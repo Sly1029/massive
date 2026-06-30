@@ -1,0 +1,18 @@
+{
+  "name": "massive",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "check:mocks": "node scripts/check-no-test-mocks.mjs",
+    "check:types": "npx tsgo --noEmit -p tsconfig.json",
+    "test": "deno test --config deno.json --allow-read --allow-write --allow-sys=cpus packages/sdk/test",
+    "check": "pnpm check:mocks && pnpm check:types && pnpm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.7",
+    "fast-glob": "^3.3.3",
+    "graphology": "^0.26.0",
+    "zod": "^4.0.0"
+  }
+}
