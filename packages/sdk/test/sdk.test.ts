@@ -15,6 +15,7 @@ import {
   stateSchema,
   workflow,
 } from "../src/index.ts";
+import { graphCases } from "./graph-fixtures.ts";
 
 Deno.test("linear workflow compiles, runs, and writes artifacts", async () => {
   await withTempDir(async (root) => {
@@ -155,6 +156,9 @@ Deno.test("graph validation rejects cycles and missing paths to end", async () =
     );
 
     await assertRejects(() => compile(missingEnd, compileOptions), GraphValidationError, "cannot reach end");
+
+    const noEdges = workflow({ name: "no-edges", input: z.number(), output: z.number() });
+    await assertRejects(() => compile(noEdges, compileOptions), GraphValidationError, "End is not reachable from start");
   });
 });
 
@@ -195,6 +199,45 @@ Deno.test("minimal channel publish persists named channel value", async () => {
       new TextDecoder().decode(await readFile(join(runRoot, runs[0]!, "channels", "answer", "value.json"))),
       "42"
     );
+  });
+});
+
+Deno.test("graph catalog compiles and runs consistently with async runner", async () => {
+  await withTempDir(async (root) => {
+    for (const graphCase of graphCases) {
+      const store = datastore.local({ path: join(root, "async", graphCase.name) });
+      const compiled = await compile(graphCase.build(), { target: "local", datastore: store, source: sourceSpec() });
+
+      assertEquals(await run(compiled, { input: graphCase.input }), graphCase.expected, graphCase.name);
+      assertEquals(compiled.plan.graph.nodes.filter((node) => node.kind === "step").length, graphCase.expectedTasks);
+      assertEquals(compiled.plan.graph.edges.length, graphCase.expectedEdges);
+
+      for (const [stepId, mergeInputs] of Object.entries(graphCase.mergeExpectations ?? {})) {
+        const node = compiled.plan.graph.nodes.find((candidate) => candidate.id === stepId);
+        assertEquals(node?.kind === "step" ? node.mergeInputs : undefined, mergeInputs, graphCase.name);
+      }
+    }
+  });
+});
+
+Deno.test("graph catalog runs consistently through Argo-local runner", async () => {
+  await withTempDir(async (root) => {
+    for (const graphCase of graphCases) {
+      const store = datastore.local({ path: join(root, "argo-local", graphCase.name) });
+      const compiled = await compile(graphCase.build(), { target: "local", datastore: store, source: sourceSpec() });
+      const result = await runArgoLocal(compiled, { input: graphCase.input });
+      const manifest = compileArgoWorkflow(compiled);
+      const main = mainTemplate(manifest);
+
+      assertEquals(result.output, graphCase.expected, graphCase.name);
+      assertEquals(result.manifest, manifest, graphCase.name);
+      assertEquals(main.dag.tasks.length, graphCase.expectedTasks, graphCase.name);
+
+      for (const [stepId, mergeInputs] of Object.entries(graphCase.mergeExpectations ?? {})) {
+        const task = main.dag.tasks.find((candidate) => candidate.name === stepId);
+        assertEquals(task?.dependencies, [...mergeInputs].sort(), graphCase.name);
+      }
+    }
   });
 });
 

@@ -5,10 +5,16 @@ export {
   stateSchema,
   workflow,
   type ChannelDefinition,
+  type EndHandle,
+  type MergeBuilder,
+  type PathBuilder,
   type StateSchema,
+  type StepHandle,
+  type StepNode,
   type StepRun,
   type StepSpec,
   type WorkflowConfig,
+  type WorkflowBuilder,
 } from "./workflow.ts";
 export { run } from "./run.ts";
 export { compileArgoWorkflow, runArgoLocal, ArgoWorkflowManifestSchema, type ArgoWorkflowManifest } from "./argo.ts";

@@ -41,8 +41,19 @@ Useful assertions:
 - default step output artifacts are persisted,
 - explicit channel publications have the expected reducers,
 - compile diagnostics point to authoring locations.
+- every supported v0 graph shape runs consistently through the async runner and the Argo-local runner.
 
 These tests should not replace graph operations. They should use the real Graphology-backed builder and inspect the lowered IR.
+
+The current v0 graph catalog covers:
+
+- passthrough `start -> end`,
+- single-step workflows,
+- linear chains,
+- fan-out/fan-in diamond graphs,
+- uneven branch-depth fan-in,
+- multi-stage fan-in,
+- 100-way batch split and merge.
 
 ### Datastore Tests
 

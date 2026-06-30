@@ -194,6 +194,10 @@ function validateGraphShape(builder: WorkflowBuilder<unknown, unknown>): void {
       throw new GraphValidationError(`Step "${step}" cannot reach end`);
     }
   }
+
+  if (!reachableFromStart.has(END_NODE)) {
+    throw new GraphValidationError("End is not reachable from start");
+  }
 }
 
 function assertAcyclic(builder: WorkflowBuilder<unknown, unknown>): void {
