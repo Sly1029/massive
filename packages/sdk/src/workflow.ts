@@ -33,6 +33,7 @@ export interface WorkflowConfig<InputSchema extends AnySchema, OutputSchema exte
 export interface ChannelDefinition<Output> {
   readonly schema: AnySchema;
   readonly reducer: "last";
+  // Phantom type until StepRun receives typed channel state.
   readonly __output?: Output;
 }
 

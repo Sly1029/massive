@@ -95,11 +95,8 @@ export async function compile<Input, Output>(
     ),
   };
 
-  WorkflowPlanJsonV0Schema.parse(planWithoutHash);
-
   const planHash = sha256Text(stableStringify(planWithoutHash));
-  const plan = { ...planWithoutHash, planHash };
-  WorkflowPlanJsonV0Schema.parse(plan);
+  const plan = WorkflowPlanJsonV0Schema.parse({ ...planWithoutHash, planHash });
 
   await options.datastore.put(`packages/${source.sourcePackageHash}/manifest.json`, stableStringify(source));
   await options.datastore.put(`plans/${planHash}/workflow.json`, stableStringify(plan));
@@ -212,14 +209,14 @@ function assertAcyclic(builder: WorkflowBuilder<unknown, unknown>): void {
     }
 
     visiting.add(node);
-    for (const neighbor of graph.outboundNeighbors(node) as string[]) {
+    for (const neighbor of graph.outboundNeighbors(node)) {
       visit(neighbor);
     }
     visiting.delete(node);
     visited.add(node);
   };
 
-  for (const node of graph.nodes() as string[]) {
+  for (const node of graph.nodes()) {
     visit(node);
   }
 }
@@ -235,7 +232,7 @@ function traverse(builder: WorkflowBuilder<unknown, unknown>, start: string, dir
     seen.add(node);
 
     const next = direction === "outbound" ? graph.outboundNeighbors(node) : graph.inboundNeighbors(node);
-    queue.push(...(next as string[]));
+    queue.push(...next);
   }
 
   return seen;
@@ -272,8 +269,8 @@ function lowerNodes(
 
 function lowerEdges(builder: WorkflowBuilder<unknown, unknown>): WorkflowPlanJsonV0["graph"]["edges"] {
   const edges: WorkflowPlanJsonV0["graph"]["edges"] = [];
-  builder.graph.forEachDirectedEdge((edge, _attributes, source, target) => {
-    edges.push({ from: String(source), to: String(target) });
+  builder.graph.forEachDirectedEdge((_edge, _attributes, source, target) => {
+    edges.push({ from: source, to: target });
   });
   return edges.sort((left, right) => `${left.from}\0${left.to}`.localeCompare(`${right.from}\0${right.to}`));
 }

@@ -94,9 +94,8 @@ function visitSchema(schema: AnySchema, role: string, visited: Set<AnySchema>): 
 }
 
 function schemaDef(schema: AnySchema): Record<string, unknown> {
-  return ((schema as unknown as { _def?: Record<string, unknown>; def?: Record<string, unknown> })._def ??
-    (schema as unknown as { def?: Record<string, unknown> }).def ??
-    {}) as Record<string, unknown>;
+  // Zod exposes no public visitor API; keep the v0 portable-subset coupling isolated to Zod 4's public `.def` shape.
+  return ((schema as unknown as { def?: Record<string, unknown> }).def ?? {}) as Record<string, unknown>;
 }
 
 function objectShape(def: Record<string, unknown>): Record<string, unknown> {

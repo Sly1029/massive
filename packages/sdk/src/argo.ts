@@ -98,7 +98,7 @@ export async function runArgoLocal<Output>(
   compiled: CompiledWorkflow<Output>,
   inputConfig: { readonly input: unknown }
 ): Promise<{ readonly manifest: ArgoWorkflowManifest; readonly output: Output }> {
-  const manifest = compileArgoWorkflow(compiled as CompiledWorkflow<unknown>);
+  const manifest = compileArgoWorkflow(compiled);
   return {
     manifest,
     output: await run(compiled, inputConfig),

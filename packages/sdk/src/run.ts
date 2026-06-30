@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { GraphValidationError, MassiveError } from "./errors.ts";
-import { WorkflowPlanJsonV0Schema } from "./plan.ts";
+import { WorkflowPlanJsonV0Schema, type WorkflowPlanJsonV0 } from "./plan.ts";
+import type { AnySchema } from "./schema.ts";
 import { stableStringify } from "./stable.ts";
 import { END_NODE, START_NODE } from "./workflow.ts";
 import type { CompiledWorkflow } from "./compile.ts";
@@ -10,20 +11,21 @@ export async function run<Output>(
   inputConfig: { readonly input: unknown }
 ): Promise<Output> {
   const plan = WorkflowPlanJsonV0Schema.parse(compiled.plan);
+  const index = buildExecutionIndex(plan);
   const runId = randomUUID();
   const workflowInput = schemaFor(compiled, plan.workflow.inputSchema).parse(inputConfig.input);
   const outputs = new Map<string, unknown>([[START_NODE, workflowInput]]);
   const state: Record<string, unknown> = {};
 
-  for (const nodeId of topologicalOrder(plan)) {
+  for (const nodeId of index.order) {
     if (nodeId === START_NODE || nodeId === END_NODE) continue;
 
-    const node = plan.graph.nodes.find((candidate) => candidate.id === nodeId);
+    const node = index.nodesById.get(nodeId);
     if (node === undefined || node.kind !== "step") {
       throw new GraphValidationError(`Plan references unknown step "${nodeId}"`);
     }
 
-    const inbound = plan.graph.edges.filter((edge) => edge.to === nodeId);
+    const inbound = index.inboundByTarget.get(nodeId) ?? [];
     const rawInput =
       node.mergeInputs === undefined
         ? singleInput(inbound, outputs, nodeId)
@@ -54,7 +56,7 @@ export async function run<Output>(
     }
   }
 
-  const endInbound = plan.graph.edges.filter((edge) => edge.to === END_NODE);
+  const endInbound = index.inboundByTarget.get(END_NODE) ?? [];
   const result = schemaFor(compiled, plan.workflow.outputSchema).parse(singleInput(endInbound, outputs, END_NODE)) as Output;
   await compiled.datastore.put(`runs/${runId}/result.json`, stableStringify(result));
   return result;
@@ -85,7 +87,7 @@ function mergedInput(
   return mergeInputs.map((source) => outputs.get(source));
 }
 
-function schemaFor(compiled: CompiledWorkflow<unknown>, schemaHash: string) {
+function schemaFor(compiled: CompiledWorkflow<unknown>, schemaHash: string): AnySchema {
   const schema = compiled.runtimeSchemas.get(schemaHash);
   if (schema === undefined) {
     throw new MassiveError(`No runtime schema registered for "${schemaHash}"`);
@@ -117,17 +119,26 @@ function readOutputField(output: unknown, field: string, stepId: string): unknow
   return (output as Record<string, unknown>)[field];
 }
 
-function topologicalOrder(plan: ReturnType<typeof WorkflowPlanJsonV0Schema.parse>): string[] {
+function buildExecutionIndex(plan: WorkflowPlanJsonV0): {
+  readonly inboundByTarget: ReadonlyMap<string, { readonly from: string; readonly to: string }[]>;
+  readonly nodesById: ReadonlyMap<string, WorkflowPlanJsonV0["graph"]["nodes"][number]>;
+  readonly order: readonly string[];
+} {
   const indegree = new Map<string, number>();
+  const inboundByTarget = new Map<string, { readonly from: string; readonly to: string }[]>();
+  const nodesById = new Map<string, WorkflowPlanJsonV0["graph"]["nodes"][number]>();
   const outbound = new Map<string, string[]>();
 
   for (const node of plan.graph.nodes) {
+    nodesById.set(node.id, node);
     indegree.set(node.id, 0);
+    inboundByTarget.set(node.id, []);
     outbound.set(node.id, []);
   }
 
   for (const edge of plan.graph.edges) {
     indegree.set(edge.to, (indegree.get(edge.to) ?? 0) + 1);
+    inboundByTarget.get(edge.to)?.push(edge);
     outbound.get(edge.from)?.push(edge.to);
   }
 
@@ -155,5 +166,5 @@ function topologicalOrder(plan: ReturnType<typeof WorkflowPlanJsonV0Schema.parse
     throw new GraphValidationError("Plan graph contains a cycle");
   }
 
-  return order;
+  return { inboundByTarget, nodesById, order };
 }

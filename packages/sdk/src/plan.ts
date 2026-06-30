@@ -1,6 +1,7 @@
 import { z } from "zod";
+import type { JsonValue } from "./stable.ts";
 
-const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([
     z.null(),
     z.boolean(),
