@@ -6,7 +6,8 @@
   "scripts": {
     "check:mocks": "node scripts/check-no-test-mocks.mjs",
     "check:types": "npx tsgo --noEmit -p tsconfig.json",
-    "test": "deno test --config deno.json --allow-read --allow-write --allow-sys=cpus packages/sdk/test",
+    "test": "deno test --config deno.json --allow-read --allow-write --allow-sys=cpus packages/sdk/test/sdk.test.ts",
+    "test:argo-cluster": "deno test --config deno.json --allow-read --allow-write --allow-run=argo --allow-sys=cpus packages/sdk/test/argo-cluster.test.ts",
     "check": "pnpm check:mocks && pnpm check:types && pnpm test"
   },
   "devDependencies": {

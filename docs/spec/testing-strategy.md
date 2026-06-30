@@ -89,10 +89,18 @@ The fast path should not require Kubernetes. Most tests should compile plans, va
 The v0 SDK command is:
 
 ```sh
-deno test --config deno.json --allow-read --allow-write --allow-sys=cpus packages/sdk/test
+deno test --config deno.json --allow-read --allow-write --allow-sys=cpus packages/sdk/test/sdk.test.ts
 ```
 
 The `--allow-sys=cpus` permission is required by the Node-compatible `fast-glob` dependency.
+
+The local Argo cluster command is:
+
+```sh
+pnpm test:argo-cluster
+```
+
+That test expects the active Kubernetes context to be `orbstack`, Argo Workflows installed in the `argo` namespace, and the `argo` service account able to create `workflowtaskresults.argoproj.io`.
 
 ## Language Split
 

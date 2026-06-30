@@ -13,6 +13,7 @@ export const ArgoWorkflowManifestSchema = z.object({
   }),
   spec: z.object({
     entrypoint: z.literal("main"),
+    serviceAccountName: z.literal("argo"),
     templates: z.array(
       z.union([
         z.object({
@@ -74,6 +75,7 @@ export function compileArgoWorkflow(compiled: CompiledWorkflow<unknown>): ArgoWo
     },
     spec: {
       entrypoint: "main",
+      serviceAccountName: "argo",
       templates: [
         {
           name: "main",
