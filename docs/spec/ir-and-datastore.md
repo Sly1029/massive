@@ -12,6 +12,8 @@ For v0, frontend SDKs emit deterministic `WorkflowSpec` JSON that conforms to th
 
 `WorkflowSpec` is the frontend-emitted, pre-materialization artifact. It is not a runnable plan and should not be accepted directly by backend runners.
 
+The v0 machine contract is the draft 2020-12 JSON Schema at [`../../conformance/schema/workflow-spec.schema.json`](../../conformance/schema/workflow-spec.schema.json). Conformance fixtures live under [`../../conformance/fixtures/specs`](../../conformance/fixtures/specs). The schema validates portable artifact shape; the Go compiler still owns cross-reference validation, DAG validation, target compatibility, and strict type/contract checks.
+
 It includes:
 
 - `GraphIR`: portable graph topology and typed dataflow.

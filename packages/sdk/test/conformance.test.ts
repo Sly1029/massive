@@ -1,4 +1,6 @@
 import { assert, assertEquals } from "jsr:@std/assert";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema, ValidateFunction } from "ajv/dist/2020.js";
 import { z } from "zod";
 import { graphCases } from "./graph-fixtures.ts";
 
@@ -52,10 +54,34 @@ Deno.test("graph catalog markdown table is rendered from canonical JSON", async 
   assertEquals(extractGeneratedCatalogTable(markdown), renderGraphCatalogTable(catalog));
 });
 
+Deno.test("WorkflowSpec JSON Schema validates v0 graph fixture specs", async () => {
+  const validate = await compileWorkflowSpecValidator();
+
+  for (const caseId of ["passthrough", "linear-chain", "diamond"]) {
+    const spec = await readJson(`../../../conformance/fixtures/specs/${caseId}/workflow-spec.json`);
+    assert(validate(spec), `${caseId} should validate: ${JSON.stringify(validate.errors)}`);
+  }
+});
+
+Deno.test("WorkflowSpec JSON Schema rejects step nodes without contractRef", async () => {
+  const validate = await compileWorkflowSpecValidator();
+  const spec = await readJson("../../../conformance/fixtures/specs/invalid-missing-contract-ref/workflow-spec.json");
+
+  assertEquals(validate(spec), false);
+  assert(JSON.stringify(validate.errors).includes("contractRef"));
+});
+
 async function readGraphCatalog(): Promise<GraphCatalog> {
-  return GraphCatalogSchema.parse(
-    JSON.parse(await Deno.readTextFile(new URL("../../../conformance/graph-catalog.json", import.meta.url)))
-  );
+  return GraphCatalogSchema.parse(await readJson("../../../conformance/graph-catalog.json"));
+}
+
+async function compileWorkflowSpecValidator(): Promise<ValidateFunction> {
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  return ajv.compile((await readJson("../../../conformance/schema/workflow-spec.schema.json")) as AnySchema);
+}
+
+async function readJson(path: string): Promise<unknown> {
+  return JSON.parse(await Deno.readTextFile(new URL(path, import.meta.url)));
 }
 
 function extractGeneratedCatalogTable(markdown: string): string {

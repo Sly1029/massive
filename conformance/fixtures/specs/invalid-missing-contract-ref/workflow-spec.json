@@ -1,0 +1,72 @@
+{
+  "kind": "WorkflowSpec",
+  "schemaVersion": 0,
+  "encoding": "json-v0",
+  "specHash": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "workflow": {
+    "name": "invalid-missing-contract-ref",
+    "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "graph": {
+    "start": "__start",
+    "end": "__end",
+    "nodes": [
+      { "id": "__start", "kind": "start" },
+      { "id": "__end", "kind": "end" },
+      {
+        "id": "double",
+        "kind": "step",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "invalid-missing-contract-ref/double"
+      }
+    ],
+    "edges": [
+      { "from": "__start", "to": "double" },
+      { "from": "double", "to": "__end" }
+    ]
+  },
+  "schemas": {
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111": {
+      "type": "number"
+    }
+  },
+  "symbols": {
+    "invalid-missing-contract-ref/double": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "workflow.ts",
+      "export": "double"
+    }
+  },
+  "sourcePackages": {
+    "ts-main": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "root": ".",
+      "include": ["workflow.ts"],
+      "files": [
+        {
+          "path": "workflow.ts",
+          "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      ]
+    }
+  },
+  "environments": {
+    "sha256:7777777777777777777777777777777777777777777777777777777777777777": {
+      "kind": "container",
+      "image": "ghcr.io/massive-dev/typescript-runner:v0"
+    }
+  },
+  "contracts": {
+    "sha256:8888888888888888888888888888888888888888888888888888888888888888": {
+      "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    }
+  },
+  "targets": [
+    { "kind": "local" }
+  ]
+}
