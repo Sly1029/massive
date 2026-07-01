@@ -8,7 +8,7 @@ The Argo backend proves the main product thesis: a portable typed graph plus exe
 
 ## Deploy Bundle
 
-An Argo compile target emits a directory or archive like:
+An Argo compile target emits a deployable template bundle, not an ad hoc run object. The primary Kubernetes artifact is a `WorkflowTemplate`.
 
 ```text
 dist/argo/<workflow-name>/
@@ -28,6 +28,8 @@ The exact files vary by target config. The bundle manifest is canonical and reco
 Argo customization uses typed target config, compiler plugins, and ordered raw patches.
 
 Typed config is not a separate privileged path. It lowers into the same internal patch representation as user patches.
+
+Argo target config is declared inside `WorkflowSpec` as a target request. The Go compiler may be asked to compile only the Argo request from a multi-target spec, but Argo semantics come from the spec, not ad hoc CLI flags. The compiler is responsible for rejecting workflow features that Argo cannot represent or that the selected Argo target configuration does not enable.
 
 ```ts
 argoTarget({
@@ -114,6 +116,35 @@ argoTarget({
 ```
 
 System mediation runs after user patches. Users can customize generated YAML freely, then the compiler reasserts secret/network/runtime wiring in a controlled stage.
+
+## V0 Executable Wedge
+
+The full pipeline above is the target architecture, not the first implementation slice. The first Go Argo compiler should only implement:
+
+```text
+1. Plan
+   Consume WorkflowSpec target inputs and the compiled WorkflowPlan.
+
+2. Materialize Tree
+   Produce the minimal Argo WorkflowTemplate tree.
+
+3. Validate Structure
+   Validate generated YAML against the selected Kubernetes and Argo schemas.
+
+4. Validate Minimal Invariants
+   Enforce dag-integrity, plan-provenance, and identity-set.
+
+5. Emit Bundle
+   Emit canonical YAML, workflow.capnp, and bundle-manifest.capnp.
+```
+
+Presets, plugins, user patches, system mediation, field-level provenance explanations, secret binding, and network policy enforcement are deferred until after the SDK -> spec -> Go -> Argo execution path works end to end.
+
+The v0 Argo step image contract is the same as the container environment contract: a fixed Massive runtime image contains the step runner, fetches the source package from the datastore, resolves the requested symbol, reads input artifacts, and writes output artifacts.
+
+The compiler should not emit a one-off `Workflow` as the primary bundle artifact. Actual submission and execution are left to users or test harnesses. Local cluster tests can submit the generated template through the Argo CLI, for example with `argo submit --from workflowtemplate/<name>`, then wait for completion and inspect datastore artifacts.
+
+The first executable Argo wedge supports `env.container(...)` only. `env.node(...)` should be rejected for Argo with a clear target compatibility diagnostic until Node dependency environment materialization exists for Kubernetes.
 
 ## Patches
 
@@ -240,4 +271,3 @@ The Argo compiler must be deterministic:
 - no timestamps in emitted artifacts,
 - sorted map keys where possible,
 - bundle hash covers IR, target config, patches, provider identities, compiler version, and materialized artifact references.
-

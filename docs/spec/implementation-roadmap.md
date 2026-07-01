@@ -1,0 +1,334 @@
+# Implementation Roadmap
+
+Status: draft
+
+This roadmap turns the architecture in [overview.md](overview.md), [ir-and-datastore.md](ir-and-datastore.md), [argo-backend.md](argo-backend.md), and [environment-materialization.md](environment-materialization.md) into an implementation plan that can be **handed off and parallelized** across multiple agents or engineers.
+
+It is organized so that independent workstreams can proceed at the same time behind frozen contracts, rather than as a single serial slice list. Read this order:
+
+1. [Current State](#current-state) — ground truth of what exists today.
+2. [Target v2 Architecture](#target-v2-architecture) — where we are pushing.
+3. [Parallelization Principle](#parallelization-principle) — how contracts + fixtures unlock concurrency.
+4. [Milestones](#milestones) — the four gates that define "done."
+5. [Workstreams](#workstreams) — assignable units of ownership with dependencies.
+6. [Dependency Graph](#dependency-graph) — what blocks what.
+7. [Detailed Task Breakdown](#detailed-task-breakdown) — task IDs, acceptance criteria, and dependencies for handoff.
+8. [Cross-Cutting Requirements](#cross-cutting-requirements) — determinism, hashing, testing policy.
+9. [Handoff Checklist](#handoff-checklist) — how a picker-upper starts a task.
+
+---
+
+## Current State
+
+Ground truth as of this revision. The spec docs describe the **target** architecture; the code is an earlier prototype. Do not assume the docs describe running software.
+
+**What exists (`packages/sdk`, ~1,900 lines TypeScript):**
+
+- `workflow.ts` — a typed Graphology-free builder: `workflow()`, `step()`, fluent `path()`, `channel()`, `stateSchema()`, fan-in via `mergeInputs`. This is real and largely matches [authoring-model.md](authoring-model.md).
+- `compile.ts` — emits a `WorkflowPlanJsonV0` (JSON) for `target: "local"` only. **It emits a plan, not a `WorkflowSpec`.** The spec/plan split does not exist in code yet.
+- `run.ts` — an **in-memory TypeScript runner** that executes steps directly from a `runtimeRegistry`. This is the execution path the target architecture explicitly removes.
+- `argo.ts` — emits an Argo `Workflow` (not `WorkflowTemplate`) whose steps are `alpine:3.20` running `echo "massive local argo placeholder"`. `runArgoLocal()` just calls the in-memory `run()`. **Argo executes nothing real today.**
+- `datastore.ts` — local filesystem datastore only (`put`/`get`/`exists`). No S3.
+- `stable.ts` — `sha256*` + `stableStringify` (sorted-key canonical JSON). Reusable as the basis for canonical hashing.
+- `schema.ts` — Zod → portable schema lowering (`lowerPortableSchema`).
+
+**What does NOT exist yet:**
+
+- No Go anywhere (no `go.mod`; branch name `rohit/add-go-backend` is aspirational).
+- No Cap'n Proto schemas or artifacts.
+- No `WorkflowSpec` JSON artifact or its schema.
+- No `StepInvocationDescriptor`.
+- No S3/MinIO datastore.
+- No environment materialization.
+- No `massive.config.ts`, no CLI (`massive run`), no zero-config resolution.
+- No real Argo `WorkflowTemplate` and no cluster execution of real steps.
+
+**Gap summary:** the interesting, defensible idea (a portable typed graph **plus** an `ExecutionContract` the compiler enforces against real backends) is specced but unbuilt. The first job is to make one workflow execute for real through the compiled-artifact path — locally, then on Argo — not to add more backends.
+
+---
+
+## Target v2 Architecture
+
+```text
+TypeScript authoring source
+  -> TS SDK emits deterministic WorkflowSpec JSON  (conforms to shared schema)
+  -> Go compiler validates spec, materializes/records artifacts
+  -> Go writes Cap'n Proto WorkflowPlan + manifests to the datastore
+  -> Go orchestrator schedules DAG, emits StepInvocationDescriptors
+  -> TS step runner (language adapter) executes each step from the datastore
+  -> run artifacts land in the datastore (local FS or S3-compatible)
+```
+
+Same path for `local` and `argo`. No in-memory execution path. See [overview.md](overview.md) for the full contract statement.
+
+---
+
+## Parallelization Principle
+
+**Contracts are frozen first, as versioned fixtures. Everything else is built against fixtures, not against other teams.**
+
+The single biggest risk to parallel work is teams blocking on each other's live code. We remove that by making the boundaries between components **checked-in artifacts**:
+
+- The **TS SDK** is built to *produce* `WorkflowSpec` JSON that validates against a JSON Schema and matches golden fixtures. It does not need the Go compiler to exist.
+- The **Go compiler** is built to *consume* checked-in `WorkflowSpec` JSON fixtures and *produce* `WorkflowPlan` fixtures. It does not need the SDK to exist.
+- The **TS step runner** is built to *consume* checked-in `StepInvocationDescriptor` JSON fixtures. It does not need the Go orchestrator to exist.
+- The **Argo compiler** is built to *consume* checked-in `WorkflowPlan` fixtures and *produce* bundle fixtures. It does not need a live orchestrator.
+- The **datastore** implementations are built against a **shared contract test suite** that both local FS and S3/MinIO must pass.
+
+The coordination artifact is a top-level **`conformance/`** directory (created in WS-0):
+
+```text
+conformance/
+  schema/                     # JSON Schemas + Cap'n Proto schemas (the contracts)
+  fixtures/
+    specs/<case>/workflow-spec.json           # golden WorkflowSpec inputs
+    plans/<case>/workflow-plan.json           # golden WorkflowPlan (JSON projection for diffing)
+    descriptors/<case>/descriptor.json        # golden StepInvocationDescriptor
+    bundles/<case>/argo/...                   # golden Argo bundle output
+  graph-catalog.md            # the canonical v0 graph shapes every layer must support
+```
+
+Every workstream's tests assert against `conformance/`. When a contract must change, it changes in `conformance/` with a version bump, and dependents update against the new fixtures — asynchronously.
+
+**Consequence:** once WS-0 lands (even as a v0 draft), WS-1, WS-2, WS-3, WS-4, and WS-9 can all start the same day.
+
+---
+
+## Milestones
+
+| Milestone | Definition of done | Gated by |
+|-----------|--------------------|----------|
+| **M0 — Contracts frozen** | `conformance/` exists with v0 JSON Schemas, Cap'n Proto schemas, descriptor schema, datastore layout, hashing spec, and at least the passthrough + linear + diamond graph fixtures. | WS-0 |
+| **M1 — Local round trip** | `massive run workflow.ts` emits a `WorkflowSpec`, Go compiles a `WorkflowPlan` to the datastore, the Go orchestrator drives the TS step runner per step, and real step outputs land in the datastore. The in-memory `run.ts` path is deleted. | WS-1, WS-2, WS-3, WS-4, WS-5, WS-6 |
+| **M2 — Argo executable wedge** | `env.container(...)` workflow compiles to a real `WorkflowTemplate` bundle; a run submitted from it on a local cluster executes real steps that read/write a pod-reachable datastore (MinIO) and reaches Succeeded. `env.node(...)` is rejected for Argo with a clear diagnostic. | WS-7, WS-8 (+ M1) |
+| **M3 — Node env materialization** | `env.node(...)` materializes a real dependency environment from a lockfile, deduped by env key, usable by local and (then) Argo targets. | WS-9 (+ M1) |
+| **M4 — Hardening** | Field-level provenance, determinism guarantees, S3/MinIO parity, and the full invariant set from [argo-backend.md](argo-backend.md) beyond the wedge. | WS-10 (+ M2) |
+
+Ship M1 before starting M2. Ship M2 before M3/M4 unless staffing allows a dedicated env-materialization track (WS-9 is off the critical path — see the graph).
+
+---
+
+## Workstreams
+
+Each workstream is an ownable unit with a clear interface boundary. "Can start at M0" means it only needs frozen contracts, not other teams' code.
+
+| ID | Workstream | Language | Depends on | Unblocks | Can start at |
+|----|------------|----------|------------|----------|--------------|
+| **WS-0** | Contracts & conformance fixtures | schema/docs | — | everything | now |
+| **WS-1** | TS SDK: `WorkflowSpec` emission | TS | WS-0 | WS-6 | M0 |
+| **WS-2** | Go compiler core: spec → plan | Go | WS-0 | WS-5, WS-7 | M0 |
+| **WS-3** | Datastore: Go (local+S3) + shared contract tests + TS client | Go + TS | WS-0 (layout) | WS-4, WS-5, WS-7 | M0 |
+| **WS-4** | TS step runner (language adapter) | TS | WS-0, WS-3 | WS-5, WS-7 | M0 (against fixtures) |
+| **WS-5** | Go local orchestrator + run manifests | Go | WS-2, WS-3, WS-4 | WS-6 | after WS-2/WS-3 |
+| **WS-6** | CLI `massive run` orchestration (integration) | TS | WS-1, WS-5 | **M1** | after WS-1/WS-5 |
+| **WS-7** | Argo `WorkflowTemplate` compiler | Go | WS-2, WS-3, WS-4 | WS-8 | after WS-2/WS-3 |
+| **WS-8** | Argo cluster test harness | TS/Go | WS-7 | **M2** | after WS-7 |
+| **WS-9** | Node environment materialization | Go (+TS) | WS-0, WS-3 | M3 | M0 (off critical path) |
+| **WS-10** | Determinism, provenance, invariants, S3 parity | Go | WS-2, WS-7 | **M4** | after WS-2 |
+
+---
+
+## Dependency Graph
+
+```text
+                         WS-0 Contracts & fixtures (M0)
+        ┌───────────────┬──────────────┬───────────────┬───────────────┐
+        │               │              │               │               │
+      WS-1            WS-2           WS-3            WS-4            WS-9
+   SDK spec        Go compiler     Datastore     TS step runner   Env materialize
+   emission        (spec→plan)   (local+S3+TS)   (adapter)        (off critical path)
+        │               │   \        /   \          /   \
+        │               │    \      /     \        /     \
+        │               │     WS-5 Go local orchestrator   \
+        │               │        (needs WS-2+WS-3+WS-4)      \
+        │               │              │                      \
+        └──────► WS-6 CLI `massive run` ◄──────────────────    WS-7 Argo compiler
+                    │  == M1 local round trip ==          \      (needs WS-2+WS-3+WS-4)
+                    │                                       \          │
+                    │                                        \      WS-8 Argo cluster harness
+                    ▼                                         \        │  == M2 wedge ==
+              (M1 unblocks M2 execution work)                  └──► WS-10 hardening == M4 ==
+```
+
+**Start-today set (all parallel once WS-0 drafts land): WS-1, WS-2, WS-3, WS-4, WS-9.**
+
+---
+
+## Detailed Task Breakdown
+
+Task IDs are `WS-<n>.<k>`. Each has an acceptance criterion (AC) and dependencies. All tests must be **mock-free** per [testing-strategy.md](testing-strategy.md) and org policy — real filesystems, real MinIO, real clusters, real generated artifacts, schema validation. Run `node scripts/check-no-test-mocks.mjs` before finishing any task.
+
+### WS-0 — Contracts & Conformance Fixtures  *(blocking; land fast, ideally one owner or a tight pair)*
+
+The point of this workstream is to unblock everyone else, so bias toward landing **v0 drafts quickly** and iterating via versioned bumps rather than perfecting up front.
+
+- **WS-0.1 — Create `conformance/` and the graph catalog.** Port the v0 graph catalog from [testing-strategy.md](testing-strategy.md) (passthrough, single-step, linear, diamond, uneven branch-depth fan-in, multi-stage fan-in, 100-way split/merge) into canonical `conformance/graph-catalog.json` with a stable case ID per shape and a generated human-readable `conformance/graph-catalog.md` view.
+  - AC: every case has an ID; downstream fixtures key off these IDs.
+  - Status: implemented in [`../../conformance/graph-catalog.json`](../../conformance/graph-catalog.json) and [`../../conformance/graph-catalog.md`](../../conformance/graph-catalog.md), checked by `pnpm check:conformance`. Go compiler work in WS-2 must read the same JSON catalog for its matching conformance assertion.
+- **WS-0.2 — `WorkflowSpec` JSON Schema.** Author the shared schema for `WorkflowSpec` per [ir-and-datastore.md](ir-and-datastore.md): `GraphIR`, schema table, symbol table, source package table, environment table, effective execution-contract table, per-node `contractRef`, target requests. Provide it as a JSON Schema (draft 2020-12) under `conformance/schema/workflow-spec.schema.json`.
+  - AC: schema validates a hand-authored spec for the passthrough + linear + diamond cases; rejects a spec missing a `contractRef`.
+- **WS-0.3 — Cap'n Proto schemas.** Define `workflow-plan.capnp` (`WorkflowPlan` joining `GraphIR` + `ExecutionContract` + materialization refs + provenance) and `bundle-manifest.capnp`, plus a documented **JSON projection** of the plan for human-diffable fixtures.
+  - AC: `capnp compile` succeeds; a round-trip encode/decode test passes in Go.
+- **WS-0.4 — `StepInvocationDescriptor` schema.** Define the descriptor as a shared schema message (JSON transport for v0) with all fields from [ir-and-datastore.md](ir-and-datastore.md#step-invocation-descriptor). Keep it Cap'n-Proto-compatible.
+  - AC: JSON Schema under `conformance/schema/step-invocation-descriptor.schema.json`; a golden descriptor validates.
+- **WS-0.5 — Datastore layout + key rules.** Freeze the storage layout and content-addressing rules from [ir-and-datastore.md](ir-and-datastore.md#storage-layout) as `conformance/schema/datastore-layout.md`: blob/spec/env/package/plan/target/run key templates, `sha256:<hex>` full-digest keys, project-key normalization.
+  - AC: documented key templates with at least one worked example per template.
+- **WS-0.6 — Canonical hashing spec.** Specify field-tree canonicalization and hashing for `specHash`, `planHash`, source-package hash, env key, and runtime-artifact hash. Baseline: the sorted-key JSON approach already in `packages/sdk/src/stable.ts`. Document exactly which fields each hash covers (see [Cross-Cutting](#cross-cutting-requirements)).
+  - AC: `conformance/schema/hashing.md` with a golden input → expected digest vector that both TS and Go test against.
+- **WS-0.7 — Seed golden fixtures.** Produce `conformance/fixtures/specs/<case>/workflow-spec.json` for at least passthrough, linear, and diamond, plus matching `plans/` JSON projections and one `descriptors/` example.
+  - AC: fixtures validate against WS-0.2/WS-0.4 schemas in CI.
+
+### WS-1 — TS SDK: `WorkflowSpec` Emission  *(depends: WS-0)*
+
+Refactor `packages/sdk` from JSON *plan* compilation to `WorkflowSpec` *emission*. The Go compiler becomes the only plan writer.
+
+- **WS-1.1 — Introduce the `WorkflowSpec` emitter.** New `packages/sdk/src/emit.ts` that lowers a `WorkflowBuilder` into `WorkflowSpec` JSON conforming to `conformance/schema/workflow-spec.schema.json`. Reuse `lowerPortableSchema` (`schema.ts`) for the schema table and `stable.ts` for `specHash`.
+  - AC: emits valid specs for every graph-catalog case; `specHash` matches the WS-0.6 vector; validated against the JSON Schema in tests.
+- **WS-1.2 — Symbol table + source-package manifest.** Emit stable symbol IDs (`packageId` + module + export) and a source-package manifest listing exact files + content hashes (extend the existing globbing in `compile.ts`).
+  - AC: symbols are stable across runs; manifest lists exact files/hashes; a changed source file changes the package hash and nothing else.
+- **WS-1.3 — Execution-contract merge → effective contracts.** Implement `contract()`, `env.node()`, `env.container()`, `net.*`, `secret.ref()` authoring primitives ([authoring-model.md](authoring-model.md#execution-contracts-in-authoring)); merge workflow defaults with step overrides into effective contracts deduped by content hash; emit the environment table keyed by env-spec hash; put `contractRef` on every executable node.
+  - AC: two steps with the same effective env share one env-table entry even if resources/secrets differ; every step node has a `contractRef`.
+- **WS-1.4 — `massive.config.ts` + target requests.** Implement `defineWorkflowPackage(...)` ([ir-and-datastore.md](ir-and-datastore.md#source-packages)) with `include`, `entrypoint`, `environment`, `targets` (`target.local`, `target.argo`). Emit target requests into the spec.
+  - AC: a package config produces a spec with the requested targets; Argo target request round-trips into the spec.
+- **WS-1.5 — Entrypoint resolution + zero-config.** Implement `workflow.ts`, `workflow.ts#named`, ambiguity error on multiple exports, and directory resolution via config. Zero-config single-file synthesizes an ephemeral config with `local` target only; deployable targets require explicit config.
+  - AC: all four resolution cases behave per [open-questions.md](open-questions.md#workflow-entrypoints-and-package-roots); zero-config refuses to request Argo.
+- **WS-1.6 — Remove the in-memory runtime as a supported path.** Delete/retire `run.ts` and `argo.ts`'s `runArgoLocal` from the public surface (keep step `run` closures for the *runner* to execute, not for in-SDK execution). Update `index.ts` exports.
+  - AC: `index.ts` no longer exports an in-memory `run`; SDK tests assert on emitted spec/artifacts only.
+
+### WS-2 — Go Compiler Core: spec → plan  *(depends: WS-0)*
+
+New `go/` module. Suggested layout: `go/cmd/massive-compiler`, `go/internal/spec`, `go/internal/plan`, `go/internal/capnp` (generated).
+
+- **WS-2.1 — Bootstrap the Go module + capnp codegen.** `go.mod`, Cap'n Proto Go bindings generated from WS-0.3, CI wiring, `go test ./...`.
+  - AC: `go build ./...` and generated capnp types compile.
+- **WS-2.2 — Read + validate `WorkflowSpec`.** Parse spec JSON; validate portable schema conformance, graph integrity (DAG, reachability, single start/end), contract references exist, symbol references exist, target requests, datastore references.
+  - AC: accepts all WS-0.7 valid fixtures; produces a specific diagnostic for a spec with a dangling `contractRef` and for a cyclic graph. Emit deterministic JSON dumps of the parsed spec for conformance assertions.
+- **WS-2.3 — Emit Cap'n Proto `WorkflowPlan`.** Join `GraphIR` + `ExecutionContract` + symbol table + (initially empty) materialization refs + provenance + compiler version; compute `planHash` per WS-0.6.
+  - AC: byte-stable plan for identical inputs; plan JSON projection matches `conformance/fixtures/plans/`.
+- **WS-2.4 — Topological schedule.** Produce the deterministic execution order used by the local orchestrator and by Argo dependency wiring.
+  - AC: diamond and multi-stage fan-in produce correct, stable orders; used by both WS-5 and WS-7.
+
+### WS-3 — Datastore  *(depends: WS-0.5)*
+
+- **WS-3.1 — Shared datastore contract test suite.** A single suite (Go) that any implementation must pass: put/get/exists, content-type, conditional write, listing, key validation, content-addressing.
+  - AC: suite runs against an implementation instance passed in; no mocks.
+- **WS-3.2 — Go local filesystem datastore.** Port `packages/sdk/src/datastore.ts` semantics (atomic temp-rename write, key traversal guards) to Go.
+  - AC: passes WS-3.1 in a temp dir.
+- **WS-3.3 — Go S3-compatible datastore.** Endpoint-configurable (`datastore.s3({ endpoint })`) so R2/MinIO work. Test against a real MinIO container.
+  - AC: passes WS-3.1 against MinIO; documented as opt-in/tagged if MinIO isn't guaranteed in CI ([open-questions.md](open-questions.md#datastore)).
+- **WS-3.4 — TS datastore client for the step runner.** The runner needs to fetch source packages/inputs and write outputs. Provide a TS client with the same key rules; support local FS + S3-compatible.
+  - AC: TS client and Go client interoperate on the same layout (a Go-written artifact is readable by TS and vice versa) in a functional test.
+
+### WS-4 — TS Step Runner (language adapter)  *(depends: WS-0.4, WS-3.4)*
+
+New `packages/sdk/src/runner/` shipping a `massive-step-runner` bin ([ir-and-datastore.md](ir-and-datastore.md#language-runtime-adapters)). Can start against WS-0 descriptor **fixtures** before WS-3.4 lands, then wire real datastore reads.
+
+- **WS-4.1 — Descriptor parsing isolated from execution.** Parse `StepInvocationDescriptor` JSON; keep parsing separate from execution so a future Cap'n Proto transport swaps in cleanly.
+  - AC: parses all `conformance/fixtures/descriptors/`; rejects a malformed descriptor with a clear error.
+- **WS-4.2 — Source package fetch + symbol resolution.** Fetch/unpack the referenced source package from the datastore; import the module/export symbol.
+  - AC: given a descriptor pointing at a fixture package, resolves and loads the exported step function.
+- **WS-4.3 — Execute one step with schema validation at the boundary.** Read canonical JSON input artifact, validate against input schema ref, execute, validate output against output schema ref, write canonical JSON output artifact.
+  - AC: executes a real fixture step end to end against a temp local datastore; a schema mismatch on input or output produces a precise diagnostic.
+- **WS-4.4 — Runner diagnostics.** Clear errors for module resolution, schema validation, and step failure, distinguishable by exit behavior for the orchestrator.
+  - AC: three failure modes produce three distinguishable, documented outcomes.
+
+### WS-5 — Go Local Orchestrator + Run Manifests  *(depends: WS-2, WS-3, WS-4)*
+
+- **WS-5.1 — Local run manifest + descriptor emission.** From a `WorkflowPlan`, create a run (run ID), emit per-node `StepInvocationDescriptor`s, and record a run manifest in the datastore.
+  - AC: descriptors validate against WS-0.4 and match golden fixtures for the linear case.
+- **WS-5.2 — Schedule + invoke the TS runner as an external process.** Walk the WS-2.4 order, spawn the step runner per node, thread step outputs to downstream inputs, handle fan-in (`mergeInputs`) and channels.
+  - AC: linear + diamond + multi-stage fan-in execute real steps; outputs land at the WS-0.5 datastore keys.
+- **WS-5.3 — Validate runtime artifacts.** After each step, validate artifact presence, schema refs, and content hashes.
+  - AC: a tampered output artifact hash fails the run loudly.
+
+### WS-6 — CLI `massive run` (integration → M1)  *(depends: WS-1, WS-5)*
+
+New `packages/cli`. This is the glue that makes M1 real.
+
+- **WS-6.1 — `massive run workflow.ts` orchestration.** Discover entrypoint → invoke SDK emitter → write `WorkflowSpec` to datastore → invoke Go compiler → run Go local orchestrator → invoke TS runner per step → surface concise status + final result location.
+  - AC: `massive run` on a fixture workflow produces real datastore outputs via the full path; **no in-memory execution**.
+- **WS-6.2 — Caching by hash.** Skip emit if source unchanged (source-package hash), skip compile if spec unchanged (`specHash`), skip nothing semantically. Cache keyed in the datastore.
+  - AC: a second identical run reuses cached spec + plan (observable via verbose logs) and is materially faster.
+- **WS-6.3 — Verbose/inspect surface.** Hide hashes/paths by default; expose them under `--verbose` / an `inspect` subcommand ([overview.md](overview.md#developer-experience)).
+  - AC: default output is author-facing; verbose reveals artifact paths + hashes.
+
+### WS-7 — Argo `WorkflowTemplate` Compiler (→ M2 wedge)  *(depends: WS-2, WS-3, WS-4)*
+
+Implement only the executable wedge from [argo-backend.md](argo-backend.md#v0-executable-wedge): plan → materialize tree → validate structure → minimal invariants → emit bundle. Presets/plugins/patches/mediation are WS-10.
+
+- **WS-7.1 — Container-only env gate.** Accept `env.container(...)`; reject `env.node(...)` for Argo with a target-compatibility diagnostic until WS-9 lands Kubernetes materialization.
+  - AC: a node-env workflow targeting Argo fails with the documented diagnostic; a container-env workflow proceeds.
+- **WS-7.2 — `WorkflowTemplate` generation.** Emit a `WorkflowTemplate` (not a one-off `Workflow`) with a DAG mirroring the plan topology; each step template runs the fixed Massive runtime image contract (fetch source package → resolve symbol → read inputs → write outputs) per [environment-materialization.md](environment-materialization.md#container-escape-hatch).
+  - AC: generated template's DAG dependencies equal the plan edges; step container is the runtime image, not a placeholder `echo`.
+- **WS-7.3 — Structure validation.** Validate generated YAML against Kubernetes + Argo CRD schemas (pick the CRD version per [open-questions.md](open-questions.md#argo-compiler)).
+  - AC: invalid generated YAML is caught in an offline test; valid YAML passes.
+- **WS-7.4 — Minimal invariants.** Enforce `dag-integrity`, `plan-provenance`, `identity-set` ([argo-backend.md](argo-backend.md#invariants)).
+  - AC: each invariant has a passing case and a deliberately-broken failing case.
+- **WS-7.5 — Bundle emission.** Emit canonical `workflow-template.yaml`, `massive-plan.capnp`, `bundle-manifest.capnp` into `dist/argo/<workflow>/`; bundle manifest records all artifacts.
+  - AC: bundle matches `conformance/fixtures/bundles/`; deterministic (no timestamps, sorted keys).
+
+### WS-8 — Argo Cluster Test Harness (→ M2)  *(depends: WS-7)*
+
+- **WS-8.1 — Cluster harness.** Namespace-per-run: verify/install Argo CRDs+controller, apply the generated template, `argo submit --from workflowtemplate/<name>`, wait for terminal status, collect status/logs, inspect datastore artifacts, delete namespace ([testing-strategy.md](testing-strategy.md#argo-compiler-tests)).
+  - AC: `pnpm test:argo-cluster` runs against OrbStack (`orbstack` context, `argo` namespace) and asserts Succeeded + expected datastore artifacts.
+- **WS-8.2 — Pod-reachable datastore wiring.** Wire MinIO (in-cluster or reachable S3-compatible endpoint) so step pods read/write real artifacts.
+  - AC: a run's step outputs are present in the datastore after completion, produced by real pods.
+
+### WS-9 — Node Environment Materialization (→ M3; off critical path)  *(depends: WS-0, WS-3)*
+
+Build against contracts; do **not** block the M2 wedge. See [environment-materialization.md](environment-materialization.md).
+
+- **WS-9.1 — Env key calculation.** Compute the Node env key from env kind, Node version, package manager (+version), lockfile hash, manifest hash, workspace package hashes, platform, arch, materializer version, build args.
+  - AC: two workflows with identical dependency inputs share a key; a lockfile change changes the key; a resource-limit change does not.
+- **WS-9.2 — Materialization artifact shape.** Decide + implement tarball vs OCI layer vs backend-specific ([open-questions.md](open-questions.md)); produce `envs/<env-key>/manifest.capnp` + `runtime.tar.zst` (or chosen shape).
+  - AC: real materialization from a small committed fixture package with a lockfile; manifest records source hashes, platform, digests, entrypoint.
+- **WS-9.3 — Local target consumption.** Local runner uses materialized env; reuse local package-manager caches where possible; record manifest + hashes.
+  - AC: local run of a node-env workflow uses the materialized env, not the ambient environment.
+- **WS-9.4 — Kubernetes materialization + Argo `env.node` unblock.** Materialize to object storage; pods fetch/mount the artifact; flip WS-7.1 to accept `env.node(...)` for Argo.
+  - AC: an Argo run of a node-env workflow executes with the materialized dependencies; cache hit/miss diagnostics surfaced.
+
+### WS-10 — Determinism, Provenance, Invariants, S3 Parity (→ M4)  *(depends: WS-2, WS-7)*
+
+- **WS-10.1 — Determinism guarantees.** Stable ordering, canonical YAML/JSON, no timestamps, sorted keys, bundle hash covering IR+config+patches+provider identity+compiler version+materialization refs ([argo-backend.md](argo-backend.md#determinism)).
+  - AC: byte-identical bundle across two runs on two machines for the same inputs (golden test).
+- **WS-10.2 — Field-level provenance.** Emit the provenance sidecar (name, source layer, scope, target path, old/new value hashes) and basic `massive compile --explain <path>`.
+  - AC: `--explain` resolves a generated field to its source layer for one worked example.
+- **WS-10.3 — Presets/plugins/typed-config/patches pipeline.** Implement the full Argo pipeline stages 3–7 from [argo-backend.md](argo-backend.md#compiler-pipeline) (patches as ordered, named, provenance-carrying; `onMiss: error` default).
+  - AC: a strategic-merge and a JSON patch both apply with recorded provenance; missing selector errors by default.
+- **WS-10.4 — Full invariant set.** Add `entrypoint-resolves`, `artifact-wiring`, `reserved-names`, `name-uniqueness`, `secret-binding`, `egress-representable`, with severities (hard / soft / forceable).
+  - AC: each invariant has passing + failing cases; reserved-names is non-forceable.
+- **WS-10.5 — S3/MinIO parity gate.** Run the full local + Argo suites against the S3-compatible datastore, not just local FS.
+  - AC: the datastore contract suite and at least one end-to-end run pass on MinIO.
+
+---
+
+## Cross-Cutting Requirements
+
+**Hashing (owned by WS-0.6, consumed everywhere).** All hashes are over canonical field trees (sorted-key JSON baseline from `stable.ts`), never over JSON whitespace or Cap'n Proto wire bytes. Documented coverage:
+
+- `specHash`: the full `WorkflowSpec` field tree.
+- `sourcePackageHash`: exact file list + per-file content hashes.
+- env key: environment-relevant inputs only (WS-9.1) — never resources/secrets/network/scheduling.
+- `planHash`: spec hash + GraphIR + ExecutionContract + symbol table + target config + patches + compiler version + env materialization refs + datastore manifest refs + mediation provider identity ([ir-and-datastore.md](ir-and-datastore.md#plan-hash)).
+- Keys use full `sha256:<hex>`; manifests record the algorithm; UI may shorten for display only.
+
+**Security / policy (org requirements — flag in review).** Anything touching secrets, network egress, service accounts, or the datastore credential path warrants explicit review. Never hardcode credentials — env vars or AWS Managed Secrets only. Don't log customer code/PII/tokens. New package-manager manifests (`go.mod`, any new `package.json`, lockfiles) must carry the org-mandated cooldown settings; GitHub Actions must be pinned to full commit SHAs with a version comment. The sidecar/secret-mediation model in [argo-backend.md](argo-backend.md#runtime-mediation) is reserved but out of v0 scope.
+
+**Testing (repo + org policy).** Mock-free everywhere: real FS datastores, real MinIO, real generated manifests, schema validation, real local clusters. `node scripts/check-no-test-mocks.mjs` gates every change; enable the pre-commit hook with `git config core.hooksPath .githooks`. Kubernetes tests are opt-in/tagged.
+
+**AI-generated code.** Every line is reviewed; production merges need a PR with +1. Surface conflicts with these specs rather than silently diverging.
+
+---
+
+## Handoff Checklist
+
+To pick up a task:
+
+1. **Read the contract, not the neighbors.** Your inputs/outputs are files in `conformance/`. Build against those fixtures; do not wait on another workstream's live code.
+2. **Confirm your milestone gate.** Check the [Workstreams](#workstreams) table for `Depends on` — if a dependency's fixtures aren't in `conformance/` yet, that's the real blocker to raise.
+3. **Write the functional test first.** It should consume/produce the relevant `conformance/` fixture. No mocks.
+4. **If you must change a contract**, bump it in `conformance/` with a version note and open the change to dependents asynchronously — do not fork the contract inside your workstream.
+5. **Run** `node scripts/check-no-test-mocks.mjs` and (for TS) the deno test command in [testing-strategy.md](testing-strategy.md) before marking done.
+6. **Flag** any secret/network/auth/datastore-credential surface for explicit security review in your PR.
+
+**Recommended first wave to staff in parallel:** WS-0 (unblocks all) → then immediately WS-1, WS-2, WS-3, WS-4, WS-9 concurrently. WS-5/WS-6 converge those into M1; WS-7/WS-8 deliver M2.
