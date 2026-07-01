@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://massive.dev/conformance/schema/workflow-spec.schema.json",
+  "title": "Massive WorkflowSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schemaVersion",
+    "encoding",
+    "specHash",
+    "workflow",
+    "graph",
+    "schemas",
+    "symbols",
+    "sourcePackages",
+    "environments",
+    "contracts",
+    "targets"
+  ],
+  "properties": {
+    "kind": { "const": "WorkflowSpec" },
+    "schemaVersion": { "const": 0 },
+    "encoding": { "const": "json-v0" },
+    "specHash": { "$ref": "#/$defs/hashRef" },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "inputSchema", "outputSchema"],
+      "properties": {
+        "name": { "$ref": "#/$defs/id" },
+        "inputSchema": { "$ref": "#/$defs/hashRef" },
+        "outputSchema": { "$ref": "#/$defs/hashRef" }
+      }
+    },
+    "graph": { "$ref": "#/$defs/graph" },
+    "schemas": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/hashRef" },
+      "additionalProperties": { "type": "object" }
+    },
+    "symbols": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/symbol" }
+    },
+    "sourcePackages": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/sourcePackage" }
+    },
+    "environments": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/hashRef" },
+      "additionalProperties": { "$ref": "#/$defs/environment" }
+    },
+    "contracts": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/hashRef" },
+      "additionalProperties": { "$ref": "#/$defs/executionContract" }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/target" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.@/:#-]+$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "not": { "pattern": "^(/|.*(^|/)\\.\\.(/|$))" }
+    },
+    "hashRef": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "nodes", "edges"],
+      "properties": {
+        "start": { "$ref": "#/$defs/id" },
+        "end": { "$ref": "#/$defs/id" },
+        "nodes": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/edge" }
+        }
+      }
+    },
+    "node": {
+      "oneOf": [
+        { "$ref": "#/$defs/startNode" },
+        { "$ref": "#/$defs/endNode" },
+        { "$ref": "#/$defs/stepNode" }
+      ]
+    },
+    "startNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "const": "start" }
+      }
+    },
+    "endNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "const": "end" }
+      }
+    },
+    "stepNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "inputSchema", "outputSchema", "symbolRef", "contractRef"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "const": "step" },
+        "inputSchema": { "$ref": "#/$defs/hashRef" },
+        "outputSchema": { "$ref": "#/$defs/hashRef" },
+        "symbolRef": { "$ref": "#/$defs/id" },
+        "contractRef": { "$ref": "#/$defs/hashRef" },
+        "mergeInputs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "channel": { "$ref": "#/$defs/id" },
+        "publish": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "$ref": "#/$defs/id" },
+        "to": { "$ref": "#/$defs/id" }
+      }
+    },
+    "symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packageId", "language", "module", "export"],
+      "properties": {
+        "packageId": { "$ref": "#/$defs/id" },
+        "language": { "enum": ["typescript", "python"] },
+        "module": { "$ref": "#/$defs/relativePath" },
+        "export": { "$ref": "#/$defs/id" }
+      }
+    },
+    "sourcePackage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packageId", "language", "packageHash", "root", "include", "files"],
+      "properties": {
+        "packageId": { "$ref": "#/$defs/id" },
+        "language": { "enum": ["typescript", "python"] },
+        "packageHash": { "$ref": "#/$defs/hashRef" },
+        "root": { "type": "string", "minLength": 1 },
+        "include": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/relativePath" }
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "hash"],
+            "properties": {
+              "path": { "$ref": "#/$defs/relativePath" },
+              "hash": { "$ref": "#/$defs/hashRef" }
+            }
+          }
+        },
+        "artifact": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "environment": {
+      "oneOf": [
+        { "$ref": "#/$defs/containerEnvironment" },
+        { "$ref": "#/$defs/nodeEnvironment" }
+      ]
+    },
+    "containerEnvironment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "image"],
+      "properties": {
+        "kind": { "const": "container" },
+        "image": { "type": "string", "minLength": 1 },
+        "command": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "workingDirectory": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "nodeEnvironment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "version", "packageManager", "lockfile"],
+      "properties": {
+        "kind": { "const": "node" },
+        "version": { "type": "string", "minLength": 1 },
+        "packageManager": { "enum": ["npm", "pnpm", "yarn"] },
+        "lockfile": { "$ref": "#/$defs/relativePath" }
+      }
+    },
+    "executionContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environmentRef"],
+      "properties": {
+        "environmentRef": { "$ref": "#/$defs/hashRef" },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": { "type": "string", "minLength": 1 },
+            "memory": { "type": "string", "minLength": 1 }
+          }
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "ref"],
+            "properties": {
+              "name": { "$ref": "#/$defs/id" },
+              "ref": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "egress": { "enum": ["none", "declared", "any"] }
+          }
+        }
+      }
+    },
+    "target": {
+      "oneOf": [
+        { "$ref": "#/$defs/localTarget" },
+        { "$ref": "#/$defs/argoTarget" }
+      ]
+    },
+    "localTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "local" }
+      }
+    },
+    "argoTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "namespace", "serviceAccountName"],
+      "properties": {
+        "kind": { "const": "argo" },
+        "namespace": { "$ref": "#/$defs/id" },
+        "serviceAccountName": { "$ref": "#/$defs/id" },
+        "workflowTemplateName": { "$ref": "#/$defs/id" }
+      }
+    }
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "kind": "WorkflowSpec",
+  "schemaVersion": 0,
+  "encoding": "json-v0",
+  "specHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "workflow": {
+    "name": "passthrough",
+    "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "graph": {
+    "start": "__start",
+    "end": "__end",
+    "nodes": [
+      { "id": "__start", "kind": "start" },
+      { "id": "__end", "kind": "end" }
+    ],
+    "edges": [
+      { "from": "__start", "to": "__end" }
+    ]
+  },
+  "schemas": {
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111": {
+      "type": "number"
+    }
+  },
+  "symbols": {},
+  "sourcePackages": {
+    "ts-main": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "root": ".",
+      "include": ["workflow.ts"],
+      "files": [
+        {
+          "path": "workflow.ts",
+          "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      ],
+      "artifact": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst"
+    }
+  },
+  "environments": {
+    "sha256:7777777777777777777777777777777777777777777777777777777777777777": {
+      "kind": "container",
+      "image": "ghcr.io/massive-dev/typescript-runner:v0"
+    }
+  },
+  "contracts": {
+    "sha256:8888888888888888888888888888888888888888888888888888888888888888": {
+      "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "network": {
+        "egress": "none"
+      }
+    }
+  },
+  "targets": [
+    { "kind": "local" }
+  ]
+}

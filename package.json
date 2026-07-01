@@ -13,6 +13,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.7",
+    "ajv": "^8.20.0",
     "fast-glob": "^3.3.3",
     "graphology": "^0.26.0",
     "zod": "^4.0.0"

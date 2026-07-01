@@ -19,6 +19,7 @@
     "packageJson": {
       "dependencies": [
         "npm:@types/node@^24.0.7",
+        "npm:ajv@^8.20.0",
         "npm:fast-glob@^3.3.3",
         "npm:graphology@0.26",
         "npm:zod@4"
