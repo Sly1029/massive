@@ -72,25 +72,25 @@
     "diamond/split": {
       "packageId": "ts-main",
       "language": "typescript",
-      "module": "workflow.ts",
+      "module": "./workflow.ts",
       "export": "split"
     },
     "diamond/left": {
       "packageId": "ts-main",
       "language": "typescript",
-      "module": "workflow.ts",
+      "module": "./workflow.ts",
       "export": "left"
     },
     "diamond/right": {
       "packageId": "ts-main",
       "language": "typescript",
-      "module": "workflow.ts",
+      "module": "./workflow.ts",
       "export": "right"
     },
     "diamond/merge": {
       "packageId": "ts-main",
       "language": "typescript",
-      "module": "workflow.ts",
+      "module": "./workflow.ts",
       "export": "merge"
     }
   },

@@ -39,7 +39,7 @@ Useful assertions:
 - GraphIR topology is correct,
 - schema references are present,
 - source package manifests contain exact files and hashes,
-- explicit channel publications have the expected reducers,
+- post-M2 channel publications have the expected reducers once channels enter the portable schema,
 - emit diagnostics point to authoring locations,
 - every supported v0 graph shape emits a valid `WorkflowSpec`.
 
@@ -92,6 +92,7 @@ For v0, the recommended local stack is:
 - Deno for the v0 local runner and SDK functional tests,
 - `tsgo` for TypeScript validation,
 - Go toolchain if backend compilers are written in Go,
+- Cap'n Proto compiler (`capnp`) for schema compile and round-trip conformance checks,
 - Docker or compatible container runtime,
 - OrbStack or minikube Kubernetes cluster,
 - Argo Workflows installed in a test namespace,

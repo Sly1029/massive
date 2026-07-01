@@ -36,7 +36,7 @@
     "invalid-missing-contract-ref/double": {
       "packageId": "ts-main",
       "language": "typescript",
-      "module": "workflow.ts",
+      "module": "./workflow.ts",
       "export": "double"
     }
   },

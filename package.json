@@ -5,11 +5,12 @@
   "packageManager": "pnpm@11.7.0",
   "scripts": {
     "check:mocks": "node scripts/check-no-test-mocks.mjs",
-    "check:conformance": "deno test --config deno.json --allow-read --allow-sys=cpus packages/sdk/test/conformance.test.ts",
+    "check:capnp": "go test ./conformance/schema",
+    "check:conformance": "deno test --config deno.json --allow-read --allow-sys=cpus packages/sdk/test/conformance.test.ts && pnpm check:capnp",
     "check:types": "npx tsgo --noEmit -p tsconfig.json",
     "test": "deno test --config deno.json --allow-read --allow-write --allow-sys=cpus packages/sdk/test/sdk.test.ts packages/sdk/test/conformance.test.ts",
     "test:argo-cluster": "deno test --config deno.json --allow-read --allow-write --allow-run=argo --allow-sys=cpus packages/sdk/test/argo-cluster.test.ts",
-    "check": "pnpm check:mocks && pnpm check:types && pnpm test"
+    "check": "pnpm check:mocks && pnpm check:types && pnpm test && pnpm check:capnp"
   },
   "devDependencies": {
     "@types/node": "^24.0.7",

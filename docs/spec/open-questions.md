@@ -8,7 +8,7 @@ This document tracks decisions that are intentionally unsettled or likely to cha
 
 ### Global State Channel Declaration
 
-V0 channels are globally declared in `stateSchema(...)`.
+Channels are post-M2 for the portable `WorkflowSpec` schema. When they enter the schema, the current tentative direction is to declare them globally in `stateSchema(...)`.
 
 Why this is the current choice:
 

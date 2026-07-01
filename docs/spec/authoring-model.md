@@ -4,6 +4,8 @@ Status: draft
 
 The v0 authoring API is TypeScript-first and functional/declarative. It should feel closer to `pydantic-graph`'s `GraphBuilder` than to a class hierarchy or AST-extracted control flow.
 
+This document describes the intended author-facing model, including features beyond the first portable compiler wedge. The `WorkflowSpec` schema v0 currently admits DAG step nodes, directed edges, and `mergeInputs` fan-in only. Channels, branches, foreach/map, and reducer-backed joins are post-M2 portable-schema work even if the authoring API sketches their eventual shape here.
+
 Authors define:
 
 - a workflow,
@@ -79,7 +81,7 @@ Channels are opt-in. Use them when data must be addressable outside a single edg
 
 ## State Schema
 
-For v0, channels are globally declared in `stateSchema(...)`.
+When channels enter the portable schema, they should be globally declared in `stateSchema(...)`.
 
 This decision is tentative and open to change after authoring real workflows. Central declaration is the clearest compile target now because the compiler can validate schemas, reducers, branch discriminants, joins, and final projections up front.
 
@@ -229,4 +231,3 @@ const g = workflow({
 The TypeScript step function exists for local execution, type inference, and symbol registration. The portable plan must not depend on serializing closures.
 
 Every executable step, reducer, projection, and advanced condition must have a stable symbol identity in the compiled plan. Backend runners resolve symbols through a language/runtime registry.
-

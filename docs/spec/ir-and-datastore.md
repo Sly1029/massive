@@ -2,7 +2,7 @@
 
 Status: draft
 
-Massive's canonical compiled artifact is a Cap'n Proto `WorkflowPlan`.
+Massive's canonical compiled artifact is a Cap'n Proto `WorkflowPlan`. The v0 schema lives at [`../../conformance/schema/workflow-plan.capnp`](../../conformance/schema/workflow-plan.capnp), with target bundle output described by [`../../conformance/schema/bundle-manifest.capnp`](../../conformance/schema/bundle-manifest.capnp).
 
 The TypeScript SDK is not the source of truth. It is the first authoring frontend. Future Python, Rust, or Go SDKs should emit the same shared schema.
 
@@ -123,9 +123,13 @@ The Go compiler consumes a `WorkflowSpec`, validates it, resolves target inputs,
 
 The plan should be content-addressed and hashable. Same source inputs, compiler version, target config, patches, environment inputs, and materializer settings should produce the same canonical plan hash. Hashes are computed over canonical field trees, not raw Cap'n Proto segment bytes, because valid Cap'n Proto messages can have different byte layouts.
 
+Human-diffable fixtures should use the deterministic JSON projection documented in [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md). That projection is a conformance aid only; runners consume the persisted Cap'n Proto plan and target manifests.
+
+Canonical plans and target bundle manifests must not include wall-clock timestamps. Compiler identity, compiler version, source/spec hashes, materialized artifact refs, and validation results belong in canonical provenance; compile time and bundle emission time are side metadata if they are needed later.
+
 ## GraphIR
 
-The v0 graph IR is DAG-only.
+The v0 `WorkflowSpec` graph IR is intentionally narrow: DAG step nodes, start/end nodes, directed edges, and explicit `mergeInputs` fan-in.
 
 It includes:
 
@@ -134,16 +138,13 @@ It includes:
 - step nodes,
 - start/end nodes,
 - directed edges,
-- branches,
-- foreach/map nodes,
-- join/reducer references,
+- merge fan-in through `mergeInputs`,
 - step input/output schema references,
-- state channel declarations,
 - stable symbol references for executable code,
 - retry metadata,
 - artifact dependencies.
 
-It does not include arbitrary closures.
+It does not include arbitrary closures. Channels, branch nodes, foreach/map nodes, joins/reducers, and channel publish/read declarations are post-M2 `WorkflowSpec` features. The authoring model may describe those user-facing APIs before they are admitted to the portable v0 schema; frontend SDKs must not emit them into `schemaVersion: 0`.
 
 ## ExecutionContract
 

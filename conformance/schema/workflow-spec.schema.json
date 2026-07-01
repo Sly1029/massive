@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://massive.dev/conformance/schema/workflow-spec.schema.json",
   "title": "Massive WorkflowSpec",
+  "description": "V0 WorkflowSpec covers DAG step nodes, start/end nodes, directed edges, and mergeInputs fan-in. Channels, branches, foreach/map nodes, and reducers are intentionally post-M2 and must not be emitted into this schema version.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -138,11 +139,6 @@
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/id" }
-        },
-        "channel": { "$ref": "#/$defs/id" },
-        "publish": {
-          "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/id" }
         }
       }
     },

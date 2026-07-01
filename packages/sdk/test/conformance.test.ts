@@ -71,6 +71,17 @@ Deno.test("WorkflowSpec JSON Schema rejects step nodes without contractRef", asy
   assert(JSON.stringify(validate.errors).includes("contractRef"));
 });
 
+Deno.test("WorkflowSpec JSON Schema rejects post-M2 channel fields in schema v0", async () => {
+  const validate = await compileWorkflowSpecValidator();
+  const spec = (await readJson("../../../conformance/fixtures/specs/linear-chain/workflow-spec.json")) as {
+    graph: { nodes: Record<string, unknown>[] };
+  };
+  spec.graph.nodes.find((node) => node.kind === "step")!.channel = "result";
+
+  assertEquals(validate(spec), false);
+  assert(JSON.stringify(validate.errors).includes("channel"));
+});
+
 async function readGraphCatalog(): Promise<GraphCatalog> {
   return GraphCatalogSchema.parse(await readJson("../../../conformance/graph-catalog.json"));
 }
