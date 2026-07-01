@@ -162,8 +162,9 @@ Task IDs are `WS-<n>.<k>`. Each has an acceptance criterion (AC) and dependencie
 
 The point of this workstream is to unblock everyone else, so bias toward landing **v0 drafts quickly** and iterating via versioned bumps rather than perfecting up front.
 
-- **WS-0.1 — Create `conformance/` and the graph catalog.** Port the v0 graph catalog from [testing-strategy.md](testing-strategy.md) (passthrough, single-step, linear, diamond, uneven branch-depth fan-in, multi-stage fan-in, 100-way split/merge) into `conformance/graph-catalog.md` with a stable case ID per shape.
+- **WS-0.1 — Create `conformance/` and the graph catalog.** Port the v0 graph catalog from [testing-strategy.md](testing-strategy.md) (passthrough, single-step, linear, diamond, uneven branch-depth fan-in, multi-stage fan-in, 100-way split/merge) into canonical `conformance/graph-catalog.json` with a stable case ID per shape and a generated human-readable `conformance/graph-catalog.md` view.
   - AC: every case has an ID; downstream fixtures key off these IDs.
+  - Status: implemented in [`../../conformance/graph-catalog.json`](../../conformance/graph-catalog.json) and [`../../conformance/graph-catalog.md`](../../conformance/graph-catalog.md), checked by `pnpm check:conformance`. Go compiler work in WS-2 must read the same JSON catalog for its matching conformance assertion.
 - **WS-0.2 — `WorkflowSpec` JSON Schema.** Author the shared schema for `WorkflowSpec` per [ir-and-datastore.md](ir-and-datastore.md): `GraphIR`, schema table, symbol table, source package table, environment table, effective execution-contract table, per-node `contractRef`, target requests. Provide it as a JSON Schema (draft 2020-12) under `conformance/schema/workflow-spec.schema.json`.
   - AC: schema validates a hand-authored spec for the passthrough + linear + diamond cases; rejects a spec missing a `contractRef`.
 - **WS-0.3 — Cap'n Proto schemas.** Define `workflow-plan.capnp` (`WorkflowPlan` joining `GraphIR` + `ExecutionContract` + materialization refs + provenance) and `bundle-manifest.capnp`, plus a documented **JSON projection** of the plan for human-diffable fixtures.

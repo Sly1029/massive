@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 0,
+  "cases": [
+    {
+      "id": "passthrough",
+      "shape": "Passthrough",
+      "topology": "start -> end",
+      "executableSteps": 0,
+      "directedEdges": 1,
+      "mergeInputs": []
+    },
+    {
+      "id": "single-step",
+      "shape": "Single step",
+      "topology": "start -> hello -> end",
+      "executableSteps": 1,
+      "directedEdges": 2,
+      "mergeInputs": []
+    },
+    {
+      "id": "linear-chain",
+      "shape": "Linear chain",
+      "topology": "start -> double -> increment -> label -> end",
+      "executableSteps": 3,
+      "directedEdges": 4,
+      "mergeInputs": []
+    },
+    {
+      "id": "diamond",
+      "shape": "Fan-out/fan-in diamond",
+      "topology": "start -> split -> {left,right} -> merge -> end",
+      "executableSteps": 4,
+      "directedEdges": 6,
+      "mergeInputs": [
+        {
+          "stepId": "merge",
+          "sourceIds": ["left", "right"]
+        }
+      ]
+    },
+    {
+      "id": "uneven-fan-in",
+      "shape": "Uneven branch-depth fan-in",
+      "topology": "start -> split -> short -> merge -> end and split -> long -> long-tail -> merge",
+      "executableSteps": 5,
+      "directedEdges": 7,
+      "mergeInputs": [
+        {
+          "stepId": "merge",
+          "sourceIds": ["short", "long-tail"]
+        }
+      ]
+    },
+    {
+      "id": "multi-stage-merge",
+      "shape": "Multi-stage fan-in",
+      "topology": "split fans into a1,a2,b1,b2; pairwise merges feed merge-final",
+      "executableSteps": 8,
+      "directedEdges": 12,
+      "mergeInputs": [
+        {
+          "stepId": "merge-a",
+          "sourceIds": ["a1", "a2"]
+        },
+        {
+          "stepId": "merge-b",
+          "sourceIds": ["b1", "b2"]
+        },
+        {
+          "stepId": "merge-final",
+          "sourceIds": ["merge-a", "merge-b"]
+        }
+      ]
+    },
+    {
+      "id": "batch-merge-100",
+      "shape": "100-way split/merge",
+      "topology": "start -> split -> worker-000..worker-099 -> merge -> end",
+      "executableSteps": 102,
+      "directedEdges": 202,
+      "mergeInputs": [
+        {
+          "stepId": "merge",
+          "sourceIds": [
+            "worker-000",
+            "worker-001",
+            "worker-002",
+            "worker-003",
+            "worker-004",
+            "worker-005",
+            "worker-006",
+            "worker-007",
+            "worker-008",
+            "worker-009",
+            "worker-010",
+            "worker-011",
+            "worker-012",
+            "worker-013",
+            "worker-014",
+            "worker-015",
+            "worker-016",
+            "worker-017",
+            "worker-018",
+            "worker-019",
+            "worker-020",
+            "worker-021",
+            "worker-022",
+            "worker-023",
+            "worker-024",
+            "worker-025",
+            "worker-026",
+            "worker-027",
+            "worker-028",
+            "worker-029",
+            "worker-030",
+            "worker-031",
+            "worker-032",
+            "worker-033",
+            "worker-034",
+            "worker-035",
+            "worker-036",
+            "worker-037",
+            "worker-038",
+            "worker-039",
+            "worker-040",
+            "worker-041",
+            "worker-042",
+            "worker-043",
+            "worker-044",
+            "worker-045",
+            "worker-046",
+            "worker-047",
+            "worker-048",
+            "worker-049",
+            "worker-050",
+            "worker-051",
+            "worker-052",
+            "worker-053",
+            "worker-054",
+            "worker-055",
+            "worker-056",
+            "worker-057",
+            "worker-058",
+            "worker-059",
+            "worker-060",
+            "worker-061",
+            "worker-062",
+            "worker-063",
+            "worker-064",
+            "worker-065",
+            "worker-066",
+            "worker-067",
+            "worker-068",
+            "worker-069",
+            "worker-070",
+            "worker-071",
+            "worker-072",
+            "worker-073",
+            "worker-074",
+            "worker-075",
+            "worker-076",
+            "worker-077",
+            "worker-078",
+            "worker-079",
+            "worker-080",
+            "worker-081",
+            "worker-082",
+            "worker-083",
+            "worker-084",
+            "worker-085",
+            "worker-086",
+            "worker-087",
+            "worker-088",
+            "worker-089",
+            "worker-090",
+            "worker-091",
+            "worker-092",
+            "worker-093",
+            "worker-094",
+            "worker-095",
+            "worker-096",
+            "worker-097",
+            "worker-098",
+            "worker-099"
+          ]
+        }
+      ]
+    }
+  ]
+}

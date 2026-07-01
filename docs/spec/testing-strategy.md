@@ -45,7 +45,7 @@ Useful assertions:
 
 These tests should not replace graph operations. They should use the real Graphology-backed builder and inspect the lowered spec.
 
-The current v0 graph catalog covers:
+The current v0 graph catalog is the canonical machine-readable contract in [`../../conformance/graph-catalog.json`](../../conformance/graph-catalog.json), with a human-readable view in [`../../conformance/graph-catalog.md`](../../conformance/graph-catalog.md). It covers:
 
 - passthrough `start -> end`,
 - single-step workflows,
