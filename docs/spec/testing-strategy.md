@@ -31,19 +31,19 @@ This does not ban Vitest as a test runner. It bans replacing behavior inside tes
 
 ### SDK Tests
 
-SDK tests should build real workflows with the public TypeScript API, compile them, then inspect the generated `WorkflowPlan` and datastore artifacts.
+SDK tests should build real workflows with the public TypeScript API, emit `WorkflowSpec`, then inspect the generated spec and source package artifacts.
 
 Useful assertions:
 
 - step symbols are stable,
 - GraphIR topology is correct,
 - schema references are present,
-- default step output artifacts are persisted,
+- source package manifests contain exact files and hashes,
 - explicit channel publications have the expected reducers,
-- compile diagnostics point to authoring locations.
-- every supported v0 graph shape runs consistently through the async runner and the Argo-local runner.
+- emit diagnostics point to authoring locations,
+- every supported v0 graph shape emits a valid `WorkflowSpec`.
 
-These tests should not replace graph operations. They should use the real Graphology-backed builder and inspect the lowered IR.
+These tests should not replace graph operations. They should use the real Graphology-backed builder and inspect the lowered spec.
 
 The current v0 graph catalog covers:
 
@@ -59,24 +59,26 @@ The current v0 graph catalog covers:
 
 Datastore tests should run against real implementations:
 
-- local filesystem datastore in a temporary directory for fast default coverage,
+- local filesystem datastore in a temporary directory for fast coverage,
 - S3-compatible object store for protocol coverage.
 
 MinIO is useful for CI and local functional tests because it exercises bucket, key, content type, conditional write, and listing behavior without using a cloud account. The datastore contract should be shared across implementations so the same test suite can run against local filesystem and S3-compatible stores.
+
+The default developer datastore is `~/.massive/store`. Tests should use explicit temporary local datastore roots so they do not read or mutate a developer's real local store.
 
 ### Argo Compiler Tests
 
 Argo compiler tests should have two layers:
 
 - offline bundle generation tests that compile a real `WorkflowPlan` and validate generated YAML against Kubernetes and Argo schemas,
-- cluster tests that submit selected bundles to a local Kubernetes cluster and assert terminal status plus expected datastore artifacts.
+- cluster tests that install generated `WorkflowTemplate` bundles into a local Kubernetes cluster, submit runs from those templates with the Argo CLI, and assert terminal status plus expected datastore artifacts.
 
 Your OrbStack or minikube cluster is enough for the cluster layer if it can run the Argo Workflows controller and reach the configured datastore. For early v0 work, a local filesystem datastore is enough for offline compilation tests, but real cluster execution will eventually need either:
 
 - MinIO running in the cluster, or
 - an S3-compatible external endpoint reachable from workflow pods.
 
-The cluster test harness should create a namespace per test run, install or verify Argo CRDs/controller, submit the deploy bundle, wait for completion, collect workflow status/logs, and delete the namespace.
+The cluster test harness should create a namespace per test run, install or verify Argo CRDs/controller, apply the generated template bundle, submit a run from the template, wait for completion, collect workflow status/logs, inspect datastore artifacts, and delete the namespace.
 
 ### Environment Materialization Tests
 
@@ -104,6 +106,17 @@ deno test --config deno.json --allow-read --allow-write --allow-sys=cpus package
 ```
 
 The `--allow-sys=cpus` permission is required by the Node-compatible `fast-glob` dependency.
+
+The local execution test path should use the same compiled artifact path as production-like targets:
+
+```text
+TypeScript SDK emits WorkflowSpec
+Go compiler emits local WorkflowPlan
+local runner loads WorkflowPlan from datastore
+TypeScript SDK runtime adapter executes TypeScript steps
+```
+
+The old TypeScript in-memory runner is not the architectural local path and should be removed when the Go local target lands.
 
 The local Argo cluster command is:
 
