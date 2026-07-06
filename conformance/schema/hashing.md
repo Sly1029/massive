@@ -5,6 +5,13 @@ This document defines the v0 canonical hashing rules for `specHash`,
 The normative implementation baseline is `stableStringify` plus SHA-256 in
 `packages/sdk/src/stable.ts`.
 
+The canonicalization is **RFC 8785 (JSON Canonicalization Scheme, JCS)**, with
+one additional v0 restriction: numbers are limited to canonical safe integers
+(see [Canonicalization details](#canonicalization-details)). Implementations
+in other languages should target RFC 8785 conformance rather than
+reverse-engineering ECMAScript behavior; the rules spelled out below are the
+JCS behaviors most often gotten wrong, and the golden vector exercises them.
+
 ## Canonical Field Tree
 
 Hash inputs are JSON-compatible field trees: `null`, booleans, finite JSON
@@ -30,8 +37,8 @@ references, and conformance fixtures use the full key.
 ### Canonicalization details
 
 The following rules pin the exact ECMAScript semantics that "equivalent to
-`JSON.stringify`" implies. Non-JavaScript implementations must reproduce them
-byte for byte; the golden vector exercises each rule.
+`JSON.stringify`" implies. They match RFC 8785; non-JavaScript implementations
+must reproduce them byte for byte, and the golden vector exercises each rule.
 
 - **Key ordering is UTF-16 code-unit order** (ECMAScript
   `Object.keys(value).sort()`), not UTF-8 byte order or code-point order. The
@@ -45,8 +52,9 @@ byte for byte; the golden vector exercises each rule.
   escaping. Strings must be well-formed Unicode (no lone surrogates).
 - **Numbers in v0 canonical field trees are restricted to canonical safe
   integers:** base-10, no leading zeros, no sign on zero, no fraction or
-  exponent, absolute value at most 2^53 − 1. Producers must normalize or
-  reject anything else. Full ECMAScript number-to-string serialization is
+  exponent, absolute value at most 2^53 − 1. This is a strict subset of RFC
+  8785's number serialization (ECMAScript `Number::toString`). Producers must
+  normalize or reject anything else. Full RFC 8785 number serialization is
   required of any implementation before non-integer numbers may appear in
   hashed field trees (owed by the Go compiler workstream, WS-2).
 

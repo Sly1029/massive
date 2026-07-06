@@ -4,7 +4,7 @@ Status: draft
 
 Massive's canonical compiled artifact is a Cap'n Proto `WorkflowPlan`. The v0 schema lives at [`../../conformance/schema/workflow-plan.capnp`](../../conformance/schema/workflow-plan.capnp), with target bundle output described by [`../../conformance/schema/bundle-manifest.capnp`](../../conformance/schema/bundle-manifest.capnp).
 
-The TypeScript SDK is not the source of truth. It is the first authoring frontend. Future Python, Rust, or Go SDKs should emit the same shared schema.
+The TypeScript SDK is not the source of truth. It is the first authoring frontend. The schema stays language-neutral so other authoring SDKs remain possible, but TypeScript/JavaScript is the only authoring frontend planned for now.
 
 For v0, frontend SDKs emit deterministic `WorkflowSpec` JSON that conforms to the shared schema. The Go compiler is the first required Cap'n Proto binary writer. This avoids making every SDK responsible for byte-stable Cap'n Proto encoding while the schema is still moving.
 
@@ -34,7 +34,7 @@ Targets are allowed to support different feature subsets. The Go compiler owns t
 
 `WorkflowSpec` is content-addressed by a `specHash` over its canonical field tree. The hash is not computed over JSON whitespace and is not computed over Cap'n Proto wire bytes.
 
-The emitting SDK is responsible for language-specific validation before it writes a `WorkflowSpec`. For TypeScript, that includes resolving module/export symbols against the source package and checking that the authoring-time step declarations can be lowered into portable schemas and contracts. A future Python SDK must perform the equivalent Python-specific checks before emitting the same portable spec shape. The Go compiler validates the emitted spec as a portable artifact: schema conformance, graph integrity, contract references, target requests, datastore references, and backend-specific invariants. It should not need to understand each frontend language's import or reflection rules.
+The emitting SDK is responsible for language-specific validation before it writes a `WorkflowSpec`. For TypeScript, that includes resolving module/export symbols against the source package and checking that the authoring-time step declarations can be lowered into portable schemas and contracts. Any future authoring SDK must perform the equivalent language-specific checks before emitting the same portable spec shape. The Go compiler validates the emitted spec as a portable artifact: schema conformance, graph integrity, contract references, target requests, datastore references, and backend-specific invariants. It should not need to understand each frontend language's import or reflection rules.
 
 ## Source Packages
 
@@ -56,7 +56,7 @@ symbols:
     export: double
 ```
 
-V0 TypeScript workflows will usually have one source package, but the schema must not assume one package per workflow. This keeps future Python support, mixed-language workflows, reusable packages, and monorepo package boundaries possible without changing the graph IR.
+V0 TypeScript workflows will usually have one source package, but the schema must not assume one package per workflow. This keeps future multi-language support, mixed-language workflows, reusable packages, and monorepo package boundaries possible without changing the graph IR.
 
 Source packages are not environments. They identify executable source content. Environment specs identify dependency/runtime requirements. Environment materialization may read source package metadata when calculating package or workspace hashes, but dependency environment keys are still derived from environment-relevant inputs, not from resource limits, secret bindings, or target-specific scheduling settings.
 
@@ -249,7 +249,7 @@ For TypeScript v0, the adapter should live with the TypeScript SDK package. That
 
 The step invocation descriptor is the narrow runtime protocol between Go orchestration and language adapters.
 
-V0 serializes this descriptor as JSON for ease of implementation in TypeScript and future Python. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so it can later be serialized as Cap'n Proto without changing its semantics.
+V0 serializes this descriptor as JSON for ease of implementation in TypeScript. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so it can later be serialized as Cap'n Proto without changing its semantics.
 
 It includes:
 

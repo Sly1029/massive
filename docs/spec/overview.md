@@ -4,6 +4,8 @@ Status: draft
 
 Massive is a portable workflow compiler. It is not, at least initially, a durable execution runtime. Authors define typed workflows in TypeScript, the SDK lowers them into a language-neutral workflow specification, and backend compilers render that specification into runnable artifacts such as a local async plan or an Argo deploy bundle.
 
+Two audiences anchor the design. Workflow authors get a typed TypeScript SDK and a one-command local loop. Platform teams get the differentiating layer: compiled, deterministic, provenance-carrying deploy bundles whose execution contracts (environment, resources, secrets, network) are verifiable artifacts rather than runtime configuration. When scope decisions are close, the compile/verify/provenance layer wins.
+
 The core bet is that workflow authoring, graph analysis, execution requirements, environment materialization, and backend-specific deployment can be separated cleanly:
 
 ```text
@@ -55,7 +57,7 @@ For v0, the Cap'n Proto schema is the shared contract, but the TypeScript SDK do
 ## Goals
 
 - Provide a TypeScript-first workflow SDK with a declarative, functional authoring style inspired by `pydantic-graph`.
-- Use native graph libraries instead of reimplementing graph algorithms. TypeScript uses Graphology internally; a future Python SDK can use NetworkX while emitting the same IR.
+- Use native graph libraries instead of reimplementing graph algorithms. TypeScript uses Graphology internally. The IR stays language-neutral by design, but TypeScript/JavaScript is the only planned authoring language for now.
 - Keep the canonical compiled workflow representation language-neutral with Cap'n Proto.
 - Treat execution requirements as first-class. A compiled workflow includes graph topology plus environment, resources, secrets, storage, network, and observability contracts.
 - Support local async execution and Argo as the first production backend.
@@ -67,7 +69,7 @@ For v0, the Cap'n Proto schema is the shared contract, but the TypeScript SDK do
 - Owning a durable execution runtime.
 - Supporting arbitrary cyclic workflows. The portable v0 IR is DAG-only.
 - Supporting Cloudflare Workers/Workflows or Vercel Workflows as v0 backends.
-- Supporting Python authoring in v0.
+- Supporting authoring languages other than TypeScript/JavaScript. The IR remains language-neutral by design, but no second-language SDK is scheduled.
 - Implementing uv, Nix, or container image builders beyond the TypeScript/Node path and container escape hatch.
 - Requiring a metadata database or hosted control plane.
 - Implementing the full runtime sidecar/proxy security model in v0.

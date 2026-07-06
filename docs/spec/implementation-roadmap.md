@@ -222,6 +222,7 @@ New `go/` module. Suggested layout: `go/cmd/massive-compiler`, `go/internal/spec
   - AC: accepts all WS-0.7 valid fixtures; produces a specific diagnostic for a spec with a dangling `contractRef` and for a cyclic graph. Emit deterministic JSON dumps of the parsed spec for conformance assertions.
 - **WS-2.3 — Emit Cap'n Proto `WorkflowPlan`.** Join `GraphIR` + `ExecutionContract` + symbol table + (initially empty) materialization refs + provenance + compiler version; compute `planHash` per WS-0.6.
   - AC: byte-stable plan for identical inputs; plan JSON projection matches `conformance/fixtures/plans/`.
+  - Decision checkpoint at M1 ([open-questions.md](open-questions.md#plan-artifact-encoding)): `planHash` covers the canonical field tree, not Cap'n Proto wire bytes, and the JSON projection carries all conformance weight today. If at M1 no consumer needs the binary encoding, evaluate making canonical JSON the plan artifact and dropping the Cap'n Proto toolchain before M4 hardening bakes it in.
 - **WS-2.4 — Topological schedule.** Produce the deterministic execution order used by the local orchestrator and by Argo dependency wiring.
   - AC: diamond and multi-stage fan-in produce correct, stable orders; used by both WS-5 and WS-7.
 
@@ -257,6 +258,8 @@ New `packages/sdk/src/runner/` shipping a `massive-step-runner` bin ([ir-and-dat
   - AC: linear + diamond + multi-stage fan-in execute real steps; outputs land at the WS-0.5 datastore keys.
 - **WS-5.3 — Validate runtime artifacts.** After each step, validate artifact presence, schema refs, and content hashes.
   - AC: a tampered output artifact hash fails the run loudly.
+- **WS-5.4 — Warm runner invocation.** Design the orchestrator↔runner protocol so a long-lived runner process can handle many descriptors; per-step Node cold-start must not define local DX. Per-step spawn is acceptable for M1 bring-up, but the descriptor handoff (WS-5.2) must not bake in one-process-per-step assumptions.
+  - AC: a local run of a 20-step linear fixture executes with a single warm runner process producing artifacts identical to cold mode; per-step overhead is measured and recorded.
 
 ### WS-6 — CLI `massive run` (integration → M1)  *(depends: WS-1, WS-5)*
 
@@ -321,7 +324,7 @@ Build against contracts; do **not** block the M2 wedge. See [environment-materia
 
 ## Cross-Cutting Requirements
 
-**Hashing (owned by WS-0.6, consumed everywhere).** All hashes are over canonical field trees (sorted-key JSON baseline from `stable.ts`), never over JSON whitespace or Cap'n Proto wire bytes. Documented coverage:
+**Hashing (owned by WS-0.6, consumed everywhere).** All hashes are over canonical field trees canonicalized per **RFC 8785 (JCS)** with a v0 safe-integer number restriction — see `conformance/schema/hashing.md`. Never over JSON whitespace or Cap'n Proto wire bytes. The `stable.ts` implementation is the normative baseline. Documented coverage:
 
 - `specHash`: the full `WorkflowSpec` field tree.
 - `sourcePackageHash`: exact file list + per-file content hashes.

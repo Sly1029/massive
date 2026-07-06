@@ -148,6 +148,8 @@ The developer experience can still be a single command that automatically emits,
 
 Common local commands should look like `massive run workflow.ts` or `massive run workflow/`. Those commands discover the workflow entrypoint, invoke the language SDK emitter, compile the local target through Go, run the Go local orchestrator, and invoke language adapters. Authors should see concise run status and diagnostics by default; artifact hashes and generated files should be exposed through verbose or inspect commands.
 
+Open risk: per-step runner process spawning. The same-path discipline means the orchestrator invokes an external runner per step, and Node cold-start per step could make local iteration feel sluggish — which is exactly the pressure that pushes users back to in-memory runners. The orchestrator↔runner protocol must support a warm, long-lived runner process handling multiple descriptors (see roadmap WS-5.4). Per-step spawn is acceptable for M1 bring-up only.
+
 ### Language Runtime Adapters
 
 Language runtime adapters are external runner processes with a stable invocation protocol. They are not embedded interpreters inside Go.
@@ -163,7 +165,7 @@ Why this is the current choice:
 
 - frontend SDKs stay responsible for language-specific runtime behavior,
 - Go remains strict about portable specs, plans, and target compilation,
-- future Python support can add a Python runner without changing Go orchestration semantics,
+- a future second-language SDK (none scheduled) could add its own runner without changing Go orchestration semantics,
 - local development can be smooth without creating a separate in-memory execution model.
 
 ### Step Invocation Descriptor
@@ -185,12 +187,24 @@ V0 stores step inputs, step outputs, channel values, and final run results as ca
 
 Why this is the current choice:
 
-- TypeScript and future Python adapters can validate JSON-shaped values directly,
+- language adapters can validate JSON-shaped values directly,
 - portable schemas already lower to JSON Schema,
 - the plan can still carry schema refs, artifact refs, and content hashes,
 - v0 avoids prematurely mapping arbitrary portable schemas to generated Cap'n Proto data messages.
 
 Future work may add Cap'n Proto value artifacts for compatible schemas.
+
+### Plan Artifact Encoding
+
+Current decision: the compiled `WorkflowPlan` and bundle manifests are Cap'n Proto (`workflow-plan.capnp`, `bundle-manifest.capnp`), with a documented JSON projection for human-diffable fixtures.
+
+Tension to re-evaluate at M1:
+
+- `planHash` is computed over the canonical field tree (RFC 8785), never over Cap'n Proto wire bytes — the binary encoding contributes nothing to artifact identity.
+- The JSON projection currently carries all conformance and review weight; the Cap'n Proto artifact has no consumer yet.
+- Cap'n Proto is a whole extra toolchain (codegen, CLI, Go bindings) in a v0 that already spans TypeScript and Go.
+
+Checkpoint at M1: if no consumer needs the binary encoding by then (the local orchestrator could read canonical JSON just as well), make canonical JSON the plan artifact and drop the Cap'n Proto toolchain before M4 hardening bakes it in. Keep the decision reversible until then by keeping all plan semantics in the shared field tree, not in encoding-specific behavior.
 
 ## Environment Materialization
 
@@ -274,9 +288,11 @@ Current v0 direction:
 
 ## Market Positioning
 
+Current stance (July 2026): TypeScript/JavaScript is the only authoring language for now — no second-language SDK is scheduled, though the IR stays language-neutral by design. The near-term wedge leans toward platform teams that want compiled, deterministic, provenance-carrying deploy bundles with verifiable execution contracts; author-facing DX is the adoption surface, not the differentiator.
+
 Open questions:
 
 - Is the first public wedge "portable workflow compiler" or "typed deployable workflow plans"?
 - How much should Massive compare itself to Metaflow in docs versus staying TypeScript-native?
 - Is Argo the primary production story long-term, or only the first serious target?
-- Which future backend should follow Argo: Cloudflare, Vercel, Temporal, or a Python SDK?
+- Which future backend should follow Argo: Cloudflare, Vercel, or Temporal?
