@@ -1,0 +1,32 @@
+{
+  "zeta": "last input key",
+  "array": [
+    {
+      "b": 2,
+      "a": 1
+    },
+    "text",
+    false,
+    null
+  ],
+  "nested": {
+    "workflow": {
+      "name": "hash-vector",
+      "version": 0
+    },
+    "alpha": {
+      "enabled": true,
+      "labels": {
+        "b": "second",
+        "a": "first"
+      }
+    }
+  },
+  "number": 42,
+  "unicode": {
+    "😀": "supplementary-plane key (sorts before U+E000 in UTF-16)",
+    "\ue000": "private-use key (sorts before the emoji in UTF-8 byte order)",
+    "separators": "line\u2028para\u2029end",
+    "html": "<tag> & \"quoted\"'s"
+  }
+}

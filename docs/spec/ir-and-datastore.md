@@ -194,20 +194,23 @@ V0 does not require a database or hosted metadata service. The object store hold
 
 ## Storage Layout
 
-Indicative layout:
+Normative key templates are frozen in [`conformance/schema/datastore-layout.md`](../../conformance/schema/datastore-layout.md); this section is an illustrative overview.
 
 ```text
-/blobs/sha256/<digest>
-/specs/<spec-key>/workflow-spec.json
-/envs/<env-key>/manifest.capnp
-/envs/<env-key>/runtime.tar.zst
-/packages/<package-key>/source-manifest.capnp
-/packages/<package-key>/source.tar.zst
-/plans/<plan-key>/workflow.capnp
-/plans/<plan-key>/provenance.capnp
-/targets/<plan-key>/<target>/bundle-manifest.capnp
-/projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
-/projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
+blobs/sha256/<digest>
+specs/<spec-key>/workflow-spec.json
+envs/<env-key>/manifest.capnp
+envs/<env-key>/runtime.tar.zst
+packages/<package-key>/source-manifest.capnp
+packages/<package-key>/source.tar.zst
+plans/<plan-key>/workflow.capnp
+plans/<plan-key>/provenance.capnp
+targets/<plan-key>/<target>/bundle-manifest.capnp
+projects/<project-key>/runs/<run-id>/run-manifest.json
+projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
+projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
+projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
+projects/<project-key>/runs/<run-id>/result.json
 ```
 
 The exact path format should be specified in the Cap'n Proto manifest, not hardcoded by backend runners.
@@ -218,7 +221,7 @@ Project keys come from explicit project identity. `massive.config.ts` may set a 
 
 The project key stored in the datastore should be a normalized and hashed representation of that project identity, not raw arbitrary text. It should not include transient run data.
 
-Content-addressed keys should use collision-resistant full digests, such as `sha256:<hex>`, and manifests should record the hash algorithm. UI and CLI output may display shortened prefixes, but datastore keys and manifest references should use full hashes.
+Content-addressed keys use collision-resistant full digests. Path segments use the filesystem-safe `sha256-<hex>` form per [`datastore-layout.md`](../../conformance/schema/datastore-layout.md); the `sha256:<hex>` colon form is the digest string inside manifests and JSON artifacts. Manifests record the hash algorithm. UI and CLI output may display shortened prefixes, but datastore keys and manifest references use full hashes.
 
 ## Compile Before Run
 
@@ -286,7 +289,7 @@ Example:
     "schema": "sha256:..."
   },
   "output": {
-    "artifact": "runs/.../steps/double/attempts/1/output.json",
+    "artifact": "runs/.../steps/double/1/output.json",
     "schema": "sha256:..."
   }
 }

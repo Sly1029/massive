@@ -20,7 +20,7 @@ It is organized so that independent workstreams can proceed at the same time beh
 
 ## Current State
 
-Ground truth as of this revision. The spec docs describe the **target** architecture; the code is an earlier prototype. Do not assume the docs describe running software.
+Ground truth as of this revision. The spec docs describe the **target** architecture; most runtime code is still an earlier prototype. Shared contracts in `conformance/` are landing; do not assume the docs describe running software end to end.
 
 **What exists (`packages/sdk`, ~1,900 lines TypeScript):**
 
@@ -32,18 +32,27 @@ Ground truth as of this revision. The spec docs describe the **target** architec
 - `stable.ts` — `sha256*` + `stableStringify` (sorted-key canonical JSON). Reusable as the basis for canonical hashing.
 - `schema.ts` — Zod → portable schema lowering (`lowerPortableSchema`).
 
+**What exists (`conformance/` contracts + Go bootstrap):**
+
+- `conformance/graph-catalog.json` and generated `conformance/graph-catalog.md` — canonical v0 graph shapes (passthrough, linear, diamond, fan-in variants, etc.) keyed by stable case IDs.
+- `conformance/schema/workflow-spec.schema.json` — shared `WorkflowSpec` JSON Schema (draft 2020-12). Validating shape fixtures under `conformance/fixtures/specs/` for `passthrough`, `linear-chain`, `diamond`, and `invalid-missing-contract-ref`; checked by `pnpm check:conformance`.
+- `conformance/schema/workflow-plan.capnp` and `bundle-manifest.capnp` — Cap'n Proto schemas for `WorkflowPlan` and bundle manifests, plus a documented JSON projection in `workflow-plan-json-projection.md`. Real `capnp compile` and Go encode/decode round-trip tests in `conformance/schema/capnp_schema_test.go`; checked by `pnpm check:capnp`.
+- `conformance/schema/step-invocation-descriptor.schema.json` — `StepInvocationDescriptor` JSON Schema with a golden fixture under `conformance/fixtures/descriptors/`; checked by `pnpm check:conformance`.
+- `conformance/schema/datastore-layout.md` — frozen key templates, digest encoding, and project-key normalization (WS-0.5).
+- `conformance/schema/hashing.md` — canonical hashing spec with golden vectors under `conformance/fixtures/hashing/`, tested cross-language by `packages/sdk/test/hashing.test.ts` (TS) and `conformance/schema/hashing_vector_test.go` (Go).
+- `conformance/fixtures/plans/` — golden `WorkflowPlan` JSON projections for passthrough, linear-chain, and diamond, checked for structural consistency against the spec fixtures.
+- `go.mod` — module `github.com/Sly1029/massive`, Go 1.24.4. Go code today is limited to the schema conformance tests above; there is no `WorkflowSpec` → `WorkflowPlan` compiler yet.
+
 **What does NOT exist yet:**
 
-- No Go anywhere (no `go.mod`; branch name `rohit/add-go-backend` is aspirational).
-- No Cap'n Proto schemas or artifacts.
-- No `WorkflowSpec` JSON artifact or its schema.
-- No `StepInvocationDescriptor`.
 - No S3/MinIO datastore.
 - No environment materialization.
 - No `massive.config.ts`, no CLI (`massive run`), no zero-config resolution.
 - No real Argo `WorkflowTemplate` and no cluster execution of real steps.
+- No Go compiler beyond the Cap'n Proto schema conformance test.
+- `packages/sdk` still exposes the in-memory `run.ts` path and placeholder `argo.ts` (not refactored to `WorkflowSpec` emission or the compiled-artifact execution path).
 
-**Gap summary:** the interesting, defensible idea (a portable typed graph **plus** an `ExecutionContract` the compiler enforces against real backends) is specced but unbuilt. The first job is to make one workflow execute for real through the compiled-artifact path — locally, then on Argo — not to add more backends.
+**Gap summary:** the WS-0 contracts have landed (graph catalog, `WorkflowSpec` + descriptor schemas, Cap'n Proto plan/manifest schemas, datastore layout, hashing spec, golden fixtures), but the interesting, defensible idea (a portable typed graph **plus** an `ExecutionContract` the compiler enforces against real backends) is still unbuilt in executable form. The SDK emits plans, not specs; Go validates schemas, it does not compile. The first job remains to make one workflow execute for real through the compiled-artifact path — locally, then on Argo — not to add more backends.
 
 ---
 
@@ -173,12 +182,18 @@ The point of this workstream is to unblock everyone else, so bias toward landing
   - Status: implemented in [`../../conformance/schema/workflow-plan.capnp`](../../conformance/schema/workflow-plan.capnp), [`../../conformance/schema/bundle-manifest.capnp`](../../conformance/schema/bundle-manifest.capnp), and [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md), with real `capnp` compile and Go encode/decode checks in `pnpm check:capnp`.
 - **WS-0.4 — `StepInvocationDescriptor` schema.** Define the descriptor as a shared schema message (JSON transport for v0) with all fields from [ir-and-datastore.md](ir-and-datastore.md#step-invocation-descriptor). Keep it Cap'n-Proto-compatible.
   - AC: JSON Schema under `conformance/schema/step-invocation-descriptor.schema.json`; a golden descriptor validates.
+  - Status: implemented in [`../../conformance/schema/step-invocation-descriptor.schema.json`](../../conformance/schema/step-invocation-descriptor.schema.json), with a validating golden fixture at [`../../conformance/fixtures/descriptors/linear-chain/descriptor.json`](../../conformance/fixtures/descriptors/linear-chain/descriptor.json), checked by `pnpm check:conformance`.
 - **WS-0.5 — Datastore layout + key rules.** Freeze the storage layout and content-addressing rules from [ir-and-datastore.md](ir-and-datastore.md#storage-layout) as `conformance/schema/datastore-layout.md`: blob/spec/env/package/plan/target/run key templates, `sha256:<hex>` full-digest keys, project-key normalization.
   - AC: documented key templates with at least one worked example per template.
+  - Status: implemented in [`../../conformance/schema/datastore-layout.md`](../../conformance/schema/datastore-layout.md).
 - **WS-0.6 — Canonical hashing spec.** Specify field-tree canonicalization and hashing for `specHash`, `planHash`, source-package hash, env key, and runtime-artifact hash. Baseline: the sorted-key JSON approach already in `packages/sdk/src/stable.ts`. Document exactly which fields each hash covers (see [Cross-Cutting](#cross-cutting-requirements)).
   - AC: `conformance/schema/hashing.md` with a golden input → expected digest vector that both TS and Go test against.
+  - Status: implemented in [`../../conformance/schema/hashing.md`](../../conformance/schema/hashing.md), with golden vectors under [`../../conformance/fixtures/hashing`](../../conformance/fixtures/hashing) and cross-language checks in `packages/sdk/test/hashing.test.ts` and `conformance/schema/hashing_vector_test.go`.
 - **WS-0.7 — Seed golden fixtures.** Produce `conformance/fixtures/specs/<case>/workflow-spec.json` for at least passthrough, linear, and diamond, plus matching `plans/` JSON projections and one `descriptors/` example.
-  - AC: fixtures validate against WS-0.2/WS-0.4 schemas in CI.
+  - AC: spec and descriptor fixtures validate against the WS-0.2/WS-0.4 JSON Schemas in CI; plan fixtures (which have no JSON Schema in v0 — see WS-0.8) are checked by structural-consistency and digest assertions against their spec fixtures.
+  - Status: implemented with spec fixtures under [`../../conformance/fixtures/specs`](../../conformance/fixtures/specs), plan JSON projections under [`../../conformance/fixtures/plans`](../../conformance/fixtures/plans), and a descriptor example at [`../../conformance/fixtures/descriptors/linear-chain/descriptor.json`](../../conformance/fixtures/descriptors/linear-chain/descriptor.json), checked by `pnpm check:conformance`.
+- **WS-0.8 — `WorkflowPlan` projection JSON Schema.** Author a JSON Schema for the plan JSON projection documented in `workflow-plan-json-projection.md`, so plan fixtures are schema-validated rather than only structurally spot-checked. *(depends: WS-0.3; off the critical path)*
+  - AC: `conformance/fixtures/plans/` fixtures validate against it in CI; unblocks stronger WS-2.3 conformance assertions.
 
 ### WS-1 — TS SDK: `WorkflowSpec` Emission  *(depends: WS-0)*
 
@@ -237,7 +252,7 @@ New `packages/sdk/src/runner/` shipping a `massive-step-runner` bin ([ir-and-dat
 ### WS-5 — Go Local Orchestrator + Run Manifests  *(depends: WS-2, WS-3, WS-4)*
 
 - **WS-5.1 — Local run manifest + descriptor emission.** From a `WorkflowPlan`, create a run (run ID), emit per-node `StepInvocationDescriptor`s, and record a run manifest in the datastore.
-  - AC: descriptors validate against WS-0.4 and match golden fixtures for the linear case.
+  - AC: descriptors validate against WS-0.4 and match golden fixtures for the linear case; run manifest and result keys per `conformance/schema/datastore-layout.md`.
 - **WS-5.2 — Schedule + invoke the TS runner as an external process.** Walk the WS-2.4 order, spawn the step runner per node, thread step outputs to downstream inputs, handle fan-in (`mergeInputs`) and channels.
   - AC: linear + diamond + multi-stage fan-in execute real steps; outputs land at the WS-0.5 datastore keys.
 - **WS-5.3 — Validate runtime artifacts.** After each step, validate artifact presence, schema refs, and content hashes.

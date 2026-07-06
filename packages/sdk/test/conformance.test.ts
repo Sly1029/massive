@@ -56,8 +56,10 @@ Deno.test("graph catalog markdown table is rendered from canonical JSON", async 
 
 Deno.test("WorkflowSpec JSON Schema validates v0 graph fixture specs", async () => {
   const validate = await compileWorkflowSpecValidator();
+  const caseIds = (await listFixtureCases("specs")).filter((caseId) => !caseId.startsWith("invalid-"));
+  assert(caseIds.length >= 3, "expected at least the passthrough, linear-chain, and diamond spec fixtures");
 
-  for (const caseId of ["passthrough", "linear-chain", "diamond"]) {
+  for (const caseId of caseIds) {
     const spec = await readJson(`../../../conformance/fixtures/specs/${caseId}/workflow-spec.json`);
     assert(validate(spec), `${caseId} should validate: ${JSON.stringify(validate.errors)}`);
   }
@@ -82,13 +84,87 @@ Deno.test("WorkflowSpec JSON Schema rejects post-M2 channel fields in schema v0"
   assert(JSON.stringify(validate.errors).includes("channel"));
 });
 
+Deno.test("StepInvocationDescriptor JSON Schema validates linear-chain descriptor fixture", async () => {
+  const validate = await compileStepInvocationDescriptorValidator();
+  const descriptor = await readJson("../../../conformance/fixtures/descriptors/linear-chain/descriptor.json");
+
+  assert(validate(descriptor), `linear-chain descriptor should validate: ${JSON.stringify(validate.errors)}`);
+});
+
+Deno.test("StepInvocationDescriptor JSON Schema rejects descriptors missing required fields", async () => {
+  const validate = await compileStepInvocationDescriptorValidator();
+  const descriptor = (await readJson("../../../conformance/fixtures/descriptors/linear-chain/descriptor.json")) as Record<
+    string,
+    unknown
+  >;
+  const missingPlanHash = { ...descriptor };
+  delete missingPlanHash.planHash;
+
+  assertEquals(validate(missingPlanHash), false);
+  assert(JSON.stringify(validate.errors).includes("planHash"));
+});
+
+Deno.test("WorkflowPlan JSON projection is structurally consistent with matching WorkflowSpec fixtures", async () => {
+  const caseIds = await listFixtureCases("plans");
+  assert(caseIds.length >= 3, "expected at least the passthrough, linear-chain, and diamond plan fixtures");
+
+  for (const caseId of caseIds) {
+    const [spec, plan] = await Promise.all([
+      readJson(`../../../conformance/fixtures/specs/${caseId}/workflow-spec.json`),
+      readJson(`../../../conformance/fixtures/plans/${caseId}/workflow-plan.json`),
+    ]);
+
+    assertSpecPlanStructuralConsistency(spec, plan, caseId);
+    assertPlanReferencesResolve(plan, caseId);
+    assertPlanHashRefDigests(plan, caseId);
+  }
+});
+
+Deno.test("StepInvocationDescriptor JSON Schema rejects datastore keys that violate key syntax", async () => {
+  const validate = await compileStepInvocationDescriptorValidator();
+  const descriptor = (await readJson("../../../conformance/fixtures/descriptors/linear-chain/descriptor.json")) as {
+    output: { artifact: { key: string } };
+  };
+
+  for (const key of ["..\\..\\etc\\passwd", "a//b/output.json", "./x", "/absolute/output.json", "a/../b.json"]) {
+    const tampered = structuredClone(descriptor);
+    tampered.output.artifact.key = key;
+    assertEquals(validate(tampered), false, `key ${JSON.stringify(key)} should be rejected`);
+  }
+});
+
 async function readGraphCatalog(): Promise<GraphCatalog> {
   return GraphCatalogSchema.parse(await readJson("../../../conformance/graph-catalog.json"));
 }
 
-async function compileWorkflowSpecValidator(): Promise<ValidateFunction> {
+let workflowSpecValidator: Promise<ValidateFunction> | undefined;
+let stepInvocationDescriptorValidator: Promise<ValidateFunction> | undefined;
+
+function compileWorkflowSpecValidator(): Promise<ValidateFunction> {
+  workflowSpecValidator ??= compileSchema("../../../conformance/schema/workflow-spec.schema.json");
+  return workflowSpecValidator;
+}
+
+function compileStepInvocationDescriptorValidator(): Promise<ValidateFunction> {
+  stepInvocationDescriptorValidator ??= compileSchema(
+    "../../../conformance/schema/step-invocation-descriptor.schema.json"
+  );
+  return stepInvocationDescriptorValidator;
+}
+
+async function compileSchema(path: string): Promise<ValidateFunction> {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
-  return ajv.compile((await readJson("../../../conformance/schema/workflow-spec.schema.json")) as AnySchema);
+  return ajv.compile((await readJson(path)) as AnySchema);
+}
+
+async function listFixtureCases(kind: "specs" | "plans"): Promise<string[]> {
+  const cases: string[] = [];
+  for await (const entry of Deno.readDir(new URL(`../../../conformance/fixtures/${kind}`, import.meta.url))) {
+    if (entry.isDirectory) {
+      cases.push(entry.name);
+    }
+  }
+  return cases.sort();
 }
 
 async function readJson(path: string): Promise<unknown> {
@@ -135,4 +211,99 @@ function formatSourceIds(sourceIds: readonly string[]): string {
   }
 
   return sourceIds.join(", ");
+}
+
+const HASH_REF_PATTERN = /^sha256:[0-9a-f]{64}$/;
+
+type WorkflowSpecFixture = {
+  workflow: { name: string };
+  graph: {
+    nodes: { id: string; kind: string; contractRef?: string }[];
+    edges: { from: string; to: string }[];
+  };
+};
+
+type WorkflowPlanFixture = {
+  graph: {
+    workflowName: string;
+    nodes: { id: string; kind: string; contractRef?: string }[];
+    edges: { from: string; to: string }[];
+  };
+  contracts: { contractRef: string; environmentRef: string }[];
+  environments: { envRef: string }[];
+};
+
+function assertSpecPlanStructuralConsistency(spec: unknown, plan: unknown, caseId: string): void {
+  const typedSpec = spec as WorkflowSpecFixture;
+  const typedPlan = plan as WorkflowPlanFixture;
+
+  assertEquals(typedPlan.graph.workflowName, typedSpec.workflow.name, `${caseId} workflow name`);
+  assertEquals(
+    new Set(typedPlan.graph.nodes.map((node) => node.id)),
+    new Set(typedSpec.graph.nodes.map((node) => node.id)),
+    `${caseId} node IDs`
+  );
+  assertEquals(
+    normalizeEdges(typedPlan.graph.edges),
+    normalizeEdges(typedSpec.graph.edges),
+    `${caseId} edges`
+  );
+
+  for (const node of typedPlan.graph.nodes) {
+    if (node.kind !== "step") {
+      continue;
+    }
+
+    assert(typeof node.contractRef === "string" && node.contractRef.length > 0, `${caseId} step ${node.id} contractRef`);
+  }
+}
+
+function assertPlanReferencesResolve(plan: unknown, caseId: string): void {
+  const typedPlan = plan as WorkflowPlanFixture;
+  const contractRefs = new Set(typedPlan.contracts.map((contract) => contract.contractRef));
+  const environmentRefs = new Set(typedPlan.environments.map((environment) => environment.envRef));
+
+  for (const node of typedPlan.graph.nodes) {
+    if (node.kind !== "step") {
+      continue;
+    }
+
+    assert(
+      node.contractRef !== undefined && contractRefs.has(node.contractRef),
+      `${caseId} step ${node.id} contractRef does not resolve in plan.contracts`
+    );
+  }
+
+  for (const contract of typedPlan.contracts) {
+    assert(
+      environmentRefs.has(contract.environmentRef),
+      `${caseId} contract ${contract.contractRef} environmentRef does not resolve in plan.environments`
+    );
+  }
+}
+
+function assertPlanHashRefDigests(plan: unknown, caseId: string): void {
+  for (const digest of collectHashRefDigests(plan)) {
+    assert(HASH_REF_PATTERN.test(digest), `${caseId} invalid HashRef digest: ${digest}`);
+  }
+}
+
+function collectHashRefDigests(value: unknown): string[] {
+  if (typeof value === "string") {
+    return value.startsWith("sha256:") ? [value] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectHashRefDigests(entry));
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).flatMap((entry) => collectHashRefDigests(entry));
+  }
+
+  return [];
+}
+
+function normalizeEdges(edges: readonly { from: string; to: string }[]): string[] {
+  return edges.map((edge) => `${edge.from}->${edge.to}`).sort();
 }
