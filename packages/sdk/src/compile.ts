@@ -5,7 +5,7 @@ import { GraphValidationError, MassiveError } from "./errors.ts";
 import type { Datastore } from "./datastore.ts";
 import { WorkflowPlanJsonV0Schema, type WorkflowPlanJsonV0 } from "./plan.ts";
 import { lowerPortableSchema, type AnySchema, type LoweredSchema } from "./schema.ts";
-import { sha256Bytes, sha256Text, stableStringify, type JsonValue } from "./stable.ts";
+import { compareCodeUnits, sha256RefBytes, sha256RefText, sha256Text, stableStringify, type JsonValue } from "./stable.ts";
 import { END_NODE, START_NODE, type StepNode, type WorkflowBuilder } from "./workflow.ts";
 
 export interface SourceSpec {
@@ -23,12 +23,10 @@ export interface CompiledWorkflow<Output = unknown> {
   readonly planHash: string;
   readonly plan: WorkflowPlanJsonV0;
   readonly datastore: Datastore;
-  readonly runtimeRegistry: ReadonlyMap<string, StepNode["run"]>;
-  readonly runtimeSchemas: ReadonlyMap<string, AnySchema>;
   readonly __output?: Output;
 }
 
-interface SourcePackage {
+export interface SourcePackage {
   readonly root: string;
   readonly include: string[];
   readonly files: { readonly path: string; readonly hash: string }[];
@@ -44,22 +42,21 @@ export async function compile<Input, Output>(
 
   const source = await hashSourcePackage(options.source);
   const schemas = new Map<string, JsonValue>();
-  const runtimeSchemas = new Map<string, AnySchema>();
 
-  const workflowInput = registerSchema(schemas, runtimeSchemas, builder.input, `${builder.name}.input`);
-  const workflowOutput = registerSchema(schemas, runtimeSchemas, builder.output, `${builder.name}.output`);
+  const workflowInput = registerSchema(schemas, builder.input, `${builder.name}.input`);
+  const workflowOutput = registerSchema(schemas, builder.output, `${builder.name}.output`);
 
   const stepSchemas = new Map<string, { input: LoweredSchema; output: LoweredSchema }>();
   for (const step of sortedSteps(builder)) {
     stepSchemas.set(step.id, {
-      input: registerSchema(schemas, runtimeSchemas, step.input, `${builder.name}.${step.id}.input`),
-      output: registerSchema(schemas, runtimeSchemas, step.output, `${builder.name}.${step.id}.output`),
+      input: registerSchema(schemas, step.input, `${builder.name}.${step.id}.input`),
+      output: registerSchema(schemas, step.output, `${builder.name}.${step.id}.output`),
     });
   }
 
   const channelSchemas = new Map<string, LoweredSchema>();
-  for (const [name, definition] of Object.entries(builder.channels).sort(([left], [right]) => left.localeCompare(right))) {
-    channelSchemas.set(name, registerSchema(schemas, runtimeSchemas, definition.schema, `${builder.name}.channel.${name}`));
+  for (const [name, definition] of Object.entries(builder.channels).sort(([left], [right]) => compareCodeUnits(left, right))) {
+    channelSchemas.set(name, registerSchema(schemas, definition.schema, `${builder.name}.channel.${name}`));
   }
 
   const symbolSteps = sortedSteps(builder).map((step) => ({
@@ -83,7 +80,7 @@ export async function compile<Input, Output>(
       symbolManifestHash,
       steps: symbolSteps,
     },
-    schemas: Object.fromEntries([...schemas.entries()].sort(([left], [right]) => left.localeCompare(right))),
+    schemas: Object.fromEntries([...schemas.entries()].sort(([left], [right]) => compareCodeUnits(left, right))),
     graph: {
       start: START_NODE,
       end: END_NODE,
@@ -115,24 +112,20 @@ export async function compile<Input, Output>(
     planHash,
     plan,
     datastore: options.datastore,
-    runtimeRegistry: new Map(builder.runtimeRegistry),
-    runtimeSchemas,
   };
 }
 
 function registerSchema(
   schemas: Map<string, JsonValue>,
-  runtimeSchemas: Map<string, AnySchema>,
   schema: AnySchema,
   role: string
 ): LoweredSchema {
   const lowered = lowerPortableSchema(schema, role);
   schemas.set(lowered.hash, lowered.jsonSchema);
-  runtimeSchemas.set(lowered.hash, schema);
   return lowered;
 }
 
-async function hashSourcePackage(source: SourceSpec): Promise<SourcePackage> {
+export async function hashSourcePackage(source: SourceSpec): Promise<SourcePackage> {
   if (source.include.length === 0) {
     throw new MassiveError("compile source.include must contain at least one pattern");
   }
@@ -156,11 +149,11 @@ async function hashSourcePackage(source: SourceSpec): Promise<SourcePackage> {
 
     entries.push({
       path: normalizeObjectPath(backToRoot),
-      hash: sha256Bytes(await readFile(absolute)),
+      hash: sha256RefBytes(await readFile(absolute)),
     });
   }
 
-  const sourcePackageHash = sha256Text(stableStringify(entries));
+  const sourcePackageHash = sha256RefText(stableStringify(entries));
   return {
     root,
     include: [...source.include],
@@ -169,7 +162,7 @@ async function hashSourcePackage(source: SourceSpec): Promise<SourcePackage> {
   };
 }
 
-function validateGraphShape(builder: WorkflowBuilder<unknown, unknown>): void {
+export function validateGraphShape(builder: WorkflowBuilder<unknown, unknown>): void {
   const graph = builder.graph;
 
   if (!graph.hasNode(START_NODE) || !graph.hasNode(END_NODE)) {
@@ -239,7 +232,7 @@ function traverse(builder: WorkflowBuilder<unknown, unknown>, start: string, dir
 }
 
 function sortedSteps(builder: WorkflowBuilder<unknown, unknown>): StepNode[] {
-  return [...builder.stepNodes.values()].sort((left, right) => left.id.localeCompare(right.id));
+  return [...builder.stepNodes.values()].sort((left, right) => compareCodeUnits(left.id, right.id));
 }
 
 function lowerNodes(
@@ -272,7 +265,7 @@ function lowerEdges(builder: WorkflowBuilder<unknown, unknown>): WorkflowPlanJso
   builder.graph.forEachDirectedEdge((_edge, _attributes, source, target) => {
     edges.push({ from: source, to: target });
   });
-  return edges.sort((left, right) => `${left.from}\0${left.to}`.localeCompare(`${right.from}\0${right.to}`));
+  return edges.sort((left, right) => compareCodeUnits(`${left.from}\0${left.to}`, `${right.from}\0${right.to}`));
 }
 
 function normalizeObjectPath(path: string): string {

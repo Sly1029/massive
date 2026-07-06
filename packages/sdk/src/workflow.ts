@@ -1,5 +1,6 @@
 import { DirectedGraph } from "graphology";
 import type { z } from "zod";
+import type { ContractSpec, ExecutionContract } from "./contract.ts";
 import { GraphValidationError } from "./errors.ts";
 import type { AnySchema } from "./schema.ts";
 
@@ -19,6 +20,7 @@ export interface StepSpec<InputSchema extends AnySchema, OutputSchema extends An
   readonly input: InputSchema;
   readonly output: OutputSchema;
   readonly run: StepRun<z.infer<InputSchema>, z.infer<OutputSchema>>;
+  readonly contract?: ContractSpec | ExecutionContract;
   readonly channel?: string;
   readonly publish?: Record<string, string>;
 }
@@ -28,6 +30,7 @@ export interface WorkflowConfig<InputSchema extends AnySchema, OutputSchema exte
   readonly input: InputSchema;
   readonly output: OutputSchema;
   readonly state?: StateSchema;
+  readonly defaults?: ContractSpec | ExecutionContract;
 }
 
 export interface ChannelDefinition<Output> {
@@ -46,6 +49,7 @@ export interface StepNode {
   readonly output: AnySchema;
   readonly run: StepRun<unknown, unknown>;
   readonly symbolRef: string;
+  readonly contract?: ContractSpec | ExecutionContract;
   readonly channel?: string;
   mergeInputs?: string[];
   readonly publish?: Record<string, string>;
@@ -105,6 +109,7 @@ export class WorkflowBuilder<Input, Output> {
     readonly name: string,
     readonly input: AnySchema,
     readonly output: AnySchema,
+    readonly defaults: ContractSpec | ExecutionContract | undefined,
     channels: StateSchema = {}
   ) {
     this.channels = channels;
@@ -128,6 +133,7 @@ export class WorkflowBuilder<Input, Output> {
       output: spec.output,
       run: spec.run as StepRun<unknown, unknown>,
       symbolRef,
+      ...(spec.contract === undefined ? {} : { contract: spec.contract }),
       ...(spec.channel === undefined ? {} : { channel: spec.channel }),
       ...(spec.publish === undefined ? {} : { publish: spec.publish }),
     };
@@ -198,6 +204,7 @@ export function workflow<InputSchema extends AnySchema, OutputSchema extends Any
     config.name,
     config.input,
     config.output,
+    config.defaults,
     config.state
   );
 }

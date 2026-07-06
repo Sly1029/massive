@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { CompiledWorkflow } from "./compile.ts";
 import { WorkflowPlanJsonV0Schema } from "./plan.ts";
-import { run } from "./run.ts";
 
 export const ArgoWorkflowManifestSchema = z.object({
   apiVersion: z.literal("argoproj.io/v1alpha1"),
@@ -92,15 +91,4 @@ export function compileArgoWorkflow(compiled: CompiledWorkflow<unknown>): ArgoWo
       ],
     },
   });
-}
-
-export async function runArgoLocal<Output>(
-  compiled: CompiledWorkflow<Output>,
-  inputConfig: { readonly input: unknown }
-): Promise<{ readonly manifest: ArgoWorkflowManifest; readonly output: Output }> {
-  const manifest = compileArgoWorkflow(compiled);
-  return {
-    manifest,
-    output: await run(compiled, inputConfig),
-  };
 }
