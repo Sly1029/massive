@@ -1,0 +1,47 @@
+{
+  "kind": "StepInvocationDescriptor",
+  "schemaVersion": 0,
+  "encoding": "json-v0",
+  "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runId": "run-linear-chain-0001",
+  "nodeId": "double",
+  "attempt": 1,
+  "symbol": {
+    "packageId": "ts-main",
+    "language": "typescript",
+    "module": "./workflow.ts",
+    "export": "double"
+  },
+  "sourcePackage": {
+    "packageId": "ts-main",
+    "language": "typescript",
+    "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "sourceArchive": {
+      "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst",
+      "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "contentType": "application/zstd"
+    }
+  },
+  "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+  "input": {
+    "artifact": {
+      "key": "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-linear-chain-0001/inputs/double.json",
+      "hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "contentType": "application/json"
+    },
+    "schema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "output": {
+    "artifact": {
+      "key": "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-linear-chain-0001/steps/double/1/output.json",
+      "contentType": "application/json"
+    },
+    "schema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "channelReads": [],
+  "channelWrites": [],
+  "datastore": {
+    "kind": "local",
+    "path": "/tmp/massive-conformance-store"
+  }
+}

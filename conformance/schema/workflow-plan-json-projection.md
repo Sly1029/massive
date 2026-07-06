@@ -13,7 +13,8 @@ The projection is a deterministic JSON rendering of the logical Cap'n Proto fiel
 - `ArtifactRef` renders as `{ "key", "hash", "contentType" }`,
 - `SchemaEntry.canonicalJson` is sorted-key canonical JSON for the lowered portable schema value,
 - wall-clock fields, including compile time and bundle emission time, are not part of the canonical Cap'n Proto artifacts and must not appear in the projection,
-- absent/default Cap'n Proto scalar values are omitted only if the projection spec for that field says so; v0 fixtures should prefer explicit values.
+- absent/default Cap'n Proto scalar values are omitted only if the projection spec for that field says so; v0 fixtures should prefer explicit values,
+- projected plans must not contain dangling references: every step node's `contractRef` resolves to an entry in `contracts`, and every contract's `environmentRef` resolves to an entry in `environments`.
 
 Shape:
 
@@ -56,9 +57,31 @@ Shape:
       "export": "double"
     }
   ],
-  "sourcePackages": [],
-  "environments": [],
-  "contracts": [],
+  "sourcePackages": [
+    {
+      "language": "typescript",
+      "manifest": { "contentType": "application/vnd.capnp", "hash": "sha256:<hex>", "key": "packages/sha256-<hex>/source-manifest.capnp" },
+      "packageHash": "sha256:<hex>",
+      "packageId": "ts-main",
+      "sourceArchive": { "contentType": "application/zstd", "hash": "sha256:<hex>", "key": "packages/sha256-<hex>/source.tar.zst" }
+    }
+  ],
+  "environments": [
+    {
+      "envRef": "sha256:<hex>",
+      "kind": "skipped",
+      "specHash": "sha256:<hex>"
+    }
+  ],
+  "contracts": [
+    {
+      "contractRef": "sha256:<hex>",
+      "environmentRef": "sha256:<hex>",
+      "network": { "egress": "none" },
+      "resources": { "cpu": "500m", "memory": "512Mi" },
+      "secrets": []
+    }
+  ],
   "targets": [],
   "datastoreManifests": [],
   "provenance": {

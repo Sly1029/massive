@@ -1,0 +1,140 @@
+{
+  "contracts": [
+    {
+      "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "network": { "egress": "none" },
+      "resources": { "cpu": "500m", "memory": "512Mi" },
+      "secrets": []
+    }
+  ],
+  "datastoreManifests": [],
+  "environments": [
+    {
+      "envRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "kind": "skipped",
+      "specHash": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    }
+  ],
+  "graph": {
+    "edges": [
+      { "from": "__start", "to": "split" },
+      { "from": "split", "to": "left" },
+      { "from": "split", "to": "right" },
+      { "from": "left", "to": "merge" },
+      { "from": "right", "to": "merge" },
+      { "from": "merge", "to": "__end" }
+    ],
+    "endNode": "__end",
+    "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "nodes": [
+      { "id": "__start", "kind": "start" },
+      {
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "id": "split",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "kind": "step",
+        "mergeInputs": [],
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "diamond/split"
+      },
+      {
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "id": "left",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "kind": "step",
+        "mergeInputs": [],
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "diamond/left"
+      },
+      {
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "id": "right",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "kind": "step",
+        "mergeInputs": [],
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "diamond/right"
+      },
+      {
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "id": "merge",
+        "inputSchema": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "kind": "step",
+        "mergeInputs": ["left", "right"],
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "diamond/merge"
+      },
+      { "id": "__end", "kind": "end" }
+    ],
+    "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "startNode": "__start",
+    "workflowName": "diamond"
+  },
+  "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "provenance": {
+    "compilerName": "massive-go",
+    "compilerVersion": "0.0.0",
+    "sourceSpecHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "schemaVersion": 0,
+  "schemas": [
+    {
+      "canonicalJson": "{\"type\":\"number\"}",
+      "hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "canonicalJson": "{\"items\":{\"type\":\"number\"},\"type\":\"array\"}",
+      "hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  ],
+  "sourcePackages": [
+    {
+      "language": "typescript",
+      "manifest": {
+        "contentType": "application/vnd.capnp",
+        "hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source-manifest.capnp"
+      },
+      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "packageId": "ts-main",
+      "sourceArchive": {
+        "contentType": "application/zstd",
+        "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst"
+      }
+    }
+  ],
+  "specHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "symbols": [
+    {
+      "export": "split",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "packageId": "ts-main",
+      "symbolRef": "diamond/split"
+    },
+    {
+      "export": "left",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "packageId": "ts-main",
+      "symbolRef": "diamond/left"
+    },
+    {
+      "export": "right",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "packageId": "ts-main",
+      "symbolRef": "diamond/right"
+    },
+    {
+      "export": "merge",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "packageId": "ts-main",
+      "symbolRef": "diamond/merge"
+    }
+  ],
+  "targets": []
+}

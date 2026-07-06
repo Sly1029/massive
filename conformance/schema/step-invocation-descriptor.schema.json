@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://massive.dev/conformance/schema/step-invocation-descriptor.schema.json",
+  "title": "Massive StepInvocationDescriptor",
+  "description": "V0 StepInvocationDescriptor JSON transport between backend orchestration and language runtime adapters. The logical field shape is kept compatible with future Cap'n Proto transport.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schemaVersion",
+    "encoding",
+    "planHash",
+    "runId",
+    "nodeId",
+    "attempt",
+    "symbol",
+    "sourcePackage",
+    "environmentRef",
+    "input",
+    "output",
+    "datastore"
+  ],
+  "properties": {
+    "kind": { "const": "StepInvocationDescriptor" },
+    "schemaVersion": { "const": 0 },
+    "encoding": { "const": "json-v0" },
+    "planHash": { "$ref": "#/$defs/hashRef" },
+    "runId": { "$ref": "#/$defs/id" },
+    "nodeId": { "$ref": "#/$defs/id" },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "symbol": { "$ref": "#/$defs/symbol" },
+    "sourcePackage": { "$ref": "#/$defs/sourcePackageRef" },
+    "environmentRef": { "$ref": "#/$defs/hashRef" },
+    "input": { "$ref": "#/$defs/dataArtifactRef" },
+    "output": { "$ref": "#/$defs/dataArtifactDestination" },
+    "channelReads": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/channelArtifactRef" }
+    },
+    "channelWrites": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/channelArtifactDestination" }
+    },
+    "datastore": { "$ref": "#/$defs/datastore" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.@/:#-]+$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:(?!\\.{1,2}(?:/|$))[^/\\\\]+)(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*$"
+    },
+    "modulePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:\\./)?(?:(?!\\.{1,2}(?:/|$))[^/\\\\]+)(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*$"
+    },
+    "datastoreKey": { "$ref": "#/$defs/relativePath" },
+    "hashRef": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "language": {
+      "enum": ["typescript", "python"]
+    },
+    "symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packageId", "language", "module", "export"],
+      "properties": {
+        "packageId": { "$ref": "#/$defs/id" },
+        "language": { "$ref": "#/$defs/language" },
+        "module": { "$ref": "#/$defs/modulePath" },
+        "export": { "$ref": "#/$defs/id" }
+      }
+    },
+    "sourcePackageRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["packageId", "language", "packageHash", "sourceArchive"],
+      "properties": {
+        "packageId": { "$ref": "#/$defs/id" },
+        "language": { "$ref": "#/$defs/language" },
+        "packageHash": { "$ref": "#/$defs/hashRef" },
+        "sourceArchive": { "$ref": "#/$defs/artifactRef" },
+        "manifest": { "$ref": "#/$defs/artifactRef" }
+      }
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "hash", "contentType"],
+      "properties": {
+        "key": { "$ref": "#/$defs/datastoreKey" },
+        "hash": { "$ref": "#/$defs/hashRef" },
+        "contentType": { "$ref": "#/$defs/contentType" }
+      }
+    },
+    "artifactDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "contentType"],
+      "properties": {
+        "key": { "$ref": "#/$defs/datastoreKey" },
+        "contentType": { "$ref": "#/$defs/contentType" }
+      }
+    },
+    "dataArtifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "schema"],
+      "properties": {
+        "artifact": { "$ref": "#/$defs/artifactRef" },
+        "schema": { "$ref": "#/$defs/hashRef" }
+      }
+    },
+    "dataArtifactDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact", "schema"],
+      "properties": {
+        "artifact": { "$ref": "#/$defs/artifactDestination" },
+        "schema": { "$ref": "#/$defs/hashRef" }
+      }
+    },
+    "channelArtifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channelName", "artifact", "schema"],
+      "properties": {
+        "channelName": { "$ref": "#/$defs/id" },
+        "artifact": { "$ref": "#/$defs/artifactRef" },
+        "schema": { "$ref": "#/$defs/hashRef" }
+      }
+    },
+    "channelArtifactDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channelName", "artifact", "schema"],
+      "properties": {
+        "channelName": { "$ref": "#/$defs/id" },
+        "artifact": { "$ref": "#/$defs/artifactDestination" },
+        "schema": { "$ref": "#/$defs/hashRef" }
+      }
+    },
+    "contentType": {
+      "type": "string",
+      "minLength": 1
+    },
+    "datastore": {
+      "oneOf": [
+        { "$ref": "#/$defs/localDatastore" },
+        { "$ref": "#/$defs/s3Datastore" }
+      ]
+    },
+    "localDatastore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path"],
+      "properties": {
+        "kind": { "const": "local" },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "s3Datastore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "bucket", "region"],
+      "properties": {
+        "kind": { "const": "s3" },
+        "bucket": { "$ref": "#/$defs/id" },
+        "prefix": { "$ref": "#/$defs/datastoreKey" },
+        "region": { "type": "string", "minLength": 1 },
+        "endpoint": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

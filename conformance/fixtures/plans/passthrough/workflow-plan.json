@@ -1,0 +1,66 @@
+{
+  "contracts": [
+    {
+      "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+      "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "network": { "egress": "none" },
+      "resources": { "cpu": "500m", "memory": "512Mi" },
+      "secrets": []
+    }
+  ],
+  "datastoreManifests": [],
+  "environments": [
+    {
+      "envRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "kind": "skipped",
+      "specHash": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    }
+  ],
+  "graph": {
+    "edges": [
+      { "from": "__start", "to": "__end" }
+    ],
+    "endNode": "__end",
+    "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "nodes": [
+      { "id": "__start", "kind": "start" },
+      { "id": "__end", "kind": "end" }
+    ],
+    "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "startNode": "__start",
+    "workflowName": "passthrough"
+  },
+  "planHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "provenance": {
+    "compilerName": "massive-go",
+    "compilerVersion": "0.0.0",
+    "sourceSpecHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "schemaVersion": 0,
+  "schemas": [
+    {
+      "canonicalJson": "{\"type\":\"number\"}",
+      "hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "sourcePackages": [
+    {
+      "language": "typescript",
+      "manifest": {
+        "contentType": "application/vnd.capnp",
+        "hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source-manifest.capnp"
+      },
+      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "packageId": "ts-main",
+      "sourceArchive": {
+        "contentType": "application/zstd",
+        "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst"
+      }
+    }
+  ],
+  "specHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "symbols": [],
+  "targets": []
+}
