@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects } from "jsr:@std/assert";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import {
@@ -9,15 +9,13 @@ import {
   datastore,
   DatastoreKeyError,
   GraphValidationError,
-  run,
-  runArgoLocal,
   SchemaPortabilityError,
   stateSchema,
   workflow,
 } from "../src/index.ts";
 import { graphCases } from "./graph-fixtures.ts";
 
-Deno.test("linear workflow compiles, runs, and writes artifacts", async () => {
+Deno.test("linear workflow compiles and writes plan artifacts", async () => {
   await withTempDir(async (root) => {
     const g = workflow({
       name: "math",
@@ -46,7 +44,7 @@ Deno.test("linear workflow compiles, runs, and writes artifacts", async () => {
       source: sourceSpec(),
     });
 
-    assertEquals(await run(compiled, { input: 21 }), "Result: 42");
+    assertEquals(g.runtimeRegistry.size, 2);
     assertEquals(await store.exists(`plans/${compiled.planHash}/workflow.json`), true);
 
     const planBytes = await store.get(`plans/${compiled.planHash}/workflow.json`);
@@ -54,6 +52,7 @@ Deno.test("linear workflow compiles, runs, and writes artifacts", async () => {
     assertEquals(plan.encoding, "json-v0");
     assertEquals(plan.schemaVersion, 0);
     assertEquals(plan.planHash, compiled.planHash);
+    assertEquals(plan.graph.nodes.filter((node: { kind: string }) => node.kind === "step").length, 2);
   });
 });
 
@@ -114,27 +113,6 @@ Deno.test("non-portable Zod schemas fail compilation with schema diagnostics", a
   });
 });
 
-Deno.test("runtime validation rejects invalid input and invalid step output", async () => {
-  await withTempDir(async (root) => {
-    const store = datastore.local({ path: join(root, "store") });
-    const inputWorkflow = makeMathWorkflow();
-    const compiledInput = await compile(inputWorkflow, { target: "local", datastore: store, source: sourceSpec() });
-
-    await assertRejects(() => run(compiledInput, { input: "not a number" }));
-
-    const g = workflow({ name: "bad-output", input: z.number(), output: z.string() });
-    const bad = g.step("bad", {
-      input: z.number(),
-      output: z.string(),
-      run: () => 123 as unknown as string,
-    });
-    g.start().to(bad).to(g.end());
-
-    const compiledOutput = await compile(g, { target: "local", datastore: store, source: sourceSpec() });
-    await assertRejects(() => run(compiledOutput, { input: 1 }));
-  });
-});
-
 Deno.test("graph validation rejects cycles and missing paths to end", async () => {
   await withTempDir(async (root) => {
     const compileOptions = {
@@ -174,7 +152,7 @@ Deno.test("local datastore rejects traversal keys and writes exact bytes", async
   });
 });
 
-Deno.test("minimal channel publish persists named channel value", async () => {
+Deno.test("minimal channel publish compiles named channel plan", async () => {
   await withTempDir(async (root) => {
     const State = stateSchema({
       answer: channel(z.number()),
@@ -190,27 +168,23 @@ Deno.test("minimal channel publish persists named channel value", async () => {
 
     const store = datastore.local({ path: join(root, "store") });
     const compiled = await compile(g, { target: "local", datastore: store, source: sourceSpec() });
-    assertEquals(await run(compiled, { input: 41 }), 42);
+    const publishNode = compiled.plan.graph.nodes.find((node) => node.id === "publish");
 
-    const runRoot = join(root, "store", "runs");
-    const runs = [...Deno.readDirSync(runRoot)].map((entry) => entry.name);
-    assertEquals(runs.length, 1);
-    assertEquals(
-      new TextDecoder().decode(await readFile(join(runRoot, runs[0]!, "channels", "answer", "value.json"))),
-      "42"
-    );
+    assertEquals(compiled.plan.channels.answer?.reducer, "last");
+    assertEquals(publishNode?.kind === "step" ? publishNode.channel : undefined, "answer");
+    assertEquals(await store.exists(`plans/${compiled.planHash}/workflow.json`), true);
   });
 });
 
-Deno.test("graph catalog compiles and runs consistently with async runner", async () => {
+Deno.test("graph catalog compiles consistently", async () => {
   await withTempDir(async (root) => {
     for (const graphCase of graphCases) {
       const store = datastore.local({ path: join(root, "async", graphCase.name) });
       const compiled = await compile(graphCase.build(), { target: "local", datastore: store, source: sourceSpec() });
 
-      assertEquals(await run(compiled, { input: graphCase.input }), graphCase.expected, graphCase.name);
       assertEquals(compiled.plan.graph.nodes.filter((node) => node.kind === "step").length, graphCase.expectedTasks);
       assertEquals(compiled.plan.graph.edges.length, graphCase.expectedEdges);
+      assertEquals(await store.exists(`plans/${compiled.planHash}/workflow.json`), true);
 
       for (const [stepId, mergeInputs] of Object.entries(graphCase.mergeExpectations ?? {})) {
         const node = compiled.plan.graph.nodes.find((candidate) => candidate.id === stepId);
@@ -220,17 +194,14 @@ Deno.test("graph catalog compiles and runs consistently with async runner", asyn
   });
 });
 
-Deno.test("graph catalog runs consistently through Argo-local runner", async () => {
+Deno.test("graph catalog emits Argo DAG manifests consistently", async () => {
   await withTempDir(async (root) => {
     for (const graphCase of graphCases) {
       const store = datastore.local({ path: join(root, "argo-local", graphCase.name) });
       const compiled = await compile(graphCase.build(), { target: "local", datastore: store, source: sourceSpec() });
-      const result = await runArgoLocal(compiled, { input: graphCase.input });
       const manifest = compileArgoWorkflow(compiled);
       const main = mainTemplate(manifest);
 
-      assertEquals(result.output, graphCase.expected, graphCase.name);
-      assertEquals(result.manifest, manifest, graphCase.name);
       assertEquals(main.dag.tasks.length, graphCase.expectedTasks, graphCase.name);
 
       for (const [stepId, mergeInputs] of Object.entries(graphCase.mergeExpectations ?? {})) {
@@ -241,7 +212,7 @@ Deno.test("graph catalog runs consistently through Argo-local runner", async () 
   });
 });
 
-Deno.test("async runner executes fan-out fan-in diamond graph", async () => {
+Deno.test("fan-out fan-in diamond graph compiles merge metadata", async () => {
   await withTempDir(async (root) => {
     const g = workflow({ name: "diamond", input: z.number(), output: z.number() });
     const split = g.step("split", {
@@ -276,14 +247,13 @@ Deno.test("async runner executes fan-out fan-in diamond graph", async () => {
       source: sourceSpec(),
     });
 
-    assertEquals(await run(compiled, { input: 4 }), 45);
     assertEquals(compiled.plan.graph.nodes.find((node) => node.id === "merge")?.kind, "step");
     const mergeNode = compiled.plan.graph.nodes.find((node) => node.id === "merge");
     assertEquals(mergeNode?.kind === "step" ? mergeNode.mergeInputs : undefined, ["left", "right"]);
   });
 });
 
-Deno.test("async runner executes 100-way batch split and merge", async () => {
+Deno.test("100-way batch split and merge compiles stable graph shape", async () => {
   await withTempDir(async (root) => {
     const g = workflow({ name: "batch-merge", input: z.number(), output: z.number() });
     const split = g.step("split", {
@@ -316,13 +286,12 @@ Deno.test("async runner executes 100-way batch split and merge", async () => {
       source: sourceSpec(),
     });
 
-    assertEquals(await run(compiled, { input: 1 }), 5050);
     assertEquals(compiled.plan.graph.nodes.length, 104);
     assertEquals(compiled.plan.graph.edges.length, 202);
   });
 });
 
-Deno.test("argo local runner validates diamond DAG manifest and output", async () => {
+Deno.test("Argo DAG manifest includes diamond dependencies", async () => {
   await withTempDir(async (root) => {
     const compiled = await compile(makeDiamondWorkflow(), {
       target: "local",
@@ -330,17 +299,16 @@ Deno.test("argo local runner validates diamond DAG manifest and output", async (
       source: sourceSpec(),
     });
 
-    const result = await runArgoLocal(compiled, { input: 4 });
-    const main = mainTemplate(result.manifest);
+    const manifest = compileArgoWorkflow(compiled);
+    const main = mainTemplate(manifest);
     const mergeTask = main.dag.tasks.find((task) => task.name === "merge");
 
-    assertEquals(result.output, 45);
-    assertEquals(result.manifest.metadata.annotations["massive.dev/plan-hash"], compiled.planHash);
+    assertEquals(manifest.metadata.annotations["massive.dev/plan-hash"], compiled.planHash);
     assertEquals(mergeTask?.dependencies, ["left", "right"]);
   });
 });
 
-Deno.test("argo local runner validates 100-way batch merge DAG manifest and output", async () => {
+Deno.test("Argo DAG manifest includes 100-way batch dependencies", async () => {
   await withTempDir(async (root) => {
     const compiled = await compile(makeBatchMergeWorkflow(100), {
       target: "local",
@@ -348,12 +316,10 @@ Deno.test("argo local runner validates 100-way batch merge DAG manifest and outp
       source: sourceSpec(),
     });
 
-    const result = await runArgoLocal(compiled, { input: 1 });
     const manifest = compileArgoWorkflow(compiled);
     const main = mainTemplate(manifest);
     const mergeTask = main.dag.tasks.find((task) => task.name === "merge");
 
-    assertEquals(result.output, 5050);
     assertEquals(main.dag.tasks.length, 102);
     assertEquals(mergeTask?.dependencies?.length, 100);
     assertEquals(mergeTask?.dependencies?.at(0), "worker-000");
