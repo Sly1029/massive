@@ -249,16 +249,29 @@
           }
         },
         "network": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "egress": { "enum": ["none", "declared", "any"] },
-            "hosts": {
-              "type": "array",
-              "minItems": 1,
-              "items": { "type": "string", "minLength": 1 }
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["egress", "hosts"],
+              "properties": {
+                "egress": { "const": "declared" },
+                "hosts": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": { "type": "string", "minLength": 1 }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["egress"],
+              "properties": {
+                "egress": { "enum": ["none", "any"] }
+              }
             }
-          }
+          ]
         }
       }
     },

@@ -41,6 +41,14 @@ func TestWorkflowPlanJSONRoundTrip(t *testing.T) {
 func runProtoc(t *testing.T, args ...string) {
 	t.Helper()
 
+	protoc, err := exec.LookPath("protoc")
+	if err != nil {
+		t.Skip("protoc not found in PATH; install protobuf to run the schema compile check")
+	}
+	if _, err := exec.LookPath("protoc-gen-go"); err != nil {
+		t.Skip("protoc-gen-go not found in PATH; run: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest")
+	}
+
 	outDir := t.TempDir()
 	protocArgs := []string{
 		"-I", ".",
@@ -49,9 +57,8 @@ func runProtoc(t *testing.T, args ...string) {
 	}
 	protocArgs = append(protocArgs, args...)
 
-	cmd := exec.Command("/opt/homebrew/bin/protoc", protocArgs...)
+	cmd := exec.Command(protoc, protocArgs...)
 	cmd.Dir = "."
-	cmd.Env = append(os.Environ(), "PATH="+os.Getenv("PATH")+":/Users/rohit/go/bin")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("protoc %v failed: %v\n%s", args, err, output)
