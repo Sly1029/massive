@@ -13,7 +13,7 @@ TypeScript authoring source
   -> Graphology-backed graph model
   -> canonical WorkflowSpec JSON conforming to the shared schema
   -> Go backend compiler
-  -> Cap'n Proto WorkflowPlan + TargetBundleManifest
+  -> canonical WorkflowPlan JSON + TargetBundleManifest JSON typed by proto schemas
   -> object-store datastore
   -> backend runner
 ```
@@ -52,13 +52,13 @@ discover workflow entrypoint
 
 The default output should focus on author-facing status, diagnostics, and final result locations. Artifact paths, hashes, generated specs, and compiled plans should be available through verbose flags or explicit inspect commands, not required knowledge for the common local path.
 
-For v0, the Cap'n Proto schema is the shared contract, but the TypeScript SDK does not need to emit Cap'n Proto binary bytes directly. The SDK emits deterministic `WorkflowSpec` JSON that conforms to the shared schema. The Go compiler is the first writer of canonical Cap'n Proto `WorkflowPlan` artifacts.
+For v0, `.proto` schemas define the typed compiled-plan and manifest contracts, and canonical JSON is the artifact body. The SDK emits deterministic `WorkflowSpec` JSON that conforms to the shared schema. The Go compiler writes canonical `WorkflowPlan` JSON artifacts typed by the proto schemas.
 
 ## Goals
 
 - Provide a TypeScript-first workflow SDK with a declarative, functional authoring style inspired by `pydantic-graph`.
 - Use native graph libraries instead of reimplementing graph algorithms. TypeScript uses Graphology internally. The IR stays language-neutral by design, but TypeScript/JavaScript is the only planned authoring language for now.
-- Keep the canonical compiled workflow representation language-neutral with Cap'n Proto.
+- Keep the canonical compiled workflow representation language-neutral with proto-typed JSON artifacts.
 - Treat execution requirements as first-class. A compiled workflow includes graph topology plus environment, resources, secrets, storage, network, and observability contracts.
 - Support local async execution and Argo as the first production backend.
 - Use object storage for compiled plans, code packages, environments, step outputs, channel values, and run artifacts.
@@ -95,9 +95,9 @@ V0 should include:
 
 - TypeScript SDK.
 - Graphology-backed builder model.
-- Cap'n Proto schema for the shared IR and compiled plan.
+- Proto schemas for the compiled plan and target manifests.
 - Deterministic `WorkflowSpec` JSON emission from the TypeScript SDK.
-- Go backend compiler that validates specs and writes Cap'n Proto `WorkflowPlan` artifacts.
+- Go backend compiler that validates specs and writes canonical JSON `WorkflowPlan` artifacts.
 - Local filesystem datastore.
 - S3-compatible object-store datastore.
 - Local async runner.

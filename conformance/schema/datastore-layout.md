@@ -6,7 +6,7 @@ Massive v0 stores compiled artifacts and run outputs in an object-store-first la
 
 This document freezes path templates, digest encoding, and project-key normalization. Hash *field coverage* for `specHash`, `planHash`, source-package hash, and env key is owned by [`hashing.md`](hashing.md) (WS-0.6). This document defines how those digests appear in datastore keys and how run-scoped objects are namespaced.
 
-Runners and adapters must treat keys recorded in Cap'n Proto manifests (`ArtifactRef.key`) as authoritative. They must not hardcode alternate layouts.
+Runners and adapters must treat keys recorded in proto-typed JSON manifests (`ArtifactRef.key`) as authoritative. They must not hardcode alternate layouts.
 
 ## Key syntax
 
@@ -24,10 +24,10 @@ Implementations must reject keys that escape the configured datastore root after
 
 Digests have exactly one representation per artifact family:
 
-- **Cap'n Proto manifests** use the `HashRef` struct from `workflow-plan.capnp`: `(algorithm = "sha256", digestHex = "<64 lowercase hex chars>")`.
-- **JSON artifacts** (workflow specs, step invocation descriptors, and plan JSON projections) use only the digest string `sha256:<hex>`, per [`hashing.md`](hashing.md) and the JSON Schemas. The object form is not valid in JSON artifacts.
+- **Proto-typed JSON manifests** use only the digest string `sha256:<hex>`, per [`hashing.md`](hashing.md) and the `.proto` schemas. Digest object forms are not valid in JSON artifacts.
+- **JSON artifacts** (workflow specs, step invocation descriptors, plans, provenance records, and manifests) use the same digest string form.
 
-The two are equivalent encodings of the same digest. UI and CLI output may display shortened prefixes; **datastore keys and manifest references must use the full 64-character lowercase hex digest**, never a truncated prefix.
+UI and CLI output may display shortened prefixes; **datastore keys and manifest references must use the full 64-character lowercase hex digest**, never a truncated prefix.
 
 Content-addressed **path segments** encode the same digest in a filesystem-safe form:
 
@@ -43,7 +43,7 @@ Pure content blobs use a separate layout (below): algorithm as a directory name 
 
 | Role | Path segment or key field | Example |
 |------|---------------------------|---------|
-| JSON digest string (Cap'n Proto uses the `HashRef` struct) | `sha256:<digestHex>` | `sha256:bbbb…bbbb` |
+| JSON digest string | `sha256:<digestHex>` | `sha256:bbbb…bbbb` |
 | `<spec-key>`, `<plan-key>`, `<env-key>`, `<package-key>`, `<project-key>` | `sha256-<digestHex>` | `sha256-bbbb…bbbb` |
 | Blob leaf name | `<digestHex>` under `blobs/sha256/` | `blobs/sha256/bbbb…bbbb` |
 
@@ -88,14 +88,14 @@ specs/sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/wo
 Templates:
 
 ```text
-envs/<env-key>/manifest.capnp
+envs/<env-key>/manifest.json
 envs/<env-key>/runtime.tar.zst
 ```
 
 Examples:
 
 ```text
-envs/sha256-7777777777777777777777777777777777777777777777777777777777777777/manifest.capnp
+envs/sha256-7777777777777777777777777777777777777777777777777777777777777777/manifest.json
 envs/sha256-7777777777777777777777777777777777777777777777777777777777777777/runtime.tar.zst
 ```
 
@@ -104,14 +104,14 @@ envs/sha256-7777777777777777777777777777777777777777777777777777777777777777/run
 Templates:
 
 ```text
-packages/<package-key>/source-manifest.capnp
+packages/<package-key>/source-manifest.json
 packages/<package-key>/source.tar.zst
 ```
 
 Examples:
 
 ```text
-packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source-manifest.capnp
+packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source-manifest.json
 packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst
 ```
 
@@ -120,15 +120,15 @@ packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/s
 Templates:
 
 ```text
-plans/<plan-key>/workflow.capnp
-plans/<plan-key>/provenance.capnp
+plans/<plan-key>/workflow.json
+plans/<plan-key>/provenance.json
 ```
 
 Examples:
 
 ```text
-plans/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/workflow.capnp
-plans/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/provenance.capnp
+plans/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/workflow.json
+plans/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/provenance.json
 ```
 
 ### Target bundle
@@ -136,7 +136,7 @@ plans/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pr
 Template:
 
 ```text
-targets/<plan-key>/<target>/bundle-manifest.capnp
+targets/<plan-key>/<target>/bundle-manifest.json
 ```
 
 `<target>` is the target backend id (`local`, `argo`, or a future backend name).
@@ -144,10 +144,10 @@ targets/<plan-key>/<target>/bundle-manifest.capnp
 Example:
 
 ```text
-targets/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/argo/bundle-manifest.capnp
+targets/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/argo/bundle-manifest.json
 ```
 
-Target compilers may emit additional bundle files under the same `targets/<plan-key>/<target>/` prefix. Those files are recorded in `bundle-manifest.capnp`; their keys are bundle-relative paths joined under that prefix.
+Target compilers may emit additional bundle files under the same `targets/<plan-key>/<target>/` prefix. Those files are recorded in `bundle-manifest.json`; their keys are bundle-relative paths joined under that prefix.
 
 Example (companion artifact referenced from a bundle manifest):
 
@@ -233,13 +233,13 @@ V0 runtime data artifacts (step inputs, step outputs, channel values, final run 
 ```text
 blobs/sha256/<digestHex>
 specs/<spec-key>/workflow-spec.json
-envs/<env-key>/manifest.capnp
+envs/<env-key>/manifest.json
 envs/<env-key>/runtime.tar.zst
-packages/<package-key>/source-manifest.capnp
+packages/<package-key>/source-manifest.json
 packages/<package-key>/source.tar.zst
-plans/<plan-key>/workflow.capnp
-plans/<plan-key>/provenance.capnp
-targets/<plan-key>/<target>/bundle-manifest.capnp
+plans/<plan-key>/workflow.json
+plans/<plan-key>/provenance.json
+targets/<plan-key>/<target>/bundle-manifest.json
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
 projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json

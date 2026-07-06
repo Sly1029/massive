@@ -45,7 +45,7 @@ The portable IR must not depend on serializing TypeScript closures.
 
 Why this is the current choice:
 
-- Cap'n Proto must work across languages,
+- proto-typed JSON artifacts must work across languages,
 - backend compilers need stable symbols,
 - closures are not portable or diffable.
 
@@ -61,18 +61,18 @@ Current validation split:
 
 ### WorkflowSpec Boundary
 
-V0 frontend SDKs emit deterministic `WorkflowSpec` JSON conforming to the shared schema. They do not need to emit Cap'n Proto binary directly.
+V0 frontend SDKs emit deterministic `WorkflowSpec` JSON conforming to the shared schema. They do not need to emit compiled-plan or manifest artifacts directly.
 
 Why this is the current choice:
 
-- the Cap'n Proto schema remains the language-neutral contract,
-- Go can be the first byte-stable Cap'n Proto writer,
-- frontend SDKs avoid dependency on immature or divergent Cap'n Proto encoders,
-- plan hashes can be defined over canonical field trees rather than raw wire bytes.
+- the proto schemas remain the language-neutral compiled-artifact contract,
+- Go can be the first canonical JSON `WorkflowPlan` writer,
+- frontend SDKs avoid owning backend compilation and manifest emission,
+- plan hashes can be defined over canonical field trees rather than raw binary wire encodings.
 
 Potential future:
 
-- frontend SDKs may emit Cap'n Proto binary once encoder determinism and toolchain stability are proven.
+- frontend SDKs may emit additional typed artifacts once compiler boundaries and schema ownership are proven.
 
 ### Target Requests In Specs
 
@@ -176,7 +176,7 @@ Rules:
 
 - the descriptor is defined as a shared schema message,
 - JSON is only the v0 transport encoding,
-- the logical fields must be compatible with future Cap'n Proto serialization,
+- the logical fields must be compatible with future transports,
 - adapters should keep descriptor parsing separate from step execution.
 
 Required fields include plan hash, run ID, node ID, attempt, symbol reference, source package reference, environment reference, input artifacts, output destinations, schema refs, and datastore configuration.
@@ -190,21 +190,20 @@ Why this is the current choice:
 - language adapters can validate JSON-shaped values directly,
 - portable schemas already lower to JSON Schema,
 - the plan can still carry schema refs, artifact refs, and content hashes,
-- v0 avoids prematurely mapping arbitrary portable schemas to generated Cap'n Proto data messages.
+- v0 avoids prematurely mapping arbitrary portable schemas to generated data messages.
 
-Future work may add Cap'n Proto value artifacts for compatible schemas.
+Future work may add alternate value artifacts for compatible schemas.
 
 ### Plan Artifact Encoding
 
-Current decision: the compiled `WorkflowPlan` and bundle manifests are Cap'n Proto (`workflow-plan.capnp`, `bundle-manifest.capnp`), with a documented JSON projection for human-diffable fixtures.
+Decision (July 2026): the compiled `WorkflowPlan` and manifests are canonical JSON artifacts typed by proto3 schemas (`workflow-plan.proto`, `bundle-manifest.proto`). Cap'n Proto has been dropped from the v0 plan and manifest contract.
 
-Tension to re-evaluate at M1:
+Rationale:
 
-- `planHash` is computed over the canonical field tree (RFC 8785), never over Cap'n Proto wire bytes — the binary encoding contributes nothing to artifact identity.
-- The JSON projection currently carries all conformance and review weight; the Cap'n Proto artifact has no consumer yet.
-- Cap'n Proto is a whole extra toolchain (codegen, CLI, Go bindings) in a v0 that already spans TypeScript and Go.
-
-Checkpoint at M1: if no consumer needs the binary encoding by then (the local orchestrator could read canonical JSON just as well), make canonical JSON the plan artifact and drop the Cap'n Proto toolchain before M4 hardening bakes it in. Keep the decision reversible until then by keeping all plan semantics in the shared field tree, not in encoding-specific behavior.
+- `planHash` is computed over the canonical field tree (RFC 8785), never over binary wire encodings, so binary bytes do not contribute to artifact identity.
+- The JSON body carried all conformance and review weight.
+- Dropping Cap'n Proto removes one extra toolchain from a v0 that already spans TypeScript and Go.
+- Proto schemas keep generated typed bindings available without making the wire format the artifact contract.
 
 ## Environment Materialization
 
@@ -277,14 +276,14 @@ Open questions:
 
 - Should MinIO be mandatory for CI, or should S3-compatible tests be optional in v0?
 - Should Argo cluster tests run against OrbStack/minikube locally only, or also in CI through kind?
-- Should conformance fixtures be checked in as Cap'n Proto binary plans, text dumps, or both?
+- Should conformance fixtures include generated proto descriptor sets in addition to JSON artifacts?
 - How strict should golden bundle tests be before provenance and deterministic ordering are fully stable?
 
 Current v0 direction:
 
 - use canonical `WorkflowSpec` JSON fixtures at the SDK boundary,
 - use Go deterministic JSON dumps of parsed specs for conformance assertions,
-- add Cap'n Proto binary `WorkflowPlan` fixtures after Go compilation is implemented.
+- use canonical JSON `WorkflowPlan` fixtures typed by proto schemas after Go compilation is implemented.
 
 ## Market Positioning
 

@@ -2,11 +2,11 @@
 
 Status: draft
 
-Massive's canonical compiled artifact is a Cap'n Proto `WorkflowPlan`. The v0 schema lives at [`../../conformance/schema/workflow-plan.capnp`](../../conformance/schema/workflow-plan.capnp), with target bundle output described by [`../../conformance/schema/bundle-manifest.capnp`](../../conformance/schema/bundle-manifest.capnp).
+Massive's canonical compiled artifact is a JSON `WorkflowPlan` typed by proto3 schemas. The v0 schema lives at [`../../conformance/schema/workflow-plan.proto`](../../conformance/schema/workflow-plan.proto), with target bundle output described by [`../../conformance/schema/bundle-manifest.proto`](../../conformance/schema/bundle-manifest.proto).
 
 The TypeScript SDK is not the source of truth. It is the first authoring frontend. The schema stays language-neutral so other authoring SDKs remain possible, but TypeScript/JavaScript is the only authoring frontend planned for now.
 
-For v0, frontend SDKs emit deterministic `WorkflowSpec` JSON that conforms to the shared schema. The Go compiler is the first required Cap'n Proto binary writer. This avoids making every SDK responsible for byte-stable Cap'n Proto encoding while the schema is still moving.
+For v0, frontend SDKs emit deterministic `WorkflowSpec` JSON that conforms to the shared schema. The Go compiler emits canonical JSON `WorkflowPlan` and manifest artifacts typed by the proto schemas. This avoids making artifact identity depend on any binary wire encoding while the schema is still moving.
 
 ## WorkflowSpec
 
@@ -32,7 +32,7 @@ Target requests are part of the `WorkflowSpec` rather than only CLI arguments. T
 
 Targets are allowed to support different feature subsets. The Go compiler owns target compatibility checks and should produce explicit diagnostics when a target cannot represent a requested graph shape, execution contract, environment, secret mode, network intent, or storage requirement. Unsupported target features are compile-time errors unless the target has a documented degraded mode and the spec explicitly allows that degradation.
 
-`WorkflowSpec` is content-addressed by a `specHash` over its canonical field tree. The hash is not computed over JSON whitespace and is not computed over Cap'n Proto wire bytes.
+`WorkflowSpec` is content-addressed by a `specHash` over its canonical field tree. The hash is not computed over JSON whitespace or any binary wire encoding.
 
 The emitting SDK is responsible for language-specific validation before it writes a `WorkflowSpec`. For TypeScript, that includes resolving module/export symbols against the source package and checking that the authoring-time step declarations can be lowered into portable schemas and contracts. Any future authoring SDK must perform the equivalent language-specific checks before emitting the same portable spec shape. The Go compiler validates the emitted spec as a portable artifact: schema conformance, graph integrity, contract references, target requests, datastore references, and backend-specific invariants. It should not need to understand each frontend language's import or reflection rules.
 
@@ -119,11 +119,11 @@ The compiled plan joins three surfaces:
 - `ExecutionContract`: portable execution requirements.
 - backend/materialization references: code packages, environment artifacts, datastore paths, target metadata, provenance, and compiler version.
 
-The Go compiler consumes a `WorkflowSpec`, validates it, resolves target inputs, materializes or records environments, writes package and datastore references, and emits a Cap'n Proto `WorkflowPlan`.
+The Go compiler consumes a `WorkflowSpec`, validates it, resolves target inputs, materializes or records environments, writes package and datastore references, and emits a canonical JSON `WorkflowPlan`.
 
-The plan should be content-addressed and hashable. Same source inputs, compiler version, target config, patches, environment inputs, and materializer settings should produce the same canonical plan hash. Hashes are computed over canonical field trees, not raw Cap'n Proto segment bytes, because valid Cap'n Proto messages can have different byte layouts.
+The plan should be content-addressed and hashable. Same source inputs, compiler version, target config, patches, environment inputs, and materializer settings should produce the same canonical plan hash. Hashes are computed over canonical field trees, not raw JSON whitespace or binary wire encodings.
 
-Human-diffable fixtures should use the deterministic JSON projection documented in [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md). That projection is a conformance aid only; runners consume the persisted Cap'n Proto plan and target manifests.
+Plan fixtures and persisted plans use the deterministic canonical JSON encoding documented in [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md). Runners consume the persisted proto-typed JSON plan and target manifests.
 
 Canonical plans and target bundle manifests must not include wall-clock timestamps. Compiler identity, compiler version, source/spec hashes, materialized artifact refs, and validation results belong in canonical provenance; compile time and bundle emission time are side metadata if they are needed later.
 
@@ -199,13 +199,13 @@ Normative key templates are frozen in [`conformance/schema/datastore-layout.md`]
 ```text
 blobs/sha256/<digest>
 specs/<spec-key>/workflow-spec.json
-envs/<env-key>/manifest.capnp
+envs/<env-key>/manifest.json
 envs/<env-key>/runtime.tar.zst
-packages/<package-key>/source-manifest.capnp
+packages/<package-key>/source-manifest.json
 packages/<package-key>/source.tar.zst
-plans/<plan-key>/workflow.capnp
-plans/<plan-key>/provenance.capnp
-targets/<plan-key>/<target>/bundle-manifest.capnp
+plans/<plan-key>/workflow.json
+plans/<plan-key>/provenance.json
+targets/<plan-key>/<target>/bundle-manifest.json
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
 projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
@@ -213,7 +213,7 @@ projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```
 
-The exact path format should be specified in the Cap'n Proto manifest, not hardcoded by backend runners.
+The exact path format should be specified in the proto-typed JSON manifest, not hardcoded by backend runners.
 
 Compiled artifacts are globally content-addressed inside the configured datastore. Run metadata and run outputs are namespaced by project key so local run history stays organized without losing deduplication for source packages, specs, plans, and environment artifacts.
 
@@ -231,7 +231,7 @@ Every run consumes a compiled plan. Local development may auto-compile, but the 
 massive run --local
   -> emit WorkflowSpec if source changed
   -> Go compile if spec changed
-  -> write plan to ~/.massive/store/plans/<plan-key>/workflow.capnp
+  -> write plan to ~/.massive/store/plans/<plan-key>/workflow.json
   -> execute compiled plan
 ```
 
@@ -249,7 +249,7 @@ For TypeScript v0, the adapter should live with the TypeScript SDK package. That
 
 The step invocation descriptor is the narrow runtime protocol between Go orchestration and language adapters.
 
-V0 serializes this descriptor as JSON for ease of implementation in TypeScript. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so it can later be serialized as Cap'n Proto without changing its semantics.
+V0 serializes this descriptor as JSON for ease of implementation in TypeScript. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so a future transport can reuse the same semantics.
 
 It includes:
 
@@ -295,7 +295,7 @@ Example:
 }
 ```
 
-Future Cap'n Proto transport should reuse the same logical fields. Runtime adapters should isolate descriptor parsing from step execution so the JSON transport can be replaced without rewriting symbol loading or step invocation logic.
+Any future descriptor transport should reuse the same logical fields. Runtime adapters should isolate descriptor parsing from step execution so the JSON transport can be replaced without rewriting symbol loading or step invocation logic.
 
 ## Runtime Data Artifacts
 
@@ -309,9 +309,9 @@ Each artifact records:
 - datastore key,
 - producing run, node, and attempt when applicable.
 
-The plan, environment manifests, source manifests, and bundle manifests may use Cap'n Proto where Go writes them. User data values remain JSON in v0 because portable authoring schemas lower to JSON Schema and language adapters can validate JSON-shaped values directly.
+The plan, environment manifests, source manifests, and bundle manifests are canonical JSON artifacts typed by proto schemas. User data values also remain JSON in v0 because portable authoring schemas lower to JSON Schema and language adapters can validate JSON-shaped values directly.
 
-This is a runtime data decision, not a compiler boundary retreat. The compiled plan still records the schema refs, artifact refs, and hashes needed to validate and reproduce execution. Future work may add Cap'n Proto value artifacts for compatible schemas, but v0 does not require mapping arbitrary portable JSON Schema values into generated Cap'n Proto data schemas.
+This is a runtime data decision, not a compiler boundary retreat. The compiled plan still records the schema refs, artifact refs, and hashes needed to validate and reproduce execution. Future work may add alternate value artifacts for compatible schemas, but v0 does not require mapping arbitrary portable JSON Schema values into generated data schemas.
 
 ## Plan Hash
 
