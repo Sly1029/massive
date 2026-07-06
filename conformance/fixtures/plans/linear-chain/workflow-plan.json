@@ -4,11 +4,9 @@
       "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
       "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
       "network": { "egress": "none" },
-      "resources": { "cpu": "500m", "memory": "512Mi" },
-      "secrets": []
+      "resources": { "cpu": "500m", "memory": "512Mi" }
     }
   ],
-  "datastoreManifests": [],
   "environments": [
     {
       "envRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
@@ -32,7 +30,6 @@
         "id": "double",
         "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "kind": "step",
-        "mergeInputs": [],
         "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "symbolRef": "linear-chain/double"
       },
@@ -41,7 +38,6 @@
         "id": "increment",
         "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "kind": "step",
-        "mergeInputs": [],
         "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "symbolRef": "linear-chain/increment"
       },
@@ -50,7 +46,6 @@
         "id": "label",
         "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "kind": "step",
-        "mergeInputs": [],
         "outputSchema": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
         "symbolRef": "linear-chain/label"
       },
@@ -81,9 +76,9 @@
     {
       "language": "typescript",
       "manifest": {
-        "contentType": "application/vnd.capnp",
+        "contentType": "application/json",
         "hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source-manifest.capnp"
+        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source-manifest.json"
       },
       "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "packageId": "ts-main",
@@ -117,6 +112,5 @@
       "packageId": "ts-main",
       "symbolRef": "linear-chain/label"
     }
-  ],
-  "targets": []
+  ]
 }

@@ -83,7 +83,7 @@ node@22.12.0 + linux/amd64 + pnpm@9 + lock:<hash> + package:<hash>
 Example Argo materialization output:
 
 ```text
-s3://bucket/envs/node/<env-key>/manifest.capnp
+s3://bucket/envs/node/<env-key>/manifest.json
 s3://bucket/envs/node/<env-key>/runtime.tar.zst
 ```
 
@@ -130,7 +130,7 @@ Container environments still emit environment manifests. The manifest records th
 Example:
 
 ```text
-envs/<env-key>/manifest.capnp
+envs/<env-key>/manifest.json
   kind: container
   image: ghcr.io/acme/workflow@sha256:...
   materialization: skipped

@@ -15,9 +15,9 @@ dist/argo/<workflow-name>/
   workflow-template.yaml
   network-policy.yaml
   service-account.patch.yaml
-  massive-plan.capnp
-  provenance.capnp
-  bundle-manifest.capnp
+  massive-plan.json
+  provenance.json
+  bundle-manifest.json
   values.schema.json
 ```
 
@@ -112,7 +112,7 @@ argoTarget({
    secrets, egress.
 
 9. Emit Bundle
-   Canonical YAML, workflow.capnp, provenance sidecar, bundle manifest.
+   Canonical YAML, workflow.json, provenance sidecar, bundle manifest.
 ```
 
 System mediation runs after user patches. Users can customize generated YAML freely, then the compiler reasserts secret/network/runtime wiring in a controlled stage.
@@ -135,7 +135,7 @@ The full pipeline above is the target architecture, not the first implementation
    Enforce dag-integrity, plan-provenance, and identity-set.
 
 5. Emit Bundle
-   Emit canonical YAML, workflow.capnp, and bundle-manifest.capnp.
+   Emit canonical YAML, workflow.json, and bundle-manifest.json.
 ```
 
 Presets, plugins, user patches, system mediation, field-level provenance explanations, secret binding, and network policy enforcement are deferred until after the SDK -> spec -> Go -> Argo execution path works end to end.

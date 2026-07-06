@@ -92,7 +92,7 @@ For v0, the recommended local stack is:
 - Deno for the v0 local runner and SDK functional tests,
 - `tsgo` for TypeScript validation,
 - Go toolchain if backend compilers are written in Go,
-- Cap'n Proto compiler (`capnp`) for schema compile and round-trip conformance checks,
+- Protocol Buffers compiler (`protoc`) for schema compile and protojson round-trip conformance checks,
 - Docker or compatible container runtime,
 - OrbStack or minikube Kubernetes cluster,
 - Argo Workflows installed in a test namespace,
@@ -132,9 +132,9 @@ That test expects the active Kubernetes context to be `orbstack`, Argo Workflows
 The current recommended split is:
 
 - TypeScript for the authoring SDK and developer-facing workflow definitions,
-- Cap'n Proto as the shared IR boundary,
+- proto-typed canonical JSON as the compiled-artifact boundary,
 - Go for backend compilers, datastore tooling, Argo bundle generation, and future target compilers.
 
 This split is reasonable because it keeps the authoring layer close to TypeScript users while putting the portable compiler and backend machinery in a language with strong static binaries, Kubernetes libraries, good concurrency, and straightforward distribution.
 
-The cost is schema discipline. The TypeScript SDK cannot become the real source of truth for semantics if Go owns backend compilation. Shared behavior must live in the Cap'n Proto schema, conformance fixtures, and golden functional tests that both languages consume.
+The cost is schema discipline. The TypeScript SDK cannot become the real source of truth for semantics if Go owns backend compilation. Shared behavior must live in proto schemas, conformance fixtures, and golden functional tests that both languages consume.

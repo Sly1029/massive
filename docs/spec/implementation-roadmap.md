@@ -36,11 +36,11 @@ Ground truth as of this revision. The spec docs describe the **target** architec
 
 - `conformance/graph-catalog.json` and generated `conformance/graph-catalog.md` — canonical v0 graph shapes (passthrough, linear, diamond, fan-in variants, etc.) keyed by stable case IDs.
 - `conformance/schema/workflow-spec.schema.json` — shared `WorkflowSpec` JSON Schema (draft 2020-12). Validating shape fixtures under `conformance/fixtures/specs/` for `passthrough`, `linear-chain`, `diamond`, and `invalid-missing-contract-ref`; checked by `pnpm check:conformance`.
-- `conformance/schema/workflow-plan.capnp` and `bundle-manifest.capnp` — Cap'n Proto schemas for `WorkflowPlan` and bundle manifests, plus a documented JSON projection in `workflow-plan-json-projection.md`. Real `capnp compile` and Go encode/decode round-trip tests in `conformance/schema/capnp_schema_test.go`; checked by `pnpm check:capnp`.
+- `conformance/schema/workflow-plan.proto` and `bundle-manifest.proto` — proto3 schemas for `WorkflowPlan` and bundle manifests. Canonical JSON is the artifact body, documented in `workflow-plan-json-projection.md`. `protoc` compile and protojson round-trip tests live in `conformance/schema/proto_schema_test.go`; checked by `pnpm check:proto`.
 - `conformance/schema/step-invocation-descriptor.schema.json` — `StepInvocationDescriptor` JSON Schema with a golden fixture under `conformance/fixtures/descriptors/`; checked by `pnpm check:conformance`.
 - `conformance/schema/datastore-layout.md` — frozen key templates, digest encoding, and project-key normalization (WS-0.5).
 - `conformance/schema/hashing.md` — canonical hashing spec with golden vectors under `conformance/fixtures/hashing/`, tested cross-language by `packages/sdk/test/hashing.test.ts` (TS) and `conformance/schema/hashing_vector_test.go` (Go).
-- `conformance/fixtures/plans/` — golden `WorkflowPlan` JSON projections for passthrough, linear-chain, and diamond, checked for structural consistency against the spec fixtures.
+- `conformance/fixtures/plans/` — golden `WorkflowPlan` JSON artifacts for passthrough, linear-chain, and diamond, checked for structural consistency against the spec fixtures.
 - `go.mod` — module `github.com/Sly1029/massive`, Go 1.24.4. Go code today is limited to the schema conformance tests above; there is no `WorkflowSpec` → `WorkflowPlan` compiler yet.
 
 **What does NOT exist yet:**
@@ -49,10 +49,10 @@ Ground truth as of this revision. The spec docs describe the **target** architec
 - No environment materialization.
 - No `massive.config.ts`, no CLI (`massive run`), no zero-config resolution.
 - No real Argo `WorkflowTemplate` and no cluster execution of real steps.
-- No Go compiler beyond the Cap'n Proto schema conformance test.
+- No Go compiler beyond the proto schema conformance test.
 - `packages/sdk` still exposes the in-memory `run.ts` path and placeholder `argo.ts` (not refactored to `WorkflowSpec` emission or the compiled-artifact execution path).
 
-**Gap summary:** the WS-0 contracts have landed (graph catalog, `WorkflowSpec` + descriptor schemas, Cap'n Proto plan/manifest schemas, datastore layout, hashing spec, golden fixtures), but the interesting, defensible idea (a portable typed graph **plus** an `ExecutionContract` the compiler enforces against real backends) is still unbuilt in executable form. The SDK emits plans, not specs; Go validates schemas, it does not compile. The first job remains to make one workflow execute for real through the compiled-artifact path — locally, then on Argo — not to add more backends.
+**Gap summary:** the WS-0 contracts have landed (graph catalog, `WorkflowSpec` + descriptor schemas, proto-typed JSON plan/manifest schemas, datastore layout, hashing spec, golden fixtures), but the interesting, defensible idea (a portable typed graph **plus** an `ExecutionContract` the compiler enforces against real backends) is still unbuilt in executable form. The SDK emits plans, not specs; Go validates schemas, it does not compile. The first job remains to make one workflow execute for real through the compiled-artifact path — locally, then on Argo — not to add more backends.
 
 ---
 
@@ -62,7 +62,7 @@ Ground truth as of this revision. The spec docs describe the **target** architec
 TypeScript authoring source
   -> TS SDK emits deterministic WorkflowSpec JSON  (conforms to shared schema)
   -> Go compiler validates spec, materializes/records artifacts
-  -> Go writes Cap'n Proto WorkflowPlan + manifests to the datastore
+  -> Go writes canonical WorkflowPlan JSON + manifests to the datastore
   -> Go orchestrator schedules DAG, emits StepInvocationDescriptors
   -> TS step runner (language adapter) executes each step from the datastore
   -> run artifacts land in the datastore (local FS or S3-compatible)
@@ -88,10 +88,10 @@ The coordination artifact is a top-level **`conformance/`** directory (created i
 
 ```text
 conformance/
-  schema/                     # JSON Schemas + Cap'n Proto schemas (the contracts)
+  schema/                     # JSON Schemas + proto schemas (the contracts)
   fixtures/
     specs/<case>/workflow-spec.json           # golden WorkflowSpec inputs
-    plans/<case>/workflow-plan.json           # golden WorkflowPlan (JSON projection for diffing)
+    plans/<case>/workflow-plan.json           # golden WorkflowPlan JSON
     descriptors/<case>/descriptor.json        # golden StepInvocationDescriptor
     bundles/<case>/argo/...                   # golden Argo bundle output
   graph-catalog.md            # the canonical v0 graph shapes every layer must support
@@ -107,7 +107,7 @@ Every workstream's tests assert against `conformance/`. When a contract must cha
 
 | Milestone | Definition of done | Gated by |
 |-----------|--------------------|----------|
-| **M0 — Contracts frozen** | `conformance/` exists with v0 JSON Schemas, Cap'n Proto schemas, descriptor schema, datastore layout, hashing spec, and at least the passthrough + linear + diamond graph fixtures. | WS-0 |
+| **M0 — Contracts frozen** | `conformance/` exists with v0 JSON Schemas, proto schemas, descriptor schema, datastore layout, hashing spec, and at least the passthrough + linear + diamond graph fixtures. | WS-0 |
 | **M1 — Local round trip** | `massive run workflow.ts` emits a `WorkflowSpec`, Go compiles a `WorkflowPlan` to the datastore, the Go orchestrator drives the TS step runner per step, and real step outputs land in the datastore. The in-memory `run.ts` path is deleted. | WS-1, WS-2, WS-3, WS-4, WS-5, WS-6 |
 | **M2 — Argo executable wedge** | `env.container(...)` workflow compiles to a real `WorkflowTemplate` bundle; a run submitted from it on a local cluster executes real steps that read/write a pod-reachable datastore (MinIO) and reaches Succeeded. `env.node(...)` is rejected for Argo with a clear diagnostic. | WS-7, WS-8 (+ M1) |
 | **M3 — Node env materialization** | `env.node(...)` materializes a real dependency environment from a lockfile, deduped by env key, usable by local and (then) Argo targets. | WS-9 (+ M1) |
@@ -177,10 +177,10 @@ The point of this workstream is to unblock everyone else, so bias toward landing
 - **WS-0.2 — `WorkflowSpec` JSON Schema.** Author the shared schema for `WorkflowSpec` per [ir-and-datastore.md](ir-and-datastore.md): `GraphIR`, schema table, symbol table, source package table, environment table, effective execution-contract table, per-node `contractRef`, target requests. Provide it as a JSON Schema (draft 2020-12) under `conformance/schema/workflow-spec.schema.json`.
   - AC: schema validates a hand-authored spec for the passthrough + linear + diamond cases; rejects a spec missing a `contractRef`.
   - Status: implemented in [`../../conformance/schema/workflow-spec.schema.json`](../../conformance/schema/workflow-spec.schema.json), with validating shape fixtures under [`../../conformance/fixtures/specs`](../../conformance/fixtures/specs) and Ajv-backed checks in `pnpm check:conformance`. The v0 schema covers DAG step nodes and `mergeInputs` fan-in only; channels, branches, foreach/map, and reducers are post-M2 schema work.
-- **WS-0.3 — Cap'n Proto schemas.** Define `workflow-plan.capnp` (`WorkflowPlan` joining `GraphIR` + `ExecutionContract` + materialization refs + provenance) and `bundle-manifest.capnp`, plus a documented **JSON projection** of the plan for human-diffable fixtures.
-  - AC: `capnp compile` succeeds; a round-trip encode/decode test passes in Go.
-  - Status: implemented in [`../../conformance/schema/workflow-plan.capnp`](../../conformance/schema/workflow-plan.capnp), [`../../conformance/schema/bundle-manifest.capnp`](../../conformance/schema/bundle-manifest.capnp), and [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md), with real `capnp` compile and Go encode/decode checks in `pnpm check:capnp`.
-- **WS-0.4 — `StepInvocationDescriptor` schema.** Define the descriptor as a shared schema message (JSON transport for v0) with all fields from [ir-and-datastore.md](ir-and-datastore.md#step-invocation-descriptor). Keep it Cap'n-Proto-compatible.
+- **WS-0.3 — Proto-typed canonical JSON plan schemas.** Define `workflow-plan.proto` (`WorkflowPlan` joining `GraphIR` + `ExecutionContract` + materialization refs + provenance) and `bundle-manifest.proto`, plus a documented canonical JSON encoding of the plan.
+  - AC: `protoc` compile succeeds; a protojson round-trip test preserves the JSON field tree.
+  - Status: supersedes the earlier Cap'n Proto schema checkpoint. Implemented in [`../../conformance/schema/workflow-plan.proto`](../../conformance/schema/workflow-plan.proto), [`../../conformance/schema/bundle-manifest.proto`](../../conformance/schema/bundle-manifest.proto), and [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md), with real `protoc` compile and protojson checks in `pnpm check:proto`.
+- **WS-0.4 — `StepInvocationDescriptor` schema.** Define the descriptor as a shared schema message (JSON transport for v0) with all fields from [ir-and-datastore.md](ir-and-datastore.md#step-invocation-descriptor). Keep the logical fields transport-neutral.
   - AC: JSON Schema under `conformance/schema/step-invocation-descriptor.schema.json`; a golden descriptor validates.
   - Status: implemented in [`../../conformance/schema/step-invocation-descriptor.schema.json`](../../conformance/schema/step-invocation-descriptor.schema.json), with a validating golden fixture at [`../../conformance/fixtures/descriptors/linear-chain/descriptor.json`](../../conformance/fixtures/descriptors/linear-chain/descriptor.json), checked by `pnpm check:conformance`.
 - **WS-0.5 — Datastore layout + key rules.** Freeze the storage layout and content-addressing rules from [ir-and-datastore.md](ir-and-datastore.md#storage-layout) as `conformance/schema/datastore-layout.md`: blob/spec/env/package/plan/target/run key templates, `sha256:<hex>` full-digest keys, project-key normalization.
@@ -189,10 +189,10 @@ The point of this workstream is to unblock everyone else, so bias toward landing
 - **WS-0.6 — Canonical hashing spec.** Specify field-tree canonicalization and hashing for `specHash`, `planHash`, source-package hash, env key, and runtime-artifact hash. Baseline: the sorted-key JSON approach already in `packages/sdk/src/stable.ts`. Document exactly which fields each hash covers (see [Cross-Cutting](#cross-cutting-requirements)).
   - AC: `conformance/schema/hashing.md` with a golden input → expected digest vector that both TS and Go test against.
   - Status: implemented in [`../../conformance/schema/hashing.md`](../../conformance/schema/hashing.md), with golden vectors under [`../../conformance/fixtures/hashing`](../../conformance/fixtures/hashing) and cross-language checks in `packages/sdk/test/hashing.test.ts` and `conformance/schema/hashing_vector_test.go`.
-- **WS-0.7 — Seed golden fixtures.** Produce `conformance/fixtures/specs/<case>/workflow-spec.json` for at least passthrough, linear, and diamond, plus matching `plans/` JSON projections and one `descriptors/` example.
+- **WS-0.7 — Seed golden fixtures.** Produce `conformance/fixtures/specs/<case>/workflow-spec.json` for at least passthrough, linear, and diamond, plus matching `plans/` JSON artifacts and one `descriptors/` example.
   - AC: spec and descriptor fixtures validate against the WS-0.2/WS-0.4 JSON Schemas in CI; plan fixtures (which have no JSON Schema in v0 — see WS-0.8) are checked by structural-consistency and digest assertions against their spec fixtures.
-  - Status: implemented with spec fixtures under [`../../conformance/fixtures/specs`](../../conformance/fixtures/specs), plan JSON projections under [`../../conformance/fixtures/plans`](../../conformance/fixtures/plans), and a descriptor example at [`../../conformance/fixtures/descriptors/linear-chain/descriptor.json`](../../conformance/fixtures/descriptors/linear-chain/descriptor.json), checked by `pnpm check:conformance`.
-- **WS-0.8 — `WorkflowPlan` projection JSON Schema.** Author a JSON Schema for the plan JSON projection documented in `workflow-plan-json-projection.md`, so plan fixtures are schema-validated rather than only structurally spot-checked. *(depends: WS-0.3; off the critical path)*
+  - Status: implemented with spec fixtures under [`../../conformance/fixtures/specs`](../../conformance/fixtures/specs), plan JSON artifacts under [`../../conformance/fixtures/plans`](../../conformance/fixtures/plans), and a descriptor example at [`../../conformance/fixtures/descriptors/linear-chain/descriptor.json`](../../conformance/fixtures/descriptors/linear-chain/descriptor.json), checked by `pnpm check:conformance`.
+- **WS-0.8 — `WorkflowPlan` JSON Schema.** Author a JSON Schema for the plan JSON artifact documented in `workflow-plan-json-projection.md`, so plan fixtures are schema-validated rather than only structurally spot-checked. *(depends: WS-0.3; off the critical path)*
   - AC: `conformance/fixtures/plans/` fixtures validate against it in CI; unblocks stronger WS-2.3 conformance assertions.
 
 ### WS-1 — TS SDK: `WorkflowSpec` Emission  *(depends: WS-0)*
@@ -201,28 +201,34 @@ Refactor `packages/sdk` from JSON *plan* compilation to `WorkflowSpec` *emission
 
 - **WS-1.1 — Introduce the `WorkflowSpec` emitter.** New `packages/sdk/src/emit.ts` that lowers a `WorkflowBuilder` into `WorkflowSpec` JSON conforming to `conformance/schema/workflow-spec.schema.json`. Reuse `lowerPortableSchema` (`schema.ts`) for the schema table and `stable.ts` for `specHash`.
   - AC: emits valid specs for every graph-catalog case; `specHash` matches the WS-0.6 vector; validated against the JSON Schema in tests.
+  - Status: implemented in `packages/sdk/src/emit.ts`, tested by `packages/sdk/test/emit.test.ts` (schema validation across all graph-catalog cases, determinism, `specHash` self-exclusion per `hashing.md`).
 - **WS-1.2 — Symbol table + source-package manifest.** Emit stable symbol IDs (`packageId` + module + export) and a source-package manifest listing exact files + content hashes (extend the existing globbing in `compile.ts`).
   - AC: symbols are stable across runs; manifest lists exact files/hashes; a changed source file changes the package hash and nothing else.
+  - Status: implemented in `packages/sdk/src/emit.ts` + `compile.ts` (source-package manifest with per-file `sha256:<hex>` hashes); package-hash sensitivity covered in `emit.test.ts`.
 - **WS-1.3 — Execution-contract merge → effective contracts.** Implement `contract()`, `env.node()`, `env.container()`, `net.*`, `secret.ref()` authoring primitives ([authoring-model.md](authoring-model.md#execution-contracts-in-authoring)); merge workflow defaults with step overrides into effective contracts deduped by content hash; emit the environment table keyed by env-spec hash; put `contractRef` on every executable node.
   - AC: two steps with the same effective env share one env-table entry even if resources/secrets differ; every step node has a `contractRef`.
+  - Status: implemented in `packages/sdk/src/contract.ts` (authoring primitives + merge) and `emit.ts` (dedup by content hash, env table keyed by env-spec hash); covered in `emit.test.ts`.
 - **WS-1.4 — `massive.config.ts` + target requests.** Implement `defineWorkflowPackage(...)` ([ir-and-datastore.md](ir-and-datastore.md#source-packages)) with `include`, `entrypoint`, `environment`, `targets` (`target.local`, `target.argo`). Emit target requests into the spec.
   - AC: a package config produces a spec with the requested targets; Argo target request round-trips into the spec.
+  - Status: implemented in `packages/sdk/src/config.ts` (`defineWorkflowPackage`, `target.local`, `target.argo`); targets participate in `specHash`; covered in `packages/sdk/test/config.test.ts`.
 - **WS-1.5 — Entrypoint resolution + zero-config.** Implement `workflow.ts`, `workflow.ts#named`, ambiguity error on multiple exports, and directory resolution via config. Zero-config single-file synthesizes an ephemeral config with `local` target only; deployable targets require explicit config.
   - AC: all four resolution cases behave per [open-questions.md](open-questions.md#workflow-entrypoints-and-package-roots); zero-config refuses to request Argo.
+  - Status: implemented in `packages/sdk/src/resolve.ts`; all resolution cases + zero-config Argo refusal covered in `packages/sdk/test/resolve.test.ts` against real temp-dir fixtures.
 - **WS-1.6 — Remove the in-memory runtime as a supported path.** Delete/retire `run.ts` and `argo.ts`'s `runArgoLocal` from the public surface (keep step `run` closures for the *runner* to execute, not for in-SDK execution). Update `index.ts` exports.
   - AC: `index.ts` no longer exports an in-memory `run`; SDK tests assert on emitted spec/artifacts only.
+  - Status: implemented — `run.ts` deleted, `runArgoLocal` removed from `argo.ts`, runtime registries dropped from compiled results, `sdk.test.ts` reworked to assert on emitted plans/artifacts.
 
 ### WS-2 — Go Compiler Core: spec → plan  *(depends: WS-0)*
 
-New `go/` module. Suggested layout: `go/cmd/massive-compiler`, `go/internal/spec`, `go/internal/plan`, `go/internal/capnp` (generated).
+New `go/` module. Suggested layout: `go/cmd/massive-compiler`, `go/internal/spec`, `go/internal/plan`, `go/internal/planpb` (generated).
 
-- **WS-2.1 — Bootstrap the Go module + capnp codegen.** `go.mod`, Cap'n Proto Go bindings generated from WS-0.3, CI wiring, `go test ./...`.
-  - AC: `go build ./...` and generated capnp types compile. WS-0.3 validates schemas with the real `capnp` CLI, but this task still owes an encode/decode test through the generated Go bindings.
+- **WS-2.1 — Bootstrap the Go module + proto codegen.** `go.mod`, protobuf Go bindings generated from WS-0.3, CI wiring, `go test ./...`.
+  - AC: `go build ./...` and generated proto types compile. WS-0.3 validates schemas with the real `protoc` CLI and protojson round-trip test.
 - **WS-2.2 — Read + validate `WorkflowSpec`.** Parse spec JSON; validate portable schema conformance, graph integrity (DAG, reachability, single start/end), contract references exist, symbol references exist, target requests, datastore references.
   - AC: accepts all WS-0.7 valid fixtures; produces a specific diagnostic for a spec with a dangling `contractRef` and for a cyclic graph. Emit deterministic JSON dumps of the parsed spec for conformance assertions.
-- **WS-2.3 — Emit Cap'n Proto `WorkflowPlan`.** Join `GraphIR` + `ExecutionContract` + symbol table + (initially empty) materialization refs + provenance + compiler version; compute `planHash` per WS-0.6.
-  - AC: byte-stable plan for identical inputs; plan JSON projection matches `conformance/fixtures/plans/`.
-  - Decision checkpoint at M1 ([open-questions.md](open-questions.md#plan-artifact-encoding)): `planHash` covers the canonical field tree, not Cap'n Proto wire bytes, and the JSON projection carries all conformance weight today. If at M1 no consumer needs the binary encoding, evaluate making canonical JSON the plan artifact and dropping the Cap'n Proto toolchain before M4 hardening bakes it in.
+- **WS-2.3 — Emit canonical JSON `WorkflowPlan`.** Join `GraphIR` + `ExecutionContract` + symbol table + (initially empty) materialization refs + provenance + compiler version; compute `planHash` per WS-0.6.
+  - AC: byte-stable canonical JSON plan for identical inputs; plan JSON matches `conformance/fixtures/plans/`.
+  - Decision: [open-questions.md](open-questions.md#plan-artifact-encoding) records the July 2026 checkpoint resolution in favor of proto3 schemas with canonical JSON bodies.
 - **WS-2.4 — Topological schedule.** Produce the deterministic execution order used by the local orchestrator and by Argo dependency wiring.
   - AC: diamond and multi-stage fan-in produce correct, stable orders; used by both WS-5 and WS-7.
 
@@ -241,7 +247,7 @@ New `go/` module. Suggested layout: `go/cmd/massive-compiler`, `go/internal/spec
 
 New `packages/sdk/src/runner/` shipping a `massive-step-runner` bin ([ir-and-datastore.md](ir-and-datastore.md#language-runtime-adapters)). Can start against WS-0 descriptor **fixtures** before WS-3.4 lands, then wire real datastore reads.
 
-- **WS-4.1 — Descriptor parsing isolated from execution.** Parse `StepInvocationDescriptor` JSON; keep parsing separate from execution so a future Cap'n Proto transport swaps in cleanly.
+- **WS-4.1 — Descriptor parsing isolated from execution.** Parse `StepInvocationDescriptor` JSON; keep parsing separate from execution so a future transport swaps in cleanly.
   - AC: parses all `conformance/fixtures/descriptors/`; rejects a malformed descriptor with a clear error.
 - **WS-4.2 — Source package fetch + symbol resolution.** Fetch/unpack the referenced source package from the datastore; import the module/export symbol.
   - AC: given a descriptor pointing at a fixture package, resolves and loads the exported step function.
@@ -284,7 +290,7 @@ Implement only the executable wedge from [argo-backend.md](argo-backend.md#v0-ex
   - AC: invalid generated YAML is caught in an offline test; valid YAML passes.
 - **WS-7.4 — Minimal invariants.** Enforce `dag-integrity`, `plan-provenance`, `identity-set` ([argo-backend.md](argo-backend.md#invariants)).
   - AC: each invariant has a passing case and a deliberately-broken failing case.
-- **WS-7.5 — Bundle emission.** Emit canonical `workflow-template.yaml`, `massive-plan.capnp`, `bundle-manifest.capnp` into `dist/argo/<workflow>/`; bundle manifest records all artifacts.
+- **WS-7.5 — Bundle emission.** Emit canonical `workflow-template.yaml`, `massive-plan.json`, `bundle-manifest.json` into `dist/argo/<workflow>/`; bundle manifest records all artifacts.
   - AC: bundle matches `conformance/fixtures/bundles/`; deterministic (no timestamps, sorted keys).
 
 ### WS-8 — Argo Cluster Test Harness (→ M2)  *(depends: WS-7)*
@@ -300,7 +306,7 @@ Build against contracts; do **not** block the M2 wedge. See [environment-materia
 
 - **WS-9.1 — Env key calculation.** Compute the Node env key from env kind, Node version, package manager (+version), lockfile hash, manifest hash, workspace package hashes, platform, arch, materializer version, build args.
   - AC: two workflows with identical dependency inputs share a key; a lockfile change changes the key; a resource-limit change does not.
-- **WS-9.2 — Materialization artifact shape.** Decide + implement tarball vs OCI layer vs backend-specific ([open-questions.md](open-questions.md)); produce `envs/<env-key>/manifest.capnp` + `runtime.tar.zst` (or chosen shape).
+- **WS-9.2 — Materialization artifact shape.** Decide + implement tarball vs OCI layer vs backend-specific ([open-questions.md](open-questions.md)); produce `envs/<env-key>/manifest.json` + `runtime.tar.zst` (or chosen shape).
   - AC: real materialization from a small committed fixture package with a lockfile; manifest records source hashes, platform, digests, entrypoint.
 - **WS-9.3 — Local target consumption.** Local runner uses materialized env; reuse local package-manager caches where possible; record manifest + hashes.
   - AC: local run of a node-env workflow uses the materialized env, not the ambient environment.
@@ -324,14 +330,14 @@ Build against contracts; do **not** block the M2 wedge. See [environment-materia
 
 ## Cross-Cutting Requirements
 
-**Hashing (owned by WS-0.6, consumed everywhere).** All hashes are over canonical field trees canonicalized per **RFC 8785 (JCS)** with a v0 safe-integer number restriction — see `conformance/schema/hashing.md`. Never over JSON whitespace or Cap'n Proto wire bytes. The `stable.ts` implementation is the normative baseline. Documented coverage:
+**Hashing (owned by WS-0.6, consumed everywhere).** All hashes are over canonical field trees canonicalized per **RFC 8785 (JCS)** with a v0 safe-integer number restriction — see `conformance/schema/hashing.md`. Never over JSON whitespace or binary wire encodings. The `stable.ts` implementation is the normative baseline. Documented coverage:
 
 - `specHash`: the full `WorkflowSpec` field tree.
 - `sourcePackageHash`: exact file list + per-file content hashes.
 - env key: environment-relevant inputs only (WS-9.1) — never resources/secrets/network/scheduling.
 - `planHash`: spec hash + GraphIR + ExecutionContract + symbol table + target config + patches + compiler version + env materialization refs + datastore manifest refs + mediation provider identity ([ir-and-datastore.md](ir-and-datastore.md#plan-hash)).
 - Keys use full `sha256:<hex>`; manifests record the algorithm; UI may shorten for display only.
-- Wall-clock timestamps are not part of canonical compiled artifacts, bundle manifests, hash coverage, or JSON projections. If audit timing is needed later, store it in side metadata outside `WorkflowPlan` and `TargetBundleManifest`.
+- Wall-clock timestamps are not part of canonical compiled artifacts, bundle manifests, hash coverage, or JSON artifacts. If audit timing is needed later, store it in side metadata outside `WorkflowPlan` and `TargetBundleManifest`.
 
 **Security / policy (org requirements — flag in review).** Anything touching secrets, network egress, service accounts, or the datastore credential path warrants explicit review. Never hardcode credentials — env vars or AWS Managed Secrets only. Don't log customer code/PII/tokens. New package-manager manifests (`go.mod`, any new `package.json`, lockfiles) must carry the org-mandated cooldown settings; GitHub Actions must be pinned to full commit SHAs with a version comment. The sidecar/secret-mediation model in [argo-backend.md](argo-backend.md#runtime-mediation) is reserved but out of v0 scope.
 

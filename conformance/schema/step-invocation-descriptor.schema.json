@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://massive.dev/conformance/schema/step-invocation-descriptor.schema.json",
   "title": "Massive StepInvocationDescriptor",
-  "description": "V0 StepInvocationDescriptor JSON transport between backend orchestration and language runtime adapters. The logical field shape is kept compatible with future Cap'n Proto transport.",
+  "description": "V0 StepInvocationDescriptor JSON transport between backend orchestration and language runtime adapters. The logical field shape is kept compatible with future transports.",
   "type": "object",
   "additionalProperties": false,
   "required": [

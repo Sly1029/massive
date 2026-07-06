@@ -59,12 +59,19 @@ must reproduce them byte for byte, and the golden vector exercises each rule.
   hashed field trees (owed by the Go compiler workstream, WS-2).
 
 Hashes are over canonical field trees, never over JSON source whitespace and
-never over Cap'n Proto wire bytes. Canonical compiled artifacts, bundle
-manifests, JSON projections, and hash coverage must not include wall-clock
+never over binary wire encodings. Canonical compiled artifacts, bundle
+manifests, JSON artifacts, and hash coverage must not include wall-clock
 timestamps. If audit timing is needed, it belongs in side metadata outside the
 hashed artifact.
 
 ## Hash Coverage
+
+Self-exclusion rule: when an artifact records its own digest as a member of
+its field tree (`specHash` in a `WorkflowSpec`, `planHash` in a
+`WorkflowPlan`), that member is excluded from its own coverage. Compute the
+digest over the field tree with the self-referencing member absent, then
+record the result in that member. All other digest members (for example
+`specHash` inside a plan) are covered normally.
 
 ### `specHash`
 
@@ -100,7 +107,7 @@ write time, compile time, run IDs, or any other wall-clock timestamp.
 - mediation provider identity.
 
 The hash is computed from the canonical field tree used for the plan's JSON
-projection, not from Cap'n Proto segment bytes. Generated deploy artifacts must
+artifact, not from binary wire bytes. Generated deploy artifacts must
 carry the `planHash`; backends must reject runs when the annotation is missing
 or mismatched.
 
