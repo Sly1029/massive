@@ -1,9 +1,4 @@
 import {
-  hashSourcePackage,
-  type SourceSpec,
-  validateGraphShape,
-} from "./compile.ts";
-import {
   contract,
   type ContractSpec,
   contractSpecOf,
@@ -17,8 +12,15 @@ import {
 } from "./contract.ts";
 import type { WorkflowPackageConfig, WorkflowSpecTarget } from "./config.ts";
 import { GraphValidationError } from "./errors.ts";
+import { validateGraphShape } from "./graph-validate.ts";
 import { lowerPortableSchema } from "./schema.ts";
-import { compareCodeUnits, type JsonValue, sha256RefText, stableStringify } from "./stable.ts";
+import { hashSourcePackage, type SourceSpec } from "./source-package.ts";
+import {
+  compareCodeUnits,
+  type JsonValue,
+  sha256RefText,
+  stableStringify,
+} from "./stable.ts";
 import {
   END_NODE,
   START_NODE,
@@ -224,9 +226,11 @@ export async function emitWorkflowSpec<Input, Output>(
     },
     environments: sortedRecord(environments),
     contracts: sortedRecord(contracts),
-    targets: [...(options.targets ?? options.package?.targets ?? [{
-      kind: "local" as const,
-    }])],
+    targets: [
+      ...(options.targets ?? options.package?.targets ?? [{
+        kind: "local" as const,
+      }]),
+    ],
   };
 
   return {
@@ -254,7 +258,9 @@ function emitSourceSpec(options: EmitWorkflowSpecOptions): EmitSourceSpec {
 
 function moduleFromEntrypoint(entrypoint: string): string {
   const hashIndex = entrypoint.lastIndexOf("#");
-  const modulePath = hashIndex === -1 ? entrypoint : entrypoint.slice(0, hashIndex);
+  const modulePath = hashIndex === -1
+    ? entrypoint
+    : entrypoint.slice(0, hashIndex);
   return modulePath.startsWith(".") ? modulePath : `./${modulePath}`;
 }
 

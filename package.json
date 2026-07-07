@@ -9,7 +9,6 @@
     "check:conformance": "deno test --config deno.json --allow-read --allow-sys=cpus packages/sdk/test/conformance.test.ts && pnpm check:proto",
     "check:types": "npx tsgo --noEmit -p tsconfig.json",
     "test": "deno test --config deno.json --allow-read --allow-write --allow-run=go --allow-net --allow-env --allow-sys=cpus,osRelease packages/sdk/test/sdk.test.ts packages/sdk/test/conformance.test.ts packages/sdk/test/hashing.test.ts packages/sdk/test/emit.test.ts packages/sdk/test/config.test.ts packages/sdk/test/resolve.test.ts packages/sdk/test/datastore-client.test.ts packages/sdk/test/runner.test.ts",
-    "test:argo-cluster": "deno test --config deno.json --allow-read --allow-write --allow-run=argo --allow-sys=cpus packages/sdk/test/argo-cluster.test.ts",
     "check": "pnpm check:mocks && pnpm check:types && pnpm test && pnpm check:go",
     "check:go": "go vet ./... && go test ./..."
   },

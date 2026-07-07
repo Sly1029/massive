@@ -2,7 +2,7 @@ import { assert, assertEquals, assertInstanceOf } from "jsr:@std/assert";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Datastore, datastore } from "../src/datastore.ts";
+import { type Datastore, datastore } from "../src/datastore/index.ts";
 import {
   parseStepInvocationDescriptor,
   type StepInvocationDescriptor,
