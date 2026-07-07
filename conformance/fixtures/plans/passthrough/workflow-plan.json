@@ -3,8 +3,7 @@
     {
       "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
       "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
-      "network": { "egress": "none" },
-      "resources": { "cpu": "500m", "memory": "512Mi" }
+      "network": { "egress": "none" }
     }
   ],
   "environments": [
@@ -58,6 +57,5 @@
       }
     }
   ],
-  "specHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "symbols": []
+  "specHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 }
