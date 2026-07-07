@@ -45,14 +45,12 @@ Ground truth as of this revision. The spec docs describe the **target** architec
 
 **What does NOT exist yet:**
 
-- No S3/MinIO datastore.
 - No environment materialization.
-- No `massive.config.ts`, no CLI (`massive run`), no zero-config resolution.
+- No Go local orchestrator (WS-5) and no CLI `massive run` glue (WS-6) — the compiled-artifact path has all its pieces but nothing drives them end to end yet.
 - No real Argo `WorkflowTemplate` and no cluster execution of real steps.
-- No Go compiler beyond the proto schema conformance test.
-- `packages/sdk` still exposes the in-memory `run.ts` path and placeholder `argo.ts` (not refactored to `WorkflowSpec` emission or the compiled-artifact execution path).
+- Legacy `compile.ts`/`argo.ts` plan-JSON surface still exists in the SDK; it retires when WS-6 makes the Go compiler the only plan writer.
 
-**Gap summary:** the WS-0 contracts have landed (graph catalog, `WorkflowSpec` + descriptor schemas, proto-typed JSON plan/manifest schemas, datastore layout, hashing spec, golden fixtures), but the interesting, defensible idea (a portable typed graph **plus** an `ExecutionContract` the compiler enforces against real backends) is still unbuilt in executable form. The SDK emits plans, not specs; Go validates schemas, it does not compile. The first job remains to make one workflow execute for real through the compiled-artifact path — locally, then on Argo — not to add more backends.
+**Gap summary:** WS-0 through WS-4 have landed: contracts, SDK `WorkflowSpec` emission, the Go compiler (`internal/spec`, `internal/plan`, `cmd/massive-compiler`), datastores (Go local/S3 + TS clients), and the TS step runner. What remains for M1 is convergence: the Go local orchestrator (WS-5) driving the runner from compiled plans, and the `massive run` CLI (WS-6). The first job remains one workflow executing for real through the compiled-artifact path — locally, then on Argo.
 
 ---
 
@@ -224,24 +222,32 @@ New `go/` module. Suggested layout: `go/cmd/massive-compiler`, `go/internal/spec
 
 - **WS-2.1 — Bootstrap the Go module + proto codegen.** `go.mod`, protobuf Go bindings generated from WS-0.3, CI wiring, `go test ./...`.
   - AC: `go build ./...` and generated proto types compile. WS-0.3 validates schemas with the real `protoc` CLI and protojson round-trip test.
+  - Status: complete — module bootstrapped with generated `planpb` bindings; protojson round-trip checks in `conformance/schema/proto_schema_test.go`.
 - **WS-2.2 — Read + validate `WorkflowSpec`.** Parse spec JSON; validate portable schema conformance, graph integrity (DAG, reachability, single start/end), contract references exist, symbol references exist, target requests, datastore references.
   - AC: accepts all WS-0.7 valid fixtures; produces a specific diagnostic for a spec with a dangling `contractRef` and for a cyclic graph. Emit deterministic JSON dumps of the parsed spec for conformance assertions.
+  - Status: implemented in `internal/spec` (embedded JSON-Schema validation + typed semantic diagnostics: cycles named, reachability, dangling contract/env/symbol refs, mergeInputs).
 - **WS-2.3 — Emit canonical JSON `WorkflowPlan`.** Join `GraphIR` + `ExecutionContract` + symbol table + (initially empty) materialization refs + provenance + compiler version; compute `planHash` per WS-0.6.
   - AC: byte-stable canonical JSON plan for identical inputs; plan JSON matches `conformance/fixtures/plans/`.
+  - Status: implemented in `internal/plan` + `internal/canonical` (RFC 8785 canonicalizer validated against the shared golden vector); golden tests compare against plan fixtures with digest values normalized (fixtures carry placeholders); byte-stability asserted. CLI: `cmd/massive-compiler`.
   - Decision: [open-questions.md](open-questions.md#plan-artifact-encoding) records the July 2026 checkpoint resolution in favor of proto3 schemas with canonical JSON bodies.
 - **WS-2.4 — Topological schedule.** Produce the deterministic execution order used by the local orchestrator and by Argo dependency wiring.
   - AC: diamond and multi-stage fan-in produce correct, stable orders; used by both WS-5 and WS-7.
+  - Status: implemented as `plan.BuildSchedule` — Kahn order with UTF-16 code-unit tie-breaks and per-node depths; table-driven tests incl. 100-way split/merge.
 
 ### WS-3 — Datastore  *(depends: WS-0.5)*
 
 - **WS-3.1 — Shared datastore contract test suite.** A single suite (Go) that any implementation must pass: put/get/exists, content-type, conditional write, listing, key validation, content-addressing.
   - AC: suite runs against an implementation instance passed in; no mocks.
+  - Status: implemented as `datastore.RunDatastoreContract` in `internal/datastore`.
 - **WS-3.2 — Go local filesystem datastore.** Port `packages/sdk/src/datastore.ts` semantics (atomic temp-rename write, key traversal guards) to Go.
   - AC: passes WS-3.1 in a temp dir.
+  - Status: implemented (`internal/datastore/local.go`), atomic temp+rename writes and traversal guards ported from the TS client.
 - **WS-3.3 — Go S3-compatible datastore.** Endpoint-configurable (`datastore.s3({ endpoint })`) so R2/MinIO work. Test against a real MinIO container.
   - AC: passes WS-3.1 against MinIO; documented as opt-in/tagged if MinIO isn't guaranteed in CI ([open-questions.md](open-questions.md#datastore)).
+  - Status: implemented (`internal/datastore/s3.go`, minio-go, env-only credentials); contract suite runs against a real MinIO container via docker with clean skip when unavailable. Listing stats each object because bucket listings do not carry content types.
 - **WS-3.4 — TS datastore client for the step runner.** The runner needs to fetch source packages/inputs and write outputs. Provide a TS client with the same key rules; support local FS + S3-compatible.
   - AC: TS client and Go client interoperate on the same layout (a Go-written artifact is readable by TS and vice versa) in a functional test.
+  - Status: implemented (`packages/sdk/src/datastore/` local + S3 clients on @aws-sdk/client-s3); cross-process Go↔TS interop test in `packages/sdk/test/datastore-client.test.ts`. Local FS carries a content-type sidecar convention shared by both languages.
 
 ### WS-4 — TS Step Runner (language adapter)  *(depends: WS-0.4, WS-3.4)*
 
@@ -249,12 +255,16 @@ New `packages/sdk/src/runner/` shipping a `massive-step-runner` bin ([ir-and-dat
 
 - **WS-4.1 — Descriptor parsing isolated from execution.** Parse `StepInvocationDescriptor` JSON; keep parsing separate from execution so a future transport swaps in cleanly.
   - AC: parses all `conformance/fixtures/descriptors/`; rejects a malformed descriptor with a clear error.
+  - Status: implemented (`packages/sdk/src/runner/descriptor.ts`), Ajv-validated with typed decode; parsing isolated from execution.
 - **WS-4.2 — Source package fetch + symbol resolution.** Fetch/unpack the referenced source package from the datastore; import the module/export symbol.
   - AC: given a descriptor pointing at a fixture package, resolves and loads the exported step function.
+  - Status: implemented (`packages/sdk/src/runner/source.ts`) with hash verification; real `.tar.zst` unpacking is a documented v0 follow-up (directory-artifact shape covers v0 tests).
 - **WS-4.3 — Execute one step with schema validation at the boundary.** Read canonical JSON input artifact, validate against input schema ref, execute, validate output against output schema ref, write canonical JSON output artifact.
   - AC: executes a real fixture step end to end against a temp local datastore; a schema mismatch on input or output produces a precise diagnostic.
+  - Status: implemented (`packages/sdk/src/runner/execute.ts`); schema refs resolve from `blobs/sha256:<digest>` keys — WS-5 descriptor emission must write schema blobs there.
 - **WS-4.4 — Runner diagnostics.** Clear errors for module resolution, schema validation, and step failure, distinguishable by exit behavior for the orchestrator.
   - AC: three failure modes produce three distinguishable, documented outcomes.
+  - Status: implemented (`packages/sdk/src/runner/outcomes.ts`): exit 0 success / 64 descriptor / 65 schema validation / 66 step execution.
 
 ### WS-5 — Go Local Orchestrator + Run Manifests  *(depends: WS-2, WS-3, WS-4)*
 
