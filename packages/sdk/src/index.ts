@@ -45,4 +45,5 @@ export {
   GraphValidationError,
   MassiveError,
   SchemaPortabilityError,
+  SourcePackagePathError,
 } from "./errors.ts";

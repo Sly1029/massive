@@ -1,7 +1,7 @@
 import fg from "fast-glob";
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { MassiveError } from "./errors.ts";
+import { MassiveError, SourcePackagePathError } from "./errors.ts";
 import { sha256RefBytes, sha256RefText, stableStringify } from "./stable.ts";
 
 export interface SourceSpec {
@@ -25,17 +25,34 @@ export async function hashSourcePackage(
     );
   }
 
-  const root = resolve(source.root);
+  const sourceRoot = resolve(source.root);
+  if ((await lstat(sourceRoot)).isSymbolicLink()) {
+    throw new SourcePackagePathError(
+      `compile source root must not be a symbolic link: ${source.root}`,
+    );
+  }
+
+  const root = await realpath(sourceRoot);
   const files = await fg([...source.include], {
     cwd: root,
     dot: true,
     followSymbolicLinks: false,
-    onlyFiles: true,
+    objectMode: true,
+    onlyFiles: false,
     unique: true,
   });
 
   const entries: { path: string; hash: string }[] = [];
-  for (const file of files.sort()) {
+  for (
+    const entry of files.sort((left, right) =>
+      left.path.localeCompare(right.path)
+    )
+  ) {
+    if (!entry.dirent.isFile() && !entry.dirent.isSymbolicLink()) {
+      continue;
+    }
+
+    const file = entry.path;
     const absolute = resolve(root, file);
     const backToRoot = relative(root, absolute);
     if (
@@ -47,9 +64,24 @@ export async function hashSourcePackage(
       );
     }
 
+    const realFile = await realpath(absolute);
+    const realBackToRoot = relative(root, realFile);
+    if (
+      realBackToRoot === "" || realBackToRoot.startsWith(`..${sep}`) ||
+      isAbsolute(realBackToRoot)
+    ) {
+      throw new SourcePackagePathError(
+        `compile source include resolved outside root after following symlinks: ${file}`,
+      );
+    }
+
+    if (!(await stat(realFile)).isFile()) {
+      continue;
+    }
+
     entries.push({
       path: normalizeObjectPath(backToRoot),
-      hash: sha256RefBytes(await readFile(absolute)),
+      hash: sha256RefBytes(await readFile(realFile)),
     });
   }
 

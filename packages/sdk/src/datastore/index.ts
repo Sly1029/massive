@@ -35,8 +35,8 @@ class LocalDatastore implements Datastore {
     return (await this.client.get(Key.parse(key))).body;
   }
 
-  exists(key: string): Promise<boolean> {
-    return this.client.exists(Key.parse(key));
+  async exists(key: string): Promise<boolean> {
+    return await this.client.exists(Key.parse(key));
   }
 }
 

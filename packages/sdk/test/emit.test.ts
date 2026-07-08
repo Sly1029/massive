@@ -1,8 +1,14 @@
-import { assert, assertEquals, assertNotEquals } from "jsr:@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+} from "jsr:@std/assert";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ValidateFunction } from "ajv/dist/2020.js";
 import { join } from "node:path";
 import { z } from "zod";
+import { SourcePackagePathError } from "../src/errors.ts";
 import {
   contract,
   emitWorkflowSpec,
@@ -195,6 +201,67 @@ Deno.test("source package packageHash follows included file content only", async
     assertEquals(omitSourceAndHash(first), omitSourceAndHash(second));
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("source package rejects symbolic link roots", async () => {
+  const packageRoot = await Deno.makeTempDir({
+    prefix: "massive-emit-package-",
+  });
+  const outsideRoot = await Deno.makeTempDir({
+    prefix: "massive-emit-outside-",
+  });
+  try {
+    await Deno.writeTextFile(
+      join(outsideRoot, "workflow.ts"),
+      "export const outside = true;\n",
+    );
+    const symlinkRoot = join(packageRoot, "source");
+    await Deno.symlink(outsideRoot, symlinkRoot, { type: "dir" });
+
+    await assertRejects(
+      () =>
+        emitWorkflowSpec(graphCases[1]!.build(), {
+          source: { root: symlinkRoot, include: ["workflow.ts"] },
+        }),
+      SourcePackagePathError,
+      "source root must not be a symbolic link",
+    );
+  } finally {
+    await Deno.remove(packageRoot, { recursive: true });
+    await Deno.remove(outsideRoot, { recursive: true });
+  }
+});
+
+Deno.test("source package rejects included file symlinks escaping root", async () => {
+  const root = await Deno.makeTempDir({ prefix: "massive-emit-source-" });
+  const outsideRoot = await Deno.makeTempDir({
+    prefix: "massive-emit-outside-",
+  });
+  try {
+    await Deno.writeTextFile(
+      join(outsideRoot, "workflow.ts"),
+      "export const outside = true;\n",
+    );
+    await Deno.symlink(
+      join(outsideRoot, "workflow.ts"),
+      join(root, "workflow.ts"),
+      {
+        type: "file",
+      },
+    );
+
+    await assertRejects(
+      () =>
+        emitWorkflowSpec(graphCases[1]!.build(), {
+          source: { root, include: ["workflow.ts"] },
+        }),
+      SourcePackagePathError,
+      "outside root after following symlinks",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(outsideRoot, { recursive: true });
   }
 });
 

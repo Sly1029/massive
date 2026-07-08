@@ -11,6 +11,7 @@ import {
 } from "jsr:@std/assert";
 import {
   blobKeyForBytes,
+  datastore,
   DatastoreConflictError,
   Key,
   LocalDatastoreClient,
@@ -72,6 +73,27 @@ Deno.test("Go and TypeScript local datastore clients interoperate on the same la
     "interop/from-ts.txt",
   ]);
   assertEquals(output, "text/x-ts\nfrom ts\n");
+});
+
+Deno.test("local datastore string API rejects invalid keys asynchronously", async () => {
+  const store = datastore.local({ path: await Deno.makeTempDir() });
+
+  const operations: readonly [string, () => Promise<unknown>][] = [
+    ["put", () => store.put("../escape", "bad")],
+    ["get", () => store.get("../escape")],
+    ["exists", () => store.exists("../escape")],
+  ];
+
+  for (const [name, operation] of operations) {
+    let promise: Promise<unknown>;
+    try {
+      promise = operation();
+    } catch (error) {
+      throw new Error(`${name} threw synchronously`, { cause: error });
+    }
+
+    await assertRejects(() => promise, DatastoreKeyError);
+  }
 });
 
 async function runDatastoreClientContract(
