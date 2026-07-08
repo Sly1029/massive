@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,18 +17,62 @@ import (
 
 const descriptorPathToken = "{descriptor}"
 
-func DefaultRunnerCommand() []string {
+type DefaultRunnerCommandInputs struct {
+	WorkingDir        string
+	DescriptorDir     string
+	DatastoreRoot     string
+	SourcePackageRoot string
+}
+
+func DefaultRunnerCommand(inputs DefaultRunnerCommandInputs) ([]string, error) {
+	workingDir := inputs.WorkingDir
+	if workingDir == "" {
+		workingDir = "."
+	}
+	if inputs.DescriptorDir == "" {
+		return nil, fmt.Errorf("descriptor directory is required")
+	}
+	if inputs.DatastoreRoot == "" {
+		return nil, fmt.Errorf("datastore root is required")
+	}
+	workingDir, err := filepath.Abs(workingDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve runner working directory: %w", err)
+	}
+	descriptorDir, err := filepath.Abs(inputs.DescriptorDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve descriptor directory: %w", err)
+	}
+	datastoreRoot, err := filepath.Abs(inputs.DatastoreRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve datastore root: %w", err)
+	}
+
+	readRoots := []string{workingDir, descriptorDir, datastoreRoot}
+	if inputs.SourcePackageRoot != "" {
+		sourcePackageRoot, err := filepath.Abs(inputs.SourcePackageRoot)
+		if err != nil {
+			return nil, fmt.Errorf("resolve source package root: %w", err)
+		}
+		relative, err := filepath.Rel(workingDir, sourcePackageRoot)
+		if err != nil {
+			return nil, fmt.Errorf("compare source package root with runner working directory: %w", err)
+		}
+		if relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			readRoots = append(readRoots, sourcePackageRoot)
+		}
+	}
+
 	return []string{
 		"deno",
 		"run",
 		"--config",
 		"deno.json",
-		"--allow-read",
-		"--allow-write",
-		"--allow-env",
+		"--allow-read=" + strings.Join(readRoots, ","),
+		"--allow-write=" + datastoreRoot,
 		"packages/sdk/src/runner/main.ts",
 		descriptorPathToken,
-	}
+	}, nil
 }
 
 type ProcessStepInvoker struct {
@@ -79,11 +124,49 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		return StepInvocationOutcome{}, fmt.Errorf("write descriptor %q: %w", descriptorPath, err)
 	}
 
-	command := i.CommandTemplate
-	if len(command) == 0 {
-		command = DefaultRunnerCommand()
+	var argv []string
+	if len(i.CommandTemplate) == 0 {
+		inputs := DefaultRunnerCommandInputs{
+			WorkingDir:    i.WorkingDir,
+			DescriptorDir: descriptorDir,
+			DatastoreRoot: descriptor.Datastore.Path,
+		}
+		if descriptor.SourcePackage.SourceArchive.ContentType == SourceDirectoryContentType {
+			if descriptor.Datastore.Kind != "local" {
+				return StepInvocationOutcome{}, fmt.Errorf("build runner command for %s: source directory packages require a local datastore", descriptor.NodeID)
+			}
+			store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: descriptor.Datastore.Path})
+			if err != nil {
+				return StepInvocationOutcome{}, fmt.Errorf("open local datastore for source package: %w", err)
+			}
+			key, err := datastore.ParseKey(descriptor.SourcePackage.SourceArchive.Key)
+			if err != nil {
+				return StepInvocationOutcome{}, err
+			}
+			object, err := store.Get(ctx, key)
+			if err != nil {
+				return StepInvocationOutcome{}, fmt.Errorf("read source package pointer %s: %w", key, err)
+			}
+			if err := verifyDigest(descriptor.SourcePackage.SourceArchive.Hash, object.Body); err != nil {
+				return StepInvocationOutcome{}, fmt.Errorf("source package pointer %s: %w", key, err)
+			}
+			var pointer sourceFetchPointer
+			if err := json.Unmarshal(object.Body, &pointer); err != nil {
+				return StepInvocationOutcome{}, fmt.Errorf("decode source package pointer %s: %w", key, err)
+			}
+			if pointer.SourceFetch == "" {
+				return StepInvocationOutcome{}, fmt.Errorf("source package pointer %s is missing sourceFetch", key)
+			}
+			inputs.SourcePackageRoot = pointer.SourceFetch
+		}
+		argv, err = DefaultRunnerCommand(inputs)
+		if err != nil {
+			return StepInvocationOutcome{}, fmt.Errorf("build runner command for %s: %w", descriptor.NodeID, err)
+		}
+		argv = substituteDescriptorPath(argv, descriptorPath)
+	} else {
+		argv = substituteDescriptorPath(i.CommandTemplate, descriptorPath)
 	}
-	argv := substituteDescriptorPath(command, descriptorPath)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = i.WorkingDir
 

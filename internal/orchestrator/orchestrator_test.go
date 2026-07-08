@@ -161,20 +161,21 @@ func compileFixture(t *testing.T, name string) *plan.CompileResult {
 func validateDescriptorSchema(t *testing.T, descriptor StepInvocationDescriptor) {
 	t.Helper()
 
+	repoRoot := repoRootForTest(t)
 	workspace := t.TempDir()
 	descriptorPath := filepath.Join(workspace, "descriptor.json")
 	if err := os.WriteFile(descriptorPath, mustMarshalCanonical(t, descriptor), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	scriptPath := filepath.Join(workspace, "validate_descriptor.ts")
-	script := `import { parseStepInvocationDescriptorText } from "` + filepath.ToSlash(filepath.Join(repoRootForTest(t), "packages", "sdk", "src", "runner", "descriptor.ts")) + `";
+	script := `import { parseStepInvocationDescriptorText } from "` + filepath.ToSlash(filepath.Join(repoRoot, "packages", "sdk", "src", "runner", "descriptor.ts")) + `";
 await parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[0]));
 `
 	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("deno", "run", "--config", filepath.Join(repoRootForTest(t), "deno.json"), "--allow-read", scriptPath, descriptorPath)
-	cmd.Dir = repoRootForTest(t)
+	cmd := exec.Command("deno", "run", "--config", filepath.Join(repoRoot, "deno.json"), "--allow-read="+strings.Join([]string{repoRoot, workspace}, ","), scriptPath, descriptorPath)
+	cmd.Dir = repoRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("descriptor schema validation failed: %v\n%s", err, output)
