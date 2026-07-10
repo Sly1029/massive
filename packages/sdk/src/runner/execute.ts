@@ -1,6 +1,6 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject } from "ajv/dist/2020.js";
-import { type Datastore, datastore } from "../datastore/index.ts";
+import { type Datastore, datastore } from "../datastore/facade.ts";
 import {
   type JsonValue,
   sha256RefBytes,

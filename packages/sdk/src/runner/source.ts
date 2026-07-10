@@ -1,7 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { datastore } from "../datastore/index.ts";
+import { datastore } from "../datastore/facade.ts";
 import { sha256RefBytes } from "../stable.ts";
 import type { StepRun } from "../workflow.ts";
 import type { StepInvocationDescriptor } from "./descriptor.ts";
