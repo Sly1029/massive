@@ -56,7 +56,9 @@ export async function executeStep(
 
     const serializedOutput = stableStringify(output);
     const outputHash = sha256RefText(serializedOutput);
-    await store.put(descriptor.output.artifact.key, serializedOutput);
+    await store.put(descriptor.output.artifact.key, serializedOutput, {
+      contentType: descriptor.output.artifact.contentType,
+    });
 
     return {
       kind: "success",

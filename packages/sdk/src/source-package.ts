@@ -1,8 +1,13 @@
 import fg from "fast-glob";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { MassiveError, SourcePackagePathError } from "./errors.ts";
-import { sha256RefBytes, sha256RefText, stableStringify } from "./stable.ts";
+import {
+  compareCodeUnits,
+  sha256RefBytes,
+  sha256RefText,
+  stableStringify,
+} from "./stable.ts";
 
 export interface SourceSpec {
   readonly root: string;
@@ -25,14 +30,7 @@ export async function hashSourcePackage(
     );
   }
 
-  const sourceRoot = resolve(source.root);
-  if ((await lstat(sourceRoot)).isSymbolicLink()) {
-    throw new SourcePackagePathError(
-      `compile source root must not be a symbolic link: ${source.root}`,
-    );
-  }
-
-  const root = await realpath(sourceRoot);
+  const root = await realpath(resolve(source.root));
   const files = await fg([...source.include], {
     cwd: root,
     dot: true,
@@ -45,7 +43,7 @@ export async function hashSourcePackage(
   const entries: { path: string; hash: string }[] = [];
   for (
     const entry of files.sort((left, right) =>
-      left.path.localeCompare(right.path)
+      compareCodeUnits(left.path, right.path)
     )
   ) {
     if (!entry.dirent.isFile() && !entry.dirent.isSymbolicLink()) {

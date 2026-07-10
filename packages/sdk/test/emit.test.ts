@@ -8,8 +8,9 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ValidateFunction } from "ajv/dist/2020.js";
 import { join } from "node:path";
 import { z } from "zod";
-import { SourcePackagePathError } from "../src/errors.ts";
+import { GraphValidationError, SourcePackagePathError } from "../src/errors.ts";
 import {
+  channel,
   contract,
   emitWorkflowSpec,
   env,
@@ -204,33 +205,122 @@ Deno.test("source package packageHash follows included file content only", async
   }
 });
 
-Deno.test("source package rejects symbolic link roots", async () => {
+Deno.test("source package hashes a symlinked root identically to its real target", async () => {
   const packageRoot = await Deno.makeTempDir({
     prefix: "massive-emit-package-",
   });
-  const outsideRoot = await Deno.makeTempDir({
-    prefix: "massive-emit-outside-",
+  const realRoot = await Deno.makeTempDir({
+    prefix: "massive-emit-real-",
   });
   try {
     await Deno.writeTextFile(
-      join(outsideRoot, "workflow.ts"),
-      "export const outside = true;\n",
+      join(realRoot, "workflow.ts"),
+      "export const real = true;\n",
     );
     const symlinkRoot = join(packageRoot, "source");
-    await Deno.symlink(outsideRoot, symlinkRoot, { type: "dir" });
+    await Deno.symlink(realRoot, symlinkRoot, { type: "dir" });
+
+    const viaReal = await emitWorkflowSpec(graphCases[1]!.build(), {
+      source: { root: realRoot, include: ["workflow.ts"] },
+    });
+    const viaSymlink = await emitWorkflowSpec(graphCases[1]!.build(), {
+      source: { root: symlinkRoot, include: ["workflow.ts"] },
+    });
+
+    assertEquals(
+      sourcePackage(viaSymlink).packageHash,
+      sourcePackage(viaReal).packageHash,
+    );
+    assertEquals(sourcePackage(viaSymlink).files, sourcePackage(viaReal).files);
+  } finally {
+    await Deno.remove(packageRoot, { recursive: true });
+    await Deno.remove(realRoot, { recursive: true });
+  }
+});
+
+Deno.test("source package manifest orders files by UTF-16 code units, not locale", async () => {
+  const root = await Deno.makeTempDir({ prefix: "massive-emit-order-" });
+  try {
+    await Deno.writeTextFile(
+      join(root, "workflow.ts"),
+      "export const w = 1;\n",
+    );
+    await Deno.writeTextFile(join(root, "B.ts"), "export const b = 1;\n");
+    await Deno.writeTextFile(join(root, "a.ts"), "export const a = 1;\n");
+
+    const first = await emitWorkflowSpec(graphCases[1]!.build(), {
+      source: { root, include: ["*.ts"] },
+    });
+
+    // Code-unit order puts uppercase "B.ts" (0x42) before lowercase "a.ts"
+    // (0x61) and "workflow.ts" (0x77); localeCompare would place "a.ts" first.
+    assertEquals(
+      sourcePackage(first).files.map((file) => file.path),
+      ["B.ts", "a.ts", "workflow.ts"],
+    );
+
+    const second = await emitWorkflowSpec(graphCases[1]!.build(), {
+      source: { root, include: ["*.ts"] },
+    });
+    assertEquals(
+      sourcePackage(second).packageHash,
+      sourcePackage(first).packageHash,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("emission rejects workflow-level channel declarations (post-M2)", async () => {
+  await withSourcePackage(async (root) => {
+    const g = workflow({
+      name: "channels-workflow",
+      input: z.number(),
+      output: z.number(),
+      state: { result: channel(z.number()) },
+    });
+    const first = g.step("first", {
+      input: z.number(),
+      output: z.number(),
+      run: ({ input }) => input + 1,
+    });
+    g.start().to(first).to(g.end());
 
     await assertRejects(
       () =>
-        emitWorkflowSpec(graphCases[1]!.build(), {
-          source: { root: symlinkRoot, include: ["workflow.ts"] },
+        emitWorkflowSpec(g, {
+          source: { root, include: ["workflow.ts"] },
         }),
-      SourcePackagePathError,
-      "source root must not be a symbolic link",
+      GraphValidationError,
+      "channel(s): result",
     );
-  } finally {
-    await Deno.remove(packageRoot, { recursive: true });
-    await Deno.remove(outsideRoot, { recursive: true });
-  }
+  });
+});
+
+Deno.test("emission rejects step-level channel publication (post-M2)", async () => {
+  await withSourcePackage(async (root) => {
+    const g = workflow({
+      name: "channel-step",
+      input: z.number(),
+      output: z.number(),
+    });
+    const first = g.step("first", {
+      input: z.number(),
+      output: z.number(),
+      channel: "result",
+      run: ({ input }) => input + 1,
+    });
+    g.start().to(first).to(g.end());
+
+    await assertRejects(
+      () =>
+        emitWorkflowSpec(g, {
+          source: { root, include: ["workflow.ts"] },
+        }),
+      GraphValidationError,
+      'channel "result"',
+    );
+  });
 });
 
 Deno.test("source package rejects included file symlinks escaping root", async () => {

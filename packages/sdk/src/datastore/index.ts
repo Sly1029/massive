@@ -1,10 +1,15 @@
 import { Key } from "./key.ts";
 import { LocalDatastoreClient } from "./local.ts";
+import type { PutOptions } from "./types.ts";
 
 export interface Datastore {
   readonly kind: "local";
   readonly root: string;
-  put(key: string, value: string | Uint8Array): Promise<void>;
+  put(
+    key: string,
+    value: string | Uint8Array,
+    options?: PutOptions,
+  ): Promise<void>;
   get(key: string): Promise<Uint8Array>;
   exists(key: string): Promise<boolean>;
 }
@@ -27,8 +32,12 @@ class LocalDatastore implements Datastore {
     return this.client.root;
   }
 
-  async put(key: string, value: string | Uint8Array): Promise<void> {
-    await this.client.put(Key.parse(key), value);
+  async put(
+    key: string,
+    value: string | Uint8Array,
+    options?: PutOptions,
+  ): Promise<void> {
+    await this.client.put(Key.parse(key), value, options);
   }
 
   async get(key: string): Promise<Uint8Array> {

@@ -22,13 +22,12 @@ It is organized so that independent workstreams can proceed at the same time beh
 
 Ground truth as of this revision. The spec docs describe the **target** architecture; most runtime code is still an earlier prototype. Shared contracts in `conformance/` are landing; do not assume the docs describe running software end to end.
 
-**What exists (`packages/sdk`, ~1,900 lines TypeScript):**
+**What exists (`packages/sdk`, TypeScript):**
 
-- `workflow.ts` — a typed Graphology-free builder: `workflow()`, `step()`, fluent `path()`, `channel()`, `stateSchema()`, fan-in via `mergeInputs`. This is real and largely matches [authoring-model.md](authoring-model.md).
-- `compile.ts` — emits a `WorkflowPlanJsonV0` (JSON) for `target: "local"` only. **It emits a plan, not a `WorkflowSpec`.** The spec/plan split does not exist in code yet.
-- `run.ts` — an **in-memory TypeScript runner** that executes steps directly from a `runtimeRegistry`. This is the execution path the target architecture explicitly removes.
-- `argo.ts` — emits an Argo `Workflow` (not `WorkflowTemplate`) whose steps are `alpine:3.20` running `echo "massive local argo placeholder"`. `runArgoLocal()` just calls the in-memory `run()`. **Argo executes nothing real today.**
-- `datastore.ts` — local filesystem datastore only (`put`/`get`/`exists`). No S3.
+- `workflow.ts` — a typed Graphology-based builder: `workflow()`, `step()`, fluent `path()`, `channel()`, `stateSchema()`, fan-in via `mergeInputs`. This is real and largely matches [authoring-model.md](authoring-model.md). Channels are authored but not yet emitted — `emit.ts` rejects any workflow that declares them (post-M2 schema work).
+- `emit.ts` — emits a deterministic `WorkflowSpec` (JSON) that conforms to the shared schema. **This is the spec side of the spec/plan split; the SDK no longer writes plans.** Source-package globbing, symlink-escape guards, and per-file content hashing live in `source-package.ts`.
+- `datastore/` — the consolidated datastore client (`put`/`get`/`exists`/`list`) with a local filesystem backend and an S3-compatible backend.
+- `runner/` — the TypeScript step runner (language adapter): it resolves a step symbol from a `StepInvocationDescriptor` and executes it against the datastore. There is no in-SDK execution path; the legacy in-memory runner, `compile.ts` plan emitter, and `argo.ts` emitter have all been removed.
 - `stable.ts` — `sha256*` + `stableStringify` (sorted-key canonical JSON). Reusable as the basis for canonical hashing.
 - `schema.ts` — Zod → portable schema lowering (`lowerPortableSchema`).
 
@@ -48,7 +47,7 @@ Ground truth as of this revision. The spec docs describe the **target** architec
 - No environment materialization.
 - No Go local orchestrator (WS-5) and no CLI `massive run` glue (WS-6) — the compiled-artifact path has all its pieces but nothing drives them end to end yet.
 - No real Argo `WorkflowTemplate` and no cluster execution of real steps.
-- Legacy `compile.ts`/`argo.ts` plan-JSON surface still exists in the SDK; it retires when WS-6 makes the Go compiler the only plan writer.
+- The Go compiler is the only plan writer: the legacy `compile.ts`/`argo.ts` plan-JSON surface has been removed from the SDK, which now emits only a `WorkflowSpec`.
 
 **Gap summary:** WS-0 through WS-4 have landed: contracts, SDK `WorkflowSpec` emission, the Go compiler (`internal/spec`, `internal/plan`, `cmd/massive-compiler`), datastores (Go local/S3 + TS clients), and the TS step runner. What remains for M1 is convergence: the Go local orchestrator (WS-5) driving the runner from compiled plans, and the `massive run` CLI (WS-6). The first job remains one workflow executing for real through the compiled-artifact path — locally, then on Argo.
 
@@ -200,9 +199,9 @@ Refactor `packages/sdk` from JSON *plan* compilation to `WorkflowSpec` *emission
 - **WS-1.1 — Introduce the `WorkflowSpec` emitter.** New `packages/sdk/src/emit.ts` that lowers a `WorkflowBuilder` into `WorkflowSpec` JSON conforming to `conformance/schema/workflow-spec.schema.json`. Reuse `lowerPortableSchema` (`schema.ts`) for the schema table and `stable.ts` for `specHash`.
   - AC: emits valid specs for every graph-catalog case; `specHash` matches the WS-0.6 vector; validated against the JSON Schema in tests.
   - Status: implemented in `packages/sdk/src/emit.ts`, tested by `packages/sdk/test/emit.test.ts` (schema validation across all graph-catalog cases, determinism, `specHash` self-exclusion per `hashing.md`).
-- **WS-1.2 — Symbol table + source-package manifest.** Emit stable symbol IDs (`packageId` + module + export) and a source-package manifest listing exact files + content hashes (extend the existing globbing in `compile.ts`).
+- **WS-1.2 — Symbol table + source-package manifest.** Emit stable symbol IDs (`packageId` + module + export) and a source-package manifest listing exact files + content hashes.
   - AC: symbols are stable across runs; manifest lists exact files/hashes; a changed source file changes the package hash and nothing else.
-  - Status: implemented in `packages/sdk/src/emit.ts` + `compile.ts` (source-package manifest with per-file `sha256:<hex>` hashes); package-hash sensitivity covered in `emit.test.ts`.
+  - Status: implemented in `packages/sdk/src/emit.ts` + `source-package.ts` (source-package manifest with per-file `sha256:<hex>` hashes, code-unit path ordering); package-hash sensitivity covered in `emit.test.ts`.
 - **WS-1.3 — Execution-contract merge → effective contracts.** Implement `contract()`, `env.node()`, `env.container()`, `net.*`, `secret.ref()` authoring primitives ([authoring-model.md](authoring-model.md#execution-contracts-in-authoring)); merge workflow defaults with step overrides into effective contracts deduped by content hash; emit the environment table keyed by env-spec hash; put `contractRef` on every executable node.
   - AC: two steps with the same effective env share one env-table entry even if resources/secrets differ; every step node has a `contractRef`.
   - Status: implemented in `packages/sdk/src/contract.ts` (authoring primitives + merge) and `emit.ts` (dedup by content hash, env table keyed by env-spec hash); covered in `emit.test.ts`.
@@ -239,7 +238,7 @@ New `go/` module. Suggested layout: `go/cmd/massive-compiler`, `go/internal/spec
 - **WS-3.1 — Shared datastore contract test suite.** A single suite (Go) that any implementation must pass: put/get/exists, content-type, conditional write, listing, key validation, content-addressing.
   - AC: suite runs against an implementation instance passed in; no mocks.
   - Status: implemented as `datastore.RunDatastoreContract` in `internal/datastore`.
-- **WS-3.2 — Go local filesystem datastore.** Port `packages/sdk/src/datastore.ts` semantics (atomic temp-rename write, key traversal guards) to Go.
+- **WS-3.2 — Go local filesystem datastore.** Port `packages/sdk/src/datastore/local.ts` semantics (atomic temp-rename write, key traversal guards) to Go.
   - AC: passes WS-3.1 in a temp dir.
   - Status: implemented (`internal/datastore/local.go`), atomic temp+rename writes and traversal guards ported from the TS client.
 - **WS-3.3 — Go S3-compatible datastore.** Endpoint-configurable (`datastore.s3({ endpoint })`) so R2/MinIO work. Test against a real MinIO container.
