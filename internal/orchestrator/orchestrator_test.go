@@ -165,6 +165,58 @@ func TestSourceSnapshotIsDeterministicAcrossRuns(t *testing.T) {
 	}
 }
 
+func TestHostileRunIDRejectedBeforeSideEffects(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+
+	for _, hostile := range []string{"../escape", "../../etc", "a/b", "..", "foo/../bar"} {
+		t.Run(hostile, func(t *testing.T) {
+			_, err := Run(context.Background(), RunConfig{
+				Plan:              compiled.Plan,
+				DatastoreRoot:     storeRoot,
+				ProjectID:         "acme/security-workflows",
+				RunID:             hostile,
+				SourcePackageRoot: sourceRoot,
+				SourceManifests:   manifests,
+				StepInvoker:       &functionalStepInvoker{storeRoot: storeRoot},
+			}, []byte("20"))
+			if err == nil {
+				t.Fatalf("Run accepted hostile run id %q", hostile)
+			}
+			if !strings.Contains(err.Error(), "invalid run id") {
+				t.Fatalf("error = %v, want invalid run id", err)
+			}
+			// Rejection must happen before any run or snapshot artifact is
+			// written anywhere under the store.
+			for _, sub := range []string{".snapshots", "projects"} {
+				if _, statErr := os.Stat(filepath.Join(storeRoot, sub)); !os.IsNotExist(statErr) {
+					t.Fatalf("run id %q left %s behind (stat err %v)", hostile, sub, statErr)
+				}
+			}
+		})
+	}
+}
+
+func TestPackageHashValidationRejectsUnsafeRefs(t *testing.T) {
+	safe := "sha256:" + strings.Repeat("a", 64)
+	if !validSHA256Ref(safe) {
+		t.Fatalf("rejected valid ref %q", safe)
+	}
+	for _, bad := range []string{
+		"",
+		"sha256:" + strings.Repeat("a", 63), // too short
+		"sha256:" + strings.Repeat("A", 64), // upper-case hex
+		"sha256-" + strings.Repeat("a", 64), // wrong separator
+		"sha256:../../../../etc/passwd" + strings.Repeat("a", 36),
+		"sha256:" + strings.Repeat("a", 64) + "/x", // trailing segment
+	} {
+		if validSHA256Ref(bad) {
+			t.Fatalf("accepted unsafe package hash %q", bad)
+		}
+	}
+}
+
 func TestSourcePackageHashGoldenVector(t *testing.T) {
 	// Non-circular golden vector: a fixed manifest with literal file hashes and
 	// the expected package hash computed once from the TS hashSourcePackage

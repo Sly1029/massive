@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -21,6 +22,15 @@ import (
 )
 
 const jsonContentType = "application/json"
+
+// sha256RefPattern is the exact canonical digest-ref form. Package hashes are
+// interpolated into filesystem paths and datastore keys, so they are validated
+// against this before any path is derived from them.
+var sha256RefPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func validSHA256Ref(ref string) bool {
+	return sha256RefPattern.MatchString(ref)
+}
 
 type executionIndex struct {
 	nodesByID       map[string]*planpb.GraphNode
@@ -76,6 +86,13 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	runID := config.RunID
 	if runID == "" {
 		runID = uuid.NewString()
+	}
+	// The run id is interpolated into datastore keys (and thereby filesystem
+	// paths). Reject a traversal or otherwise unsafe id up front, using the same
+	// segment rules the datastore key parser enforces, before any run artifact
+	// is written. A run id must be a single normalized path segment.
+	if _, err := datastore.ParseKey(runID); err != nil || strings.Contains(runID, "/") {
+		return nil, fmt.Errorf("invalid run id %q: must be a single safe path segment", runID)
 	}
 
 	index, err := buildExecutionIndex(config.Plan)
@@ -221,6 +238,12 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 	for _, sourcePackage := range config.Plan.GetSourcePackages() {
 		packageID := sourcePackage.GetPackageId()
 		planPackageHash := sourcePackage.GetPackageHash()
+		// The package hash becomes a datastore key segment and a snapshot
+		// directory name, so it must be a strict canonical digest ref before any
+		// path is derived from it.
+		if !validSHA256Ref(planPackageHash) {
+			return nil, fmt.Errorf("source package %q has an invalid package hash %q", packageID, planPackageHash)
+		}
 		manifest, ok := config.SourceManifests[packageID]
 		if !ok {
 			return nil, fmt.Errorf("source package %q has no file manifest; cannot verify source integrity before running", packageID)
@@ -251,7 +274,7 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 		// concurrent or repeated runs converge on identical artifact bytes
 		// instead of overwriting each other's descriptors.
 		snapshotDir := sourceSnapshotDir(config.DatastoreRoot, planPackageHash)
-		if err := ensureSourceSnapshot(sourceRoot, snapshotDir, manifest.Files); err != nil {
+		if err := ensureSourceSnapshot(config.DatastoreRoot, sourceRoot, snapshotDir, manifest.Files); err != nil {
 			return nil, err
 		}
 
@@ -301,7 +324,7 @@ func sourceSnapshotDir(storeRoot string, planPackageHash string) string {
 // atomically renamed into place (mirroring the local datastore's temp+rename
 // idiom), so a concurrent run either wins the rename or converges on the
 // identical bytes.
-func ensureSourceSnapshot(sourceRoot string, snapshotDir string, files []SourcePackageFile) error {
+func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir string, files []SourcePackageFile) error {
 	if snapshotMatchesManifest(snapshotDir, files) {
 		return nil
 	}
@@ -331,6 +354,15 @@ func ensureSourceSnapshot(sourceRoot string, snapshotDir string, files []SourceP
 		if snapshotMatchesManifest(snapshotDir, files) {
 			return nil
 		}
+		// Removing a composed path: only ever do so once it is confirmed to be
+		// strictly inside the datastore root, never a caller-influenced path.
+		contained, err := pathWithin(storeRoot, snapshotDir)
+		if err != nil {
+			return fmt.Errorf("verify source snapshot %q is inside the datastore: %w", snapshotDir, err)
+		}
+		if !contained {
+			return fmt.Errorf("refusing to remove source snapshot %q: outside datastore root %q", snapshotDir, storeRoot)
+		}
 		if removeErr := forceRemoveAll(snapshotDir); removeErr != nil {
 			return fmt.Errorf("remove stale source snapshot %q: %w", snapshotDir, removeErr)
 		}
@@ -340,6 +372,34 @@ func ensureSourceSnapshot(sourceRoot string, snapshotDir string, files []SourceP
 	}
 	committed = true
 	return nil
+}
+
+// pathWithin reports whether target resolves to a location strictly inside
+// root, following symlinks on the components that exist. It is the guard for
+// any destructive filesystem operation on a composed path.
+func pathWithin(root string, target string) (bool, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+	if resolved, err := filepath.EvalSymlinks(rootAbs); err == nil {
+		rootAbs = resolved
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return false, err
+	}
+	if resolved, err := filepath.EvalSymlinks(targetAbs); err == nil {
+		targetAbs = resolved
+	}
+	rel, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil {
+		return false, err
+	}
+	if rel == "." || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false, nil
+	}
+	return true, nil
 }
 
 // populateSnapshot verifies each manifest file on disk under sourceRoot against
