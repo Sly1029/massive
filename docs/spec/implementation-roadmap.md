@@ -44,12 +44,11 @@ Ground truth as of this revision. The spec docs describe the **target** architec
 
 **What does NOT exist yet:**
 
-- No environment materialization.
-- No Go local orchestrator (WS-5) and no CLI `massive run` glue (WS-6) — the compiled-artifact path has all its pieces but nothing drives them end to end yet.
-- No real Argo `WorkflowTemplate` and no cluster execution of real steps.
+- No Node environment materialization (WS-9); the container escape hatch is the only supported environment for deployable targets.
+- No Argo cluster execution of real steps yet (WS-8): the Argo backend emits and validates a `WorkflowTemplate` bundle offline, but submitting it to a live cluster with a pod-reachable datastore is WS-8.
 - The Go compiler is the only plan writer: the legacy `compile.ts`/`argo.ts` plan-JSON surface has been removed from the SDK, which now emits only a `WorkflowSpec`.
 
-**Gap summary:** WS-0 through WS-4 have landed: contracts, SDK `WorkflowSpec` emission, the Go compiler (`internal/spec`, `internal/plan`, `cmd/massive-compiler`), datastores (Go local/S3 + TS clients), and the TS step runner. What remains for M1 is convergence: the Go local orchestrator (WS-5) driving the runner from compiled plans, and the `massive run` CLI (WS-6). The first job remains one workflow executing for real through the compiled-artifact path — locally, then on Argo.
+**Gap summary:** WS-0 through WS-7 have landed: contracts, SDK `WorkflowSpec` emission, the Go compiler (`internal/spec`, `internal/plan`, `cmd/massive-compiler`), datastores (Go local/S3 + TS clients), the TS step runner, the Go local orchestrator (WS-5), the `massive run` CLI (WS-6, M1), and the Argo `WorkflowTemplate` compiler (WS-7) via a backend-neutral `internal/target` interface with an `internal/target/argo` backend. What remains for M2 is WS-8: submitting the generated template to a local cluster with a pod-reachable datastore so real steps execute end to end.
 
 ---
 
@@ -293,14 +292,19 @@ Implement only the executable wedge from [argo-backend.md](argo-backend.md#v0-ex
 
 - **WS-7.1 — Container-only env gate.** Accept `env.container(...)`; reject `env.node(...)` for Argo with a target-compatibility diagnostic until WS-9 lands Kubernetes materialization.
   - AC: a node-env workflow targeting Argo fails with the documented diagnostic; a container-env workflow proceeds.
+  - Status: implemented in `internal/target/argo` (`gateEnvironments` + typed `TargetCompatibilityError`). The compiled plan now carries the materialized container image (`internal/plan` populates `MaterializedEnvironment.container`), so the gate is plan-driven. Node/empty-image/non-container kinds are rejected naming the step and kind; covered by `gate_test.go`.
 - **WS-7.2 — `WorkflowTemplate` generation.** Emit a `WorkflowTemplate` (not a one-off `Workflow`) with a DAG mirroring the plan topology; each step template runs the fixed Massive runtime image contract (fetch source package → resolve symbol → read inputs → write outputs) per [environment-materialization.md](environment-materialization.md#container-escape-hatch).
   - AC: generated template's DAG dependencies equal the plan edges; step container is the runtime image, not a placeholder `echo`.
+  - Status: implemented in `internal/target/argo` (`template.go`). DAG task dependencies equal the plan's step-to-step edges (sentinels skipped); each step container is the env image running `massive-step-runner` against a full `StepInvocationDescriptor` (mirroring `internal/orchestrator`) delivered as a raw input artifact, with contract cpu/memory mapped to container resources and `serviceAccountName` from the target. Run-scoped descriptor fields use Argo's `{{workflow.uid}}`; the input digest and pod-reachable datastore endpoint are finalized in WS-8.
 - **WS-7.3 — Structure validation.** Validate generated YAML against Kubernetes + Argo CRD schemas (pick the CRD version per [open-questions.md](open-questions.md#argo-compiler)).
   - AC: invalid generated YAML is caught in an offline test; valid YAML passes.
+  - Status: implemented in `internal/target/argo/validate.go` against Argo `v3.7.16`, vendored at `conformance/schema/argo-workflows-v3.7.16.schema.json` (reusing the `santhosh-tekuri/jsonschema/v6` library `internal/spec` uses). Offline, no cluster/network. `validate_test.go` covers a valid template plus tampered (missing spec, wrong-typed entrypoint/templates) failures.
 - **WS-7.4 — Minimal invariants.** Enforce `dag-integrity`, `plan-provenance`, `identity-set` ([argo-backend.md](argo-backend.md#invariants)).
   - AC: each invariant has a passing case and a deliberately-broken failing case.
+  - Status: implemented in `internal/target/argo/invariants.go` and recorded in the bundle manifest. Each has a passing and a deliberately-broken failing test (`invariants_test.go`); a hard failure aborts the compile with a diagnostic and emits no bundle.
 - **WS-7.5 — Bundle emission.** Emit canonical `workflow-template.yaml`, `massive-plan.json`, `bundle-manifest.json` into `dist/argo/<workflow>/`; bundle manifest records all artifacts.
   - AC: bundle matches `conformance/fixtures/bundles/`; deterministic (no timestamps, sorted keys).
+  - Status: implemented. Backend-neutral emission (`internal/target/emit.go`, `BuildBundle`/`WriteBundle`) writes sorted, timestamp-free artifacts plus a canonical `bundle-manifest.json` recording each file's sha256; `cmd/massive-compiler compile-target` defaults output to `dist/<target>/<workflow>/`. Golden fixtures for `linear-chain` and `diamond` live under `conformance/fixtures/bundles/<case>/argo/` with byte-stability and golden-match tests (`golden_test.go`), and are checked by `pnpm check:conformance`.
 
 ### WS-8 — Argo Cluster Test Harness (→ M2)  *(depends: WS-7)*
 

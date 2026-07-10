@@ -4,6 +4,11 @@ Status: draft
 
 Argo is the first non-local backend. The Argo compiler emits a deploy bundle, not only a single WorkflowTemplate.
 
+It is implemented as the first `target.Backend` behind the backend-neutral
+interface in [target-backends.md](target-backends.md); the plan-driven `Backend`
+contract, bundle manifest, and deterministic emission described there are shared
+by every future backend (Cloudflare Workers, Temporal, Vercel).
+
 The Argo backend proves the main product thesis: a portable typed graph plus execution contract can lower to real infrastructure with pods, resources, object storage, environment artifacts, network policy, secret binding, observability, and generated deployment artifacts.
 
 ## Deploy Bundle
