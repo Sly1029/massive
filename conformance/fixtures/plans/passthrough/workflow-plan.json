@@ -8,8 +8,9 @@
   ],
   "environments": [
     {
+      "container": { "image": "ghcr.io/massive-dev/typescript-runner:v0" },
       "envRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
-      "kind": "skipped",
+      "kind": "container",
       "specHash": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
     }
   ],

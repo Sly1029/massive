@@ -77,8 +77,9 @@ Shape:
   ],
   "environments": [
     {
+      "container": { "image": "ghcr.io/acme/workflow:v0" },
       "envRef": "sha256:<hex>",
-      "kind": "skipped",
+      "kind": "container",
       "specHash": "sha256:<hex>"
     }
   ],

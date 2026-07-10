@@ -208,11 +208,20 @@ func compileEnvironments(workflowSpec *spec.WorkflowSpec) (map[string]string, []
 	entries := make([]*planpb.MaterializedEnvironment, 0, len(oldRefs))
 	for _, oldRef := range oldRefs {
 		newRef := oldToNew[oldRef]
-		entries = append(entries, &planpb.MaterializedEnvironment{
+		environment := workflowSpec.Environments[oldRef]
+		// The plan carries the authored environment kind so backends can gate on
+		// it. For the container escape hatch the image *is* the runtime, so the
+		// materialized environment records the image; dependency materialization
+		// for other kinds (WS-9) lands here later as a local runtime artifact.
+		materialized := &planpb.MaterializedEnvironment{
 			EnvRef:   stringPtr(newRef),
 			SpecHash: stringPtr(newRef),
-			Kind:     stringPtr("skipped"),
-		})
+			Kind:     stringPtr(environment.Kind),
+		}
+		if environment.Kind == spec.EnvironmentKindContainer {
+			materialized.Container = &planpb.ContainerRuntime{Image: stringPtr(environment.Image)}
+		}
+		entries = append(entries, materialized)
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return canonical.LessUTF16(entries[i].GetEnvRef(), entries[j].GetEnvRef()) })

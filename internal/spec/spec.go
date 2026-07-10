@@ -21,6 +21,16 @@ const (
 	NodeKindEnd   = "end"
 )
 
+const (
+	// EnvironmentKindContainer is the container escape hatch: the runtime image
+	// itself is the environment. EnvironmentKindNode declares a Node dependency
+	// environment materialized from a lockfile (WS-9). The compiler records the
+	// authored kind on the plan's MaterializedEnvironment; backends decide which
+	// kinds they can execute.
+	EnvironmentKindContainer = "container"
+	EnvironmentKindNode      = "node"
+)
+
 type WorkflowSpec struct {
 	Kind           string                       `json:"kind"`
 	SchemaVersion  uint32                       `json:"schemaVersion"`
