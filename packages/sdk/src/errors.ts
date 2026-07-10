@@ -19,6 +19,13 @@ export class GraphValidationError extends MassiveError {
   }
 }
 
+export class SourcePackagePathError extends MassiveError {
+  constructor(message: string) {
+    super(message);
+    this.name = "SourcePackagePathError";
+  }
+}
+
 export class DatastoreKeyError extends MassiveError {
   constructor(key: string, reason: string) {
     super(`Invalid datastore key "${key}": ${reason}`);

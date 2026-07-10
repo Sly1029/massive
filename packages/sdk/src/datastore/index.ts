@@ -1,3 +1,5 @@
+export { type Datastore, datastore } from "./facade.ts";
+
 export {
   blobKeyForBytes,
   blobKeySHA256Hex,

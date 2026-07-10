@@ -11,6 +11,7 @@ import {
 } from "jsr:@std/assert";
 import {
   blobKeyForBytes,
+  datastore,
   DatastoreConflictError,
   Key,
   LocalDatastoreClient,
@@ -22,9 +23,18 @@ import { DatastoreKeyError } from "../src/errors.ts";
 const decoder = new TextDecoder();
 
 Deno.test("local datastore client satisfies the datastore contract", async () => {
-  await runDatastoreClientContract(async () =>
-    new LocalDatastoreClient({ path: await Deno.makeTempDir() })
-  );
+  const roots: string[] = [];
+  try {
+    await runDatastoreClientContract(async () => {
+      const root = await Deno.makeTempDir({ prefix: "massive-datastore-" });
+      roots.push(root);
+      return new LocalDatastoreClient({ path: root });
+    });
+  } finally {
+    await Promise.all(
+      roots.map((root) => Deno.remove(root, { recursive: true })),
+    );
+  }
 });
 
 Deno.test({
@@ -49,29 +59,59 @@ Deno.test({
 });
 
 Deno.test("Go and TypeScript local datastore clients interoperate on the same layout", async () => {
-  const root = await Deno.makeTempDir();
-  const store = new LocalDatastoreClient({ path: root });
+  const root = await Deno.makeTempDir({ prefix: "massive-datastore-" });
+  try {
+    const store = new LocalDatastoreClient({ path: root });
 
-  await runGoInterop([
-    "write-local",
-    root,
-    "interop/from-go.txt",
-    "from go",
-    "text/x-go",
-  ]);
-  const goObject = await store.get(Key.parse("interop/from-go.txt"));
-  assertEquals(decoder.decode(goObject.body), "from go");
-  assertEquals(goObject.info.contentType, "text/x-go");
+    await runGoInterop([
+      "write-local",
+      root,
+      "interop/from-go.txt",
+      "from go",
+      "text/x-go",
+    ]);
+    const goObject = await store.get(Key.parse("interop/from-go.txt"));
+    assertEquals(decoder.decode(goObject.body), "from go");
+    assertEquals(goObject.info.contentType, "text/x-go");
 
-  await store.put(Key.parse("interop/from-ts.txt"), "from ts", {
-    contentType: "text/x-ts",
-  });
-  const output = await runGoInterop([
-    "read-local",
-    root,
-    "interop/from-ts.txt",
-  ]);
-  assertEquals(output, "text/x-ts\nfrom ts\n");
+    await store.put(Key.parse("interop/from-ts.txt"), "from ts", {
+      contentType: "text/x-ts",
+    });
+    const output = await runGoInterop([
+      "read-local",
+      root,
+      "interop/from-ts.txt",
+    ]);
+    assertEquals(output, "text/x-ts\nfrom ts\n");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("local datastore string API rejects invalid keys asynchronously", async () => {
+  const root = await Deno.makeTempDir({ prefix: "massive-datastore-" });
+  try {
+    const store = datastore.local({ path: root });
+
+    const operations: readonly [string, () => Promise<unknown>][] = [
+      ["put", () => store.put("../escape", "bad")],
+      ["get", () => store.get("../escape")],
+      ["exists", () => store.exists("../escape")],
+    ];
+
+    for (const [name, operation] of operations) {
+      let promise: Promise<unknown>;
+      try {
+        promise = operation();
+      } catch (error) {
+        throw new Error(`${name} threw synchronously`, { cause: error });
+      }
+
+      await assertRejects(() => promise, DatastoreKeyError);
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
 });
 
 async function runDatastoreClientContract(

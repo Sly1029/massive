@@ -1,7 +1,6 @@
 import { compareCodeUnits } from "./stable.ts";
 
 export type PackageManager = "npm" | "pnpm" | "yarn";
-export type NetworkEgress = "none" | "declared" | "any";
 
 export type EnvironmentSpec = ContainerEnvironmentSpec | NodeEnvironmentSpec;
 

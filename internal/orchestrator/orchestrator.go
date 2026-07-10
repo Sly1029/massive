@@ -630,6 +630,9 @@ func validateOutputArtifact(ctx context.Context, store datastore.Datastore, desc
 	if err != nil {
 		return nodeOutput{}, fmt.Errorf("output artifact %s is missing: %w", outputKey, err)
 	}
+	if object.Info.ContentType != descriptor.Output.Artifact.ContentType {
+		return nodeOutput{}, fmt.Errorf("output artifact %s content type mismatch: descriptor requires %s, stored object has %s", outputKey, descriptor.Output.Artifact.ContentType, object.Info.ContentType)
+	}
 
 	actualHash := canonical.DigestBytes(object.Body)
 	if expectedHash != "" && actualHash != expectedHash {

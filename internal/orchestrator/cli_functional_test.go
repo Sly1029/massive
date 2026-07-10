@@ -547,6 +547,9 @@ func assertStoredJSON(t *testing.T, storeRoot string, key string, expected strin
 	if string(object.Body) != expected {
 		t.Fatalf("%s = %s, want %s", key, object.Body, expected)
 	}
+	if object.Info.ContentType != jsonContentType {
+		t.Fatalf("%s content type = %q, want %q", key, object.Info.ContentType, jsonContentType)
+	}
 }
 
 func getObject(t *testing.T, storeRoot string, key string) datastore.Object {

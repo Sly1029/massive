@@ -119,13 +119,15 @@ TypeScript SDK runtime adapter executes TypeScript steps
 
 The old TypeScript in-memory runner is not the architectural local path and should be removed when the Go local target lands.
 
-The local Argo cluster command is:
-
-```sh
-pnpm test:argo-cluster
-```
-
-That test expects the active Kubernetes context to be `orbstack`, Argo Workflows installed in the `argo` namespace, and the `argo` service account able to create `workflowtaskresults.argoproj.io`.
+There is no local Argo cluster command today. The legacy TypeScript Argo
+emitter and its `pnpm test:argo-cluster` harness were retired along with the
+in-SDK plan/Argo surface. The WS-8 cluster harness
+([implementation-roadmap.md](implementation-roadmap.md)) rebuilds it against
+Go-emitted bundles: apply the generated `WorkflowTemplate`, submit a run against
+the active cluster, wait for terminal status, and inspect datastore artifacts.
+When it lands it will again expect the active Kubernetes context to be
+`orbstack`, Argo Workflows installed in the `argo` namespace, and the `argo`
+service account able to create `workflowtaskresults.argoproj.io`.
 
 ## Language Split
 

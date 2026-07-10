@@ -2,7 +2,7 @@ import { assertEquals } from "jsr:@std/assert";
 import { sha256RefText, stableStringify } from "../src/stable.ts";
 
 // Non-circular golden vector for the source-package hash construction used by
-// hashSourcePackage in ../src/compile.ts: sha256 of the canonical JSON of the
+// hashSourcePackage in ../src/source-package.ts: sha256 of the canonical JSON of the
 // {path, hash} entries array, prefixed with "sha256:". The expected value is
 // computed once and mirrored in the Go test
 // (internal/orchestrator TestSourcePackageHashGoldenVector) so the Go and TS

@@ -2,7 +2,12 @@ import { assert, assertEquals, assertInstanceOf } from "jsr:@std/assert";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Datastore, datastore } from "../src/datastore.ts";
+import {
+  type Datastore,
+  datastore,
+  Key,
+  LocalDatastoreClient,
+} from "../src/datastore/index.ts";
 import {
   parseStepInvocationDescriptor,
   type StepInvocationDescriptor,
@@ -88,6 +93,11 @@ Deno.test("runner executes a real fixture step end to end against a temp local d
       const expectedOutput = stableStringify({ value: 42 });
       assertEquals(descriptor.output.artifact.key, outputKey());
       assertEquals(outputText, expectedOutput);
+
+      const client = new LocalDatastoreClient({ path: store.root });
+      const stored = await client.get(Key.parse(descriptor.output.artifact.key));
+      assertEquals(stored.info.contentType, "application/json");
+
       assertEquals(outcome.output, {
         key: outputKey(),
         hash: sha256RefText(expectedOutput),

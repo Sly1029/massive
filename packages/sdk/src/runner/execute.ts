@@ -1,6 +1,6 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject } from "ajv/dist/2020.js";
-import { type Datastore, datastore } from "../datastore.ts";
+import { type Datastore, datastore } from "../datastore/facade.ts";
 import {
   type JsonValue,
   sha256RefBytes,
@@ -56,7 +56,9 @@ export async function executeStep(
 
     const serializedOutput = stableStringify(output);
     const outputHash = sha256RefText(serializedOutput);
-    await store.put(descriptor.output.artifact.key, serializedOutput);
+    await store.put(descriptor.output.artifact.key, serializedOutput, {
+      contentType: descriptor.output.artifact.contentType,
+    });
 
     return {
       kind: "success",
