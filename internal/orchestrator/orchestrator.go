@@ -411,8 +411,15 @@ func populateSnapshot(sourceRoot string, dir string, files []SourcePackageFile) 
 	for _, file := range files {
 		relPath := filepath.FromSlash(file.Path)
 		absPath := filepath.Join(sourceRoot, relPath)
-		rel, err := filepath.Rel(sourceRoot, absPath)
-		if err != nil || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		// Symlink-safe containment: reject not only lexical "../" escapes but a
+		// path whose components resolve (via EvalSymlinks) outside sourceRoot,
+		// so a symlink in the working tree cannot make ReadFile pull in an
+		// external file.
+		contained, err := pathWithin(sourceRoot, absPath)
+		if err != nil {
+			return fmt.Errorf("resolve source file %q: %w", file.Path, err)
+		}
+		if !contained {
 			return fmt.Errorf("source file %q resolves outside the source package root", file.Path)
 		}
 		content, err := os.ReadFile(absPath)

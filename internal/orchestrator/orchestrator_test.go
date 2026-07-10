@@ -198,6 +198,35 @@ func TestHostileRunIDRejectedBeforeSideEffects(t *testing.T) {
 	}
 }
 
+func TestPopulateSnapshotRejectsSymlinkEscape(t *testing.T) {
+	// A source file that is a symlink pointing outside the source root must be
+	// rejected even when its (followed) content matches the manifest hash, so
+	// only the containment guard — not the drift check — can be doing the work.
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.ts")
+	if err := os.WriteFile(secret, []byte("export const secret = 1;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sourceDir := t.TempDir()
+	if err := os.Symlink(secret, filepath.Join(sourceDir, "workflow.ts")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	content, err := os.ReadFile(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []SourcePackageFile{{Path: "workflow.ts", Hash: canonical.DigestBytes(content)}}
+
+	err = populateSnapshot(sourceDir, t.TempDir(), files)
+	if err == nil {
+		t.Fatal("populateSnapshot followed a symlink outside the source root")
+	}
+	if !strings.Contains(err.Error(), "outside the source package root") {
+		t.Fatalf("error = %v, want outside-root rejection", err)
+	}
+}
+
 func TestPackageHashValidationRejectsUnsafeRefs(t *testing.T) {
 	safe := "sha256:" + strings.Repeat("a", 64)
 	if !validSHA256Ref(safe) {
