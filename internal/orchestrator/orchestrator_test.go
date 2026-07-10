@@ -184,17 +184,62 @@ func TestHostileRunIDRejectedBeforeSideEffects(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Run accepted hostile run id %q", hostile)
 			}
-			if !strings.Contains(err.Error(), "invalid run id") {
-				t.Fatalf("error = %v, want invalid run id", err)
+			var invalid *InvalidRunInputError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("error = %T (%v), want *InvalidRunInputError", err, err)
 			}
-			// Rejection must happen before any run or snapshot artifact is
-			// written anywhere under the store.
-			for _, sub := range []string{".snapshots", "projects"} {
-				if _, statErr := os.Stat(filepath.Join(storeRoot, sub)); !os.IsNotExist(statErr) {
-					t.Fatalf("run id %q left %s behind (stat err %v)", hostile, sub, statErr)
-				}
+			if invalid.Field != "run id" {
+				t.Fatalf("error field = %q, want run id", invalid.Field)
 			}
+			assertNoRunSideEffects(t, storeRoot)
 		})
+	}
+}
+
+func TestHostilePackageHashRejectedBeforeSideEffects(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+	// A package hash with traversal components must be rejected before it is
+	// interpolated into a snapshot path or datastore key.
+	hostile := "sha256:../../../../../../etc/passwd"
+	compiled.Plan.GetSourcePackages()[0].PackageHash = &hostile
+
+	_, err := Run(context.Background(), RunConfig{
+		Plan:              compiled.Plan,
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "acme/security-workflows",
+		RunID:             "run-badhash-0001",
+		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
+		StepInvoker:       &functionalStepInvoker{storeRoot: storeRoot},
+	}, []byte("20"))
+	if err == nil {
+		t.Fatal("Run accepted a traversal package hash")
+	}
+	var invalid *InvalidRunInputError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("error = %T (%v), want *InvalidRunInputError", err, err)
+	}
+	if invalid.Field != "source package hash" {
+		t.Fatalf("error field = %q, want source package hash", invalid.Field)
+	}
+	assertNoRunSideEffects(t, storeRoot)
+}
+
+// assertNoRunSideEffects checks that a rejected run wrote nothing: no snapshot
+// tree, no project run artifacts, and no traversal escape outside the store.
+func assertNoRunSideEffects(t *testing.T, storeRoot string) {
+	t.Helper()
+
+	for _, sub := range []string{".snapshots", "projects"} {
+		if _, statErr := os.Stat(filepath.Join(storeRoot, sub)); !os.IsNotExist(statErr) {
+			t.Fatalf("rejected run left %s behind under the store (stat err %v)", sub, statErr)
+		}
+	}
+	// A ".snapshots" sibling of the store would signal a traversal escape.
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(storeRoot), ".snapshots")); !os.IsNotExist(statErr) {
+		t.Fatalf("rejected run created a .snapshots path outside the store (stat err %v)", statErr)
 	}
 }
 

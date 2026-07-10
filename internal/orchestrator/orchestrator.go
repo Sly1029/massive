@@ -92,7 +92,16 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	// segment rules the datastore key parser enforces, before any run artifact
 	// is written. A run id must be a single normalized path segment.
 	if _, err := datastore.ParseKey(runID); err != nil || strings.Contains(runID, "/") {
-		return nil, fmt.Errorf("invalid run id %q: must be a single safe path segment", runID)
+		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "must be a single safe path segment (datastore key segment rules)"}
+	}
+	// Every source-package hash is interpolated into a snapshot directory name
+	// and a datastore key. The spec schema constrains it, but Run also accepts a
+	// plan directly, so validate here — before any materialization touches the
+	// filesystem — and fail with a typed error rather than a downstream panic.
+	for _, sourcePackage := range config.Plan.GetSourcePackages() {
+		if !validSHA256Ref(sourcePackage.GetPackageHash()) {
+			return nil, &InvalidRunInputError{Field: "source package hash", Value: sourcePackage.GetPackageHash(), Message: "must be a canonical sha256:<64 lowercase hex> digest"}
+		}
 	}
 
 	index, err := buildExecutionIndex(config.Plan)
@@ -237,13 +246,10 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 	packages := make(map[string]sourcePackageArtifact, len(config.Plan.GetSourcePackages()))
 	for _, sourcePackage := range config.Plan.GetSourcePackages() {
 		packageID := sourcePackage.GetPackageId()
+		// planPackageHash is validated as a strict sha256 ref at the Run entry
+		// (before any materialization), so it is safe to derive paths and keys
+		// from it here.
 		planPackageHash := sourcePackage.GetPackageHash()
-		// The package hash becomes a datastore key segment and a snapshot
-		// directory name, so it must be a strict canonical digest ref before any
-		// path is derived from it.
-		if !validSHA256Ref(planPackageHash) {
-			return nil, fmt.Errorf("source package %q has an invalid package hash %q", packageID, planPackageHash)
-		}
 		manifest, ok := config.SourceManifests[packageID]
 		if !ok {
 			return nil, fmt.Errorf("source package %q has no file manifest; cannot verify source integrity before running", packageID)

@@ -66,6 +66,20 @@ type StepSummary struct {
 	Diagnostic string
 }
 
+// InvalidRunInputError is returned when a caller-supplied identifier is unsafe
+// to interpolate into datastore keys or filesystem paths — for example a run id
+// or source-package hash containing path-traversal components. It is returned
+// before any datastore or filesystem effect, and never panicked.
+type InvalidRunInputError struct {
+	Field   string
+	Value   string
+	Message string
+}
+
+func (e *InvalidRunInputError) Error() string {
+	return fmt.Sprintf("invalid %s %q: %s", e.Field, e.Value, e.Message)
+}
+
 type RunError struct {
 	StepID     string
 	Diagnostic string
