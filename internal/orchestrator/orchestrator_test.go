@@ -14,14 +14,12 @@ import (
 
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
-	"github.com/Sly1029/massive/internal/plan"
-	"github.com/Sly1029/massive/internal/spec"
 )
 
 func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
-	compiled := compileFixture(t, "linear-chain")
 	storeRoot := t.TempDir()
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
 	invoker := &functionalStepInvoker{storeRoot: storeRoot}
 
 	result, err := Run(context.Background(), RunConfig{
@@ -30,6 +28,7 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 		ProjectID:         "acme/security-workflows",
 		RunID:             "run-descriptor-0001",
 		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
 		StepInvoker:       invoker,
 	}, []byte("20"))
 	if err != nil {
@@ -42,8 +41,24 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 		t.Fatalf("captured descriptors = %d, want 3", len(invoker.descriptors))
 	}
 
-	validateDescriptorSchema(t, invoker.descriptors[0])
-	actual := normalizeDescriptorJSON(t, mustMarshalCanonical(t, invoker.descriptors[0]), "run-descriptor-0001", storeRoot)
+	// Normalization below zeroes every digest, which would hide a regression
+	// where packageHash and sourceArchive.hash collapse to the same value.
+	// Assert their distinct provenance on the un-normalized descriptor.
+	planPackageHash := compiled.Plan.GetSourcePackages()[0].GetPackageHash()
+	descriptor := invoker.descriptors[0]
+	if descriptor.SourcePackage.PackageHash != planPackageHash {
+		t.Fatalf("descriptor packageHash = %s, want plan packageHash %s", descriptor.SourcePackage.PackageHash, planPackageHash)
+	}
+	archiveBody := getObject(t, storeRoot, descriptor.SourcePackage.SourceArchive.Key)
+	if wantHash := canonical.DigestBytes(archiveBody.Body); descriptor.SourcePackage.SourceArchive.Hash != wantHash {
+		t.Fatalf("descriptor sourceArchive.hash = %s, want stored body digest %s", descriptor.SourcePackage.SourceArchive.Hash, wantHash)
+	}
+	if descriptor.SourcePackage.SourceArchive.Hash == descriptor.SourcePackage.PackageHash {
+		t.Fatal("sourceArchive.hash must differ from packageHash under the v0 pointer artifact shape")
+	}
+
+	validateDescriptorSchema(t, descriptor)
+	actual := normalizeDescriptorJSON(t, mustMarshalCanonical(t, descriptor), "run-descriptor-0001", storeRoot)
 	golden := normalizeDescriptorJSON(t, readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json"), "run-linear-chain-0001", "/tmp/massive-conformance-store")
 	if !bytes.Equal(actual, golden) {
 		t.Fatalf("descriptor mismatch\nactual:   %s\nexpected: %s", actual, golden)
@@ -51,9 +66,9 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 }
 
 func TestTamperedOutputFailsHashValidation(t *testing.T) {
-	compiled := compileFixture(t, "linear-chain")
 	storeRoot := t.TempDir()
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
 	invoker := &functionalStepInvoker{storeRoot: storeRoot}
 
 	_, err := Run(context.Background(), RunConfig{
@@ -62,6 +77,7 @@ func TestTamperedOutputFailsHashValidation(t *testing.T) {
 		ProjectID:         "acme/security-workflows",
 		RunID:             "run-tamper-0001",
 		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
 		StepInvoker:       invoker,
 		Hooks: RunHooks{
 			AfterStepInvocation: func(_ context.Context, descriptor StepInvocationDescriptor) error {
@@ -141,21 +157,6 @@ func runFixtureStep(nodeID string, inputBytes []byte) ([]byte, error) {
 		return nil, errors.New("unknown fixture step " + nodeID)
 	}
 	return marshalCanonicalJSON(output)
-}
-
-func compileFixture(t *testing.T, name string) *plan.CompileResult {
-	t.Helper()
-
-	specData := readRepoFile(t, "conformance", "fixtures", "specs", name, "workflow-spec.json")
-	workflowSpec, err := spec.Parse(specData)
-	if err != nil {
-		t.Fatal(err)
-	}
-	compiled, err := plan.Compile(workflowSpec, specData)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return compiled
 }
 
 func validateDescriptorSchema(t *testing.T, descriptor StepInvocationDescriptor) {

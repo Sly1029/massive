@@ -36,6 +36,10 @@ type sourcePackageArtifact struct {
 	Language    string
 	PackageHash string
 	Key         string
+	// ArchiveHash is the digest of the actual artifact body written to the
+	// datastore (the source-fetch pointer JSON), which is distinct from the
+	// plan's PackageHash under the v0 directory-pointer artifact shape.
+	ArchiveHash string
 	ContentType string
 }
 
@@ -77,7 +81,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	if err != nil {
 		return nil, err
 	}
-	sourcePackages, err := materializePrerequisites(ctx, store, config)
+	sourcePackages, err := materializePrerequisites(ctx, store, config, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +201,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	return result, nil
 }
 
-func materializePrerequisites(ctx context.Context, store datastore.Datastore, config RunConfig) (map[string]sourcePackageArtifact, error) {
+func materializePrerequisites(ctx context.Context, store datastore.Datastore, config RunConfig, runID string) (map[string]sourcePackageArtifact, error) {
 	for _, schemaEntry := range config.Plan.GetSchemas() {
 		schemaBytes := []byte(schemaEntry.GetCanonicalJson())
 		if err := verifyDigest(schemaEntry.GetHash(), schemaBytes); err != nil {
@@ -216,24 +220,50 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 	if err != nil {
 		return nil, fmt.Errorf("resolve source package root: %w", err)
 	}
-	sourcePointer, err := marshalCanonicalJSON(sourceFetchPointer{SourceFetch: sourceRoot})
-	if err != nil {
-		return nil, err
-	}
-	sourceHash := canonical.DigestBytes(sourcePointer)
-	sourceKey := sourcePackageKey(sourceHash)
-
-	if _, err := store.Put(ctx, datastore.MustKey(sourceKey), sourcePointer, datastore.PutOptions{ContentType: SourceDirectoryContentType}); err != nil {
-		return nil, fmt.Errorf("write source package artifact: %w", err)
-	}
 
 	packages := make(map[string]sourcePackageArtifact, len(config.Plan.GetSourcePackages()))
 	for _, sourcePackage := range config.Plan.GetSourcePackages() {
-		packages[sourcePackage.GetPackageId()] = sourcePackageArtifact{
-			PackageID:   sourcePackage.GetPackageId(),
+		packageID := sourcePackage.GetPackageId()
+		planPackageHash := sourcePackage.GetPackageHash()
+		files, ok := config.SourceManifests[packageID]
+		if !ok {
+			return nil, fmt.Errorf("source package %q has no file manifest; cannot verify source integrity before running", packageID)
+		}
+
+		// Snapshot the manifest files into an immutable per-run workspace so
+		// edits to the real source tree between compile and step execution
+		// cannot change what runs. Verification is against the manifest first
+		// (so drift names the offending file), then against the plan hash.
+		snapshotDir := sourceSnapshotDir(runID, planPackageHash)
+		if err := snapshotAndVerifySourcePackage(sourceRoot, snapshotDir, files); err != nil {
+			return nil, err
+		}
+		recomputed, err := recomputeSourcePackageHash(files)
+		if err != nil {
+			return nil, fmt.Errorf("recompute source package hash for %q: %w", packageID, err)
+		}
+		if recomputed != planPackageHash {
+			return nil, fmt.Errorf("source package %q drifted since compile: its manifest recomputes to %s but the plan records package hash %s", packageID, recomputed, planPackageHash)
+		}
+
+		pointer, err := marshalCanonicalJSON(sourceFetchPointer{SourceFetch: snapshotDir})
+		if err != nil {
+			return nil, err
+		}
+		bodyHash := canonical.DigestBytes(pointer)
+		// The archive key is templated on the plan's package hash per
+		// datastore-layout.md, not on the pointer body digest.
+		key := sourcePackageKey(planPackageHash)
+		if _, err := store.Put(ctx, datastore.MustKey(key), pointer, datastore.PutOptions{ContentType: SourceDirectoryContentType}); err != nil {
+			return nil, fmt.Errorf("write source package artifact for %q: %w", packageID, err)
+		}
+
+		packages[packageID] = sourcePackageArtifact{
+			PackageID:   packageID,
 			Language:    sourcePackage.GetLanguage(),
-			PackageHash: sourceHash,
-			Key:         sourceKey,
+			PackageHash: planPackageHash,
+			Key:         key,
+			ArchiveHash: bodyHash,
 			ContentType: SourceDirectoryContentType,
 		}
 	}
@@ -242,6 +272,63 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 
 type sourceFetchPointer struct {
 	SourceFetch string `json:"sourceFetch"`
+}
+
+// sourceSnapshotDir is the immutable per-run location the manifest files are
+// copied into. Keeping it outside the source tree isolates a run from edits to
+// the working copy after the run starts.
+func sourceSnapshotDir(runID string, planPackageHash string) string {
+	segment := strings.Replace(planPackageHash, "sha256:", "sha256-", 1)
+	return filepath.Join(os.TempDir(), "massive-run-workspaces", runID, segment)
+}
+
+// snapshotAndVerifySourcePackage verifies each manifest file on disk under
+// sourceRoot against its recorded content hash and copies verified files into
+// snapshotDir, preserving relative paths. On the first hash mismatch it fails
+// loudly with a diagnostic naming the file and explaining the drift.
+func snapshotAndVerifySourcePackage(sourceRoot string, snapshotDir string, files []SourcePackageFile) error {
+	if err := os.RemoveAll(snapshotDir); err != nil {
+		return fmt.Errorf("reset source snapshot %q: %w", snapshotDir, err)
+	}
+	for _, file := range files {
+		relPath := filepath.FromSlash(file.Path)
+		absPath := filepath.Join(sourceRoot, relPath)
+		rel, err := filepath.Rel(sourceRoot, absPath)
+		if err != nil || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("source file %q resolves outside the source package root", file.Path)
+		}
+		content, err := os.ReadFile(absPath)
+		if err != nil {
+			return fmt.Errorf("source file %q could not be read for integrity verification: %w", file.Path, err)
+		}
+		actual := canonical.DigestBytes(content)
+		if actual != file.Hash {
+			return fmt.Errorf("source package drifted since compile: file %q hashes to %s but the compiled manifest recorded %s; recompile the workflow or run the plan against the source it was compiled from", file.Path, actual, file.Hash)
+		}
+		dest := filepath.Join(snapshotDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return fmt.Errorf("create source snapshot directory for %q: %w", file.Path, err)
+		}
+		if err := os.WriteFile(dest, content, 0o644); err != nil {
+			return fmt.Errorf("write source snapshot file %q: %w", file.Path, err)
+		}
+	}
+	return nil
+}
+
+// recomputeSourcePackageHash reproduces the SDK source-package hash: the
+// sha256 of the canonical JSON of the {path, hash} entries array. See
+// hashSourcePackage in packages/sdk/src/compile.ts and hashing.md.
+func recomputeSourcePackageHash(files []SourcePackageFile) (string, error) {
+	entries := make([]any, 0, len(files))
+	for _, file := range files {
+		entries = append(entries, map[string]any{"path": file.Path, "hash": file.Hash})
+	}
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return "", fmt.Errorf("marshal source package entries: %w", err)
+	}
+	return canonical.DigestJSON(data)
 }
 
 func descriptorForStep(config RunConfig, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex) (StepInvocationDescriptor, error) {
@@ -278,7 +365,7 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 			PackageHash: sourcePackage.PackageHash,
 			SourceArchive: ArtifactRef{
 				Key:         sourcePackage.Key,
-				Hash:        sourcePackage.PackageHash,
+				Hash:        sourcePackage.ArchiveHash,
 				ContentType: sourcePackage.ContentType,
 			},
 		},

@@ -89,8 +89,9 @@ func TestOrchestratorCLILinearChainRealRunner(t *testing.T) {
 	}
 
 	projectKey := NormalizeProjectKey("acme/security-workflows")
+	compiled, _ := compileConsistentFixture(t, "linear-chain", workspace)
 	assertResultArtifact(t, storeRoot, projectKey, runID, `"value:41"`)
-	assertStepOutputs(t, storeRoot, projectKey, runID, "linear-chain")
+	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
 	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, []string{"double", "increment", "label"})
 }
 
@@ -111,10 +112,88 @@ func TestOrchestratorCLIDiamondFanInRealRunner(t *testing.T) {
 	}
 
 	projectKey := NormalizeProjectKey("acme/security-workflows")
+	compiled, _ := compileConsistentFixture(t, "diamond", workspace)
 	assertResultArtifact(t, storeRoot, projectKey, runID, `81`)
-	assertStepOutputs(t, storeRoot, projectKey, runID, "diamond")
+	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
 	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, []string{"split", "left", "right", "merge"})
 	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge").String(), `[21,60]`)
+}
+
+func TestOrchestratorCLIMultiStageFanInRealRunner(t *testing.T) {
+	workspace := prepareRunWorkspaceFromTestdata(t, "multi-stage-merge")
+	storeRoot := t.TempDir()
+	runID := "run-multi-stage-e2e"
+	result := runCommand(t,
+		"go", "run", "./cmd/massive-orchestrator", "run",
+		"--spec", filepath.Join(workspace, "workflow-spec.json"),
+		"--store", storeRoot,
+		"--project", "acme/security-workflows",
+		"--run-id", runID,
+		"--input", "20",
+	)
+	if result.err != nil {
+		t.Fatalf("orchestrator failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", result.stdout, result.stderr, result.err)
+	}
+
+	projectKey := NormalizeProjectKey("acme/security-workflows")
+	compiled := compileTestdataFixture(t, "multi-stage-merge")
+	// split=20; a1=21,a2=22,b1=23,b2=24; merge-a=43,merge-b=47; merge-final=90.
+	assertResultArtifact(t, storeRoot, projectKey, runID, `90`)
+	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-a").String(), `[21,22]`)
+	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-b").String(), `[23,24]`)
+	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-final").String(), `[43,47]`)
+	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
+	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, stepIDs(compiled))
+}
+
+func TestOrchestratorCLIUnevenFanInRealRunner(t *testing.T) {
+	workspace := prepareRunWorkspaceFromTestdata(t, "uneven-fan-in")
+	storeRoot := t.TempDir()
+	runID := "run-uneven-fan-in-e2e"
+	result := runCommand(t,
+		"go", "run", "./cmd/massive-orchestrator", "run",
+		"--spec", filepath.Join(workspace, "workflow-spec.json"),
+		"--store", storeRoot,
+		"--project", "acme/security-workflows",
+		"--run-id", runID,
+		"--input", "20",
+	)
+	if result.err != nil {
+		t.Fatalf("orchestrator failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", result.stdout, result.stderr, result.err)
+	}
+
+	projectKey := NormalizeProjectKey("acme/security-workflows")
+	compiled := compileTestdataFixture(t, "uneven-fan-in")
+	// split=20; short=21; long=40; long-tail=140; merge([21,140])=161.
+	assertResultArtifact(t, storeRoot, projectKey, runID, `161`)
+	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge").String(), `[21,140]`)
+	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
+	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, stepIDs(compiled))
+}
+
+func TestOrchestratorCLISourceDriftFailsRun(t *testing.T) {
+	workspace := prepareRunWorkspace(t, "linear-chain", "linear-chain")
+	// Edit the source after "compile" (the spec's manifest reflects the
+	// original bytes); the run must refuse to execute the drifted source.
+	drifted := "export function double(args: { readonly input: number }): number {\n  return args.input * 3;\n}\n"
+	if err := os.WriteFile(filepath.Join(workspace, "workflow.ts"), []byte(drifted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	storeRoot := t.TempDir()
+	result := runCommand(t,
+		"go", "run", "./cmd/massive-orchestrator", "run",
+		"--spec", filepath.Join(workspace, "workflow-spec.json"),
+		"--store", storeRoot,
+		"--project", "acme/security-workflows",
+		"--run-id", "run-drift-e2e",
+		"--input", "20",
+	)
+	if result.err == nil {
+		t.Fatalf("orchestrator succeeded despite source drift\nstdout:\n%s", result.stdout)
+	}
+	if !strings.Contains(result.stderr, "drifted since compile") || !strings.Contains(result.stderr, "workflow.ts") {
+		t.Fatalf("stderr = %q, want a drift diagnostic naming workflow.ts", result.stderr)
+	}
 }
 
 func TestOrchestratorCLISchemaFailureRealRunner(t *testing.T) {
@@ -169,16 +248,151 @@ func runCommand(t *testing.T, name string, args ...string) commandResult {
 func prepareRunWorkspace(t *testing.T, specFixture string, sourceFixture string) string {
 	t.Helper()
 
-	workspace := t.TempDir()
 	specData := readRepoFile(t, "conformance", "fixtures", "specs", specFixture, "workflow-spec.json")
-	if err := os.WriteFile(filepath.Join(workspace, "workflow-spec.json"), specData, 0o644); err != nil {
-		t.Fatal(err)
-	}
 	sourceData := readRepoFile(t, "internal", "orchestrator", "testdata", sourceFixture, "workflow.ts")
+	return writeRunWorkspace(t, specData, sourceData)
+}
+
+// prepareRunWorkspaceFromTestdata mirrors prepareRunWorkspace for cases whose
+// spec lives alongside its source under internal/orchestrator/testdata rather
+// than in the shared conformance spec fixtures.
+func prepareRunWorkspaceFromTestdata(t *testing.T, caseName string) string {
+	t.Helper()
+
+	specData := readRepoFile(t, "internal", "orchestrator", "testdata", caseName, "workflow-spec.json")
+	sourceData := readRepoFile(t, "internal", "orchestrator", "testdata", caseName, "workflow.ts")
+	return writeRunWorkspace(t, specData, sourceData)
+}
+
+func writeRunWorkspace(t *testing.T, specData []byte, sourceData []byte) string {
+	t.Helper()
+
+	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "workflow.ts"), sourceData, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The compiled plan's source-package hash must match the workflow.ts that
+	// ships next to it, or the orchestrator's integrity check fails the run.
+	// Fixture specs carry placeholder digests, so patch them to the real hashes
+	// of the source written into this workspace.
+	patched := patchSpecSource(t, specData, workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "workflow-spec.json"), patched, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return workspace
+}
+
+// patchSpecSource rewrites each source package's per-file hashes and package
+// hash to match the real files under sourceDir, keeping the spec internally
+// consistent with the source it will run against.
+func patchSpecSource(t *testing.T, specData []byte, sourceDir string) []byte {
+	t.Helper()
+
+	var doc map[string]any
+	if err := json.Unmarshal(specData, &doc); err != nil {
+		t.Fatal(err)
+	}
+	packages, ok := doc["sourcePackages"].(map[string]any)
+	if !ok {
+		t.Fatal("spec has no sourcePackages object")
+	}
+	for _, raw := range packages {
+		pkg, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatal("source package is not an object")
+		}
+		filesRaw, ok := pkg["files"].([]any)
+		if !ok {
+			t.Fatal("source package has no files array")
+		}
+		files := make([]SourcePackageFile, 0, len(filesRaw))
+		for _, fileRaw := range filesRaw {
+			fileMap, ok := fileRaw.(map[string]any)
+			if !ok {
+				t.Fatal("source package file is not an object")
+			}
+			path, ok := fileMap["path"].(string)
+			if !ok {
+				t.Fatal("source package file has no path")
+			}
+			content, err := os.ReadFile(filepath.Join(sourceDir, filepath.FromSlash(path)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			hash := canonical.DigestBytes(content)
+			fileMap["hash"] = hash
+			files = append(files, SourcePackageFile{Path: path, Hash: hash})
+		}
+		packageHash, err := recomputeSourcePackageHash(files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkg["packageHash"] = packageHash
+		pkg["artifact"] = "packages/" + strings.Replace(packageHash, "sha256:", "sha256-", 1) + "/source.tar.zst"
+	}
+	patched, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return patched
+}
+
+func manifestsFromSpec(workflowSpec *spec.WorkflowSpec) map[string][]SourcePackageFile {
+	manifests := make(map[string][]SourcePackageFile, len(workflowSpec.SourcePackages))
+	for packageID, sourcePackage := range workflowSpec.SourcePackages {
+		files := make([]SourcePackageFile, 0, len(sourcePackage.Files))
+		for _, file := range sourcePackage.Files {
+			files = append(files, SourcePackageFile{Path: file.Path, Hash: file.Hash})
+		}
+		manifests[packageID] = files
+	}
+	return manifests
+}
+
+// compileConsistentFixture reads a conformance spec fixture, patches its source
+// hashes to match the real source under sourceDir, and compiles it, returning
+// the plan and the file manifests to thread into RunConfig.
+func compileConsistentFixture(t *testing.T, name string, sourceDir string) (*plan.CompileResult, map[string][]SourcePackageFile) {
+	t.Helper()
+
+	specData := patchSpecSource(t, readRepoFile(t, "conformance", "fixtures", "specs", name, "workflow-spec.json"), sourceDir)
+	workflowSpec, err := spec.Parse(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := plan.Compile(workflowSpec, specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compiled, manifestsFromSpec(workflowSpec)
+}
+
+// compileTestdataFixture compiles a case whose spec + source live together
+// under internal/orchestrator/testdata, patching the source hashes first.
+func compileTestdataFixture(t *testing.T, caseName string) *plan.CompileResult {
+	t.Helper()
+
+	sourceDir := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", caseName)
+	specData := patchSpecSource(t, readRepoFile(t, "internal", "orchestrator", "testdata", caseName, "workflow-spec.json"), sourceDir)
+	workflowSpec, err := spec.Parse(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := plan.Compile(workflowSpec, specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compiled
+}
+
+func stepIDs(compiled *plan.CompileResult) []string {
+	var ids []string
+	for _, node := range compiled.Plan.GetGraph().GetNodes() {
+		if node.GetKind() == "step" {
+			ids = append(ids, node.GetId())
+		}
+	}
+	return ids
 }
 
 func assertResultArtifact(t *testing.T, storeRoot string, projectKey string, runID string, expected string) {
@@ -187,10 +401,9 @@ func assertResultArtifact(t *testing.T, storeRoot string, projectKey string, run
 	assertStoredJSON(t, storeRoot, runResultKey(projectKey, runID).String(), expected)
 }
 
-func assertStepOutputs(t *testing.T, storeRoot string, projectKey string, runID string, fixture string) {
+func assertStepOutputs(t *testing.T, storeRoot string, projectKey string, runID string, compiled *plan.CompileResult) {
 	t.Helper()
 
-	compiled := compileFixture(t, fixture)
 	for _, node := range compiled.Plan.GetGraph().GetNodes() {
 		if node.GetKind() != "step" {
 			continue

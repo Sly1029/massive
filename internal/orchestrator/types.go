@@ -24,8 +24,18 @@ type RunConfig struct {
 	RunnerCommand     []string
 	RunnerWorkingDir  string
 	SourcePackageRoot string
-	StepInvoker       StepInvoker
-	Hooks             RunHooks
+	// SourceManifests carries the per-package file manifest (relative path +
+	// sha256 content hash) from the compiled spec, keyed by package id. The
+	// plan proto records only the package hash, so the orchestrator threads the
+	// manifest separately to verify on-disk source against it before running.
+	SourceManifests map[string][]SourcePackageFile
+	StepInvoker     StepInvoker
+	Hooks           RunHooks
+}
+
+type SourcePackageFile struct {
+	Path string `json:"path"`
+	Hash string `json:"hash"`
 }
 
 type RunHooks struct {

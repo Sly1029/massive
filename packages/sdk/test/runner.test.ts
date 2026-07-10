@@ -24,6 +24,8 @@ import {
 
 const SOURCE_FETCH_CONTENT_TYPE =
   "application/vnd.massive.source-directory+json";
+const PLAN_PACKAGE_HASH =
+  "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const VALUE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -175,9 +177,12 @@ async function withRunnerFixture(
       sourcePackage: {
         packageId: "ts-main",
         language: "typescript",
-        packageHash: sourceHash,
+        // packageHash (the plan's content-addressed package hash) is distinct
+        // from sourceArchive.hash (the digest of the pointer artifact body);
+        // the runner must not require them to be equal.
+        packageHash: PLAN_PACKAGE_HASH,
         sourceArchive: {
-          key: `packages/${hashPathSegment(sourceHash)}/source-fetch.json`,
+          key: `packages/${hashPathSegment(PLAN_PACKAGE_HASH)}/source.tar.zst`,
           hash: sourceHash,
           contentType: SOURCE_FETCH_CONTENT_TYPE,
         },

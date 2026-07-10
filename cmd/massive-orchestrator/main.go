@@ -104,6 +104,7 @@ func run(args []string) error {
 		RunID:             *runID,
 		RunnerWorkingDir:  repoRoot,
 		SourcePackageRoot: sourceRoot,
+		SourceManifests:   sourceManifests(workflowSpec),
 	}, []byte(*input))
 	if err != nil {
 		return err
@@ -112,6 +113,18 @@ func run(args []string) error {
 	printStepSummaries(result)
 	fmt.Printf("result: %s\n", result.ResultKey)
 	return nil
+}
+
+func sourceManifests(workflowSpec *spec.WorkflowSpec) map[string][]orchestrator.SourcePackageFile {
+	manifests := make(map[string][]orchestrator.SourcePackageFile, len(workflowSpec.SourcePackages))
+	for packageID, sourcePackage := range workflowSpec.SourcePackages {
+		files := make([]orchestrator.SourcePackageFile, 0, len(sourcePackage.Files))
+		for _, file := range sourcePackage.Files {
+			files = append(files, orchestrator.SourcePackageFile{Path: file.Path, Hash: file.Hash})
+		}
+		manifests[packageID] = files
+	}
+	return manifests
 }
 
 func printStepSummaries(result *orchestrator.RunResult) {
