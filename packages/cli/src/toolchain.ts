@@ -106,6 +106,7 @@ async function goSourcesDirty(repoRoot: string): Promise<boolean> {
         "--",
         "cmd",
         "internal",
+        "conformance/schema",
         "go.mod",
         "go.sum",
       ],
