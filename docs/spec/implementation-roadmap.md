@@ -213,7 +213,7 @@ Refactor `packages/sdk` from JSON *plan* compilation to `WorkflowSpec` *emission
   - Status: implemented in `packages/sdk/src/resolve.ts`; all resolution cases + zero-config Argo refusal covered in `packages/sdk/test/resolve.test.ts` against real temp-dir fixtures.
 - **WS-1.6 — Remove the in-memory runtime as a supported path.** Delete/retire `run.ts` and `argo.ts`'s `runArgoLocal` from the public surface (keep step `run` closures for the *runner* to execute, not for in-SDK execution). Update `index.ts` exports.
   - AC: `index.ts` no longer exports an in-memory `run`; SDK tests assert on emitted spec/artifacts only.
-  - Status: implemented — `run.ts` deleted, `runArgoLocal` removed from `argo.ts`, runtime registries dropped from compiled results, `sdk.test.ts` reworked to assert on emitted plans/artifacts.
+  - Status: implemented — `run.ts` deleted and the in-memory/`runArgoLocal` execution path removed from the public surface; the legacy `argo.ts` and `compile.ts` plan emitters have since been retired entirely, leaving `emit.ts` as the only emitter. `sdk.test.ts` asserts on the emitted `WorkflowSpec` and datastore artifacts (the SDK no longer emits plans).
 
 ### WS-2 — Go Compiler Core: spec → plan  *(depends: WS-0)*
 

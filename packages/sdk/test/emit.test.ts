@@ -323,6 +323,32 @@ Deno.test("emission rejects step-level channel publication (post-M2)", async () 
   });
 });
 
+Deno.test("emission rejects step-level channel publications via publish (post-M2)", async () => {
+  await withSourcePackage(async (root) => {
+    const g = workflow({
+      name: "channel-publish",
+      input: z.object({ value: z.number() }),
+      output: z.object({ findings: z.number() }),
+    });
+    const scan = g.step("scan", {
+      input: z.object({ value: z.number() }),
+      output: z.object({ findings: z.number() }),
+      publish: { findings: "findings" },
+      run: ({ input }) => ({ findings: input.value }),
+    });
+    g.start().to(scan).to(g.end());
+
+    await assertRejects(
+      () =>
+        emitWorkflowSpec(g, {
+          source: { root, include: ["workflow.ts"] },
+        }),
+      GraphValidationError,
+      "channel(s): findings",
+    );
+  });
+});
+
 Deno.test("source package rejects included file symlinks escaping root", async () => {
   const root = await Deno.makeTempDir({ prefix: "massive-emit-source-" });
   const outsideRoot = await Deno.makeTempDir({

@@ -256,6 +256,17 @@ function assertNoChannels(builder: WorkflowBuilder<unknown, unknown>): void {
         `WorkflowSpec v0 emission does not support channels, but step "${step.id}" publishes to channel "${step.channel}". Channels are post-M2 schema work.`,
       );
     }
+
+    const publishedChannels = step.publish === undefined
+      ? []
+      : Object.keys(step.publish);
+    if (publishedChannels.length > 0) {
+      throw new GraphValidationError(
+        `WorkflowSpec v0 emission does not support channels, but step "${step.id}" publishes to channel(s): ${
+          publishedChannels.join(", ")
+        }. Channels are post-M2 schema work.`,
+      );
+    }
   }
 }
 
