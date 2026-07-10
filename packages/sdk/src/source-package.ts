@@ -1,4 +1,3 @@
-import fg from "fast-glob";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { MassiveError, SourcePackagePathError } from "./errors.ts";
@@ -30,6 +29,10 @@ export async function hashSourcePackage(
     );
   }
 
+  // Imported lazily so that importing "@massive/sdk" (and therefore the step
+  // runner that loads a workflow module) never evaluates fast-glob, which probes
+  // os.cpus() at load and would require --allow-sys the runner does not grant.
+  const { default: fg } = await import("fast-glob");
   const root = await realpath(resolve(source.root));
   const files = await fg([...source.include], {
     cwd: root,

@@ -207,6 +207,110 @@ func TestOrchestratorCLIExternalSpecRoot(t *testing.T) {
 	assertResultArtifact(t, storeRoot, projectKey, runID, `"value:41"`)
 }
 
+func TestOrchestratorCLIRelativeSourceRoot(t *testing.T) {
+	// The source package lives under a subdirectory of --source-root and the
+	// spec records a RELATIVE root ("pkg"); the spec file itself lives in an
+	// unrelated temp dir. With --source-root, the relative root resolves
+	// against it rather than dirname(--spec), so the handoff spec can live
+	// outside the package tree entirely.
+	sourceRoot := t.TempDir()
+	pkgDir := filepath.Join(sourceRoot, "pkg")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceData := readRepoFile(t, "internal", "orchestrator", "testdata", "linear-chain", "workflow.ts")
+	if err := os.WriteFile(filepath.Join(pkgDir, "workflow.ts"), sourceData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	specData := patchSpecSource(t, readRepoFile(t, "conformance", "fixtures", "specs", "linear-chain", "workflow-spec.json"), pkgDir)
+	specData = setSpecPackageRoots(t, specData, "pkg")
+
+	specDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(specDir, "workflow-spec.json"), specData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	storeRoot := newStoreRoot(t)
+	runID := "run-relative-root-e2e"
+	result := runCommand(t,
+		"go", "run", "./cmd/massive-orchestrator", "run",
+		"--spec", filepath.Join(specDir, "workflow-spec.json"),
+		"--source-root", sourceRoot,
+		"--store", storeRoot,
+		"--project", "acme/security-workflows",
+		"--run-id", runID,
+		"--input", "20",
+	)
+	if result.err != nil {
+		t.Fatalf("orchestrator failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", result.stdout, result.stderr, result.err)
+	}
+
+	projectKey := NormalizeProjectKey("acme/security-workflows")
+	assertResultArtifact(t, storeRoot, projectKey, runID, `"value:41"`)
+}
+
+func TestOrchestratorCLIJSONOutputMatchesManifest(t *testing.T) {
+	workspace := prepareRunWorkspace(t, "linear-chain", "linear-chain")
+	storeRoot := newStoreRoot(t)
+	runID := "run-json-e2e"
+	result := runCommand(t,
+		"go", "run", "./cmd/massive-orchestrator", "run",
+		"--spec", filepath.Join(workspace, "workflow-spec.json"),
+		"--store", storeRoot,
+		"--project", "acme/security-workflows",
+		"--run-id", runID,
+		"--input", "20",
+		"--json",
+	)
+	if result.err != nil {
+		t.Fatalf("orchestrator failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", result.stdout, result.stderr, result.err)
+	}
+	// --json replaces the human lines entirely.
+	if strings.Contains(result.stdout, "step ") || strings.Contains(result.stdout, "result: ") {
+		t.Fatalf("stdout = %q, want no human-readable lines under --json", result.stdout)
+	}
+
+	var payload struct {
+		RunID     string `json:"runId"`
+		Status    string `json:"status"`
+		ResultKey string `json:"resultKey"`
+		Steps     []struct {
+			NodeID     string `json:"nodeId"`
+			Status     string `json:"status"`
+			Diagnostic string `json:"diagnostic"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(result.stdout), &payload); err != nil {
+		t.Fatalf("stdout is not a single JSON object: %v\nstdout:\n%s", err, result.stdout)
+	}
+
+	projectKey := NormalizeProjectKey("acme/security-workflows")
+	if payload.RunID != runID {
+		t.Fatalf("runId = %q, want %q", payload.RunID, runID)
+	}
+	if payload.Status != StatusSucceeded {
+		t.Fatalf("status = %q, want %q", payload.Status, StatusSucceeded)
+	}
+	if want := runResultKey(projectKey, runID).String(); payload.ResultKey != want {
+		t.Fatalf("resultKey = %q, want %q", payload.ResultKey, want)
+	}
+
+	// The JSON steps must mirror the persisted run manifest the orchestrator
+	// already wrote — the object is a projection of that manifest, not a
+	// separately computed view.
+	manifest := readRunManifest(t, storeRoot, projectKey, runID)
+	if len(payload.Steps) != len(manifest.Steps) {
+		t.Fatalf("json steps = %d, want %d", len(payload.Steps), len(manifest.Steps))
+	}
+	for index, step := range manifest.Steps {
+		if payload.Steps[index].NodeID != step.NodeID || payload.Steps[index].Status != step.Status {
+			t.Fatalf("step[%d] = {%s %s}, manifest = {%s %s}", index, payload.Steps[index].NodeID, payload.Steps[index].Status, step.NodeID, step.Status)
+		}
+	}
+	assertResultArtifact(t, storeRoot, projectKey, runID, `"value:41"`)
+}
+
 func TestOrchestratorCLISourceDriftFailsRun(t *testing.T) {
 	workspace := prepareRunWorkspace(t, "linear-chain", "linear-chain")
 	// Edit the source after "compile" (the spec's manifest reflects the

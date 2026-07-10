@@ -13,8 +13,14 @@ export {
   net,
   secret,
 } from "./contract.ts";
-export { type Datastore, datastore } from "./datastore/index.ts";
+// Import the datastore facade directly (not ./datastore/index.ts) so that a
+// workflow module importing "@massive/sdk" — and therefore the step runner that
+// imports that module — never pulls the S3 client's @aws-sdk module graph,
+// which reads environment variables at load and would crash under the runner's
+// scoped (no --allow-env) permissions. S3 access remains a deep import.
+export { type Datastore, datastore } from "./datastore/facade.ts";
 export {
+  computeSpecHash,
   emitWorkflowSpec,
   type EmitWorkflowSpecOptions,
   type WorkflowSpec,
@@ -36,6 +42,7 @@ export {
   type WorkflowConfig,
 } from "./workflow.ts";
 export {
+  parseWorkflowPackageConfig,
   type ResolvedWorkflowEntrypoint,
   resolveWorkflowEntrypoint,
   type ResolveWorkflowEntrypointOptions,
