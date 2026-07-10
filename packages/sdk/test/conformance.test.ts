@@ -133,8 +133,59 @@ Deno.test("StepInvocationDescriptor JSON Schema rejects datastore keys that viol
   }
 });
 
+Deno.test("Argo bundle fixtures are internally consistent with their manifests", async () => {
+  const cases = await listBundleCases();
+  assert(cases.length >= 2, "expected at least linear-chain and diamond argo bundles");
+
+  for (const caseId of cases) {
+    const dir = `../../../conformance/fixtures/bundles/${caseId}/argo`;
+    const manifest = (await readJson(`${dir}/bundle-manifest.json`)) as {
+      target: string;
+      planHash: string;
+      files: { path: string; artifact: { hash: string } }[];
+      validations: { name: string; passed: boolean }[];
+    };
+
+    assertEquals(manifest.target, "argo", `${caseId} target`);
+    assert(HASH_REF_PATTERN.test(manifest.planHash), `${caseId} manifest plan hash`);
+
+    const recordedPaths = new Set(manifest.files.map((file) => file.path));
+    assert(recordedPaths.has("workflow-template.yaml"), `${caseId} records workflow-template.yaml`);
+    assert(recordedPaths.has("massive-plan.json"), `${caseId} records massive-plan.json`);
+
+    for (const file of manifest.files) {
+      const bytes = await Deno.readFile(new URL(`${dir}/${file.path}`, import.meta.url));
+      assertEquals(file.artifact.hash, `sha256:${await sha256Hex(bytes)}`, `${caseId} ${file.path} content hash`);
+    }
+
+    for (const validation of manifest.validations) {
+      assert(validation.passed, `${caseId} golden bundle invariant ${validation.name} must pass`);
+    }
+
+    const plan = (await readJson(`${dir}/massive-plan.json`)) as { planHash: string };
+    assertEquals(plan.planHash, manifest.planHash, `${caseId} embedded plan hash matches manifest`);
+  }
+});
+
 async function readGraphCatalog(): Promise<GraphCatalog> {
   return GraphCatalogSchema.parse(await readJson("../../../conformance/graph-catalog.json"));
+}
+
+async function listBundleCases(): Promise<string[]> {
+  const cases: string[] = [];
+  for await (const entry of Deno.readDir(new URL("../../../conformance/fixtures/bundles", import.meta.url))) {
+    if (entry.isDirectory) {
+      cases.push(entry.name);
+    }
+  }
+  return cases.sort();
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 let workflowSpecValidator: Promise<ValidateFunction> | undefined;

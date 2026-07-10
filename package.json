@@ -6,7 +6,8 @@
   "scripts": {
     "check:mocks": "node scripts/check-no-test-mocks.mjs",
     "check:proto": "go test ./conformance/schema",
-    "check:conformance": "deno test --config deno.json --allow-read --allow-sys=cpus packages/sdk/test/conformance.test.ts && pnpm check:proto",
+    "check:bundles": "go test ./internal/target/...",
+    "check:conformance": "deno test --config deno.json --allow-read --allow-sys=cpus packages/sdk/test/conformance.test.ts && pnpm check:proto && pnpm check:bundles",
     "check:types": "npx tsgo --noEmit -p tsconfig.json",
     "test": "deno test --config deno.json --allow-read --allow-write --allow-run=go --allow-net --allow-env --allow-sys=cpus,osRelease packages/sdk/test/sdk.test.ts packages/sdk/test/conformance.test.ts packages/sdk/test/hashing.test.ts packages/sdk/test/emit.test.ts packages/sdk/test/config.test.ts packages/sdk/test/resolve.test.ts packages/sdk/test/datastore-client.test.ts packages/sdk/test/runner.test.ts packages/sdk/test/source-package-hash.test.ts && pnpm test:cli",
     "test:cli": "deno test --config deno.json --allow-read --allow-write --allow-run --allow-env --allow-sys=cpus packages/cli/test/",
