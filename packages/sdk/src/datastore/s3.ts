@@ -102,7 +102,9 @@ export class S3DatastoreClient implements DatastoreClient {
           Key: this.objectName(key),
         }),
       );
-      const body = await readS3Body(output.Body);
+      const body = output.Body
+        ? await output.Body.transformToByteArray()
+        : new Uint8Array();
       return {
         info: {
           key,
@@ -183,33 +185,6 @@ function normalizePrefix(prefix: string): string {
   const trimmed = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
   validateObjectKey(trimmed);
   return `${trimmed}/`;
-}
-
-async function readS3Body(body: unknown): Promise<Uint8Array> {
-  if (body === undefined || body === null) {
-    return new Uint8Array();
-  }
-  if (
-    typeof body === "object" && "transformToByteArray" in body &&
-    typeof body.transformToByteArray === "function"
-  ) {
-    return await body.transformToByteArray();
-  }
-  if (Symbol.asyncIterator in Object(body)) {
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of body as AsyncIterable<Uint8Array>) {
-      chunks.push(chunk);
-    }
-    const total = chunks.reduce((size, chunk) => size + chunk.byteLength, 0);
-    const merged = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return merged;
-  }
-  throw new Error("Unsupported S3 response body");
 }
 
 function isNotFound(error: unknown): boolean {
