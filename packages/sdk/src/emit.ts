@@ -236,8 +236,19 @@ export async function emitWorkflowSpec<Input, Output>(
 
   return {
     ...specWithoutHash,
-    specHash: sha256RefText(stableStringify(specWithoutHash)),
+    specHash: computeSpecHash(specWithoutHash),
   };
+}
+
+// The canonical spec hash: a sha256 ref over the spec field tree with specHash
+// self-excluded (per conformance/hashing.md). Exposed so callers that load a
+// persisted spec (e.g. the CLI's emit cache) can verify its integrity with the
+// exact rule emission used, instead of reimplementing it.
+export function computeSpecHash(
+  spec: Omit<WorkflowSpec, "specHash"> & { readonly specHash?: string },
+): string {
+  const { specHash: _omit, ...rest } = spec;
+  return sha256RefText(stableStringify(rest));
 }
 
 function assertNoChannels(builder: WorkflowBuilder<unknown, unknown>): void {

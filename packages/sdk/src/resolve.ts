@@ -133,13 +133,24 @@ async function loadWorkflowPackageConfig(
   configPath: string,
 ): Promise<WorkflowPackageConfig> {
   const module = await import(pathToFileURL(configPath).href);
-  const parsed = WorkflowPackageConfigSchema.safeParse(module.default);
+  return parseWorkflowPackageConfig(module.default, configPath);
+}
+
+// Validates an already-evaluated massive.config.ts default export against the
+// package-config schema and returns it typed. Exported so other entrypoints
+// (e.g. the CLI's cache fast path, which imports the config itself) validate
+// with the same schema instead of duplicating it or crashing on a bad shape.
+export function parseWorkflowPackageConfig(
+  value: unknown,
+  configPath: string,
+): WorkflowPackageConfig {
+  const parsed = WorkflowPackageConfigSchema.safeParse(value);
   if (!parsed.success) {
     throw new MassiveError(
       `Invalid massive.config.ts at ${configPath}: ${z.prettifyError(parsed.error)}`,
     );
   }
-  return module.default as WorkflowPackageConfig;
+  return value as WorkflowPackageConfig;
 }
 
 async function selectWorkflowExport(

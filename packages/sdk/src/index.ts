@@ -20,6 +20,7 @@ export {
 // scoped (no --allow-env) permissions. S3 access remains a deep import.
 export { type Datastore, datastore } from "./datastore/facade.ts";
 export {
+  computeSpecHash,
   emitWorkflowSpec,
   type EmitWorkflowSpecOptions,
   type WorkflowSpec,
@@ -41,6 +42,7 @@ export {
   type WorkflowConfig,
 } from "./workflow.ts";
 export {
+  parseWorkflowPackageConfig,
   type ResolvedWorkflowEntrypoint,
   resolveWorkflowEntrypoint,
   type ResolveWorkflowEntrypointOptions,

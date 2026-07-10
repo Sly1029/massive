@@ -118,6 +118,14 @@ async function inspectCommand(parsed: Parsed): Promise<number> {
     );
     return EXIT.config;
   }
+  if (result.kind === "ambiguous") {
+    const list = result.candidates.map((dir) => `    ${dir}`).join("\n");
+    await write(
+      Deno.stderr,
+      `✗ run "${runId}" exists under multiple projects:\n${list}\n\n  next  re-run against a store scoped to one project\n`,
+    );
+    return EXIT.config;
+  }
   await write(Deno.stdout, result.text);
   return EXIT.ok;
 }

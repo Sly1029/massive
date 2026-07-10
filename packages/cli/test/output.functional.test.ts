@@ -128,3 +128,41 @@ Deno.test("massive inspect rejects an unsafe run id before touching the filesyst
   assertStringIncludes(result.stderr, "invalid run id");
   assertStringIncludes(result.stderr, "next");
 });
+
+Deno.test("massive inspect errors when a run id exists under multiple projects", async () => {
+  const fixture = await copyFixture("linear-chain");
+  const store = await makeStore();
+  const runId = "dup-run";
+
+  // Same run id under two different projects -> two run dirs in the store.
+  for (const project of ["acme/one", "acme/two"]) {
+    const run = await runCli([
+      "run",
+      fixtureEntry(fixture),
+      "--input",
+      "20",
+      "--store",
+      store,
+      "--project",
+      project,
+      "--run-id",
+      runId,
+    ]);
+    assertEquals(run.code, 0, run.stderr);
+  }
+
+  // The manifest records only the normalized project key, so --project cannot be
+  // matched without reimplementing that normalization: inspect must refuse and
+  // list the candidates rather than silently pick the first.
+  const inspect = await runCli([
+    "inspect",
+    runId,
+    "--store",
+    store,
+    "--project",
+    "acme/one",
+  ]);
+  assertEquals(inspect.code, 4, inspect.stderr);
+  assertStringIncludes(inspect.stderr, "multiple projects");
+  assertStringIncludes(inspect.stderr, "next");
+});

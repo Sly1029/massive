@@ -1,5 +1,5 @@
 import type { Datastore } from "@massive/sdk";
-import { findRunManifestKey } from "./run.ts";
+import { findRunManifestKeys } from "./run.ts";
 
 export interface InspectRequest {
   readonly runId: string;
@@ -12,7 +12,16 @@ export interface InspectRequest {
 
 export type InspectResult =
   | { readonly kind: "ok"; readonly text: string }
-  | { readonly kind: "not-found"; readonly runId: string };
+  | { readonly kind: "not-found"; readonly runId: string }
+  // The same run id exists under multiple projects. The manifest records only
+  // the Go-normalized project key (not the raw owner/repo), so --project cannot
+  // be matched here without reimplementing that normalization; surface the
+  // candidates and let the caller re-run against a store scoped to one project.
+  | {
+    readonly kind: "ambiguous";
+    readonly runId: string;
+    readonly candidates: readonly string[];
+  };
 
 interface RunManifest {
   readonly planHash: string;
@@ -37,8 +46,14 @@ export async function inspectRun(
   req: InspectRequest,
   store: Datastore,
 ): Promise<InspectResult> {
-  const key = await findRunManifestKey(req.storeRoot, req.runId);
-  if (key === undefined) return { kind: "not-found", runId: req.runId };
+  const keys = await findRunManifestKeys(req.storeRoot, req.runId);
+  if (keys.length === 0) return { kind: "not-found", runId: req.runId };
+  if (keys.length > 1) {
+    // Candidate project directories: projects/<project-key>.
+    const candidates = keys.map((key) => key.split("/").slice(0, 2).join("/"));
+    return { kind: "ambiguous", runId: req.runId, candidates };
+  }
+  const key = keys[0]!;
 
   const manifest = JSON.parse(
     decoder.decode(await store.get(key)),

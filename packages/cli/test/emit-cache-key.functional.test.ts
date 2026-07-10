@@ -189,10 +189,122 @@ Deno.test("a corrupt emit-cache pointer self-heals: the run re-emits instead of 
   assertEquals(second.code, 0, second.stderr);
   assertMatch(second.stdout, /spec\s+emitted/);
   assertMatch(second.stdout, /emit cache invalid/);
+  // Self-healing must be graceful: no uncaught stack trace leaks to stderr.
+  assertEquals(second.stderr.includes("    at "), false, second.stderr);
+  assertEquals(second.stderr.includes("Uncaught"), false, second.stderr);
 
   const result = await findRunArtifact(store, "run-heal-2", "result.json");
   assert(
     result !== undefined,
     "the re-emitted run should still produce a result",
+  );
+});
+
+Deno.test("editing an imported settings module invalidates the cached spec", async () => {
+  const fixture = await copyFixture("settings-import");
+  const store = await makeStore();
+  const workflowPath = fixtureEntry(fixture);
+  const settingsPath = join(fixture, "settings.ts");
+
+  const args = (runId: string): string[] => [
+    "run",
+    workflowPath,
+    "--input",
+    "20",
+    "--store",
+    store,
+    "--project",
+    "acme/wf",
+    "--run-id",
+    runId,
+    "--verbose",
+  ];
+
+  const first = await runCli(args("run-set-1"));
+  assertEquals(first.code, 0, first.stderr);
+  assertMatch(first.stdout, /spec\s+emitted/);
+  assertEquals((await listDirEntries(join(store, "specs"))).length, 1);
+
+  // Edit settings.ts only. massive.config.ts's bytes are unchanged, but the
+  // evaluated config (environment.image) differs, so it must be a cache miss.
+  const edited = (await Deno.readTextFile(settingsPath)).replace(
+    "node:20",
+    "node:22",
+  );
+  await Deno.writeTextFile(settingsPath, edited);
+
+  const second = await runCli(args("run-set-2"));
+  assertEquals(second.code, 0, second.stderr);
+  assertMatch(
+    second.stdout,
+    /spec\s+emitted/,
+    "an imported-settings edit must be a cache miss",
+  );
+  assertEquals(
+    (await listDirEntries(join(store, "specs"))).length,
+    2,
+    "the settings edit must persist a new spec",
+  );
+});
+
+Deno.test("a cache pointer aimed at a different valid spec is rejected; the correct workflow runs", async () => {
+  const fixture = await copyFixture("two-workflows");
+  const store = await makeStore();
+  const workflowPath = fixtureEntry(fixture);
+  const cacheDir = join(store, "cache", "emit");
+
+  const args = (entry: string, runId: string): string[] => [
+    "run",
+    entry,
+    "--input",
+    "20",
+    "--store",
+    store,
+    "--project",
+    "acme/wf",
+    "--run-id",
+    runId,
+  ];
+
+  // Run alpha (result 40): one valid spec + one pointer.
+  assertEquals(
+    (await runCli(args(`${workflowPath}#alpha`, "diff-alpha"))).code,
+    0,
+  );
+  const afterAlpha = new Set(
+    (await listDirEntries(cacheDir)).filter((n) => n.endsWith(".json")),
+  );
+
+  // Run beta (result 60): a second valid spec + a second pointer.
+  assertEquals(
+    (await runCli(args(`${workflowPath}#beta`, "diff-beta"))).code,
+    0,
+  );
+  const allPointers = (await listDirEntries(cacheDir)).filter((n) =>
+    n.endsWith(".json")
+  );
+  const alphaPointer = [...afterAlpha][0]!;
+  const betaPointer = allPointers.find((n) => !afterAlpha.has(n))!;
+
+  // Repoint alpha's cache entry at beta's (a different, internally-valid spec).
+  await Deno.writeTextFile(
+    join(cacheDir, alphaPointer),
+    await Deno.readTextFile(join(cacheDir, betaPointer)),
+  );
+
+  // Running alpha again must NOT execute beta: the integrity check rejects the
+  // mis-pointed pointer and re-emits alpha's spec.
+  const rerun = await runCli([
+    ...args(`${workflowPath}#alpha`, "diff-alpha-2"),
+    "--verbose",
+  ]);
+  assertEquals(rerun.code, 0, rerun.stderr);
+  assertMatch(rerun.stdout, /spec\s+emitted/);
+  const result = await findRunArtifact(store, "diff-alpha-2", "result.json");
+  assert(result !== undefined);
+  assertEquals(
+    await Deno.readTextFile(result),
+    "40",
+    "must run alpha (40), not the mis-pointed beta (60)",
   );
 });

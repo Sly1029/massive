@@ -1,25 +1,33 @@
 import { dirname, relative, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import {
+  computeSpecHash,
   type Datastore,
   datastore,
   emitWorkflowSpec,
   MassiveError,
+  parseWorkflowPackageConfig,
   resolveWorkflowEntrypoint,
   type WorkflowPackageConfig,
   type WorkflowSpec,
   type WorkflowSpecTarget,
 } from "@massive/sdk";
 import { hashSourcePackage } from "../../sdk/src/source-package.ts";
-import {
-  sha256Bytes,
-  sha256Text,
-  stableStringify,
-} from "../../sdk/src/stable.ts";
+import { sha256Text, stableStringify } from "../../sdk/src/stable.ts";
 import { validateObjectKey } from "../../sdk/src/datastore/key.ts";
 import { RUNNER_EXIT_CODES } from "../../sdk/src/runner/outcomes.ts";
 import { createToolchain, ToolchainMissingError } from "./toolchain.ts";
+
+// A malformed massive.config.ts shape discovered on the emit fast path. Kept
+// distinct from MassiveError (which maps to resolve-failed) so runWorkflow can
+// map it to the config-error exit code rather than a resolve failure.
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConfigError";
+  }
+}
 
 // Pre-run exit categories owned by the CLI/SDK/Go layers. Step-failure exit
 // codes are the runner's own (64/65/66) and are propagated unchanged, so the
@@ -144,7 +152,29 @@ export type RunOutcome =
 const decoder = new TextDecoder();
 
 // Pipe of ensure-toolchain -> resolve/emit (with cache) -> orchestrate.
+// Total: every path returns a RunOutcome. A malformed config maps to
+// config-error; any other unexpected throw becomes run-failed rather than an
+// uncaught stack trace, so the exit-code contract is exhaustive.
 export async function runWorkflow(req: RunRequest): Promise<RunOutcome> {
+  try {
+    return await executeRun(req);
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      return {
+        kind: "config-error",
+        exitCode: EXIT.config,
+        message: error.message,
+      };
+    }
+    return {
+      kind: "run-failed",
+      exitCode: EXIT.run,
+      diagnostic: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function executeRun(req: RunRequest): Promise<RunOutcome> {
   const root = repoRoot();
   let binary: string;
   try {
@@ -172,6 +202,7 @@ export async function runWorkflow(req: RunRequest): Promise<RunOutcome> {
         message: error.message,
       };
     }
+    // ConfigError and any unexpected error bubble to runWorkflow's catch-all.
     throw error;
   }
 
@@ -196,22 +227,24 @@ async function prepare(req: RunRequest, store: Datastore): Promise<Emitted> {
   const cfg = await resolveSourceConfig(req.entry);
   const notes: string[] = [];
   let cacheKey: string | undefined;
+  let identityHash: string | undefined;
   if (cfg !== undefined) {
     const source = await hashSourcePackage(cfg.source);
-    // The cache key identifies the exact emitted spec: source content, targets,
-    // the RESOLVED entrypoint identity (module + export, so two workflows in one
-    // package do not collide), and the config-file bytes (so a config edit is a
-    // miss even when the config is not covered by `include`). Entrypoint
-    // identity is derived statically — the workflow module is never imported on
-    // a hit.
+    // The identity hash keys the emit cache on everything that determines the
+    // emitted spec: source content, targets, the RESOLVED entrypoint identity
+    // (module + export, so two workflows in one package do not collide), and the
+    // EVALUATED config (so an edit to an imported settings module is a miss even
+    // though the config file bytes are unchanged). Derived statically — the
+    // workflow module is never imported on a hit.
     const entry = staticEntryIdentity(req.entry, cfg.packageRoot);
-    cacheKey = emitCacheKey(
+    identityHash = emitIdentityHash(
       source.sourcePackageHash,
       cfg.targets,
       entry,
       cfg.configHash,
     );
-    const reused = await readCachedSpec(store, cacheKey);
+    cacheKey = `cache/emit/${segmentForHash(identityHash)}.json`;
+    const reused = await readCachedSpec(store, cacheKey, identityHash);
     if (reused !== undefined) {
       return {
         spec: reused.spec,
@@ -223,8 +256,9 @@ async function prepare(req: RunRequest, store: Datastore): Promise<Emitted> {
       };
     }
     if (await store.exists(cacheKey)) {
-      // The pointer existed but could not be honored (missing/corrupt spec or a
-      // bad key): fall through and re-emit, self-healing the cache entry.
+      // The pointer existed but could not be honored (missing/corrupt/mismatched
+      // spec, or a pointer bound to a different identity): fall through and
+      // re-emit, self-healing the cache entry.
       notes.push("emit cache invalid; re-emitting");
     }
   }
@@ -241,8 +275,14 @@ async function prepare(req: RunRequest, store: Datastore): Promise<Emitted> {
   await store.put(specKey, JSON.stringify(spec), {
     contentType: "application/json",
   });
-  if (cacheKey !== undefined) {
-    await store.put(cacheKey, specKey, { contentType: "application/json" });
+  if (cacheKey !== undefined && identityHash !== undefined) {
+    // The pointer records the identity it was emitted for, so a later read can
+    // reject a pointer that has been repointed at a different spec.
+    await store.put(
+      cacheKey,
+      JSON.stringify({ specKey, identity: identityHash }),
+      { contentType: "application/json" },
+    );
   }
   return {
     spec,
@@ -259,20 +299,41 @@ async function prepare(req: RunRequest, store: Datastore): Promise<Emitted> {
 }
 
 // Reads the cached spec a pointer references, or undefined when the cache entry
-// cannot be honored. ANY failure (missing pointer, missing/parse-broken spec,
-// invalid key, absent specHash) is treated as a miss so a corrupt or stale
-// cache never crashes a run — the caller re-emits.
+// cannot be honored. It verifies three things before trusting a hit, so neither
+// a corrupt/stale pointer nor a pointer repointed at a DIFFERENT valid spec is
+// silently executed:
+//   1. identity binding — the pointer records the identity hash it was emitted
+//      for; it must equal this run's identity (else it points at another spec).
+//   2. content integrity — the loaded spec must hash (specHash-excluded, per the
+//      SDK's own rule) to its recorded specHash.
+//   3. key binding — the pointer's target key must be the content-addressed key
+//      for that specHash.
+// ANY failure (missing pointer/spec, parse error, bad key, any mismatch) is
+// treated as a miss so the caller re-emits; a corrupt cache never crashes a run.
 async function readCachedSpec(
   store: Datastore,
   cacheKey: string,
+  identityHash: string,
 ): Promise<{ spec: WorkflowSpec; specKey: string } | undefined> {
   try {
     if (!(await store.exists(cacheKey))) return undefined;
-    const specKey = decoder.decode(await store.get(cacheKey));
+    const pointer = JSON.parse(decoder.decode(await store.get(cacheKey))) as {
+      readonly specKey?: unknown;
+      readonly identity?: unknown;
+    };
+    if (pointer.identity !== identityHash) return undefined;
+    if (typeof pointer.specKey !== "string") return undefined;
+    const specKey = pointer.specKey;
     const spec = JSON.parse(
       decoder.decode(await store.get(specKey)),
     ) as WorkflowSpec;
     if (typeof spec.specHash !== "string" || spec.specHash === "") {
+      return undefined;
+    }
+    if (computeSpecHash(spec) !== spec.specHash) return undefined;
+    if (
+      `specs/${segmentForHash(spec.specHash)}/workflow-spec.json` !== specKey
+    ) {
       return undefined;
     }
     return { spec, specKey };
@@ -375,7 +436,16 @@ async function runOrchestrator(
     };
   }
 
-  const manifest = await readRunManifest(store, req.storeRoot, parsed.runId);
+  // Locate the manifest by deriving it from the orchestrator's own resultKey
+  // (its sibling), never by scanning projects/ — the resultKey embeds the exact
+  // Go-normalized project key, so there is no ambiguity and nothing to guess.
+  // On a failure with no resultKey the per-step statuses come from the run JSON.
+  const manifestKey = parsed.resultKey === undefined || parsed.resultKey === ""
+    ? undefined
+    : manifestKeyFromResultKey(parsed.resultKey);
+  const manifest = manifestKey === undefined
+    ? undefined
+    : await readManifestAt(store, manifestKey);
   const steps = buildSteps(parsed, manifest);
 
   if (code === 0 && parsed.status === "succeeded") {
@@ -480,9 +550,11 @@ interface SourceConfig {
   };
   readonly targets: readonly WorkflowSpecTarget[];
   readonly projectId?: string;
-  // sha256 (hex) of the massive.config.ts bytes, folded into the emit cache key
-  // so a config edit invalidates a cached spec even when the config file is not
-  // covered by the source `include` globs.
+  // sha256 (hex) of the EVALUATED, spec-relevant config fields (entrypoint,
+  // include, environment, targets), folded into the emit cache key so a config
+  // change invalidates a cached spec even when the config file is not covered by
+  // the source `include` globs — including edits that flow in via an imported
+  // settings module without changing the config file bytes.
   readonly configHash: string;
 }
 
@@ -499,9 +571,28 @@ async function resolveSourceConfig(
   const configPath = await findNearestConfig(dirname(path));
   if (configPath === undefined) return undefined;
   const packageRoot = dirname(configPath);
-  const config = (await import(pathToFileURL(configPath).href))
-    .default as WorkflowPackageConfig;
-  const configHash = sha256Bytes(await readFile(configPath));
+  const raw = (await import(pathToFileURL(configPath).href)).default;
+  // Validate the evaluated config with the SDK's own schema so a malformed shape
+  // surfaces as a config-error (exit 4) here instead of throwing a TypeError
+  // deeper in. ConfigError is distinct from MassiveError (resolve-failed).
+  let config: WorkflowPackageConfig;
+  try {
+    config = parseWorkflowPackageConfig(raw, configPath);
+  } catch (error) {
+    throw new ConfigError(
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  // Hash the EVALUATED, spec-relevant config fields — not the file bytes — so an
+  // edit to an imported settings module (which changes these values without
+  // changing the config file) is a cache miss, while a dynamic-but-equal config
+  // still hits.
+  const configHash = sha256Text(stableStringify({
+    entrypoint: config.entrypoint,
+    include: config.include,
+    environment: config.environment,
+    targets: config.targets,
+  }));
   return {
     packageRoot,
     source: { root: packageRoot, include: config.include },
@@ -543,33 +634,49 @@ interface ManifestView {
   readonly result?: { readonly key: string; readonly hash: string };
 }
 
-async function readRunManifest(
+// Reads a manifest at a known key; undefined on any failure (best-effort — the
+// caller degrades to the run JSON for step statuses).
+async function readManifestAt(
   store: Datastore,
-  storeRoot: string,
-  runId: string,
+  key: string,
 ): Promise<ManifestView | undefined> {
-  const key = await findRunManifestKey(storeRoot, runId);
-  if (key === undefined) return undefined;
-  return JSON.parse(decoder.decode(await store.get(key))) as ManifestView;
+  try {
+    return JSON.parse(decoder.decode(await store.get(key))) as ManifestView;
+  } catch {
+    return undefined;
+  }
 }
 
-// Locates a run manifest without recomputing the Go-owned project-key
-// normalization: the run id is unique, so glob projects/<project-key>/runs/<id>.
-export async function findRunManifestKey(
+// The run manifest is the sibling of the result artifact under the same run
+// directory (datastore-layout.md: projects/<key>/runs/<id>/{result,run-manifest}.json).
+function manifestKeyFromResultKey(resultKey: string): string {
+  const slash = resultKey.lastIndexOf("/");
+  return slash === -1
+    ? "run-manifest.json"
+    : `${resultKey.slice(0, slash)}/run-manifest.json`;
+}
+
+// Lists every run-manifest key matching a run id across projects, without
+// recomputing the Go-owned project-key normalization. inspect uses this to
+// disambiguate: exactly one match is returned unambiguously; multiple matches
+// (the same run id under different projects) are surfaced to the caller rather
+// than silently resolving to the first.
+export async function findRunManifestKeys(
   storeRoot: string,
   runId: string,
-): Promise<string | undefined> {
+): Promise<string[]> {
   const projectsDir = `${storeRoot}/projects`;
+  const keys: string[] = [];
   try {
     for await (const entry of Deno.readDir(projectsDir)) {
       if (!entry.isDirectory) continue;
       const key = `projects/${entry.name}/runs/${runId}/run-manifest.json`;
-      if (await pathExists(`${storeRoot}/${key}`)) return key;
+      if (await pathExists(`${storeRoot}/${key}`)) keys.push(key);
     }
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
-  return undefined;
+  return keys.sort();
 }
 
 function buildSteps(
@@ -646,19 +753,18 @@ function splitDiagnostics(stderr: string): string[] {
 
 // --- shared helpers --------------------------------------------------------
 
-function emitCacheKey(
+// The emit-cache identity hash: everything that determines the emitted spec.
+// The cache pointer lives at cache/emit/<segment(identityHash)>.json and records
+// this hash so a read can confirm the pointer is bound to the current run.
+function emitIdentityHash(
   sourcePackageHash: string,
   targets: readonly WorkflowSpecTarget[],
   entry: { readonly module: string; readonly export: string },
   configHash: string,
 ): string {
-  return `cache/emit/${
-    segmentForHash(
-      sha256Text(
-        stableStringify({ sourcePackageHash, targets, entry, configHash }),
-      ),
-    )
-  }.json`;
+  return sha256Text(
+    stableStringify({ sourcePackageHash, targets, entry, configHash }),
+  );
 }
 
 // The Go orchestrator prints identifiable spec/plan diagnostics with this stable

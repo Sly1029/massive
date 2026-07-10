@@ -130,6 +130,36 @@ const cases: readonly ErrorCase[] = [
     },
   },
   {
+    // A malformed config shape is a config-error (exit 4), not an uncaught
+    // TypeError deeper in the emit fast path.
+    name: "invalid config shape (missing include) -> exit 4",
+    expectedCode: 4,
+    async prepare(): Promise<Prepared> {
+      const fixture = await copyFixture("linear-chain");
+      const storeRoot = await makeStore();
+      // Overwrite massive.config.ts with a shape missing the required `include`.
+      await Deno.writeTextFile(
+        `${fixture}/massive.config.ts`,
+        `import { target } from "@massive/sdk";\n` +
+          `export default { entrypoint: "./workflow.ts", targets: [target.local()] };\n`,
+      );
+      return {
+        args: [
+          "run",
+          fixtureEntry(fixture),
+          "--input",
+          "20",
+          "--store",
+          storeRoot,
+          "--project",
+          "acme/wf",
+        ],
+        options: {},
+        storeRoot,
+      };
+    },
+  },
+  {
     // CLI preflight: no `go` on PATH and no prebuilt binary -> exit 70.
     name: "missing go toolchain -> exit 70",
     expectedCode: 70,
