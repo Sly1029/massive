@@ -1,0 +1,84 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  annotations:
+    massive.dev/plan-hash: sha256:b05e3dec30b558ffe6781575f72c0689ae68cebf50e88d8309d6ccd52a342ee9
+  name: linear-chain
+  namespace: argo
+spec:
+  entrypoint: main
+  serviceAccountName: argo
+  templates:
+  - dag:
+      tasks:
+      - name: double
+        template: step-double
+      - dependencies:
+        - double
+        name: increment
+        template: step-increment
+      - dependencies:
+        - increment
+        name: label
+        template: step-label
+    name: main
+  - container:
+      args:
+      - /massive/descriptor.json
+      command:
+      - massive-step-runner
+      image: ghcr.io/massive-dev/typescript-runner:v0
+      resources:
+        limits:
+          cpu: 500m
+          memory: 512Mi
+        requests:
+          cpu: 500m
+          memory: 512Mi
+    inputs:
+      artifacts:
+      - name: descriptor
+        path: /massive/descriptor.json
+        raw:
+          data: '{"attempt":1,"channelReads":[],"channelWrites":[],"datastore":{"kind":"local","path":"/massive/store"},"encoding":"json-v0","environmentRef":"sha256:71a4103570d79db198fd89eb0febc34870403de50d9dfc62b792cd628cbf05ed","input":{"artifact":{"contentType":"application/json","hash":"","key":"runs/{{workflow.uid}}/inputs/double.json"},"schema":"sha256:cddf8275afa15408533079581ad27f95be579f4eeafbb1fba9fb6f32a4a64387"},"kind":"StepInvocationDescriptor","nodeId":"double","output":{"artifact":{"contentType":"application/json","key":"runs/{{workflow.uid}}/steps/double/1/output.json"},"schema":"sha256:cddf8275afa15408533079581ad27f95be579f4eeafbb1fba9fb6f32a4a64387"},"planHash":"sha256:b05e3dec30b558ffe6781575f72c0689ae68cebf50e88d8309d6ccd52a342ee9","runId":"{{workflow.uid}}","schemaVersion":0,"sourcePackage":{"language":"typescript","packageHash":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","packageId":"ts-main","sourceArchive":{"contentType":"application/zstd","hash":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","key":"packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst"}},"symbol":{"export":"double","language":"typescript","module":"./workflow.ts","packageId":"ts-main"}}'
+    name: step-double
+  - container:
+      args:
+      - /massive/descriptor.json
+      command:
+      - massive-step-runner
+      image: ghcr.io/massive-dev/typescript-runner:v0
+      resources:
+        limits:
+          cpu: 500m
+          memory: 512Mi
+        requests:
+          cpu: 500m
+          memory: 512Mi
+    inputs:
+      artifacts:
+      - name: descriptor
+        path: /massive/descriptor.json
+        raw:
+          data: '{"attempt":1,"channelReads":[],"channelWrites":[],"datastore":{"kind":"local","path":"/massive/store"},"encoding":"json-v0","environmentRef":"sha256:71a4103570d79db198fd89eb0febc34870403de50d9dfc62b792cd628cbf05ed","input":{"artifact":{"contentType":"application/json","hash":"","key":"runs/{{workflow.uid}}/inputs/increment.json"},"schema":"sha256:cddf8275afa15408533079581ad27f95be579f4eeafbb1fba9fb6f32a4a64387"},"kind":"StepInvocationDescriptor","nodeId":"increment","output":{"artifact":{"contentType":"application/json","key":"runs/{{workflow.uid}}/steps/increment/1/output.json"},"schema":"sha256:cddf8275afa15408533079581ad27f95be579f4eeafbb1fba9fb6f32a4a64387"},"planHash":"sha256:b05e3dec30b558ffe6781575f72c0689ae68cebf50e88d8309d6ccd52a342ee9","runId":"{{workflow.uid}}","schemaVersion":0,"sourcePackage":{"language":"typescript","packageHash":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","packageId":"ts-main","sourceArchive":{"contentType":"application/zstd","hash":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","key":"packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst"}},"symbol":{"export":"increment","language":"typescript","module":"./workflow.ts","packageId":"ts-main"}}'
+    name: step-increment
+  - container:
+      args:
+      - /massive/descriptor.json
+      command:
+      - massive-step-runner
+      image: ghcr.io/massive-dev/typescript-runner:v0
+      resources:
+        limits:
+          cpu: 500m
+          memory: 512Mi
+        requests:
+          cpu: 500m
+          memory: 512Mi
+    inputs:
+      artifacts:
+      - name: descriptor
+        path: /massive/descriptor.json
+        raw:
+          data: '{"attempt":1,"channelReads":[],"channelWrites":[],"datastore":{"kind":"local","path":"/massive/store"},"encoding":"json-v0","environmentRef":"sha256:71a4103570d79db198fd89eb0febc34870403de50d9dfc62b792cd628cbf05ed","input":{"artifact":{"contentType":"application/json","hash":"","key":"runs/{{workflow.uid}}/inputs/label.json"},"schema":"sha256:cddf8275afa15408533079581ad27f95be579f4eeafbb1fba9fb6f32a4a64387"},"kind":"StepInvocationDescriptor","nodeId":"label","output":{"artifact":{"contentType":"application/json","key":"runs/{{workflow.uid}}/steps/label/1/output.json"},"schema":"sha256:00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"},"planHash":"sha256:b05e3dec30b558ffe6781575f72c0689ae68cebf50e88d8309d6ccd52a342ee9","runId":"{{workflow.uid}}","schemaVersion":0,"sourcePackage":{"language":"typescript","packageHash":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","packageId":"ts-main","sourceArchive":{"contentType":"application/zstd","hash":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","key":"packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst"}},"symbol":{"export":"label","language":"typescript","module":"./workflow.ts","packageId":"ts-main"}}'
+    name: step-label
