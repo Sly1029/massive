@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,7 +82,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	if err != nil {
 		return nil, err
 	}
-	sourcePackages, err := materializePrerequisites(ctx, store, config, runID)
+	sourcePackages, err := materializePrerequisites(ctx, store, config)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +202,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	return result, nil
 }
 
-func materializePrerequisites(ctx context.Context, store datastore.Datastore, config RunConfig, runID string) (map[string]sourcePackageArtifact, error) {
+func materializePrerequisites(ctx context.Context, store datastore.Datastore, config RunConfig) (map[string]sourcePackageArtifact, error) {
 	for _, schemaEntry := range config.Plan.GetSchemas() {
 		schemaBytes := []byte(schemaEntry.GetCanonicalJson())
 		if err := verifyDigest(schemaEntry.GetHash(), schemaBytes); err != nil {
@@ -216,34 +217,42 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 		}
 	}
 
-	sourceRoot, err := filepath.Abs(config.SourcePackageRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resolve source package root: %w", err)
-	}
-
 	packages := make(map[string]sourcePackageArtifact, len(config.Plan.GetSourcePackages()))
 	for _, sourcePackage := range config.Plan.GetSourcePackages() {
 		packageID := sourcePackage.GetPackageId()
 		planPackageHash := sourcePackage.GetPackageHash()
-		files, ok := config.SourceManifests[packageID]
+		manifest, ok := config.SourceManifests[packageID]
 		if !ok {
 			return nil, fmt.Errorf("source package %q has no file manifest; cannot verify source integrity before running", packageID)
 		}
 
-		// Snapshot the manifest files into an immutable per-run workspace so
-		// edits to the real source tree between compile and step execution
-		// cannot change what runs. Verification is against the manifest first
-		// (so drift names the offending file), then against the plan hash.
-		snapshotDir := sourceSnapshotDir(runID, planPackageHash)
-		if err := snapshotAndVerifySourcePackage(sourceRoot, snapshotDir, files); err != nil {
-			return nil, err
-		}
-		recomputed, err := recomputeSourcePackageHash(files)
+		// Confirm the threaded manifest is the one the plan was compiled from
+		// (cheap, no disk access) before touching the working tree.
+		recomputed, err := recomputeSourcePackageHash(manifest.Files)
 		if err != nil {
 			return nil, fmt.Errorf("recompute source package hash for %q: %w", packageID, err)
 		}
 		if recomputed != planPackageHash {
 			return nil, fmt.Errorf("source package %q drifted since compile: its manifest recomputes to %s but the plan records package hash %s", packageID, recomputed, planPackageHash)
+		}
+
+		sourceRoot := manifest.Root
+		if sourceRoot == "" {
+			sourceRoot = config.SourcePackageRoot
+		}
+		sourceRoot, err = filepath.Abs(sourceRoot)
+		if err != nil {
+			return nil, fmt.Errorf("resolve source package root for %q: %w", packageID, err)
+		}
+
+		// Materialize a content-addressed, read-only snapshot keyed by the plan
+		// package hash. The snapshot is created once per (store, package hash):
+		// its path and therefore the pointer body are deterministic, so
+		// concurrent or repeated runs converge on identical artifact bytes
+		// instead of overwriting each other's descriptors.
+		snapshotDir := sourceSnapshotDir(config.DatastoreRoot, planPackageHash)
+		if err := ensureSourceSnapshot(sourceRoot, snapshotDir, manifest.Files); err != nil {
+			return nil, err
 		}
 
 		pointer, err := marshalCanonicalJSON(sourceFetchPointer{SourceFetch: snapshotDir})
@@ -252,9 +261,11 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 		}
 		bodyHash := canonical.DigestBytes(pointer)
 		// The archive key is templated on the plan's package hash per
-		// datastore-layout.md, not on the pointer body digest.
+		// datastore-layout.md, not on the pointer body digest. Writing is
+		// if-absent: the deterministic body makes a pre-existing object from a
+		// prior run byte-identical, so an already-exists result is success.
 		key := sourcePackageKey(planPackageHash)
-		if _, err := store.Put(ctx, datastore.MustKey(key), pointer, datastore.PutOptions{ContentType: SourceDirectoryContentType}); err != nil {
+		if _, err := store.Put(ctx, datastore.MustKey(key), pointer, datastore.PutOptions{ContentType: SourceDirectoryContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
 			return nil, fmt.Errorf("write source package artifact for %q: %w", packageID, err)
 		}
 
@@ -274,22 +285,69 @@ type sourceFetchPointer struct {
 	SourceFetch string `json:"sourceFetch"`
 }
 
-// sourceSnapshotDir is the immutable per-run location the manifest files are
-// copied into. Keeping it outside the source tree isolates a run from edits to
-// the working copy after the run starts.
-func sourceSnapshotDir(runID string, planPackageHash string) string {
+// sourceSnapshotDir is the content-addressed, immutable snapshot location for a
+// package hash, kept under the datastore root (but outside the datastore key
+// space, since a leading-dot segment is not a valid key). Because it depends
+// only on the store and the package hash, the resulting pointer body is
+// deterministic across runs.
+func sourceSnapshotDir(storeRoot string, planPackageHash string) string {
 	segment := strings.Replace(planPackageHash, "sha256:", "sha256-", 1)
-	return filepath.Join(os.TempDir(), "massive-run-workspaces", runID, segment)
+	return filepath.Join(storeRoot, ".snapshots", segment)
 }
 
-// snapshotAndVerifySourcePackage verifies each manifest file on disk under
-// sourceRoot against its recorded content hash and copies verified files into
-// snapshotDir, preserving relative paths. On the first hash mismatch it fails
-// loudly with a diagnostic naming the file and explaining the drift.
-func snapshotAndVerifySourcePackage(sourceRoot string, snapshotDir string, files []SourcePackageFile) error {
-	if err := os.RemoveAll(snapshotDir); err != nil {
-		return fmt.Errorf("reset source snapshot %q: %w", snapshotDir, err)
+// ensureSourceSnapshot guarantees a read-only snapshot of the manifest files
+// exists at snapshotDir. If a snapshot already verifies against the manifest it
+// is reused untouched; otherwise verified source is staged in a temp dir and
+// atomically renamed into place (mirroring the local datastore's temp+rename
+// idiom), so a concurrent run either wins the rename or converges on the
+// identical bytes.
+func ensureSourceSnapshot(sourceRoot string, snapshotDir string, files []SourcePackageFile) error {
+	if snapshotMatchesManifest(snapshotDir, files) {
+		return nil
 	}
+
+	parent := filepath.Dir(snapshotDir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("create snapshot root %q: %w", parent, err)
+	}
+	staging, err := os.MkdirTemp(parent, ".tmp-"+filepath.Base(snapshotDir)+"-")
+	if err != nil {
+		return fmt.Errorf("create snapshot staging dir: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = forceRemoveAll(staging)
+		}
+	}()
+
+	if err := populateSnapshot(sourceRoot, staging, files); err != nil {
+		return err
+	}
+
+	if err := os.Rename(staging, snapshotDir); err != nil {
+		// A concurrent run may have installed an identical snapshot, or a stale
+		// partial one may be blocking the move.
+		if snapshotMatchesManifest(snapshotDir, files) {
+			return nil
+		}
+		if removeErr := forceRemoveAll(snapshotDir); removeErr != nil {
+			return fmt.Errorf("remove stale source snapshot %q: %w", snapshotDir, removeErr)
+		}
+		if err := os.Rename(staging, snapshotDir); err != nil {
+			return fmt.Errorf("install source snapshot %q: %w", snapshotDir, err)
+		}
+	}
+	committed = true
+	return nil
+}
+
+// populateSnapshot verifies each manifest file on disk under sourceRoot against
+// its recorded content hash and writes verified files into dir as read-only
+// (0444), preserving relative paths, then locks the directory tree to 0555. On
+// the first hash mismatch it fails loudly, naming the file and explaining the
+// drift.
+func populateSnapshot(sourceRoot string, dir string, files []SourcePackageFile) error {
 	for _, file := range files {
 		relPath := filepath.FromSlash(file.Path)
 		absPath := filepath.Join(sourceRoot, relPath)
@@ -305,15 +363,66 @@ func snapshotAndVerifySourcePackage(sourceRoot string, snapshotDir string, files
 		if actual != file.Hash {
 			return fmt.Errorf("source package drifted since compile: file %q hashes to %s but the compiled manifest recorded %s; recompile the workflow or run the plan against the source it was compiled from", file.Path, actual, file.Hash)
 		}
-		dest := filepath.Join(snapshotDir, relPath)
+		dest := filepath.Join(dir, relPath)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return fmt.Errorf("create source snapshot directory for %q: %w", file.Path, err)
 		}
 		if err := os.WriteFile(dest, content, 0o644); err != nil {
 			return fmt.Errorf("write source snapshot file %q: %w", file.Path, err)
 		}
+		// Read-only so a step cannot mutate the snapshot mid-run.
+		if err := os.Chmod(dest, 0o444); err != nil {
+			return fmt.Errorf("lock source snapshot file %q: %w", file.Path, err)
+		}
 	}
-	return nil
+	return lockSnapshotDirs(dir)
+}
+
+// snapshotMatchesManifest reports whether every manifest file is present under
+// dir with content that hashes to its recorded digest.
+func snapshotMatchesManifest(dir string, files []SourcePackageFile) bool {
+	for _, file := range files {
+		content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(file.Path)))
+		if err != nil {
+			return false
+		}
+		if canonical.DigestBytes(content) != file.Hash {
+			return false
+		}
+	}
+	return true
+}
+
+// lockSnapshotDirs makes every directory under root read-and-execute only so
+// the snapshot tree is immutable after population.
+func lockSnapshotDirs(root string) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if err := os.Chmod(path, 0o555); err != nil {
+				return fmt.Errorf("lock source snapshot directory %q: %w", path, err)
+			}
+		}
+		return nil
+	})
+}
+
+// forceRemoveAll restores write permission on directories (snapshot dirs are
+// 0555) before removing the tree, since unlinking children needs a writable
+// parent directory.
+func forceRemoveAll(root string) error {
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			_ = os.Chmod(path, 0o755)
+		}
+		return nil
+	})
+	return os.RemoveAll(root)
 }
 
 // recomputeSourcePackageHash reproduces the SDK source-package hash: the

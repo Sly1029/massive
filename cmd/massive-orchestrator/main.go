@@ -88,9 +88,9 @@ func run(args []string) error {
 			return err
 		}
 	}
-	sourceRoot, err := filepath.Abs(filepath.Dir(*specPath))
+	specDir, err := filepath.Abs(filepath.Dir(*specPath))
 	if err != nil {
-		return fmt.Errorf("resolve source package root: %w", err)
+		return fmt.Errorf("resolve spec directory: %w", err)
 	}
 	repoRoot, err := repoRoot()
 	if err != nil {
@@ -103,8 +103,8 @@ func run(args []string) error {
 		ProjectID:         project,
 		RunID:             *runID,
 		RunnerWorkingDir:  repoRoot,
-		SourcePackageRoot: sourceRoot,
-		SourceManifests:   sourceManifests(workflowSpec),
+		SourcePackageRoot: specDir,
+		SourceManifests:   sourceManifests(workflowSpec, specDir),
 	}, []byte(*input))
 	if err != nil {
 		return err
@@ -115,16 +115,32 @@ func run(args []string) error {
 	return nil
 }
 
-func sourceManifests(workflowSpec *spec.WorkflowSpec) map[string][]orchestrator.SourcePackageFile {
-	manifests := make(map[string][]orchestrator.SourcePackageFile, len(workflowSpec.SourcePackages))
+func sourceManifests(workflowSpec *spec.WorkflowSpec, specDir string) map[string]orchestrator.SourcePackageManifest {
+	manifests := make(map[string]orchestrator.SourcePackageManifest, len(workflowSpec.SourcePackages))
 	for packageID, sourcePackage := range workflowSpec.SourcePackages {
 		files := make([]orchestrator.SourcePackageFile, 0, len(sourcePackage.Files))
 		for _, file := range sourcePackage.Files {
 			files = append(files, orchestrator.SourcePackageFile{Path: file.Path, Hash: file.Hash})
 		}
-		manifests[packageID] = files
+		manifests[packageID] = orchestrator.SourcePackageManifest{
+			Root:  resolvePackageRoot(sourcePackage.Root, specDir),
+			Files: files,
+		}
 	}
 	return manifests
+}
+
+// resolvePackageRoot honours the spec's recorded source root: absolute roots
+// are used as-is, relative roots resolve against the spec's directory, and a
+// missing or "." root falls back to the spec directory.
+func resolvePackageRoot(specRoot string, specDir string) string {
+	if specRoot == "" || specRoot == "." {
+		return specDir
+	}
+	if filepath.IsAbs(specRoot) {
+		return specRoot
+	}
+	return filepath.Join(specDir, specRoot)
 }
 
 func printStepSummaries(result *orchestrator.RunResult) {

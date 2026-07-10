@@ -28,9 +28,18 @@ type RunConfig struct {
 	// sha256 content hash) from the compiled spec, keyed by package id. The
 	// plan proto records only the package hash, so the orchestrator threads the
 	// manifest separately to verify on-disk source against it before running.
-	SourceManifests map[string][]SourcePackageFile
+	SourceManifests map[string]SourcePackageManifest
 	StepInvoker     StepInvoker
 	Hooks           RunHooks
+}
+
+// SourcePackageManifest is the compiled spec's view of one source package: the
+// absolute root its files are resolved against and the per-file content
+// manifest. Root may be empty, in which case RunConfig.SourcePackageRoot is the
+// fallback.
+type SourcePackageManifest struct {
+	Root  string
+	Files []SourcePackageFile
 }
 
 type SourcePackageFile struct {

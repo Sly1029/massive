@@ -17,7 +17,7 @@ import (
 )
 
 func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
-	storeRoot := t.TempDir()
+	storeRoot := newStoreRoot(t)
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
 	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
 	invoker := &functionalStepInvoker{storeRoot: storeRoot}
@@ -66,7 +66,7 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 }
 
 func TestTamperedOutputFailsHashValidation(t *testing.T) {
-	storeRoot := t.TempDir()
+	storeRoot := newStoreRoot(t)
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
 	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
 	invoker := &functionalStepInvoker{storeRoot: storeRoot}
@@ -100,6 +100,93 @@ func TestTamperedOutputFailsHashValidation(t *testing.T) {
 	}
 	if runErr.Result == nil || runErr.Result.Status != StatusFailed {
 		t.Fatalf("result = %#v, want failed result", runErr.Result)
+	}
+}
+
+func TestSourceSnapshotIsDeterministicAcrossRuns(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+	planPackageHash := compiled.Plan.GetSourcePackages()[0].GetPackageHash()
+
+	run := func(runID string) StepInvocationDescriptor {
+		invoker := &functionalStepInvoker{storeRoot: storeRoot}
+		result, err := Run(context.Background(), RunConfig{
+			Plan:              compiled.Plan,
+			DatastoreRoot:     storeRoot,
+			ProjectID:         "acme/security-workflows",
+			RunID:             runID,
+			SourcePackageRoot: sourceRoot,
+			SourceManifests:   manifests,
+			StepInvoker:       invoker,
+		}, []byte("20"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Status != StatusSucceeded {
+			t.Fatalf("status = %s, want succeeded", result.Status)
+		}
+		return invoker.descriptors[0]
+	}
+
+	// The snapshot is content-addressed by (store, package hash), so both runs
+	// resolve the same immutable directory.
+	snapshotFile := filepath.Join(storeRoot, ".snapshots", strings.Replace(planPackageHash, "sha256:", "sha256-", 1), "workflow.ts")
+
+	first := run("run-determinism-0001")
+	firstInfo, err := os.Stat(snapshotFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstBody := getObject(t, storeRoot, first.SourcePackage.SourceArchive.Key).Body
+
+	second := run("run-determinism-0002")
+	secondInfo, err := os.Stat(snapshotFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBody := getObject(t, storeRoot, second.SourcePackage.SourceArchive.Key).Body
+
+	if first.SourcePackage.SourceArchive.Key != second.SourcePackage.SourceArchive.Key {
+		t.Fatalf("archive keys differ across runs: %s vs %s", first.SourcePackage.SourceArchive.Key, second.SourcePackage.SourceArchive.Key)
+	}
+	if !bytes.Equal(firstBody, secondBody) {
+		t.Fatalf("pointer artifacts differ across runs:\nfirst:  %s\nsecond: %s", firstBody, secondBody)
+	}
+	for label, descriptor := range map[string]StepInvocationDescriptor{"first": first, "second": second} {
+		body := getObject(t, storeRoot, descriptor.SourcePackage.SourceArchive.Key).Body
+		if want := canonical.DigestBytes(body); descriptor.SourcePackage.SourceArchive.Hash != want {
+			t.Fatalf("%s run: descriptor sourceArchive.hash = %s, want stored body digest %s", label, descriptor.SourcePackage.SourceArchive.Hash, want)
+		}
+	}
+	// Reuse must not repopulate: the snapshot is created exactly once.
+	if !firstInfo.ModTime().Equal(secondInfo.ModTime()) {
+		t.Fatalf("snapshot was rewritten between runs (mod times %v vs %v)", firstInfo.ModTime(), secondInfo.ModTime())
+	}
+}
+
+func TestSourcePackageHashGoldenVector(t *testing.T) {
+	// Non-circular golden vector: a fixed manifest with literal file hashes and
+	// the expected package hash computed once from the TS hashSourcePackage
+	// construction (packages/sdk/src/compile.ts) and hard-coded here and in
+	// packages/sdk/test/source-package-hash.test.ts. The e2e tests derive the
+	// package hash via this same Go function, so this constant is what keeps the
+	// Go and TS constructions honest against each other.
+	// TODO: promote this vector into conformance/fixtures/hashing once the
+	// frozen contract fixtures are opened for additions.
+	files := []SourcePackageFile{
+		{Path: "src/a.ts", Hash: "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+		{Path: "src/b.ts", Hash: "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
+		{Path: "src/nested/c.ts", Hash: "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
+	}
+	const want = "sha256:88780f05b7195a396acac9aa6ddbea16445f275dfc10f32c94972beb59a711cb"
+
+	got, err := recomputeSourcePackageHash(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("source package hash = %s, want %s", got, want)
 	}
 }
 
