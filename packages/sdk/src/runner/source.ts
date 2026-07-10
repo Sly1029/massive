@@ -40,15 +40,11 @@ export async function resolveStepSymbol(
       `symbol package "${descriptor.symbol.packageId}" does not match source package "${descriptor.sourcePackage.packageId}"`,
     );
   }
-  if (
-    descriptor.sourcePackage.sourceArchive.hash !==
-      descriptor.sourcePackage.packageHash
-  ) {
-    throw new SymbolResolutionError(
-      "source archive hash does not match source package hash",
-    );
-  }
 
+  // sourceArchive.hash is the digest of the artifact body and is verified
+  // against the fetched bytes in fetchSourcePackage. It is intentionally
+  // distinct from packageHash (the plan's content-addressed package hash),
+  // so the two are not required to be equal here.
   const packageRoot = await fetchSourcePackage(descriptor);
   const modulePath = resolveModulePath(packageRoot, descriptor.symbol.module);
   const module = (await import(

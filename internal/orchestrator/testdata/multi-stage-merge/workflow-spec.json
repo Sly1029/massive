@@ -1,0 +1,198 @@
+{
+  "kind": "WorkflowSpec",
+  "schemaVersion": 0,
+  "encoding": "json-v0",
+  "specHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "workflow": {
+    "name": "multi-stage-merge",
+    "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "graph": {
+    "start": "__start",
+    "end": "__end",
+    "nodes": [
+      { "id": "__start", "kind": "start" },
+      { "id": "__end", "kind": "end" },
+      {
+        "id": "split",
+        "kind": "step",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "multi-stage-merge/split",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      {
+        "id": "a1",
+        "kind": "step",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "multi-stage-merge/a1",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      {
+        "id": "a2",
+        "kind": "step",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "multi-stage-merge/a2",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      {
+        "id": "b1",
+        "kind": "step",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "multi-stage-merge/b1",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      {
+        "id": "b2",
+        "kind": "step",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "multi-stage-merge/b2",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      {
+        "id": "merge-a",
+        "kind": "step",
+        "inputSchema": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "multi-stage-merge/merge-a",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "mergeInputs": ["a1", "a2"]
+      },
+      {
+        "id": "merge-b",
+        "kind": "step",
+        "inputSchema": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "multi-stage-merge/merge-b",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "mergeInputs": ["b1", "b2"]
+      },
+      {
+        "id": "merge-final",
+        "kind": "step",
+        "inputSchema": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "multi-stage-merge/merge-final",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "mergeInputs": ["merge-a", "merge-b"]
+      }
+    ],
+    "edges": [
+      { "from": "__start", "to": "split" },
+      { "from": "split", "to": "a1" },
+      { "from": "split", "to": "a2" },
+      { "from": "split", "to": "b1" },
+      { "from": "split", "to": "b2" },
+      { "from": "a1", "to": "merge-a" },
+      { "from": "a2", "to": "merge-a" },
+      { "from": "b1", "to": "merge-b" },
+      { "from": "b2", "to": "merge-b" },
+      { "from": "merge-a", "to": "merge-final" },
+      { "from": "merge-b", "to": "merge-final" },
+      { "from": "merge-final", "to": "__end" }
+    ]
+  },
+  "schemas": {
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111": {
+      "type": "number"
+    },
+    "sha256:3333333333333333333333333333333333333333333333333333333333333333": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    }
+  },
+  "symbols": {
+    "multi-stage-merge/split": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "split"
+    },
+    "multi-stage-merge/a1": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "a1"
+    },
+    "multi-stage-merge/a2": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "a2"
+    },
+    "multi-stage-merge/b1": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "b1"
+    },
+    "multi-stage-merge/b2": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "b2"
+    },
+    "multi-stage-merge/merge-a": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "mergeA"
+    },
+    "multi-stage-merge/merge-b": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "mergeB"
+    },
+    "multi-stage-merge/merge-final": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "mergeFinal"
+    }
+  },
+  "sourcePackages": {
+    "ts-main": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "root": ".",
+      "include": ["workflow.ts"],
+      "files": [
+        {
+          "path": "workflow.ts",
+          "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      ],
+      "artifact": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst"
+    }
+  },
+  "environments": {
+    "sha256:7777777777777777777777777777777777777777777777777777777777777777": {
+      "kind": "container",
+      "image": "ghcr.io/massive-dev/typescript-runner:v0"
+    }
+  },
+  "contracts": {
+    "sha256:8888888888888888888888888888888888888888888888888888888888888888": {
+      "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "resources": {
+        "cpu": "500m",
+        "memory": "512Mi"
+      },
+      "network": {
+        "egress": "none"
+      }
+    }
+  },
+  "targets": [
+    { "kind": "local" }
+  ]
+}
