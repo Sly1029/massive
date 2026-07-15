@@ -59,7 +59,22 @@ type nodeOutput struct {
 	Body     []byte
 }
 
-func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, error) {
+// preparedRun is the shared setup a run needs before any step executes: an open
+// datastore, the execution index (with source packages materialized), the run's
+// identity, and the initial run manifest already written. Both a full in-process
+// Run and the out-of-process step driver's seeding phase go through prepare so
+// they lay down byte-identical prerequisites.
+type preparedRun struct {
+	store         datastore.Datastore
+	index         executionIndex
+	projectKey    string
+	runID         string
+	manifest      runManifest
+	manifestKey   datastore.Key
+	workflowInput []byte
+}
+
+func prepare(ctx context.Context, config RunConfig, inputJSON []byte) (*preparedRun, error) {
 	if config.Plan == nil {
 		return nil, fmt.Errorf("run config requires a workflow plan")
 	}
@@ -118,12 +133,42 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize workflow input: %w", err)
 	}
+	// Persist the run's workflow input as a run-scoped artifact. A full Run also
+	// keeps it in memory to seed the start node, but the step driver executes one
+	// node out-of-process and reconstructs a first step's input by reading this
+	// key from the datastore — the same value, sourced identically.
+	if _, err := store.Put(ctx, runInputRootKey(projectKey, runID), workflowInput, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
+		return nil, fmt.Errorf("write run input artifact: %w", err)
+	}
 
 	manifest := newRunManifest(config.Plan.GetPlanHash(), projectKey, runID, index.stepOrder)
 	manifestKey := runManifestKey(projectKey, runID)
 	if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
 		return nil, err
 	}
+
+	return &preparedRun{
+		store:         store,
+		index:         index,
+		projectKey:    projectKey,
+		runID:         runID,
+		manifest:      manifest,
+		manifestKey:   manifestKey,
+		workflowInput: workflowInput,
+	}, nil
+}
+
+func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, error) {
+	prepared, err := prepare(ctx, config, inputJSON)
+	if err != nil {
+		return nil, err
+	}
+	store := prepared.store
+	index := prepared.index
+	projectKey := prepared.projectKey
+	runID := prepared.runID
+	manifest := prepared.manifest
+	manifestKey := prepared.manifestKey
 
 	result := &RunResult{
 		RunID:       runID,
@@ -141,14 +186,22 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 		}
 	}
 
+	exec := stepExecution{
+		planHash:            config.Plan.GetPlanHash(),
+		projectKey:          projectKey,
+		runID:               runID,
+		datastoreDescriptor: DatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot},
+		hooks:               config.Hooks,
+	}
+
 	outputs := map[string]nodeOutput{
 		config.Plan.GetGraph().GetStartNode(): {
 			Artifact: manifestDataArtifact{
-				Hash:        canonical.DigestBytes(workflowInput),
+				Hash:        canonical.DigestBytes(prepared.workflowInput),
 				ContentType: jsonContentType,
 				Schema:      config.Plan.GetGraph().GetInputSchema(),
 			},
-			Body: workflowInput,
+			Body: prepared.workflowInput,
 		},
 	}
 
@@ -158,58 +211,11 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 		if err != nil {
 			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
 		}
-
-		inputArtifact := manifestDataArtifact{
-			Key:         runInputKey(projectKey, runID, nodeID).String(),
-			Hash:        canonical.DigestBytes(inputBytes),
-			ContentType: jsonContentType,
-			Schema:      node.GetInputSchema(),
-		}
-		if _, err := store.Put(ctx, datastore.MustKey(inputArtifact.Key), inputBytes, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
-			return nil, fmt.Errorf("write input artifact for %s: %w", nodeID, err)
-		}
-
-		descriptor, err := descriptorForStep(config, projectKey, runID, node, inputArtifact, index)
+		output, err := runStepNode(ctx, store, exec, index, invoker, node, inputBytes, &manifest, manifestKey)
 		if err != nil {
-			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
-		}
-
-		markAttemptRunning(&manifest, nodeID, inputArtifact)
-		if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-			return nil, err
-		}
-
-		outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor}}})
-		if err != nil {
-			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
-		}
-		if len(outcomes) != 1 {
-			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, fmt.Sprintf("step invoker returned %d outcomes, want 1", len(outcomes)))
-		}
-
-		if config.Hooks.AfterStepInvocation != nil {
-			if err := config.Hooks.AfterStepInvocation(ctx, descriptor); err != nil {
-				return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
-			}
-		}
-
-		outcome := outcomes[0]
-		if outcome.Status != StatusSucceeded {
-			diagnostic := runnerDiagnostic(outcome)
-			markAttemptFailed(&manifest, nodeID, diagnostic)
-			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, diagnostic)
-		}
-
-		output, err := validateOutputArtifact(ctx, store, descriptor, outcome.ExpectedOutputHash, index)
-		if err != nil {
-			markAttemptFailed(&manifest, nodeID, err.Error())
 			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
 		}
 		outputs[nodeID] = output
-		markAttemptSucceeded(&manifest, nodeID, output.Artifact)
-		if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-			return nil, err
-		}
 	}
 
 	resultArtifact, err := resultForEnd(ctx, store, projectKey, runID, config.Plan.GetGraph().GetEndNode(), index, outputs)
@@ -226,6 +232,279 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	result.ResultKey = resultArtifact.Key
 	result.Steps = summariesFromManifest(manifest)
 	return result, nil
+}
+
+// stepExecution carries the per-run context a single node's execution needs. It
+// lets the shared runStepNode serve both a full in-process Run (whose upstream
+// outputs live in memory) and the out-of-process step driver (which reloads them
+// from the datastore).
+type stepExecution struct {
+	planHash            string
+	projectKey          string
+	runID               string
+	datastoreDescriptor DatastoreDescriptor
+	hooks               RunHooks
+}
+
+// runStepNode executes one step node given its already-materialized input bytes:
+// it writes the input artifact, builds the descriptor, marks the node running,
+// invokes the runner, validates the output artifact, and records the node's run
+// manifest entry (running → succeeded/failed), persisting the manifest at each
+// transition. It mutates manifest but leaves the overall run status to the
+// caller. On step failure it returns an error after marking the node failed.
+func runStepNode(ctx context.Context, store datastore.Datastore, exec stepExecution, index executionIndex, invoker StepInvoker, node *planpb.GraphNode, inputBytes []byte, manifest *runManifest, manifestKey datastore.Key) (nodeOutput, error) {
+	nodeID := node.GetId()
+
+	inputArtifact := manifestDataArtifact{
+		Key:         runInputKey(exec.projectKey, exec.runID, nodeID).String(),
+		Hash:        canonical.DigestBytes(inputBytes),
+		ContentType: jsonContentType,
+		Schema:      node.GetInputSchema(),
+	}
+	if _, err := store.Put(ctx, datastore.MustKey(inputArtifact.Key), inputBytes, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
+		return nodeOutput{}, fmt.Errorf("write input artifact for %s: %w", nodeID, err)
+	}
+
+	descriptor, err := descriptorForStep(exec.planHash, exec.projectKey, exec.runID, node, inputArtifact, index, exec.datastoreDescriptor)
+	if err != nil {
+		return nodeOutput{}, err
+	}
+
+	markAttemptRunning(manifest, nodeID, inputArtifact)
+	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+		return nodeOutput{}, err
+	}
+
+	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor}}})
+	if err != nil {
+		return nodeOutput{}, err
+	}
+	if len(outcomes) != 1 {
+		return nodeOutput{}, fmt.Errorf("step invoker returned %d outcomes, want 1", len(outcomes))
+	}
+
+	if exec.hooks.AfterStepInvocation != nil {
+		if err := exec.hooks.AfterStepInvocation(ctx, descriptor); err != nil {
+			return nodeOutput{}, err
+		}
+	}
+
+	outcome := outcomes[0]
+	if outcome.Status != StatusSucceeded {
+		diagnostic := runnerDiagnostic(outcome)
+		markAttemptFailed(manifest, nodeID, diagnostic)
+		if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+			return nodeOutput{}, err
+		}
+		return nodeOutput{}, fmt.Errorf("%s", diagnostic)
+	}
+
+	output, err := validateOutputArtifact(ctx, store, descriptor, outcome.ExpectedOutputHash, index)
+	if err != nil {
+		markAttemptFailed(manifest, nodeID, err.Error())
+		if writeErr := writeRunManifest(ctx, store, manifestKey, *manifest); writeErr != nil {
+			return nodeOutput{}, writeErr
+		}
+		return nodeOutput{}, err
+	}
+	markAttemptSucceeded(manifest, nodeID, output.Artifact)
+	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+		return nodeOutput{}, err
+	}
+	return output, nil
+}
+
+// SeedResult identifies the run a Seed call prepared.
+type SeedResult struct {
+	ProjectKey string
+	RunID      string
+}
+
+// Seed materializes a run's prerequisites (schema blobs, source package
+// artifacts), writes the initial run manifest, and persists the workflow input
+// artifact — without executing any step. The Argo submit harness (WS-8) and the
+// step-driver functional test call it to lay down a datastore that per-node
+// RunNode invocations then execute against, exactly as a full local Run prepares
+// itself before its step loop.
+func Seed(ctx context.Context, config RunConfig, inputJSON []byte) (*SeedResult, error) {
+	prepared, err := prepare(ctx, config, inputJSON)
+	if err != nil {
+		return nil, err
+	}
+	return &SeedResult{ProjectKey: prepared.projectKey, RunID: prepared.runID}, nil
+}
+
+// NodeRunConfig configures a single-node execution against an already-seeded
+// datastore. It is the step driver's input: the plan (loaded from the datastore
+// by the caller), the run identity, the node to execute, and the datastore/
+// runner configuration.
+type NodeRunConfig struct {
+	Plan             *planpb.WorkflowPlan
+	DatastoreRoot    string
+	ProjectID        string
+	RunID            string
+	NodeID           string
+	RunnerCommand    []string
+	RunnerWorkingDir string
+	StepInvoker      StepInvoker
+}
+
+// RunNode executes exactly one plan node against an already-seeded datastore. It
+// reloads the node's upstream outputs (and, for a first step, the run's workflow
+// input) from the datastore, materializes the node input including mergeInputs
+// fan-in, builds a schema-valid StepInvocationDescriptor with real content
+// hashes, invokes the runner, validates the output, and records the node's run
+// manifest entry — the same per-node work a full local Run performs in memory.
+// It is the core of the Argo step driver: one WorkflowTemplate task runs one
+// RunNode. Concurrent nodes (a diamond's parallel branches) read-modify-write
+// the shared run manifest; serial scheduling — the wedge and its functional
+// test — is race-free, and conditional manifest updates for live concurrent
+// pods are WS-8.
+func RunNode(ctx context.Context, config NodeRunConfig) error {
+	if config.Plan == nil {
+		return fmt.Errorf("step driver requires a workflow plan")
+	}
+	if config.DatastoreRoot == "" {
+		return fmt.Errorf("step driver requires a datastore root")
+	}
+	if config.ProjectID == "" {
+		return fmt.Errorf("step driver requires an explicit project id")
+	}
+	if config.NodeID == "" {
+		return fmt.Errorf("step driver requires a node id")
+	}
+	if _, err := datastore.ParseKey(config.RunID); err != nil || strings.Contains(config.RunID, "/") {
+		return &InvalidRunInputError{Field: "run id", Value: config.RunID, Message: "must be a single safe path segment (datastore key segment rules)"}
+	}
+	datastoreRoot, err := filepath.Abs(config.DatastoreRoot)
+	if err != nil {
+		return fmt.Errorf("resolve datastore root: %w", err)
+	}
+	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: datastoreRoot})
+	if err != nil {
+		return fmt.Errorf("open local datastore: %w", err)
+	}
+	projectKey := NormalizeProjectKey(config.ProjectID)
+
+	index, err := buildExecutionIndex(config.Plan)
+	if err != nil {
+		return err
+	}
+	sourcePackages, err := loadSourcePackages(ctx, store, config.Plan)
+	if err != nil {
+		return err
+	}
+	index.packagesByID = sourcePackages
+
+	node, ok := index.nodesByID[config.NodeID]
+	if !ok {
+		return fmt.Errorf("plan has no node %q", config.NodeID)
+	}
+	if node.GetKind() != "step" {
+		return fmt.Errorf("node %q is not a step node", config.NodeID)
+	}
+
+	outputs, err := loadUpstreamOutputs(ctx, store, config.Plan, index, projectKey, config.RunID, node)
+	if err != nil {
+		return err
+	}
+	inputBytes, err := inputForNode(node, index.inboundByTarget[config.NodeID], outputs)
+	if err != nil {
+		return err
+	}
+
+	manifestKey := runManifestKey(projectKey, config.RunID)
+	manifest, err := loadRunManifest(ctx, store, manifestKey)
+	if err != nil {
+		return err
+	}
+
+	invoker := config.StepInvoker
+	if invoker == nil {
+		invoker = ProcessStepInvoker{CommandTemplate: config.RunnerCommand, WorkingDir: config.RunnerWorkingDir}
+	}
+
+	exec := stepExecution{
+		planHash:            config.Plan.GetPlanHash(),
+		projectKey:          projectKey,
+		runID:               config.RunID,
+		datastoreDescriptor: DatastoreDescriptor{Kind: "local", Path: datastoreRoot},
+	}
+	if _, err := runStepNode(ctx, store, exec, index, invoker, node, inputBytes, &manifest, manifestKey); err != nil {
+		return err
+	}
+	return nil
+}
+
+// loadSourcePackages reconstructs the source-package artifact records the step
+// driver needs to build descriptors, by reading the already-materialized source
+// artifacts from the datastore (seeded once per run) rather than snapshotting a
+// working tree. The recorded key, body hash, and content type match what
+// materializePrerequisites wrote, so the driver's descriptor is identical to the
+// in-process orchestrator's.
+func loadSourcePackages(ctx context.Context, store datastore.Datastore, plan *planpb.WorkflowPlan) (map[string]sourcePackageArtifact, error) {
+	packages := make(map[string]sourcePackageArtifact, len(plan.GetSourcePackages()))
+	for _, sourcePackage := range plan.GetSourcePackages() {
+		if !validSHA256Ref(sourcePackage.GetPackageHash()) {
+			return nil, &InvalidRunInputError{Field: "source package hash", Value: sourcePackage.GetPackageHash(), Message: "must be a canonical sha256:<64 lowercase hex> digest"}
+		}
+		key := sourcePackageKey(sourcePackage.GetPackageHash())
+		object, err := store.Get(ctx, datastore.MustKey(key))
+		if err != nil {
+			return nil, fmt.Errorf("source package artifact %s is missing; seed the run before running its steps: %w", key, err)
+		}
+		packages[sourcePackage.GetPackageId()] = sourcePackageArtifact{
+			PackageID:   sourcePackage.GetPackageId(),
+			Language:    sourcePackage.GetLanguage(),
+			PackageHash: sourcePackage.GetPackageHash(),
+			Key:         key,
+			ArchiveHash: canonical.DigestBytes(object.Body),
+			ContentType: object.Info.ContentType,
+		}
+	}
+	return packages, nil
+}
+
+// loadUpstreamOutputs reads the outputs this node consumes from the datastore:
+// each upstream step's output artifact, and — for a first step whose upstream is
+// the start node — the run's workflow input artifact. The returned map is what
+// inputForNode consumes, so materialization (including mergeInputs fan-in) is
+// identical to an in-process run.
+func loadUpstreamOutputs(ctx context.Context, store datastore.Datastore, plan *planpb.WorkflowPlan, index executionIndex, projectKey string, runID string, node *planpb.GraphNode) (map[string]nodeOutput, error) {
+	startNode := plan.GetGraph().GetStartNode()
+	outputs := make(map[string]nodeOutput)
+	for _, edge := range index.inboundByTarget[node.GetId()] {
+		source := edge.GetFrom()
+		if _, done := outputs[source]; done {
+			continue
+		}
+		if source == startNode {
+			object, err := store.Get(ctx, runInputRootKey(projectKey, runID))
+			if err != nil {
+				return nil, fmt.Errorf("read run input artifact for %s: %w", node.GetId(), err)
+			}
+			outputs[source] = nodeOutput{Body: object.Body}
+			continue
+		}
+		object, err := store.Get(ctx, runOutputKey(projectKey, runID, source, 1))
+		if err != nil {
+			return nil, fmt.Errorf("read upstream output %s for %s: %w", source, node.GetId(), err)
+		}
+		outputs[source] = nodeOutput{Body: object.Body}
+	}
+	return outputs, nil
+}
+
+func loadRunManifest(ctx context.Context, store datastore.Datastore, key datastore.Key) (runManifest, error) {
+	object, err := store.Get(ctx, key)
+	if err != nil {
+		return runManifest{}, fmt.Errorf("read run manifest %s; seed the run before running its steps: %w", key, err)
+	}
+	var manifest runManifest
+	if err := json.Unmarshal(object.Body, &manifest); err != nil {
+		return runManifest{}, fmt.Errorf("decode run manifest %s: %w", key, err)
+	}
+	return manifest, nil
 }
 
 func materializePrerequisites(ctx context.Context, store datastore.Datastore, config RunConfig) (map[string]sourcePackageArtifact, error) {
@@ -513,7 +792,7 @@ func recomputeSourcePackageHash(files []SourcePackageFile) (string, error) {
 	return canonical.DigestJSON(data)
 }
 
-func descriptorForStep(config RunConfig, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex) (StepInvocationDescriptor, error) {
+func descriptorForStep(planHash string, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex, store DatastoreDescriptor) (StepInvocationDescriptor, error) {
 	symbol := index.symbolsByRef[node.GetSymbolRef()]
 	if symbol == nil {
 		return StepInvocationDescriptor{}, fmt.Errorf("missing symbol %q", node.GetSymbolRef())
@@ -531,7 +810,7 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 		Kind:          "StepInvocationDescriptor",
 		SchemaVersion: 0,
 		Encoding:      "json-v0",
-		PlanHash:      config.Plan.GetPlanHash(),
+		PlanHash:      planHash,
 		RunID:         runID,
 		NodeID:        node.GetId(),
 		Attempt:       1,
@@ -569,10 +848,7 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 		},
 		ChannelReads:  []ChannelArtifactRef{},
 		ChannelWrites: []ChannelArtifactDestination{},
-		Datastore: DatastoreDescriptor{
-			Kind: "local",
-			Path: config.DatastoreRoot,
-		},
+		Datastore:     store,
 	}, nil
 }
 
@@ -900,6 +1176,10 @@ func NormalizeProjectKey(projectID string) string {
 
 func runManifestKey(projectKey string, runID string) datastore.Key {
 	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/run-manifest.json")
+}
+
+func runInputRootKey(projectKey string, runID string) datastore.Key {
+	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/input.json")
 }
 
 func runInputKey(projectKey string, runID string, stepID string) datastore.Key {

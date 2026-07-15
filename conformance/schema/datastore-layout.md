@@ -208,13 +208,14 @@ Templates:
 
 ```text
 projects/<project-key>/runs/<run-id>/run-manifest.json
+projects/<project-key>/runs/<run-id>/input.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
 projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
 projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```
 
-`run-manifest.json` is the run manifest the orchestrator records when it creates a run (WS-5.1): plan hash, run status, and per-step attempt/artifact records. `result.json` is the final run result artifact the CLI surfaces as the run's output location (WS-6.1). Both are canonical JSON.
+`run-manifest.json` is the run manifest the orchestrator records when it creates a run (WS-5.1): plan hash, run status, and per-step attempt/artifact records. `input.json` is the run's canonical workflow input — the value feeding the start node. A full local run keeps it in memory; the Argo step driver executes one node out-of-process and reconstructs a first step's input by reading this key, so both paths source it identically. `result.json` is the final run result artifact the CLI surfaces as the run's output location (WS-6.1). All are canonical JSON.
 
 Examples:
 
@@ -241,6 +242,7 @@ plans/<plan-key>/workflow.json
 plans/<plan-key>/provenance.json
 targets/<plan-key>/<target>/bundle-manifest.json
 projects/<project-key>/runs/<run-id>/run-manifest.json
+projects/<project-key>/runs/<run-id>/input.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
 projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
 projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json

@@ -13,14 +13,42 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
 )
 
+// The step driver reads datastore and project configuration from these
+// environment variables. The Argo step template sets each one from a workflow
+// parameter (spec.arguments.parameters), so a submit-time value — never a value
+// baked into the generated YAML — supplies the datastore location and project
+// identity. See docs/spec/argo-backend.md.
+const (
+	envDatastoreKind = "MASSIVE_DATASTORE_KIND"
+	envDatastorePath = "MASSIVE_DATASTORE_PATH"
+	envProjectID     = "MASSIVE_PROJECT_ID"
+)
+
 func main() {
-	jsonMode, err := run(os.Args[1:])
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "step" {
+		if err := runStep(args[1:]); err != nil {
+			var diagnostics *spec.DiagnosticsError
+			if errors.As(err, &diagnostics) {
+				for _, diagnostic := range diagnostics.Diagnostics {
+					fmt.Fprintf(os.Stderr, "invalid workflow spec: %s\n", diagnostic.String())
+				}
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stderr, "massive-orchestrator: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	jsonMode, err := run(args)
 	if err == nil {
 		return
 	}
@@ -150,6 +178,99 @@ func run(args []string) (bool, error) {
 	printStepSummaries(result)
 	fmt.Printf("result: %s\n", result.ResultKey)
 	return false, nil
+}
+
+// runStep drives the Argo step driver: it executes exactly one plan node against
+// an already-seeded datastore. The Argo step template invokes it as its
+// container command — one WorkflowTemplate task runs one `step`. Node id, run id
+// ({{workflow.uid}}), and plan hash come from flags (static template args); the
+// datastore root and project id come from environment variables the template
+// sets from workflow parameters, so the runtime image carries no datastore
+// coordinates.
+func runStep(args []string) error {
+	flags := flag.NewFlagSet("step", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	nodeID := flags.String("node", "", "plan node id to execute")
+	runID := flags.String("run-id", "", "run id")
+	planHash := flags.String("plan-hash", "", "compiled plan hash to load from the datastore")
+	storePath := flags.String("store", "", "local datastore root (overrides "+envDatastorePath+")")
+	projectID := flags.String("project", "", "project id (overrides "+envProjectID+")")
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("parse step flags: %w", err)
+	}
+	if *nodeID == "" {
+		return fmt.Errorf("step requires --node")
+	}
+	if *runID == "" {
+		return fmt.Errorf("step requires --run-id")
+	}
+	if *planHash == "" {
+		return fmt.Errorf("step requires --plan-hash")
+	}
+
+	datastoreKind := os.Getenv(envDatastoreKind)
+	if datastoreKind == "" {
+		datastoreKind = "local"
+	}
+	if datastoreKind != "local" {
+		return fmt.Errorf("step driver supports the local datastore only; %s=%q needs the pod-reachable S3/MinIO datastore wiring completed in WS-8", envDatastoreKind, datastoreKind)
+	}
+	storeRoot := *storePath
+	if storeRoot == "" {
+		storeRoot = os.Getenv(envDatastorePath)
+	}
+	if storeRoot == "" {
+		return fmt.Errorf("step requires a datastore root via --store or %s", envDatastorePath)
+	}
+	project := *projectID
+	if project == "" {
+		project = os.Getenv(envProjectID)
+	}
+	if project == "" {
+		return fmt.Errorf("step requires a project id via --project or %s", envProjectID)
+	}
+
+	workingDir, err := repoRoot()
+	if err != nil {
+		return err
+	}
+	compiledPlan, err := loadPlan(storeRoot, *planHash)
+	if err != nil {
+		return err
+	}
+
+	return orchestrator.RunNode(context.Background(), orchestrator.NodeRunConfig{
+		Plan:             compiledPlan,
+		DatastoreRoot:    storeRoot,
+		ProjectID:        project,
+		RunID:            *runID,
+		NodeID:           *nodeID,
+		RunnerWorkingDir: workingDir,
+	})
+}
+
+// loadPlan reads the compiled plan the step driver executes from the datastore
+// (plans/<plan-key>/workflow.json) and verifies it is self-consistent with the
+// requested plan hash before any node runs.
+func loadPlan(storeRoot string, planHash string) (*planpb.WorkflowPlan, error) {
+	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: storeRoot})
+	if err != nil {
+		return nil, fmt.Errorf("open datastore to load plan: %w", err)
+	}
+	segment := "sha256-" + strings.TrimPrefix(planHash, "sha256:")
+	key, err := datastore.ParseKey("plans/" + segment + "/workflow.json")
+	if err != nil {
+		return nil, fmt.Errorf("build plan key: %w", err)
+	}
+	object, err := store.Get(context.Background(), key)
+	if err != nil {
+		return nil, fmt.Errorf("load compiled plan %s: %w", key, err)
+	}
+	compiledPlan, err := plan.VerifyCanonicalJSON(object.Body, planHash)
+	if err != nil {
+		return nil, fmt.Errorf("verify compiled plan %s: %w", key, err)
+	}
+	return compiledPlan, nil
 }
 
 func persistCompiledPlan(storeRoot string, compiled *plan.CompileResult) error {
