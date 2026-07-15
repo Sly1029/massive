@@ -27,7 +27,9 @@ func runInvariants(tmpl *workflowTemplate, index planIndex, planHash string, pla
 
 // checkDAGIntegrity: every IR step node maps to a reachable Argo step template
 // (one DAG task referencing a runnable template), and every IR step-to-step edge
-// survives as a DAG dependency — no missing and no invented dependencies.
+// survives as a DAG dependency — no missing and no invented dependencies. The
+// system finalize task is the one non-step task; it must exist, reference the
+// finalize template, and depend on exactly the steps feeding the end node.
 func checkDAGIntegrity(tmpl *workflowTemplate, index planIndex) target.Validation {
 	dag := findDAGTemplate(tmpl)
 	if dag == nil {
@@ -46,8 +48,9 @@ func checkDAGIntegrity(tmpl *workflowTemplate, index planIndex) target.Validatio
 		tasksByName[task.Name] = task
 	}
 
-	if len(dag.Tasks) != len(index.stepOrder) {
-		return fail(invariantDAGIntegrity, fmt.Sprintf("DAG has %d tasks but the plan has %d step nodes", len(dag.Tasks), len(index.stepOrder)))
+	// One task per step node plus the single system finalize task.
+	if len(dag.Tasks) != len(index.stepOrder)+1 {
+		return fail(invariantDAGIntegrity, fmt.Sprintf("DAG has %d tasks but the plan has %d step nodes plus one finalize task", len(dag.Tasks), len(index.stepOrder)))
 	}
 
 	for _, nodeID := range index.stepOrder {
@@ -66,6 +69,17 @@ func checkDAGIntegrity(tmpl *workflowTemplate, index planIndex) target.Validatio
 		if !equalStringSets(want, got) {
 			return fail(invariantDAGIntegrity, fmt.Sprintf("step %q dependencies are %v, expected the plan edges %v", nodeID, sortedCopy(got), sortedCopy(want)))
 		}
+	}
+
+	finalize, ok := tasksByName[finalizeTaskName]
+	if !ok {
+		return fail(invariantDAGIntegrity, fmt.Sprintf("finalize task %q is missing", finalizeTaskName))
+	}
+	if !stepTemplates[finalize.Template] || finalize.Template != finalizeTaskName {
+		return fail(invariantDAGIntegrity, fmt.Sprintf("finalize task references template %q, expected the runnable %q template", finalize.Template, finalizeTaskName))
+	}
+	if !equalStringSets(finalize.Dependencies, index.endUpstreamSteps) {
+		return fail(invariantDAGIntegrity, fmt.Sprintf("finalize dependencies are %v, expected the end-feeding steps %v", sortedCopy(finalize.Dependencies), sortedCopy(index.endUpstreamSteps)))
 	}
 
 	return pass(invariantDAGIntegrity)

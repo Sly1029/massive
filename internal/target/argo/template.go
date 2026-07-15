@@ -90,8 +90,17 @@ const (
 	// schema-valid StepInvocationDescriptor, and invokes the runner. No
 	// descriptor is embedded in the template — descriptors are built at run time,
 	// so they are always schema-valid and identical to a local run's.
-	stepDriverCommand    = "massive-orchestrator"
-	stepDriverSubcommand = "step"
+	stepDriverCommand            = "massive-orchestrator"
+	stepDriverSubcommand         = "step"
+	stepDriverFinalizeSubcommand = "finalize"
+
+	// wfSystemPrefix namespaces compiler-generated system resources (argo-backend.md
+	// reserves wf-system-*). User step ids may not use it (see validateNames);
+	// full reserved-name invariant enforcement is WS-10.
+	wfSystemPrefix = "wf-system-"
+	// finalizeTaskName is the system task that finalizes the run: it composes the
+	// terminal run manifest from the per-node entries and writes result.json.
+	finalizeTaskName = wfSystemPrefix + "finalize"
 
 	// argoRunIDVariable is Argo's per-run unique id, substituted into the run-id
 	// argument when the pod starts, so one WorkflowTemplate serves every run.
@@ -138,8 +147,8 @@ func buildWorkflowTemplate(index planIndex, input compileContext) (*workflowTemp
 		return nil, err
 	}
 
-	dag := &dagTemplate{Tasks: make([]dagTask, 0, len(index.stepOrder))}
-	templates := make([]template, 0, len(index.stepOrder)+1)
+	dag := &dagTemplate{Tasks: make([]dagTask, 0, len(index.stepOrder)+1)}
+	templates := make([]template, 0, len(index.stepOrder)+2)
 
 	for _, nodeID := range index.stepOrder {
 		node := index.nodesByID[nodeID]
@@ -154,6 +163,20 @@ func buildWorkflowTemplate(index planIndex, input compileContext) (*workflowTemp
 			Dependencies: index.stepDependencies[nodeID],
 		})
 	}
+
+	// A system finalize task depends on the steps feeding the end node and runs
+	// the finalize driver, so an all-green DAG composes the terminal run manifest
+	// and writes result.json — the run reaches Succeeded instead of hanging.
+	finalizeTemplate, err := buildFinalizeTemplate(index, input.plan.GetPlanHash())
+	if err != nil {
+		return nil, err
+	}
+	templates = append(templates, finalizeTemplate)
+	dag.Tasks = append(dag.Tasks, dagTask{
+		Name:         finalizeTaskName,
+		Template:     finalizeTaskName,
+		Dependencies: index.endUpstreamSteps,
+	})
 
 	allTemplates := append([]template{{Name: entrypointTemplateName, DAG: dag}}, templates...)
 
@@ -217,6 +240,53 @@ func buildStepTemplate(index planIndex, planHash string, node *planpb.GraphNode)
 	}, nil
 }
 
+// buildFinalizeTemplate builds the system finalize container template. It reuses
+// the runtime image of the (sorted-first) step feeding the end node — every wedge
+// step ships the driver, so any qualifies — and runs the finalize subcommand with
+// the same datastore/project env contract as the step containers.
+func buildFinalizeTemplate(index planIndex, planHash string) (template, error) {
+	if len(index.endUpstreamSteps) == 0 {
+		return template{}, fmt.Errorf("plan has no step feeding the end node; the argo target cannot finalize the run")
+	}
+	image, err := stepImage(index, index.endUpstreamSteps[0])
+	if err != nil {
+		return template{}, err
+	}
+	return template{
+		Name: finalizeTaskName,
+		Container: &container{
+			Image:   image,
+			Command: []string{stepDriverCommand, stepDriverFinalizeSubcommand},
+			Args: []string{
+				"--run-id", argoRunIDVariable,
+				"--plan-hash", planHash,
+			},
+			Env: []envVar{
+				{Name: envDatastoreKind, Value: parameterRef(paramDatastoreKind)},
+				{Name: envDatastorePath, Value: parameterRef(paramDatastorePath)},
+				{Name: envProjectID, Value: parameterRef(paramProjectID)},
+			},
+		},
+	}, nil
+}
+
+// stepImage resolves a step node's container-env image via its contract.
+func stepImage(index planIndex, nodeID string) (string, error) {
+	node, ok := index.nodesByID[nodeID]
+	if !ok {
+		return "", fmt.Errorf("step %q not found in plan", nodeID)
+	}
+	contract, ok := index.contractsByRef[node.GetContractRef()]
+	if !ok {
+		return "", fmt.Errorf("step %q references unknown contract %q", nodeID, node.GetContractRef())
+	}
+	environment, ok := index.environmentsByRef[contract.GetEnvironmentRef()]
+	if !ok {
+		return "", fmt.Errorf("step %q references unknown environment %q", nodeID, contract.GetEnvironmentRef())
+	}
+	return environment.GetContainer().GetImage(), nil
+}
+
 func parameterRef(name string) string {
 	return "{{workflow.parameters." + name + "}}"
 }
@@ -256,6 +326,9 @@ type planIndex struct {
 	// maps each step to its upstream step ids (sentinels excluded), sorted.
 	stepOrder        []string
 	stepDependencies map[string][]string
+	// endUpstreamSteps are the step ids with an edge into the end node, sorted.
+	// The finalize task depends on them.
+	endUpstreamSteps []string
 }
 
 func buildPlanIndex(plan *planpb.WorkflowPlan) planIndex {
@@ -295,15 +368,20 @@ func buildPlanIndex(plan *planpb.WorkflowPlan) planIndex {
 	for _, stepID := range index.stepOrder {
 		index.stepDependencies[stepID] = []string{}
 	}
+	endNode := graph.GetEndNode()
 	for _, edge := range graph.GetEdges() {
 		if isStep[edge.GetFrom()] && isStep[edge.GetTo()] {
 			index.stepDependencies[edge.GetTo()] = append(index.stepDependencies[edge.GetTo()], edge.GetFrom())
+		}
+		if isStep[edge.GetFrom()] && edge.GetTo() == endNode {
+			index.endUpstreamSteps = append(index.endUpstreamSteps, edge.GetFrom())
 		}
 	}
 	for stepID := range index.stepDependencies {
 		deps := index.stepDependencies[stepID]
 		sortStrings(deps)
 	}
+	sortStrings(index.endUpstreamSteps)
 
 	return index
 }

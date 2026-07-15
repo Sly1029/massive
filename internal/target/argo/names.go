@@ -3,6 +3,7 @@ package argo
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // The vendored CRD schema carries no name patterns, so offline structure
@@ -41,6 +42,9 @@ func validateNames(templateName string, index planIndex) error {
 	for _, nodeID := range index.stepOrder {
 		if !workflowFieldName.MatchString(nodeID) {
 			return fmt.Errorf("step id %q cannot be an Argo template/task name; the argo target requires step ids matching %s", nodeID, workflowFieldName.String())
+		}
+		if strings.HasPrefix(nodeID, wfSystemPrefix) {
+			return fmt.Errorf("step id %q uses the reserved %q prefix; it is namespaced for compiler-generated system tasks", nodeID, wfSystemPrefix)
 		}
 		if len(nodeID) > maxStepNodeIDLength {
 			return fmt.Errorf("step id %q is %d characters; the argo target requires step ids of at most %d characters so both the DAG task name and the %q template name stay within Argo's %d-character workflow-field limit", nodeID, len(nodeID), maxStepNodeIDLength, stepTemplatePrefix+"<id>", maxWorkflowFieldLength)

@@ -26,6 +26,10 @@ spec:
         - increment
         name: label
         template: step-label
+      - dependencies:
+        - label
+        name: wf-system-finalize
+        template: wf-system-finalize
     name: main
   - container:
       args:
@@ -108,3 +112,21 @@ spec:
           cpu: 500m
           memory: 512Mi
     name: step-label
+  - container:
+      args:
+      - --run-id
+      - '{{workflow.uid}}'
+      - --plan-hash
+      - sha256:8d50c2aa7031ec9a7cda399d233a4356bbea8f6ac3fd61c5f79391d6be6bee3c
+      command:
+      - massive-orchestrator
+      - finalize
+      env:
+      - name: MASSIVE_DATASTORE_KIND
+        value: '{{workflow.parameters.datastore-kind}}'
+      - name: MASSIVE_DATASTORE_PATH
+        value: '{{workflow.parameters.datastore-path}}'
+      - name: MASSIVE_PROJECT_ID
+        value: '{{workflow.parameters.project-id}}'
+      image: ghcr.io/massive-dev/typescript-runner:v0
+    name: wf-system-finalize

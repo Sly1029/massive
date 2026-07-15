@@ -88,9 +88,23 @@ func TestCompileDiamondProducesValidTemplate(t *testing.T) {
 	// Each step container runs the step driver in the runtime image: it carries
 	// no embedded descriptor (descriptors are built at run time), its args name
 	// the node/run/plan, and its env references the datastore/project workflow
-	// parameters.
+	// parameters. The wf-system-finalize task runs the finalize driver instead
+	// and is checked separately.
+	sawFinalize := false
 	for _, tmplate := range tmpl.Spec.Templates {
 		if tmplate.Container == nil {
+			continue
+		}
+		if tmplate.Name == finalizeTaskName {
+			sawFinalize = true
+			wantCommand := []string{stepDriverCommand, stepDriverFinalizeSubcommand}
+			if len(tmplate.Container.Command) != 2 || !equalStringSets(tmplate.Container.Command, wantCommand) {
+				t.Fatalf("finalize command = %v, want %v", tmplate.Container.Command, wantCommand)
+			}
+			args := strings.Join(tmplate.Container.Args, " ")
+			if strings.Contains(args, "--node") || !strings.Contains(args, "--run-id "+argoRunIDVariable) || !strings.Contains(args, "--plan-hash") {
+				t.Fatalf("finalize args = %v, want run-id/plan-hash and no --node", tmplate.Container.Args)
+			}
 			continue
 		}
 		if tmplate.Container.Image != "ghcr.io/massive-dev/typescript-runner:v0" {
@@ -113,6 +127,25 @@ func TestCompileDiamondProducesValidTemplate(t *testing.T) {
 				t.Fatalf("step %q env is missing %q", tmplate.Name, name)
 			}
 		}
+	}
+	if !sawFinalize {
+		t.Fatal("template has no wf-system-finalize task")
+	}
+
+	// The finalize task depends on the steps feeding the end node (merge).
+	var finalizeDeps []string
+	found := false
+	for _, task := range dag.Tasks {
+		if task.Name == finalizeTaskName {
+			finalizeDeps = task.Dependencies
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("DAG has no wf-system-finalize task")
+	}
+	if !equalStringSets(finalizeDeps, []string{"merge"}) {
+		t.Fatalf("finalize dependencies = %v, want [merge]", finalizeDeps)
 	}
 }
 

@@ -105,6 +105,23 @@ func TestNameGateStepIDLengthBoundary(t *testing.T) {
 	}
 }
 
+// The wf-system- prefix is reserved for compiler-generated system tasks, so a
+// user step id may not use it.
+func TestNameGateRejectsReservedSystemPrefix(t *testing.T) {
+	input := mustCompileInput(t, "linear-chain")
+	for _, node := range input.Plan.GetGraph().GetNodes() {
+		if node.GetId() == "double" {
+			reserved := "wf-system-double"
+			node.Id = &reserved
+		}
+	}
+
+	_, err := New().Compile(input)
+	if err == nil || !strings.Contains(err.Error(), "wf-system-") {
+		t.Fatalf("expected a diagnostic rejecting the reserved prefix, got: %v", err)
+	}
+}
+
 func mustCompileInput(t *testing.T, caseName string) target.CompileInput {
 	t.Helper()
 	compileResult := compileFixturePlan(t, caseName)
