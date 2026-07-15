@@ -226,13 +226,26 @@ Open questions:
 - Should strategic merge use vendored Kubernetes OpenAPI patch metadata, or a small hardcoded merge-key table for v0?
 - Should v0 include only a path lock-list for policy authority, or start with a richer policy engine?
 - Should runtime `podSpecPatch` passthrough exist as an explicit escape hatch, or should everything resolve at compile time?
-- Which Argo CRD schema version is the v0 validation target?
 - How much of `compile --explain` should be user-facing in v0 versus just emitted as provenance data?
+
+Decided:
+
+- **Argo CRD schema version for v0 validation: `v3.7.16`** (latest stable Argo
+  Workflows v3.x at time of decision, July 2026). The generated `WorkflowTemplate`
+  is validated offline against the `io.argoproj.workflow.v1alpha1.WorkflowTemplate`
+  definition in the upstream `api/jsonschema/schema.json`, vendored verbatim at
+  [`conformance/schema/argo-workflows-v3.7.16.schema.json`](../../conformance/schema/argo-workflows-v3.7.16.schema.json)
+  (see the sibling `argo-workflows-schema.README.md` for the exact source URL and
+  update procedure). Pinned so compile/test never hit the network; bumping the
+  pin is a deliberate, reviewed change.
 
 Current v0 wedge:
 
 - implement only plan, minimal WorkflowTemplate generation, schema validation, `dag-integrity`, `plan-provenance`, `identity-set`, and bundle emission before adding presets, plugins, patches, or system mediation.
 - the compiler emits `WorkflowTemplate`; user commands and test harnesses submit actual `Workflow` runs from the template.
+- container-env only: `env.container(...)` compiles; `env.node(...)` (and any
+  non-container kind) is rejected with a target-compatibility diagnostic until
+  Kubernetes dependency materialization lands (WS-9).
 
 ## Sidecar Runtime
 

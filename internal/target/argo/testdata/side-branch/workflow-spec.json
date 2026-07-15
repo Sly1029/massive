@@ -4,9 +4,9 @@
   "encoding": "json-v0",
   "specHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "workflow": {
-    "name": "linear-chain",
+    "name": "side-branch",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-    "outputSchema": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   },
   "graph": {
     "start": "__start",
@@ -15,63 +15,45 @@
       { "id": "__start", "kind": "start" },
       { "id": "__end", "kind": "end" },
       {
-        "id": "double",
+        "id": "main",
         "kind": "step",
         "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "symbolRef": "linear-chain/double",
+        "symbolRef": "side-branch/main",
         "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
       },
       {
-        "id": "increment",
+        "id": "side",
         "kind": "step",
         "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "symbolRef": "linear-chain/increment",
-        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
-      },
-      {
-        "id": "label",
-        "kind": "step",
-        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "outputSchema": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-        "symbolRef": "linear-chain/label",
+        "symbolRef": "side-branch/side",
         "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
       }
     ],
     "edges": [
-      { "from": "__start", "to": "double" },
-      { "from": "double", "to": "increment" },
-      { "from": "increment", "to": "label" },
-      { "from": "label", "to": "__end" }
+      { "from": "__start", "to": "main" },
+      { "from": "main", "to": "__end" },
+      { "from": "__start", "to": "side" }
     ]
   },
   "schemas": {
     "sha256:1111111111111111111111111111111111111111111111111111111111111111": {
       "type": "number"
-    },
-    "sha256:2222222222222222222222222222222222222222222222222222222222222222": {
-      "type": "string"
     }
   },
   "symbols": {
-    "linear-chain/double": {
+    "side-branch/main": {
       "packageId": "ts-main",
       "language": "typescript",
       "module": "./workflow.ts",
-      "export": "double"
+      "export": "main"
     },
-    "linear-chain/increment": {
+    "side-branch/side": {
       "packageId": "ts-main",
       "language": "typescript",
       "module": "./workflow.ts",
-      "export": "increment"
-    },
-    "linear-chain/label": {
-      "packageId": "ts-main",
-      "language": "typescript",
-      "module": "./workflow.ts",
-      "export": "label"
+      "export": "side"
     }
   },
   "sourcePackages": {
@@ -98,18 +80,10 @@
   },
   "contracts": {
     "sha256:8888888888888888888888888888888888888888888888888888888888888888": {
-      "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
-      "resources": {
-        "cpu": "500m",
-        "memory": "512Mi"
-      },
-      "network": {
-        "egress": "none"
-      }
+      "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
     }
   },
   "targets": [
-    { "kind": "local" },
     {
       "kind": "argo",
       "namespace": "argo",

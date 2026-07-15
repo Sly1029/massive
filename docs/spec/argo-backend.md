@@ -4,6 +4,11 @@ Status: draft
 
 Argo is the first non-local backend. The Argo compiler emits a deploy bundle, not only a single WorkflowTemplate.
 
+It is implemented as the first `target.Backend` behind the backend-neutral
+interface in [target-backends.md](target-backends.md); the plan-driven `Backend`
+contract, bundle manifest, and deterministic emission described there are shared
+by every future backend (Cloudflare Workers, Temporal, Vercel).
+
 The Argo backend proves the main product thesis: a portable typed graph plus execution contract can lower to real infrastructure with pods, resources, object storage, environment artifacts, network policy, secret binding, observability, and generated deployment artifacts.
 
 ## Deploy Bundle
@@ -140,7 +145,37 @@ The full pipeline above is the target architecture, not the first implementation
 
 Presets, plugins, user patches, system mediation, field-level provenance explanations, secret binding, and network policy enforcement are deferred until after the SDK -> spec -> Go -> Argo execution path works end to end.
 
-The v0 Argo step image contract is the same as the container environment contract: a fixed Massive runtime image contains the step runner, fetches the source package from the datastore, resolves the requested symbol, reads input artifacts, and writes output artifacts.
+### Step pod contract (step driver)
+
+The generated `WorkflowTemplate` does **not** embed a `StepInvocationDescriptor`. Embedding one at compile time is unfixable: the input artifact's content hash and the pod-reachable datastore endpoint are only known at run time, so a compile-time descriptor is never schema-valid. Instead, each step template's container runs the **Massive step driver** — `massive-orchestrator step` — which executes exactly one plan node:
+
+- It loads the compiled plan from the datastore (`plans/<plan-key>/workflow.json`) and verifies it against the plan hash.
+- It materializes the node's input from upstream step outputs (including `mergeInputs` fan-in), reusing the local orchestrator's logic, so the input artifact carries a real content hash.
+- It builds a schema-valid `StepInvocationDescriptor` — byte-for-byte the same shape a local run builds — and invokes the TS runner.
+- It records the node's run-manifest entry. Data flows step-to-step through the datastore in DAG order; the DAG dependencies provide ordering only.
+
+The **runtime image contract** is that the container-env image ships the step driver **and** the TS runner (which fetches the source package from the datastore, resolves the symbol, reads inputs, writes outputs). The step template's container is:
+
+```text
+command: [massive-orchestrator, step]
+args:    [--node <id>, --run-id {{workflow.uid}}, --plan-hash <plan-hash>]
+```
+
+Node id and plan hash are static template values; the run id is Argo's per-run `{{workflow.uid}}`, so one reusable `WorkflowTemplate` serves every run.
+
+Datastore location and project identity come from **container environment variables** (`MASSIVE_DATASTORE_KIND`, `MASSIVE_DATASTORE_PATH`, `MASSIVE_PROJECT_ID`), each bound to a **workflow parameter** (`spec.arguments.parameters`, declared with names and no defaults). WS-8 supplies real values at submit time (`argo submit -p datastore-kind=... -p datastore-path=... -p project-id=...`). The generated YAML therefore contains only env var **names** and workflow-parameter **references** — never datastore coordinates and never credentials. S3/MinIO credentials remain env-sourced (from a Kubernetes secret wired by WS-8), never baked into the template and never logged, per org policy. The v0 step driver supports the local datastore; the pod-reachable S3/MinIO datastore is WS-8.
+
+Each step driver records its node's terminal status to its **own** datastore key (`runs/<run-id>/nodes/<node-id>.json`), never the shared run manifest. Because the keys are disjoint, a diamond's parallel branch pods run concurrently without a compare-and-swap and cannot lose each other's status. (The datastore contract exposes create-if-absent but no compare-and-swap, so disjoint write-once entries — not CAS on a shared object — are how the wedge stays lost-update-free.)
+
+### Run finalization (wf-system-finalize)
+
+Because each pod runs one node, nothing would otherwise set the run's terminal state. The compiler emits a **system finalize task**, `wf-system-finalize`, that runs the finalize driver (`massive-orchestrator finalize`): it composes the terminal run manifest from the per-node entries and writes `result.json`, so an all-green DAG reaches Succeeded exactly as a full local run does (both share the same finalize logic). It uses the same datastore/project env contract as the step containers and reuses the runtime image of an end-feeding step (every wedge step ships the driver).
+
+Finalize is a **barrier over every step**, not just the steps feeding the end node. The spec validator only guarantees reachability *from* start, so a step need not lie on a path *to* the end node (e.g. `start→A→end` plus `start→B`); finalize requires every node's entry, so it must wait for all steps — otherwise it could fire while a side branch still runs and fail on the missing entry. Depending on all steps is also strictly safe regardless of graph shape.
+
+Finalize never blesses a run with a non-succeeded node: if any node entry is not `succeeded` it records a terminal **failed** manifest naming the failing nodes and writes no `result.json`. In a live cluster a failed step already fails its task, so the all-steps barrier skips finalize; this is the defensive terminal state if finalize is invoked anyway. Argo exit-handler failure finalization is WS-8. Node entries are write-once — an identical replay is idempotent, but a replay whose bytes differ from the recorded entry (a prior attempt recorded a divergent status) is rejected rather than silently kept.
+
+`wf-system-*` is reserved (see [Invariants](#invariants)) for compiler-generated system resources. The v0 name gate rejects user step ids beginning with `wf-system-`; the full `reserved-names` invariant is WS-10.
 
 The compiler should not emit a one-off `Workflow` as the primary bundle artifact. Actual submission and execution are left to users or test harnesses. Local cluster tests can submit the generated template through the Argo CLI, for example with `argo submit --from workflowtemplate/<name>`, then wait for completion and inspect datastore artifacts.
 
