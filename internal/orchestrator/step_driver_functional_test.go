@@ -92,6 +92,20 @@ func TestArgoStepDriverMatchesLocalRun(t *testing.T) {
 			if a, b := getObject(t, storeA, manifestKey).Body, getObject(t, storeB, manifestKey).Body; !bytes.Equal(a, b) {
 				t.Fatalf("terminal run manifest differs\nlocal:  %s\ndriver: %s", a, b)
 			}
+
+			// Finalize is idempotent: running it again produces byte-identical
+			// result and manifest.
+			resultBefore := getObject(t, storeB, resultKey).Body
+			manifestBefore := getObject(t, storeB, manifestKey).Body
+			if result := runFinalizeCommand(t, storeB, project, runID, compiled.PlanHash); result.err != nil {
+				t.Fatalf("second finalize failed\nstderr:\n%s\nerror: %v", result.stderr, result.err)
+			}
+			if !bytes.Equal(resultBefore, getObject(t, storeB, resultKey).Body) {
+				t.Fatal("second finalize changed result.json")
+			}
+			if !bytes.Equal(manifestBefore, getObject(t, storeB, manifestKey).Body) {
+				t.Fatal("second finalize changed run-manifest.json")
+			}
 		})
 	}
 }

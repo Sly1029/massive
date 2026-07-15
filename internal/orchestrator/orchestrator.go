@@ -598,12 +598,28 @@ func FinalizeRun(ctx context.Context, config FinalizeConfig) error {
 
 	// Compose the terminal manifest from each node's disjoint entry.
 	manifest := newRunManifest(config.Plan.GetPlanHash(), projectKey, config.RunID, index.stepOrder)
+	var failedNodes []string
 	for i := range manifest.Steps {
 		entry, err := readNodeEntry(ctx, store, projectKey, config.RunID, manifest.Steps[i].NodeID)
 		if err != nil {
 			return err
 		}
 		manifest.Steps[i] = entry
+		if entry.Status != StatusSucceeded {
+			failedNodes = append(failedNodes, entry.NodeID)
+		}
+	}
+
+	// A run that has any non-succeeded node must not be blessed. Record a terminal
+	// FAILED manifest with the failing nodes and write no result.json. (In Argo,
+	// finalize barriers on all steps so a failed step already skips it; this is
+	// the defensive terminal state if finalize is invoked anyway.)
+	if len(failedNodes) > 0 {
+		manifest.Status = StatusFailed
+		if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+			return err
+		}
+		return &RunError{Diagnostic: fmt.Sprintf("run finalized as failed: steps %v did not succeed", failedNodes)}
 	}
 
 	outputs, err := loadUpstreamOutputs(ctx, store, config.Plan, index, projectKey, config.RunID, index.nodesByID[endNode])
@@ -643,10 +659,24 @@ func writeNodeEntry(ctx context.Context, store datastore.Datastore, projectKey s
 	if err != nil {
 		return fmt.Errorf("marshal node entry for %s: %w", entry.NodeID, err)
 	}
-	// Write-once: a node's entry is its terminal record, so a re-run of the same
-	// pod converges on identical bytes and an already-exists result is success.
-	if _, err := store.Put(ctx, runNodeEntryKey(projectKey, runID, entry.NodeID), body, datastore.PutOptions{ContentType: jsonContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
+	key := runNodeEntryKey(projectKey, runID, entry.NodeID)
+	// Write-once: a node's entry is its terminal record.
+	_, err = store.Put(ctx, key, body, datastore.PutOptions{ContentType: jsonContentType, IfAbsent: true})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, datastore.ErrAlreadyExists) {
 		return fmt.Errorf("write node entry for %s: %w", entry.NodeID, err)
+	}
+	// An entry already exists. Only an identical body is an idempotent replay;
+	// different bytes mean a prior attempt recorded a divergent status (e.g. a
+	// failed attempt-1 before this one succeeded), which must not be silently kept.
+	existing, getErr := store.Get(ctx, key)
+	if getErr != nil {
+		return fmt.Errorf("read existing node entry for %s: %w", entry.NodeID, getErr)
+	}
+	if !bytes.Equal(existing.Body, body) {
+		return fmt.Errorf("node entry for %s already exists with different content; a prior attempt recorded a divergent status and this run refuses to overwrite it", entry.NodeID)
 	}
 	return nil
 }
