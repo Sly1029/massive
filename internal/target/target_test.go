@@ -84,6 +84,36 @@ func TestRegistryRejectsTamperedPlanJSON(t *testing.T) {
 	}
 }
 
+// The registry also rejects a mutated typed plan even when PlanJSON/PlanHash are
+// left consistent — the typed plan (which a backend materializes YAML from) must
+// match the PlanJSON emitted as massive-plan.json.
+func TestRegistryRejectsMutatedTypedPlan(t *testing.T) {
+	registry := target.NewRegistry()
+	registry.Register(argo.New())
+
+	input := diamondInput(t)
+	mutated := false
+	for _, node := range input.Plan.GetGraph().GetNodes() {
+		if node.GetKind() == "step" {
+			id := node.GetId() + "-tampered"
+			node.Id = &id
+			mutated = true
+			break
+		}
+	}
+	if !mutated {
+		t.Fatal("no step node to mutate")
+	}
+
+	_, err := registry.Compile("argo", input)
+	if err == nil {
+		t.Fatal("expected a plan-consistency rejection for a mutated typed plan")
+	}
+	if !strings.Contains(err.Error(), "plan") {
+		t.Fatalf("expected a plan-consistency diagnostic, got: %v", err)
+	}
+}
+
 func TestRegistryUnknownKindListsSupported(t *testing.T) {
 	registry := target.NewRegistry()
 	registry.Register(argo.New())

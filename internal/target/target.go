@@ -72,11 +72,15 @@ func VerifyPlanConsistency(input CompileInput) error {
 	if input.Plan == nil {
 		return fmt.Errorf("compile input has no plan")
 	}
-	if _, err := plan.VerifyCanonicalJSON(input.PlanJSON, input.PlanHash); err != nil {
+	parsed, err := plan.VerifyCanonicalJSON(input.PlanJSON, input.PlanHash)
+	if err != nil {
 		return fmt.Errorf("compile input plan is inconsistent: %w", err)
 	}
-	if embedded := input.Plan.GetPlanHash(); embedded != input.PlanHash {
-		return fmt.Errorf("compile input plan.planHash %q does not match PlanHash %q", embedded, input.PlanHash)
+	// The typed Plan is what a backend materializes its YAML from, while PlanJSON
+	// is emitted verbatim as massive-plan.json. Compare them so a mutated typed
+	// plan cannot ship a bundle whose YAML and datastore plan disagree.
+	if !proto.Equal(input.Plan, parsed) {
+		return fmt.Errorf("compile input typed plan does not match PlanJSON")
 	}
 	return nil
 }
