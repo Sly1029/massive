@@ -1,9 +1,11 @@
 package target_test
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sly1029/massive/internal/canonical"
@@ -28,11 +30,21 @@ func diamondInput(t *testing.T) target.CompileInput {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var argoTarget spec.Target
+	for _, request := range workflowSpec.Targets {
+		if request.Kind == "argo" {
+			argoTarget = request
+		}
+	}
+	if argoTarget.Kind != "argo" {
+		t.Fatal("diamond fixture does not declare an argo target")
+	}
 	return target.CompileInput{
-		Plan:     compileResult.Plan,
-		PlanJSON: compileResult.CanonicalJSON,
-		PlanHash: compileResult.PlanHash,
-		Target:   spec.Target{Kind: "argo", Namespace: "argo", ServiceAccountName: "argo"},
+		Plan:         compileResult.Plan,
+		PlanJSON:     compileResult.CanonicalJSON,
+		PlanHash:     compileResult.PlanHash,
+		TargetKind:   argoTarget.Kind,
+		TargetConfig: argoTarget.Config,
 	}
 }
 
@@ -46,6 +58,29 @@ func TestRegistryCompilesRegisteredBackend(t *testing.T) {
 	}
 	if bundle.Manifest.GetTarget() != "argo" {
 		t.Fatalf("manifest target = %q, want argo", bundle.Manifest.GetTarget())
+	}
+}
+
+// The registry rejects a compile input whose PlanJSON no longer matches its
+// PlanHash/Plan, so a bundle can never describe a different plan than its own
+// massive-plan.json.
+func TestRegistryRejectsTamperedPlanJSON(t *testing.T) {
+	registry := target.NewRegistry()
+	registry.Register(argo.New())
+
+	input := diamondInput(t)
+	tampered := bytes.Replace(input.PlanJSON, []byte(`"diamond"`), []byte(`"diamon0"`), 1)
+	if bytes.Equal(tampered, input.PlanJSON) {
+		t.Fatal("tamper did not change the plan JSON")
+	}
+	input.PlanJSON = tampered
+
+	_, err := registry.Compile("argo", input)
+	if err == nil {
+		t.Fatal("expected a plan-consistency rejection for tampered PlanJSON")
+	}
+	if !strings.Contains(err.Error(), "plan") {
+		t.Fatalf("expected a plan-consistency diagnostic, got: %v", err)
 	}
 }
 

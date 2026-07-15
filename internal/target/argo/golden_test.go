@@ -19,7 +19,7 @@ var goldenBundleCases = []string{"linear-chain", "diamond"}
 func TestGoldenBundlesMatch(t *testing.T) {
 	for _, caseName := range goldenBundleCases {
 		t.Run(caseName, func(t *testing.T) {
-			bundle := compileFixtureBundle(t, caseName, argoTarget)
+			bundle := compileFixtureBundle(t, caseName)
 			dir := goldenBundleDir(caseName)
 
 			files := bundleFiles(bundle)
@@ -46,8 +46,8 @@ func TestGoldenBundlesMatch(t *testing.T) {
 func TestGoldenBundlesAreByteStable(t *testing.T) {
 	for _, caseName := range goldenBundleCases {
 		t.Run(caseName, func(t *testing.T) {
-			first := bundleFiles(compileFixtureBundle(t, caseName, argoTarget))
-			second := bundleFiles(compileFixtureBundle(t, caseName, argoTarget))
+			first := bundleFiles(compileFixtureBundle(t, caseName))
+			second := bundleFiles(compileFixtureBundle(t, caseName))
 			if len(first) != len(second) {
 				t.Fatalf("artifact count differs across compiles: %d vs %d", len(first), len(second))
 			}

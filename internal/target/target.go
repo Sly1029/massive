@@ -19,11 +19,12 @@
 package target
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
-	"github.com/Sly1029/massive/internal/spec"
+	"github.com/Sly1029/massive/internal/plan"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -41,9 +42,11 @@ type Backend interface {
 }
 
 // CompileInput is everything a backend needs to compile one target. It is
-// plan-driven by design: the typed plan plus its canonical bytes and hash, and
-// the matching target request from the spec. Backends must not reach back into
-// the WorkflowSpec.
+// plan-driven and backend-neutral by design: the typed plan plus its canonical
+// bytes and hash, and the resolved target request as a kind plus opaque
+// canonical config bytes. Backends must not reach back into the WorkflowSpec,
+// and this package never interprets TargetConfig — each backend decodes and
+// validates its own.
 type CompileInput struct {
 	// Plan is the typed compiled plan. PlanJSON is its canonical JSON body (the
 	// exact bytes written to the datastore) and PlanHash is its self-excluded
@@ -51,8 +54,31 @@ type CompileInput struct {
 	Plan     *planpb.WorkflowPlan
 	PlanJSON []byte
 	PlanHash string
-	// Target is the resolved target request for this backend's kind.
-	Target spec.Target
+	// TargetKind selects the backend. TargetConfig is the target request's
+	// canonical JSON config (every member except kind), opaque to this package
+	// and decoded by the backend. The bundle hash covers it wholesale.
+	TargetKind   string
+	TargetConfig []byte
+}
+
+// VerifyPlanConsistency rejects a compile input whose plan bytes, hash, and
+// typed plan disagree — the neutral guard the registry runs before any backend
+// sees the input, so a bundle can never describe one plan in its YAML while
+// massive-plan.json and its digest describe another. It reuses the compiler's
+// own plan-hash rule (plan.VerifyCanonicalJSON): PlanJSON must already be
+// canonical, its self-excluded digest must equal PlanHash, and the embedded
+// planHash must match.
+func VerifyPlanConsistency(input CompileInput) error {
+	if input.Plan == nil {
+		return fmt.Errorf("compile input has no plan")
+	}
+	if _, err := plan.VerifyCanonicalJSON(input.PlanJSON, input.PlanHash); err != nil {
+		return fmt.Errorf("compile input plan is inconsistent: %w", err)
+	}
+	if embedded := input.Plan.GetPlanHash(); embedded != input.PlanHash {
+		return fmt.Errorf("compile input plan.planHash %q does not match PlanHash %q", embedded, input.PlanHash)
+	}
+	return nil
 }
 
 // Artifact is one emitted content file, keyed by a bundle-relative path.
@@ -121,7 +147,7 @@ func BuildBundle(input CompileInput, artifacts []Artifact, validations []Validat
 
 	manifest := &planpb.TargetBundleManifest{
 		SchemaVersion: uint32Ptr(0),
-		Target:        strPtr(input.Target.Kind),
+		Target:        strPtr(input.TargetKind),
 		PlanHash:      strPtr(input.PlanHash),
 		BundleHash:    strPtr(bundleHash),
 		Files:         files,
@@ -148,13 +174,20 @@ func computeBundleHash(input CompileInput, files []*planpb.EmittedFile, provenan
 			"hash": file.GetArtifact().GetHash(),
 		})
 	}
+	// Hash the target's canonical config wholesale rather than enumerating
+	// backend-specific fields, so a future backend's config is automatically
+	// covered without editing this neutral package.
+	var configValue any
+	if len(input.TargetConfig) > 0 {
+		if err := json.Unmarshal(input.TargetConfig, &configValue); err != nil {
+			return "", fmt.Errorf("decode target config for bundle hash: %w", err)
+		}
+	}
 	identity := map[string]any{
 		"planHash": input.PlanHash,
-		"target": map[string]string{
-			"kind":                 input.Target.Kind,
-			"namespace":            input.Target.Namespace,
-			"serviceAccountName":   input.Target.ServiceAccountName,
-			"workflowTemplateName": input.Target.WorkflowTemplateName,
+		"target": map[string]any{
+			"kind":   input.TargetKind,
+			"config": configValue,
 		},
 		"compilerName":    provenance.GetCompilerName(),
 		"compilerVersion": provenance.GetCompilerVersion(),

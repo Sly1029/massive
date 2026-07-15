@@ -11,8 +11,11 @@
 package argo
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -32,12 +35,44 @@ func New() *Backend { return &Backend{} }
 
 func (b *Backend) Kind() string { return Kind }
 
+// argoConfig is the Argo backend's own target configuration, decoded from the
+// neutral CompileInput.TargetConfig. The neutral target package never sees these
+// Kubernetes-specific fields.
+type argoConfig struct {
+	Namespace            string `json:"namespace"`
+	ServiceAccountName   string `json:"serviceAccountName"`
+	WorkflowTemplateName string `json:"workflowTemplateName"`
+}
+
+// decodeConfig decodes and validates the Argo target config with strict
+// unknown-field rejection. The spec-level JSON-schema validation already
+// enforces the argo target shape at parse; this is the backend owning its own
+// config so the neutral package carries none of it.
+func decodeConfig(configJSON []byte) (argoConfig, error) {
+	var config argoConfig
+	decoder := json.NewDecoder(bytes.NewReader(configJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
+		return argoConfig{}, fmt.Errorf("argo target: decode target config: %w", err)
+	}
+	if err := decoder.Decode(new(struct{})); err != io.EOF {
+		return argoConfig{}, fmt.Errorf("argo target: target config has trailing JSON content")
+	}
+	if config.Namespace == "" {
+		return argoConfig{}, fmt.Errorf("argo target: config requires a namespace")
+	}
+	if config.ServiceAccountName == "" {
+		return argoConfig{}, fmt.Errorf("argo target: config requires a serviceAccountName")
+	}
+	return config, nil
+}
+
 // compileContext is the argo-internal view of a compile request, so the
-// template/descriptor builders never depend on the target package.
+// template builders never depend on the target package.
 type compileContext struct {
 	plan     *planpb.WorkflowPlan
 	planHash string
-	target   spec.Target
+	config   argoConfig
 }
 
 // TargetCompatibilityError is the documented diagnostic for a workflow feature
@@ -61,12 +96,16 @@ func (b *Backend) Compile(input target.CompileInput) (*target.Bundle, error) {
 	if input.Plan == nil {
 		return nil, fmt.Errorf("argo target: compile input has no plan")
 	}
-	if input.Target.Kind != Kind {
-		return nil, fmt.Errorf("argo target: compile input target kind is %q, expected %q", input.Target.Kind, Kind)
+	if input.TargetKind != Kind {
+		return nil, fmt.Errorf("argo target: compile input target kind is %q, expected %q", input.TargetKind, Kind)
+	}
+	config, err := decodeConfig(input.TargetConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	index := buildPlanIndex(input.Plan)
-	ctx := compileContext{plan: input.Plan, planHash: input.PlanHash, target: input.Target}
+	ctx := compileContext{plan: input.Plan, planHash: input.PlanHash, config: config}
 
 	if err := gateEnvironments(index); err != nil {
 		return nil, err

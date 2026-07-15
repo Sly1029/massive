@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Sly1029/massive/internal/spec"
 	"github.com/Sly1029/massive/internal/target"
 )
 
@@ -15,7 +14,7 @@ func diamondTemplate(t *testing.T) (*workflowTemplate, planIndex, string) {
 	tmpl, err := buildWorkflowTemplate(index, compileContext{
 		plan:     compileResult.Plan,
 		planHash: compileResult.PlanHash,
-		target:   argoTarget,
+		config:   argoConfigValue,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,17 +93,20 @@ func TestIdentitySetInvariant(t *testing.T) {
 	}
 }
 
-// WS-7.4 through Compile: a target with no service account fails the run with an
-// identity-set diagnostic and emits no bundle.
+// A target config without a service account is rejected by the backend's own
+// config validation before any bundle is built. (The identity-set invariant is
+// the defense-in-depth check on the materialized template; see
+// TestIdentitySetInvariant.)
 func TestCompileFailsWhenServiceAccountMissing(t *testing.T) {
 	compileResult := compileFixturePlan(t, "diamond")
 	_, err := New().Compile(target.CompileInput{
-		Plan:     compileResult.Plan,
-		PlanJSON: compileResult.CanonicalJSON,
-		PlanHash: compileResult.PlanHash,
-		Target:   spec.Target{Kind: "argo", Namespace: "argo"},
+		Plan:         compileResult.Plan,
+		PlanJSON:     compileResult.CanonicalJSON,
+		PlanHash:     compileResult.PlanHash,
+		TargetKind:   Kind,
+		TargetConfig: argoConfigJSON(t, argoConfig{Namespace: "argo"}),
 	})
-	if err == nil || !strings.Contains(err.Error(), invariantIdentitySet) {
-		t.Fatalf("expected identity-set failure, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "serviceAccountName") {
+		t.Fatalf("expected a serviceAccountName config failure, got: %v", err)
 	}
 }

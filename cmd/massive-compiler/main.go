@@ -106,10 +106,11 @@ func runCompileTarget(args []string) error {
 	registry.Register(argo.New())
 
 	bundle, err := registry.Compile(*targetKind, target.CompileInput{
-		Plan:     result.Plan,
-		PlanJSON: result.CanonicalJSON,
-		PlanHash: result.PlanHash,
-		Target:   targetRequest,
+		Plan:         result.Plan,
+		PlanJSON:     result.CanonicalJSON,
+		PlanHash:     result.PlanHash,
+		TargetKind:   targetRequest.Kind,
+		TargetConfig: targetRequest.Config,
 	})
 	if err != nil {
 		return err

@@ -34,6 +34,12 @@ func (r *Registry) Compile(kind string, input CompileInput) (*Bundle, error) {
 	if !ok {
 		return nil, &UnknownTargetError{Kind: kind, Supported: r.Kinds()}
 	}
+	// Neutral entry-point guard: verify the plan bytes/hash/typed plan agree
+	// before any backend runs, so no backend can emit a bundle that describes a
+	// different plan than its own massive-plan.json.
+	if err := VerifyPlanConsistency(input); err != nil {
+		return nil, err
+	}
 	return backend.Compile(input)
 }
 

@@ -3,6 +3,7 @@ package argo
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sly1029/massive/internal/plan"
@@ -10,19 +11,18 @@ import (
 	"github.com/Sly1029/massive/internal/target"
 )
 
-// argoTarget is the target request the wedge tests compile against. linear-chain
-// declares no argo target in its fixture, so tests supply one; diamond declares
-// an equivalent one.
-var argoTarget = spec.Target{Kind: "argo", Namespace: "argo", ServiceAccountName: "argo"}
+// argoConfigValue is the argo target config the wedge tests compile against.
+var argoConfigValue = argoConfig{Namespace: "argo", ServiceAccountName: "argo"}
 
-func compileFixtureBundle(t *testing.T, caseName string, targetRequest spec.Target) *target.Bundle {
+func compileFixtureBundle(t *testing.T, caseName string) *target.Bundle {
 	t.Helper()
 	compileResult := compileFixturePlan(t, caseName)
 	bundle, err := New().Compile(target.CompileInput{
-		Plan:     compileResult.Plan,
-		PlanJSON: compileResult.CanonicalJSON,
-		PlanHash: compileResult.PlanHash,
-		Target:   targetRequest,
+		Plan:         compileResult.Plan,
+		PlanJSON:     compileResult.CanonicalJSON,
+		PlanHash:     compileResult.PlanHash,
+		TargetKind:   Kind,
+		TargetConfig: argoConfigJSON(t, argoConfigValue),
 	})
 	if err != nil {
 		t.Fatalf("compile %s argo bundle: %v", caseName, err)
@@ -49,7 +49,7 @@ func compileFixturePlan(t *testing.T, caseName string) *plan.CompileResult {
 }
 
 func TestCompileDiamondProducesValidTemplate(t *testing.T) {
-	bundle := compileFixtureBundle(t, "diamond", argoTarget)
+	bundle := compileFixtureBundle(t, "diamond")
 
 	tmpl := parseBundleTemplate(t, bundle)
 	if tmpl.Kind != "WorkflowTemplate" {
@@ -85,7 +85,10 @@ func TestCompileDiamondProducesValidTemplate(t *testing.T) {
 		}
 	}
 
-	// The step container must be the runtime image, not a placeholder.
+	// Each step container runs the step driver in the runtime image: it carries
+	// no embedded descriptor (descriptors are built at run time), its args name
+	// the node/run/plan, and its env references the datastore/project workflow
+	// parameters.
 	for _, tmplate := range tmpl.Spec.Templates {
 		if tmplate.Container == nil {
 			continue
@@ -93,11 +96,22 @@ func TestCompileDiamondProducesValidTemplate(t *testing.T) {
 		if tmplate.Container.Image != "ghcr.io/massive-dev/typescript-runner:v0" {
 			t.Fatalf("step %q image = %q, want the container-env image", tmplate.Name, tmplate.Container.Image)
 		}
-		if len(tmplate.Container.Command) == 0 || tmplate.Container.Command[0] != stepRunnerCommand {
-			t.Fatalf("step %q command = %v, want the step runner", tmplate.Name, tmplate.Container.Command)
+		wantCommand := []string{stepDriverCommand, stepDriverSubcommand}
+		if !equalStringSets(tmplate.Container.Command, wantCommand) || len(tmplate.Container.Command) != 2 {
+			t.Fatalf("step %q command = %v, want %v", tmplate.Name, tmplate.Container.Command, wantCommand)
 		}
-		if tmplate.Inputs == nil || len(tmplate.Inputs.Artifacts) != 1 {
-			t.Fatalf("step %q must carry exactly one descriptor input artifact", tmplate.Name)
+		args := strings.Join(tmplate.Container.Args, " ")
+		if !strings.Contains(args, "--node") || !strings.Contains(args, "--run-id "+argoRunIDVariable) || !strings.Contains(args, "--plan-hash") {
+			t.Fatalf("step %q args = %v, want node/run-id/plan-hash", tmplate.Name, tmplate.Container.Args)
+		}
+		envNames := map[string]string{}
+		for _, env := range tmplate.Container.Env {
+			envNames[env.Name] = env.Value
+		}
+		for _, name := range []string{envDatastoreKind, envDatastorePath, envProjectID} {
+			if _, ok := envNames[name]; !ok {
+				t.Fatalf("step %q env is missing %q", tmplate.Name, name)
+			}
 		}
 	}
 }

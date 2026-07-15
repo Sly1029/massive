@@ -109,6 +109,11 @@
     }
   },
   "targets": [
-    { "kind": "local" }
+    { "kind": "local" },
+    {
+      "kind": "argo",
+      "namespace": "argo",
+      "serviceAccountName": "argo"
+    }
   ]
 }

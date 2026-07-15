@@ -24,7 +24,8 @@ func TestEnvGateRejectsNodeEnvironment(t *testing.T) {
 		Plan:     compileResult.Plan,
 		PlanJSON: compileResult.CanonicalJSON,
 		PlanHash: compileResult.PlanHash,
-		Target:   argoTarget,
+		TargetKind:   Kind,
+		TargetConfig: argoConfigJSON(t, argoConfigValue),
 	})
 	if err == nil {
 		t.Fatal("expected node-env compile to fail")
@@ -47,7 +48,8 @@ func TestEnvGateRejectsContainerWithoutImage(t *testing.T) {
 		Plan:     compileResult.Plan,
 		PlanJSON: compileResult.CanonicalJSON,
 		PlanHash: compileResult.PlanHash,
-		Target:   argoTarget,
+		TargetKind:   Kind,
+		TargetConfig: argoConfigJSON(t, argoConfigValue),
 	})
 	if err == nil || !IsTargetCompatibilityError(err) {
 		t.Fatalf("expected a target-compatibility error for a container env with no image, got: %v", err)
@@ -65,7 +67,7 @@ func TestEnvGateAcceptsContainerEnvironment(t *testing.T) {
 // gated at compile time rather than surfacing at apply time.
 func TestNameGateRejectsInvalidWorkflowTemplateName(t *testing.T) {
 	input := mustCompileInput(t, "linear-chain")
-	input.Target.WorkflowTemplateName = "Linear_Chain"
+	input.TargetConfig = argoConfigJSON(t, argoConfig{Namespace: "argo", ServiceAccountName: "argo", WorkflowTemplateName: "Linear_Chain"})
 
 	_, err := New().Compile(input)
 	if err == nil || !strings.Contains(err.Error(), "Linear_Chain") {
@@ -88,13 +90,29 @@ func TestNameGateRejectsStepIDArgoCannotName(t *testing.T) {
 	}
 }
 
+// A node id at the length bound produces a step-<id> template name at exactly
+// Argo's workflow-field limit; one character longer overflows it.
+func TestNameGateStepIDLengthBoundary(t *testing.T) {
+	atLimit := planIndex{stepOrder: []string{strings.Repeat("a", maxStepNodeIDLength)}}
+	if err := validateNames("wf", atLimit); err != nil {
+		t.Fatalf("a %d-char step id should pass: %v", maxStepNodeIDLength, err)
+	}
+
+	overLimit := planIndex{stepOrder: []string{strings.Repeat("a", maxStepNodeIDLength+1)}}
+	err := validateNames("wf", overLimit)
+	if err == nil || !strings.Contains(err.Error(), "characters") {
+		t.Fatalf("a %d-char step id should fail the length gate, got: %v", maxStepNodeIDLength+1, err)
+	}
+}
+
 func mustCompileInput(t *testing.T, caseName string) target.CompileInput {
 	t.Helper()
 	compileResult := compileFixturePlan(t, caseName)
 	return target.CompileInput{
-		Plan:     compileResult.Plan,
-		PlanJSON: compileResult.CanonicalJSON,
-		PlanHash: compileResult.PlanHash,
-		Target:   argoTarget,
+		Plan:         compileResult.Plan,
+		PlanJSON:     compileResult.CanonicalJSON,
+		PlanHash:     compileResult.PlanHash,
+		TargetKind:   Kind,
+		TargetConfig: argoConfigJSON(t, argoConfigValue),
 	}
 }

@@ -70,6 +70,39 @@ func TestCompilerCLIFunctional(t *testing.T) {
 	})
 }
 
+// WS-7.5 / WS-7.7: the golden Argo bundles are produced through the supported
+// CLI path (`massive-compiler compile-target`) on spec fixtures that legitimately
+// declare an argo target — not via an injected target — and must match the
+// checked-in goldens byte for byte.
+func TestCompileTargetCLIMatchesGoldenBundles(t *testing.T) {
+	for _, caseName := range []string{"linear-chain", "diamond"} {
+		t.Run(caseName, func(t *testing.T) {
+			bundleOut := t.TempDir()
+			specPath := filepath.Join(repoRootForTest(t), "conformance", "fixtures", "specs", caseName, "workflow-spec.json")
+			result := runCommand(t, "go", "run", "./cmd/massive-compiler", "compile-target",
+				"--spec", specPath, "--target", "argo", "--bundle-out", bundleOut)
+			if result.err != nil {
+				t.Fatalf("compile-target failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", result.stdout, result.stderr, result.err)
+			}
+
+			goldenDir := filepath.Join(repoRootForTest(t), "conformance", "fixtures", "bundles", caseName, "argo")
+			for _, file := range []string{"workflow-template.yaml", "massive-plan.json", "bundle-manifest.json"} {
+				got, err := os.ReadFile(filepath.Join(bundleOut, file))
+				if err != nil {
+					t.Fatalf("read emitted %s: %v", file, err)
+				}
+				want, err := os.ReadFile(filepath.Join(goldenDir, file))
+				if err != nil {
+					t.Fatalf("read golden %s: %v", file, err)
+				}
+				if !bytes.Equal(got, want) {
+					t.Fatalf("%s/%s from compile-target CLI does not match golden\n--- cli ---\n%s\n--- golden ---\n%s", caseName, file, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestOrchestratorCLILinearChainRealRunner(t *testing.T) {
 	workspace := prepareRunWorkspace(t, "linear-chain", "linear-chain")
 	storeRoot := newStoreRoot(t)

@@ -13,7 +13,7 @@ func TestStructureValidationAcceptsGeneratedTemplate(t *testing.T) {
 	tmpl, err := buildWorkflowTemplate(index, compileContext{
 		plan:     compileFixturePlan(t, "diamond").Plan,
 		planHash: "sha256:" + strings40(),
-		target:   argoTarget,
+		config:   argoConfigValue,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -32,7 +32,7 @@ func TestStructureValidationRejectsInvalidTemplate(t *testing.T) {
 	tmpl, err := buildWorkflowTemplate(index, compileContext{
 		plan:     compileFixturePlan(t, "diamond").Plan,
 		planHash: "sha256:" + strings40(),
-		target:   argoTarget,
+		config:   argoConfigValue,
 	})
 	if err != nil {
 		t.Fatal(err)

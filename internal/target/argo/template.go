@@ -25,13 +25,26 @@ type objectMeta struct {
 
 type workflowTemplateSpec struct {
 	Entrypoint         string     `json:"entrypoint"`
+	Arguments          *arguments `json:"arguments,omitempty"`
 	ServiceAccountName string     `json:"serviceAccountName,omitempty"`
 	Templates          []template `json:"templates"`
 }
 
+// arguments/parameter declare the WorkflowTemplate's workflow-level parameters.
+// The wedge declares them with names only (no defaults): the step containers
+// reference them for datastore and project configuration, and WS-8 supplies real
+// values at submit time.
+type arguments struct {
+	Parameters []parameter `json:"parameters,omitempty"`
+}
+
+type parameter struct {
+	Name  string  `json:"name"`
+	Value *string `json:"value,omitempty"`
+}
+
 type template struct {
 	Name      string       `json:"name"`
-	Inputs    *inputs      `json:"inputs,omitempty"`
 	DAG       *dagTemplate `json:"dag,omitempty"`
 	Container *container   `json:"container,omitempty"`
 }
@@ -46,25 +59,17 @@ type dagTask struct {
 	Dependencies []string `json:"dependencies,omitempty"`
 }
 
-type inputs struct {
-	Artifacts []inputArtifact `json:"artifacts,omitempty"`
-}
-
-type inputArtifact struct {
-	Name string      `json:"name"`
-	Path string      `json:"path"`
-	Raw  rawArtifact `json:"raw"`
-}
-
-type rawArtifact struct {
-	Data string `json:"data"`
-}
-
 type container struct {
 	Image     string                `json:"image"`
 	Command   []string              `json:"command,omitempty"`
 	Args      []string              `json:"args,omitempty"`
+	Env       []envVar              `json:"env,omitempty"`
 	Resources *resourceRequirements `json:"resources,omitempty"`
+}
+
+type envVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type resourceRequirements struct {
@@ -77,23 +82,52 @@ const (
 	workflowTemplateKind   = "WorkflowTemplate"
 	entrypointTemplateName = "main"
 	stepTemplatePrefix     = "step-"
-	descriptorArtifactName = "descriptor"
-	stepRunnerCommand      = "massive-step-runner"
+
+	// stepDriverCommand + stepDriverSubcommand are the Massive step driver the
+	// runtime image ships alongside the TS runner. Each step pod runs one driver
+	// invocation that executes exactly one plan node: it loads the plan from the
+	// datastore, materializes the node input from upstream outputs, builds a
+	// schema-valid StepInvocationDescriptor, and invokes the runner. No
+	// descriptor is embedded in the template — descriptors are built at run time,
+	// so they are always schema-valid and identical to a local run's.
+	stepDriverCommand    = "massive-orchestrator"
+	stepDriverSubcommand = "step"
+
+	// argoRunIDVariable is Argo's per-run unique id, substituted into the run-id
+	// argument when the pod starts, so one WorkflowTemplate serves every run.
+	argoRunIDVariable = "{{workflow.uid}}"
 
 	// PlanHashAnnotation carries the compiled plan hash on the generated template.
 	// The plan-provenance invariant asserts it exists and matches the plan.
 	PlanHashAnnotation = "massive.dev/plan-hash"
 )
 
+// Workflow parameter names and the container env var names each is bound to. The
+// step driver reads datastore and project configuration from these env vars; the
+// template binds each env var to a workflow parameter reference, so the runtime
+// image and the generated YAML carry no datastore coordinates or credentials —
+// only parameter references and env var names. WS-8 supplies the values.
+const (
+	paramDatastoreKind = "datastore-kind"
+	paramDatastorePath = "datastore-path"
+	paramProjectID     = "project-id"
+
+	envDatastoreKind = "MASSIVE_DATASTORE_KIND"
+	envDatastorePath = "MASSIVE_DATASTORE_PATH"
+	envProjectID     = "MASSIVE_PROJECT_ID"
+)
+
 // buildWorkflowTemplate materializes the Argo WorkflowTemplate tree from the
 // plan. The DAG mirrors the plan topology exactly: one task per step node with
 // dependencies equal to the plan's step-to-step edges (the __start/__end
-// sentinels are skipped). Each step template runs the step runner in the
-// container-env image against a descriptor delivered as a raw input artifact.
+// sentinels are skipped). Each step template runs the Massive step driver in the
+// container-env image; the driver builds its StepInvocationDescriptor at run
+// time from the plan and the datastore, so data flows step-to-step through the
+// datastore in DAG order rather than through embedded artifacts.
 func buildWorkflowTemplate(index planIndex, input compileContext) (*workflowTemplate, error) {
 	graph := input.plan.GetGraph()
 
-	name := input.target.WorkflowTemplateName
+	name := input.config.WorkflowTemplateName
 	if name == "" {
 		name = graph.GetWorkflowName()
 	}
@@ -128,15 +162,27 @@ func buildWorkflowTemplate(index planIndex, input compileContext) (*workflowTemp
 		Kind:       workflowTemplateKind,
 		Metadata: objectMeta{
 			Name:        name,
-			Namespace:   input.target.Namespace,
+			Namespace:   input.config.Namespace,
 			Annotations: map[string]string{PlanHashAnnotation: input.plan.GetPlanHash()},
 		},
 		Spec: workflowTemplateSpec{
 			Entrypoint:         entrypointTemplateName,
-			ServiceAccountName: input.target.ServiceAccountName,
+			Arguments:          runParameters(),
+			ServiceAccountName: input.config.ServiceAccountName,
 			Templates:          allTemplates,
 		},
 	}, nil
+}
+
+// runParameters declares the datastore/project workflow parameters the step
+// containers read, with names only and no defaults, so submit-time values (WS-8)
+// supply the datastore location and project identity.
+func runParameters() *arguments {
+	return &arguments{Parameters: []parameter{
+		{Name: paramDatastoreKind},
+		{Name: paramDatastorePath},
+		{Name: paramProjectID},
+	}}
 }
 
 func buildStepTemplate(index planIndex, planHash string, node *planpb.GraphNode) (template, error) {
@@ -149,31 +195,30 @@ func buildStepTemplate(index planIndex, planHash string, node *planpb.GraphNode)
 		return template{}, fmt.Errorf("step %q references unknown environment %q", node.GetId(), contract.GetEnvironmentRef())
 	}
 
-	descriptor, err := buildStepDescriptor(index, planHash, node)
-	if err != nil {
-		return template{}, err
-	}
-	descriptorJSON, err := canonicalDescriptorJSON(descriptor)
-	if err != nil {
-		return template{}, err
-	}
-
 	return template{
 		Name: stepTemplateName(node.GetId()),
-		Inputs: &inputs{
-			Artifacts: []inputArtifact{{
-				Name: descriptorArtifactName,
-				Path: descriptorMountPath,
-				Raw:  rawArtifact{Data: descriptorJSON},
-			}},
-		},
 		Container: &container{
-			Image:     environment.GetContainer().GetImage(),
-			Command:   []string{stepRunnerCommand},
-			Args:      []string{descriptorMountPath},
+			Image:   environment.GetContainer().GetImage(),
+			Command: []string{stepDriverCommand, stepDriverSubcommand},
+			// Static template args: which node, which plan. The run id is Argo's
+			// per-run uid, substituted at pod start.
+			Args: []string{
+				"--node", node.GetId(),
+				"--run-id", argoRunIDVariable,
+				"--plan-hash", planHash,
+			},
+			Env: []envVar{
+				{Name: envDatastoreKind, Value: parameterRef(paramDatastoreKind)},
+				{Name: envDatastorePath, Value: parameterRef(paramDatastorePath)},
+				{Name: envProjectID, Value: parameterRef(paramProjectID)},
+			},
 			Resources: containerResources(contract.GetResources()),
 		},
 	}, nil
+}
+
+func parameterRef(name string) string {
+	return "{{workflow.parameters." + name + "}}"
 }
 
 func containerResources(resources *planpb.ResourceRequirements) *resourceRequirements {

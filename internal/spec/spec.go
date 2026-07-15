@@ -128,11 +128,56 @@ type NetworkPolicy struct {
 	Hosts  []string `json:"hosts,omitempty"`
 }
 
+// Target is a backend-neutral target request: a kind plus the request's
+// canonical config bytes, opaque to this package. The kind selects a backend and
+// the config is whatever that backend declares (Argo: namespace,
+// serviceAccountName, workflowTemplateName; a future Temporal backend: its own
+// fields). The per-kind shapes are still schema-validated at Parse against
+// workflow-spec.schema.json, so a malformed target is rejected before decode;
+// nothing Kubernetes- or Argo-specific is hardcoded in this struct, and the
+// bundle hash covers Config wholesale so a new backend's config is automatically
+// hash-covered.
 type Target struct {
-	Kind                 string `json:"kind"`
-	Namespace            string `json:"namespace,omitempty"`
-	ServiceAccountName   string `json:"serviceAccountName,omitempty"`
-	WorkflowTemplateName string `json:"workflowTemplateName,omitempty"`
+	Kind   string
+	Config []byte
+}
+
+// UnmarshalJSON splits a target request object into its kind and its canonical
+// config bytes (every member except kind). Unknown members are still rejected by
+// the JSON-schema validation in Parse; here they are simply carried in Config as
+// the backend's opaque, hash-covered configuration.
+func (t *Target) UnmarshalJSON(data []byte) error {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return fmt.Errorf("decode target: %w", err)
+	}
+	kindRaw, ok := members["kind"]
+	if !ok {
+		return fmt.Errorf("target is missing kind")
+	}
+	if err := json.Unmarshal(kindRaw, &t.Kind); err != nil {
+		return fmt.Errorf("decode target kind: %w", err)
+	}
+	delete(members, "kind")
+
+	config := make(map[string]any, len(members))
+	for name, raw := range members {
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return fmt.Errorf("decode target config member %q: %w", name, err)
+		}
+		config[name] = value
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("encode target config: %w", err)
+	}
+	canonicalConfig, err := canonical.CanonicalizeJSON(encoded)
+	if err != nil {
+		return fmt.Errorf("canonicalize target config: %w", err)
+	}
+	t.Config = canonicalConfig
+	return nil
 }
 
 type Diagnostic struct {
