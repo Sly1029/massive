@@ -61,6 +61,33 @@ func TestEnvGateAcceptsContainerEnvironment(t *testing.T) {
 	}
 }
 
+// The vendored CRD schema has no name patterns, so invalid names must be
+// gated at compile time rather than surfacing at apply time.
+func TestNameGateRejectsInvalidWorkflowTemplateName(t *testing.T) {
+	input := mustCompileInput(t, "linear-chain")
+	input.Target.WorkflowTemplateName = "Linear_Chain"
+
+	_, err := New().Compile(input)
+	if err == nil || !strings.Contains(err.Error(), "Linear_Chain") {
+		t.Fatalf("expected a diagnostic naming the invalid template name, got: %v", err)
+	}
+}
+
+func TestNameGateRejectsStepIDArgoCannotName(t *testing.T) {
+	input := mustCompileInput(t, "linear-chain")
+	for _, node := range input.Plan.GetGraph().GetNodes() {
+		if node.GetId() == "double" {
+			invalid := "double_step"
+			node.Id = &invalid
+		}
+	}
+
+	_, err := New().Compile(input)
+	if err == nil || !strings.Contains(err.Error(), "double_step") {
+		t.Fatalf("expected a diagnostic naming the invalid step id, got: %v", err)
+	}
+}
+
 func mustCompileInput(t *testing.T, caseName string) target.CompileInput {
 	t.Helper()
 	compileResult := compileFixturePlan(t, caseName)

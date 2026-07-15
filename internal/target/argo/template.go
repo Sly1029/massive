@@ -100,6 +100,9 @@ func buildWorkflowTemplate(index planIndex, input compileContext) (*workflowTemp
 	if name == "" {
 		return nil, fmt.Errorf("plan has no workflow name and target set no workflowTemplateName")
 	}
+	if err := validateNames(name, index); err != nil {
+		return nil, err
+	}
 
 	dag := &dagTemplate{Tasks: make([]dagTask, 0, len(index.stepOrder))}
 	templates := make([]template, 0, len(index.stepOrder)+1)
