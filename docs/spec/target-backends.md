@@ -60,9 +60,12 @@ automatically hash-covered without editing this neutral package.
 Before dispatching to a backend, `Registry.Compile` runs
 `target.VerifyPlanConsistency`: `PlanJSON` must already be canonical, its
 self-excluded digest must equal `PlanHash` (the compiler's own plan-hash rule,
-`plan.VerifyCanonicalJSON`), and the typed plan's `planHash` must match — so a
-bundle can never describe one plan in its emitted artifacts while
-`massive-plan.json` and its digest describe another.
+`plan.VerifyCanonicalJSON`), **and the typed `Plan` must equal the plan parsed
+from `PlanJSON`** (`proto.Equal`). The typed plan is what a backend materializes
+its YAML from while `PlanJSON` is emitted verbatim as `massive-plan.json`, so
+comparing them means a bundle can never describe one plan in its emitted
+artifacts while `massive-plan.json` and its digest describe another — even if a
+caller mutates only the typed plan.
 
 ## Emitting a bundle
 

@@ -165,6 +165,14 @@ Node id and plan hash are static template values; the run id is Argo's per-run `
 
 Datastore location and project identity come from **container environment variables** (`MASSIVE_DATASTORE_KIND`, `MASSIVE_DATASTORE_PATH`, `MASSIVE_PROJECT_ID`), each bound to a **workflow parameter** (`spec.arguments.parameters`, declared with names and no defaults). WS-8 supplies real values at submit time (`argo submit -p datastore-kind=... -p datastore-path=... -p project-id=...`). The generated YAML therefore contains only env var **names** and workflow-parameter **references** — never datastore coordinates and never credentials. S3/MinIO credentials remain env-sourced (from a Kubernetes secret wired by WS-8), never baked into the template and never logged, per org policy. The v0 step driver supports the local datastore; the pod-reachable S3/MinIO datastore is WS-8.
 
+Each step driver records its node's terminal status to its **own** datastore key (`runs/<run-id>/nodes/<node-id>.json`), never the shared run manifest. Because the keys are disjoint, a diamond's parallel branch pods run concurrently without a compare-and-swap and cannot lose each other's status. (The datastore contract exposes create-if-absent but no compare-and-swap, so disjoint write-once entries — not CAS on a shared object — are how the wedge stays lost-update-free.)
+
+### Run finalization (wf-system-finalize)
+
+Because each pod runs one node, nothing would otherwise set the run's terminal state. The compiler emits a **system finalize task**, `wf-system-finalize`, that depends on the steps feeding the end node and runs the finalize driver (`massive-orchestrator finalize`). It composes the terminal run manifest from the per-node entries and writes `result.json`, so an all-green DAG reaches Succeeded exactly as a full local run does (both share the same finalize logic). It uses the same datastore/project env contract as the step containers and reuses the runtime image of an end-feeding step (every wedge step ships the driver). Finalize runs on success; failure-path finalization (Argo exit handlers) is WS-8.
+
+`wf-system-*` is reserved (see [Invariants](#invariants)) for compiler-generated system resources. The v0 name gate rejects user step ids beginning with `wf-system-`; the full `reserved-names` invariant is WS-10.
+
 The compiler should not emit a one-off `Workflow` as the primary bundle artifact. Actual submission and execution are left to users or test harnesses. Local cluster tests can submit the generated template through the Argo CLI, for example with `argo submit --from workflowtemplate/<name>`, then wait for completion and inspect datastore artifacts.
 
 The first executable Argo wedge supports `env.container(...)` only. `env.node(...)` should be rejected for Argo with a clear target compatibility diagnostic until Node dependency environment materialization exists for Kubernetes.
