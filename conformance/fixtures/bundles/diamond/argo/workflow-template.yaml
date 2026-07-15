@@ -32,7 +32,10 @@ spec:
         name: merge
         template: step-merge
       - dependencies:
+        - left
         - merge
+        - right
+        - split
         name: wf-system-finalize
         template: wf-system-finalize
     name: main

@@ -27,6 +27,8 @@ spec:
         name: label
         template: step-label
       - dependencies:
+        - double
+        - increment
         - label
         name: wf-system-finalize
         template: wf-system-finalize

@@ -78,8 +78,10 @@ func checkDAGIntegrity(tmpl *workflowTemplate, index planIndex) target.Validatio
 	if !stepTemplates[finalize.Template] || finalize.Template != finalizeTaskName {
 		return fail(invariantDAGIntegrity, fmt.Sprintf("finalize task references template %q, expected the runnable %q template", finalize.Template, finalizeTaskName))
 	}
-	if !equalStringSets(finalize.Dependencies, index.endUpstreamSteps) {
-		return fail(invariantDAGIntegrity, fmt.Sprintf("finalize dependencies are %v, expected the end-feeding steps %v", sortedCopy(finalize.Dependencies), sortedCopy(index.endUpstreamSteps)))
+	// finalize is a barrier over every step, so it can compose the manifest from
+	// all node entries regardless of which steps feed the end node.
+	if !equalStringSets(finalize.Dependencies, index.stepOrder) {
+		return fail(invariantDAGIntegrity, fmt.Sprintf("finalize dependencies are %v, expected all step tasks %v", sortedCopy(finalize.Dependencies), sortedCopy(index.stepOrder)))
 	}
 
 	return pass(invariantDAGIntegrity)

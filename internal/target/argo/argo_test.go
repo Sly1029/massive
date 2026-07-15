@@ -132,7 +132,7 @@ func TestCompileDiamondProducesValidTemplate(t *testing.T) {
 		t.Fatal("template has no wf-system-finalize task")
 	}
 
-	// The finalize task depends on the steps feeding the end node (merge).
+	// The finalize task is a barrier over every step, not just the end feeders.
 	var finalizeDeps []string
 	found := false
 	for _, task := range dag.Tasks {
@@ -144,8 +144,55 @@ func TestCompileDiamondProducesValidTemplate(t *testing.T) {
 	if !found {
 		t.Fatal("DAG has no wf-system-finalize task")
 	}
-	if !equalStringSets(finalizeDeps, []string{"merge"}) {
-		t.Fatalf("finalize dependencies = %v, want [merge]", finalizeDeps)
+	if !equalStringSets(finalizeDeps, []string{"split", "left", "right", "merge"}) {
+		t.Fatalf("finalize dependencies = %v, want all steps", finalizeDeps)
+	}
+}
+
+// A step need not lie on a path to the end node — the spec validator only
+// requires reachability from start. The finalize barrier must depend on every
+// step (not just end feeders) so it never fires while a side branch still runs.
+func TestFinalizeBarriersOnAllStepsIncludingSideBranch(t *testing.T) {
+	specData, err := os.ReadFile(filepath.Join("testdata", "side-branch", "workflow-spec.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The spec (main reaches end; side is reachable from start but does not) must
+	// be accepted — this documents that such graphs are valid.
+	workflowSpec, err := spec.Parse(specData)
+	if err != nil {
+		t.Fatalf("side-branch spec should be valid (a step need not reach end): %v", err)
+	}
+	compileResult, err := plan.Compile(workflowSpec, specData)
+	if err != nil {
+		t.Fatalf("compile side-branch plan: %v", err)
+	}
+
+	index := buildPlanIndex(compileResult.Plan)
+	tmpl, err := buildWorkflowTemplate(index, compileContext{
+		plan:     compileResult.Plan,
+		planHash: compileResult.PlanHash,
+		config:   argoConfigValue,
+	})
+	if err != nil {
+		t.Fatalf("build side-branch template: %v", err)
+	}
+
+	// "side" feeds no end path, so end-feeder-only wiring would omit it. The
+	// barrier must include both steps.
+	dag := findDAGTemplate(tmpl)
+	var finalizeDeps []string
+	for _, task := range dag.Tasks {
+		if task.Name == finalizeTaskName {
+			finalizeDeps = task.Dependencies
+		}
+	}
+	if !equalStringSets(finalizeDeps, []string{"main", "side"}) {
+		t.Fatalf("finalize dependencies = %v, want all steps [main side]", finalizeDeps)
+	}
+	// The invariant agrees.
+	if got := checkDAGIntegrity(tmpl, index); !got.Passed {
+		t.Fatalf("dag-integrity should pass for a side-branch graph: %s", got.Diagnostic)
 	}
 }
 

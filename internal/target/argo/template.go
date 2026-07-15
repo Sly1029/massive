@@ -164,9 +164,12 @@ func buildWorkflowTemplate(index planIndex, input compileContext) (*workflowTemp
 		})
 	}
 
-	// A system finalize task depends on the steps feeding the end node and runs
-	// the finalize driver, so an all-green DAG composes the terminal run manifest
-	// and writes result.json — the run reaches Succeeded instead of hanging.
+	// A system finalize task runs the finalize driver, which composes the
+	// terminal run manifest from every node's entry and writes result.json. It is
+	// a barrier: it depends on ALL step tasks, not just the end feeders, because a
+	// step need not lie on a path to the end node (the spec only guarantees
+	// reachability from start), yet finalize requires every node's entry. Gating
+	// on all steps keeps finalize correct regardless of graph shape.
 	finalizeTemplate, err := buildFinalizeTemplate(index, input.plan.GetPlanHash())
 	if err != nil {
 		return nil, err
@@ -175,7 +178,7 @@ func buildWorkflowTemplate(index planIndex, input compileContext) (*workflowTemp
 	dag.Tasks = append(dag.Tasks, dagTask{
 		Name:         finalizeTaskName,
 		Template:     finalizeTaskName,
-		Dependencies: index.endUpstreamSteps,
+		Dependencies: sortedCopy(index.stepOrder),
 	})
 
 	allTemplates := append([]template{{Name: entrypointTemplateName, DAG: dag}}, templates...)
