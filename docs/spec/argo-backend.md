@@ -145,7 +145,25 @@ The full pipeline above is the target architecture, not the first implementation
 
 Presets, plugins, user patches, system mediation, field-level provenance explanations, secret binding, and network policy enforcement are deferred until after the SDK -> spec -> Go -> Argo execution path works end to end.
 
-The v0 Argo step image contract is the same as the container environment contract: a fixed Massive runtime image contains the step runner, fetches the source package from the datastore, resolves the requested symbol, reads input artifacts, and writes output artifacts.
+### Step pod contract (step driver)
+
+The generated `WorkflowTemplate` does **not** embed a `StepInvocationDescriptor`. Embedding one at compile time is unfixable: the input artifact's content hash and the pod-reachable datastore endpoint are only known at run time, so a compile-time descriptor is never schema-valid. Instead, each step template's container runs the **Massive step driver** — `massive-orchestrator step` — which executes exactly one plan node:
+
+- It loads the compiled plan from the datastore (`plans/<plan-key>/workflow.json`) and verifies it against the plan hash.
+- It materializes the node's input from upstream step outputs (including `mergeInputs` fan-in), reusing the local orchestrator's logic, so the input artifact carries a real content hash.
+- It builds a schema-valid `StepInvocationDescriptor` — byte-for-byte the same shape a local run builds — and invokes the TS runner.
+- It records the node's run-manifest entry. Data flows step-to-step through the datastore in DAG order; the DAG dependencies provide ordering only.
+
+The **runtime image contract** is that the container-env image ships the step driver **and** the TS runner (which fetches the source package from the datastore, resolves the symbol, reads inputs, writes outputs). The step template's container is:
+
+```text
+command: [massive-orchestrator, step]
+args:    [--node <id>, --run-id {{workflow.uid}}, --plan-hash <plan-hash>]
+```
+
+Node id and plan hash are static template values; the run id is Argo's per-run `{{workflow.uid}}`, so one reusable `WorkflowTemplate` serves every run.
+
+Datastore location and project identity come from **container environment variables** (`MASSIVE_DATASTORE_KIND`, `MASSIVE_DATASTORE_PATH`, `MASSIVE_PROJECT_ID`), each bound to a **workflow parameter** (`spec.arguments.parameters`, declared with names and no defaults). WS-8 supplies real values at submit time (`argo submit -p datastore-kind=... -p datastore-path=... -p project-id=...`). The generated YAML therefore contains only env var **names** and workflow-parameter **references** — never datastore coordinates and never credentials. S3/MinIO credentials remain env-sourced (from a Kubernetes secret wired by WS-8), never baked into the template and never logged, per org policy. The v0 step driver supports the local datastore; the pod-reachable S3/MinIO datastore is WS-8.
 
 The compiler should not emit a one-off `Workflow` as the primary bundle artifact. Actual submission and execution are left to users or test harnesses. Local cluster tests can submit the generated template through the Argo CLI, for example with `argo submit --from workflowtemplate/<name>`, then wait for completion and inspect datastore artifacts.
 

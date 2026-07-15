@@ -34,16 +34,35 @@ type Backend interface {
 }
 
 type CompileInput struct {
-    Plan     *planpb.WorkflowPlan  // typed compiled plan
-    PlanJSON []byte                // its canonical JSON body (datastore-identical bytes)
-    PlanHash string                // its self-excluded digest
-    Target   spec.Target           // the resolved target request for this kind
+    Plan         *planpb.WorkflowPlan  // typed compiled plan
+    PlanJSON     []byte                // its canonical JSON body (datastore-identical bytes)
+    PlanHash     string                // its self-excluded digest
+    TargetKind   string                // selects the backend (e.g. "argo")
+    TargetConfig []byte                // the target request's canonical config bytes, opaque here
 }
 ```
 
 `CompileInput` is everything a backend needs. It carries both the typed plan and
 its canonical bytes/hash so a backend never re-marshals or re-hashes the plan
 (and cannot accidentally diverge from what was written to the datastore).
+
+The interface is **backend-neutral**: `internal/target` never sees a backend's
+config. `TargetConfig` is the target request minus its `kind`, serialized as
+canonical JSON (Argo: `{namespace, serviceAccountName, workflowTemplateName?}`;
+a future Temporal backend: its own fields). Each backend **decodes and validates
+its own config** — the per-kind shapes are still schema-validated at spec parse
+against [`workflow-spec.schema.json`](../../conformance/schema/workflow-spec.schema.json)'s
+`targets` `oneOf`, so a malformed request is rejected before any backend runs.
+The bundle hash covers `TargetConfig` **wholesale** (it hashes the canonical
+config value, not hand-enumerated fields), so a new backend's config is
+automatically hash-covered without editing this neutral package.
+
+Before dispatching to a backend, `Registry.Compile` runs
+`target.VerifyPlanConsistency`: `PlanJSON` must already be canonical, its
+self-excluded digest must equal `PlanHash` (the compiler's own plan-hash rule,
+`plan.VerifyCanonicalJSON`), and the typed plan's `planHash` must match — so a
+bundle can never describe one plan in its emitted artifacts while
+`massive-plan.json` and its digest describe another.
 
 ## Emitting a bundle
 
