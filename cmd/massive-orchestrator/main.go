@@ -33,8 +33,15 @@ const (
 
 func main() {
 	args := os.Args[1:]
-	if len(args) > 0 && args[0] == "step" {
-		if err := runStep(args[1:]); err != nil {
+	if len(args) > 0 && (args[0] == "step" || args[0] == "finalize") {
+		var err error
+		switch args[0] {
+		case "step":
+			err = runStep(args[1:])
+		case "finalize":
+			err = runFinalize(args[1:])
+		}
+		if err != nil {
 			var diagnostics *spec.DiagnosticsError
 			if errors.As(err, &diagnostics) {
 				for _, diagnostic := range diagnostics.Diagnostics {
@@ -208,26 +215,9 @@ func runStep(args []string) error {
 		return fmt.Errorf("step requires --plan-hash")
 	}
 
-	datastoreKind := os.Getenv(envDatastoreKind)
-	if datastoreKind == "" {
-		datastoreKind = "local"
-	}
-	if datastoreKind != "local" {
-		return fmt.Errorf("step driver supports the local datastore only; %s=%q needs the pod-reachable S3/MinIO datastore wiring completed in WS-8", envDatastoreKind, datastoreKind)
-	}
-	storeRoot := *storePath
-	if storeRoot == "" {
-		storeRoot = os.Getenv(envDatastorePath)
-	}
-	if storeRoot == "" {
-		return fmt.Errorf("step requires a datastore root via --store or %s", envDatastorePath)
-	}
-	project := *projectID
-	if project == "" {
-		project = os.Getenv(envProjectID)
-	}
-	if project == "" {
-		return fmt.Errorf("step requires a project id via --project or %s", envProjectID)
+	storeRoot, project, err := resolveStoreAndProject(*storePath, *projectID)
+	if err != nil {
+		return err
 	}
 
 	workingDir, err := repoRoot()
@@ -247,6 +237,75 @@ func runStep(args []string) error {
 		NodeID:           *nodeID,
 		RunnerWorkingDir: workingDir,
 	})
+}
+
+// runFinalize drives the Argo run-finalize step: it composes the terminal run
+// manifest from the per-node entries the step drivers wrote and writes the run
+// result artifact. The Argo template's wf-system-finalize task invokes it as a
+// container command depending on the steps that feed the end node. Run id and
+// plan hash are flags; datastore root and project id come from the same env vars
+// the step template uses.
+func runFinalize(args []string) error {
+	flags := flag.NewFlagSet("finalize", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	runID := flags.String("run-id", "", "run id")
+	planHash := flags.String("plan-hash", "", "compiled plan hash to load from the datastore")
+	storePath := flags.String("store", "", "local datastore root (overrides "+envDatastorePath+")")
+	projectID := flags.String("project", "", "project id (overrides "+envProjectID+")")
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("parse finalize flags: %w", err)
+	}
+	if *runID == "" {
+		return fmt.Errorf("finalize requires --run-id")
+	}
+	if *planHash == "" {
+		return fmt.Errorf("finalize requires --plan-hash")
+	}
+
+	storeRoot, project, err := resolveStoreAndProject(*storePath, *projectID)
+	if err != nil {
+		return err
+	}
+	compiledPlan, err := loadPlan(storeRoot, *planHash)
+	if err != nil {
+		return err
+	}
+
+	return orchestrator.FinalizeRun(context.Background(), orchestrator.FinalizeConfig{
+		Plan:          compiledPlan,
+		DatastoreRoot: storeRoot,
+		ProjectID:     project,
+		RunID:         *runID,
+	})
+}
+
+// resolveStoreAndProject reads the datastore root and project id from flags,
+// falling back to the environment variables the Argo templates set from workflow
+// parameters. The step/finalize drivers support the local datastore; S3/MinIO is
+// WS-8.
+func resolveStoreAndProject(storeFlag string, projectFlag string) (string, string, error) {
+	datastoreKind := os.Getenv(envDatastoreKind)
+	if datastoreKind == "" {
+		datastoreKind = "local"
+	}
+	if datastoreKind != "local" {
+		return "", "", fmt.Errorf("step driver supports the local datastore only; %s=%q needs the pod-reachable S3/MinIO datastore wiring completed in WS-8", envDatastoreKind, datastoreKind)
+	}
+	storeRoot := storeFlag
+	if storeRoot == "" {
+		storeRoot = os.Getenv(envDatastorePath)
+	}
+	if storeRoot == "" {
+		return "", "", fmt.Errorf("a datastore root is required via --store or %s", envDatastorePath)
+	}
+	project := projectFlag
+	if project == "" {
+		project = os.Getenv(envProjectID)
+	}
+	if project == "" {
+		return "", "", fmt.Errorf("a project id is required via --project or %s", envProjectID)
+	}
+	return storeRoot, project, nil
 }
 
 // loadPlan reads the compiled plan the step driver executes from the datastore

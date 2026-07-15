@@ -3,10 +3,12 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Sly1029/massive/internal/datastore"
@@ -65,9 +67,13 @@ func TestArgoStepDriverMatchesLocalRun(t *testing.T) {
 					t.Fatalf("step %s failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", stepID, result.stdout, result.stderr, result.err)
 				}
 			}
+			if result := runFinalizeCommand(t, storeB, project, runID, compiled.PlanHash); result.err != nil {
+				t.Fatalf("finalize failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", result.stdout, result.stderr, result.err)
+			}
 
-			// (3) Step outputs (and their per-step input artifacts) must be
-			// byte-identical between the local run and the step-driver run.
+			// (3) Step outputs and per-step inputs must be byte-identical between
+			// the local run and the step-driver run, and so must the finalized run
+			// result and the terminal run manifest.
 			for _, stepID := range compiled.Schedule.StepIDs {
 				outputKey := runOutputKey(projectKey, runID, stepID, 1).String()
 				if a, b := getObject(t, storeA, outputKey).Body, getObject(t, storeB, outputKey).Body; !bytes.Equal(a, b) {
@@ -78,8 +84,107 @@ func TestArgoStepDriverMatchesLocalRun(t *testing.T) {
 					t.Fatalf("step %s input differs\nlocal:  %s\ndriver: %s", stepID, a, b)
 				}
 			}
+			resultKey := runResultKey(projectKey, runID).String()
+			if a, b := getObject(t, storeA, resultKey).Body, getObject(t, storeB, resultKey).Body; !bytes.Equal(a, b) {
+				t.Fatalf("run result differs\nlocal:  %s\ndriver: %s", a, b)
+			}
+			manifestKey := runManifestKey(projectKey, runID).String()
+			if a, b := getObject(t, storeA, manifestKey).Body, getObject(t, storeB, manifestKey).Body; !bytes.Equal(a, b) {
+				t.Fatalf("terminal run manifest differs\nlocal:  %s\ndriver: %s", a, b)
+			}
 		})
 	}
+}
+
+// TestArgoStepDriverConcurrentBranchesKeepBothStatuses proves the parallel-DAG
+// safety of the step driver: a diamond's two independent branch steps, run as
+// concurrent `massive-orchestrator step` processes against one datastore, each
+// persist their status without clobbering the other (disjoint per-node entry
+// keys). After finalize, the run manifest carries both branches as succeeded.
+func TestArgoStepDriverConcurrentBranchesKeepBothStatuses(t *testing.T) {
+	workspace := prepareRunWorkspace(t, "diamond", "diamond")
+	project := "acme/security-workflows"
+	projectKey := NormalizeProjectKey(project)
+	runID := "run-diamond-concurrent"
+
+	store := newStoreRoot(t)
+	compiled, manifests := compileConsistentFixture(t, "diamond", workspace)
+	persistPlanForStepDriver(t, store, compiled)
+	if _, err := Seed(context.Background(), RunConfig{
+		Plan:              compiled.Plan,
+		DatastoreRoot:     store,
+		ProjectID:         project,
+		RunID:             runID,
+		SourcePackageRoot: workspace,
+		SourceManifests:   manifests,
+	}, []byte("20")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// split feeds both branches; run it first.
+	if result := runStepCommand(t, store, project, "split", runID, compiled.PlanHash); result.err != nil {
+		t.Fatalf("split failed\nstderr:\n%s\nerror: %v", result.stderr, result.err)
+	}
+
+	// left and right are independent — run them as concurrent processes.
+	var wg sync.WaitGroup
+	results := make([]commandResult, 2)
+	for i, branch := range []string{"left", "right"} {
+		wg.Add(1)
+		go func(i int, branch string) {
+			defer wg.Done()
+			results[i] = runStepCommand(t, store, project, branch, runID, compiled.PlanHash)
+		}(i, branch)
+	}
+	wg.Wait()
+	for i, branch := range []string{"left", "right"} {
+		if results[i].err != nil {
+			t.Fatalf("concurrent branch %s failed\nstderr:\n%s\nerror: %v", branch, results[i].stderr, results[i].err)
+		}
+	}
+
+	// Both branch entries survive as disjoint objects.
+	for _, branch := range []string{"left", "right"} {
+		entry := getObject(t, store, runNodeEntryKey(projectKey, runID, branch).String())
+		var step manifestStep
+		if err := json.Unmarshal(entry.Body, &step); err != nil {
+			t.Fatalf("decode %s node entry: %v", branch, err)
+		}
+		if step.Status != StatusSucceeded {
+			t.Fatalf("branch %s status = %q, want succeeded", branch, step.Status)
+		}
+	}
+
+	// Finish the run and confirm both branches are succeeded in the manifest.
+	if result := runStepCommand(t, store, project, "merge", runID, compiled.PlanHash); result.err != nil {
+		t.Fatalf("merge failed\nstderr:\n%s\nerror: %v", result.stderr, result.err)
+	}
+	if result := runFinalizeCommand(t, store, project, runID, compiled.PlanHash); result.err != nil {
+		t.Fatalf("finalize failed\nstderr:\n%s\nerror: %v", result.stderr, result.err)
+	}
+	manifest := readManifest(t, store, projectKey, runID)
+	if manifest.Status != StatusSucceeded {
+		t.Fatalf("manifest status = %q, want succeeded", manifest.Status)
+	}
+	statuses := map[string]string{}
+	for _, step := range manifest.Steps {
+		statuses[step.NodeID] = step.Status
+	}
+	for _, branch := range []string{"left", "right"} {
+		if statuses[branch] != StatusSucceeded {
+			t.Fatalf("manifest branch %s status = %q, want succeeded (both concurrent updates must survive)", branch, statuses[branch])
+		}
+	}
+}
+
+func readManifest(t *testing.T, storeRoot, projectKey, runID string) runManifest {
+	t.Helper()
+	object := getObject(t, storeRoot, runManifestKey(projectKey, runID).String())
+	var manifest runManifest
+	if err := json.Unmarshal(object.Body, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	return manifest
 }
 
 // persistPlanForStepDriver writes the compiled plan to the datastore at the key
@@ -100,8 +205,19 @@ func persistPlanForStepDriver(t *testing.T, storeRoot string, compiled *plan.Com
 
 func runStepCommand(t *testing.T, storeRoot, project, nodeID, runID, planHash string) commandResult {
 	t.Helper()
-	cmd := exec.Command("go", "run", "./cmd/massive-orchestrator", "step",
-		"--node", nodeID, "--run-id", runID, "--plan-hash", planHash)
+	return runDriverCommand(t, storeRoot, project,
+		"step", "--node", nodeID, "--run-id", runID, "--plan-hash", planHash)
+}
+
+func runFinalizeCommand(t *testing.T, storeRoot, project, runID, planHash string) commandResult {
+	t.Helper()
+	return runDriverCommand(t, storeRoot, project,
+		"finalize", "--run-id", runID, "--plan-hash", planHash)
+}
+
+func runDriverCommand(t *testing.T, storeRoot, project string, args ...string) commandResult {
+	t.Helper()
+	cmd := exec.Command("go", append([]string{"run", "./cmd/massive-orchestrator"}, args...)...)
 	cmd.Dir = repoRootForTest(t)
 	cmd.Env = append(os.Environ(),
 		"GOCACHE=/tmp/massive-go-cache",
