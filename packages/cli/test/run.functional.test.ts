@@ -1,10 +1,12 @@
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert";
+import { basename, dirname } from "node:path";
 import {
   copyFixture,
   exists,
   findRunArtifact,
   fixtureEntry,
   join,
+  listStoreKeys,
   makeStore,
   repoRoot,
   runCli,
@@ -87,8 +89,41 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
     "label",
   ]);
   const doubleOutput = manifest.steps[0].attempts[0].output;
-  assert(doubleOutput !== undefined, "double attempt should journal its output");
-  assertEquals(await Deno.readTextFile(join(store, doubleOutput.body.key)), "40");
+  assert(
+    doubleOutput !== undefined,
+    "double attempt should journal its output",
+  );
+  assertEquals(
+    await Deno.readTextFile(join(store, doubleOutput.body.key)),
+    "40",
+  );
+});
+
+Deno.test("massive run Python graph: same compiler, runner, and frozen artifact path", async () => {
+  const fixture = await copyFixture("python-linear");
+  const store = await makeStore();
+
+  const result = await runCli([
+    "run",
+    `${basename(fixture)}/workflow.py#graph`,
+    "--input",
+    '{"value":20}',
+    "--store",
+    store,
+    "--project",
+    "acme/python-workflow",
+    "--run-id",
+    "python-linear-run",
+    "--verbose",
+  ], { cwd: dirname(fixture) });
+
+  assertEquals(result.code, 0, result.stderr);
+  assertStringIncludes(result.stdout, "add_one");
+  assertStringIncludes(result.stdout, '{"value":21}');
+
+  const keys = await listStoreKeys(store);
+  assertEquals(keys.some((key) => key.endsWith("output-manifest.json")), true);
+  assertEquals(keys.some((key) => key.includes("/source.tar")), true);
 });
 
 Deno.test("massive run diamond: fan-in result 81 at the frozen result key", async () => {

@@ -50,7 +50,7 @@ export function renderOutcome(
           "✗ cannot resolve workflow entrypoint",
           [outcome.message],
           [
-            "next  name the export (massive run workflow.ts#name) or add massive.config.ts",
+            "next  name the export (massive run workflow.py#name or workflow.ts#name) or add package configuration",
           ],
         ),
       };

@@ -112,9 +112,18 @@ Current TypeScript behavior:
 - if a file has multiple exported workflows and no selector, the CLI reports an ambiguity,
 - `massive run workflow/` resolves through package configuration in that directory.
 
+Current Python behavior:
+
+- `massive run workflow.py` selects the only exported `GraphBuilder`,
+- `massive run workflow.py#name` selects a named graph,
+- ambiguity is reported before compilation,
+- zero-config packaging includes root-level `*.py` files beside the entrypoint.
+
 Package roots are explicit and define included source files, local utilities, package manifests, lockfiles, environment defaults, and optional deployment profiles. V0 packaging is driven by include patterns and required manifests rather than broad implicit source scanning.
 
-For TypeScript v0, package roots use `massive.config.ts`. Future language SDKs may use native configuration surfaces, such as `pyproject.toml` for Python, provided they emit the same portable `WorkflowSpec`.
+TypeScript package roots use `massive.config.ts`. Python package configuration
+is not exposed yet; its current zero-config frontend uses the entrypoint's
+parent directory.
 
 Zero-config single-file TypeScript workflows are allowed only for local development. They synthesize an ephemeral package config with the selected workflow file and nearby package manifests and lockfiles when present. Deployable profiles require explicit package configuration.
 
@@ -143,7 +152,13 @@ Rules:
 
 The developer experience can still be a single command that automatically emits, compiles, and runs locally.
 
-Common local commands should look like `massive run workflow.ts` or `massive run workflow/`. Those commands discover the workflow entrypoint, invoke the language SDK emitter, compile the local target through Go, run the Go local orchestrator, and invoke language adapters. Authors should see concise run status and diagnostics by default; artifact hashes and generated files should be exposed through verbose or inspect commands.
+Common local commands are `massive run workflow.py`,
+`massive run workflow.ts`, or `massive run workflow/`. Those commands discover
+the workflow entrypoint, invoke the language SDK emitter, compile the local
+target through Go, run the Go local orchestrator, and invoke language adapters.
+Authors should see concise run status and diagnostics by default; artifact
+hashes and generated files should be exposed through verbose or inspect
+commands.
 
 Open risk: per-step runner process spawning. The same-path discipline means the orchestrator invokes an external runner per step, and Node cold-start per step could make local iteration feel sluggish — which is exactly the pressure that pushes users back to in-memory runners. The orchestrator↔runner protocol must support a warm, long-lived runner process handling multiple descriptors (see roadmap WS-5.4). Per-step spawn is acceptable for M1 bring-up only.
 
@@ -151,18 +166,20 @@ Open risk: per-step runner process spawning. The same-path discipline means the 
 
 Language runtime adapters are external runner processes with a stable invocation protocol. They are not embedded interpreters inside Go.
 
-Current TypeScript decision:
+Current runtime-adapter decision:
 
-- the TypeScript SDK package ships the TypeScript step runner,
+- each SDK package ships its language step runner,
 - Go emits compiled plans and step invocation descriptors, not a second frontend spec,
-- the TypeScript runner consumes those invocation descriptors and executes module/export symbols from source packages,
-- the same TypeScript runner shape should work for local execution and containerized Argo steps.
+- each runner consumes those invocation descriptors and executes module/export
+  symbols from source packages,
+- the same runner protocol is used for local execution and containerized Argo
+  steps.
 
 Why this is the current choice:
 
 - frontend SDKs stay responsible for language-specific runtime behavior,
 - Go remains strict about portable specs, plans, and target compilation,
-- a future second-language SDK (none scheduled) could add its own runner without changing Go orchestration semantics,
+- adding another language runner does not change Go orchestration semantics,
 - local development can be smooth without creating a separate in-memory execution model.
 
 ### Step Invocation Descriptor

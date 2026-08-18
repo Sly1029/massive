@@ -124,6 +124,19 @@ boundary before an artifact is published.
 
 ## Frontend emitter
 
+Run a zero-config Python workflow through the same compiler, orchestrator, and
+artifact protocol used by every Massive frontend:
+
+```sh
+massive run path/to/workflow.py --input '{"value": 21}'
+```
+
+When a module exports more than one graph, select it explicitly with
+`workflow.py#graph_export`. The CLI invokes the Python frontend as an isolated
+process, validates its canonical `WorkflowSpec`, compiles it with the Go
+compiler, and invokes each Python step in a separate runner process. Local
+execution does not call the in-memory `GraphBuilder` directly.
+
 The Python frontend emits a portable `WorkflowSpec` from a Python workflow
 file:
 

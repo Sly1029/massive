@@ -1,12 +1,16 @@
 # Authoring Model
 
-> **V0 scope:** this document records the current TypeScript authoring model.
+> **V0 scope:** this document records the TypeScript authoring model. The
+> shipped Python surface is documented in
+> [`../../packages/python/README.md`](../../packages/python/README.md).
 > [Workflow Platform v2 Direction](workflow-platform-v2.md) is normative for the
 > Python-first v2 model and supersedes shared-state or channel semantics.
 
 Status: draft
 
-The v0 authoring API is TypeScript-first and functional/declarative. It should feel closer to `pydantic-graph`'s `GraphBuilder` than to a class hierarchy or AST-extracted control flow.
+Both authoring APIs are functional and declarative. The Python `GraphBuilder`
+is the primary v2 surface; this document retains the TypeScript forms and the
+portable semantics they share.
 
 This document describes the intended author-facing model, including features beyond the first portable compiler wedge. The `WorkflowSpec` schema v0 currently admits DAG step nodes, directed edges, and `mergeInputs` fan-in only. Channels, branches, foreach/map, and reducer-backed joins are post-M2 portable-schema work even if the authoring API sketches their eventual shape here.
 
