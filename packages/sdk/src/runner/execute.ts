@@ -8,8 +8,9 @@ import {
   DatastoreNotFoundError,
 } from "../datastore/types.ts";
 import {
-  type JsonValue,
   CanonicalJsonError,
+  decodeCanonicalUtf8,
+  type JsonValue,
   parseCanonicalJsonText,
   sha256RefBytes,
   sha256RefText,
@@ -49,12 +50,12 @@ export async function executeStep(
     try {
       try {
         output = await resolved.run({
-        input,
-        state: {},
-        context: {
-          runId: descriptor.runId,
-          stepId: descriptor.nodeId,
-        },
+          input,
+          state: {},
+          context: {
+            runId: descriptor.runId,
+            stepId: descriptor.nodeId,
+          },
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -213,9 +214,8 @@ async function readCanonicalJsonArtifact(
     );
   }
 
-  const text = new TextDecoder().decode(bytes);
-  const value = parseJsonText(
-    text,
+  const value = parseJsonBytes(
+    bytes,
     "input",
     `input artifact ${key}`,
   ) as JsonValue;
@@ -254,7 +254,16 @@ function parseJsonBytes(
   boundary: "schema" | "input" | "output",
   role: string,
 ): unknown {
-  return parseJsonText(new TextDecoder().decode(bytes), boundary, role);
+  try {
+    return parseJsonText(decodeCanonicalUtf8(bytes), boundary, role);
+  } catch (error) {
+    if (error instanceof StepSchemaValidationError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new StepSchemaValidationError(
+      boundary,
+      `${role} is not valid JSON: ${message}`,
+    );
+  }
 }
 
 function parseJsonText(

@@ -3,13 +3,13 @@ import { workflow } from "../src/index.ts";
 
 const g = workflow({
   name: "types",
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
 });
 
 const numberToNumber = g.step("number-to-number", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: ({ input }) => input + 1,
 });
 
@@ -20,13 +20,13 @@ const stringToString = g.step("string-to-string", {
 });
 
 const numberToString = g.step("number-to-string", {
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
   run: ({ input }) => String(input),
 });
 
 const mergeNumbers = g.step("merge-numbers", {
-  input: z.array(z.number()),
+  input: z.array(z.int()),
   output: z.string(),
   run: ({ input }) => input.join(","),
 });

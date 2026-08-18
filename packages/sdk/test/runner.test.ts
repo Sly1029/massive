@@ -106,7 +106,10 @@ Deno.test("runner executes a real fixture step end to end against a temp local d
       );
       assertEquals(new TextDecoder().decode(resolved.body), expectedOutput);
       assertEquals(resolved.published.manifest.key, outputManifestKey());
-      assertEquals(resolved.published.manifest.contentType, "application/vnd.massive.data-artifact-manifest+json");
+      assertEquals(
+        resolved.published.manifest.contentType,
+        "application/vnd.massive.data-artifact-manifest+json",
+      );
       assertEquals(resolved.published.body.contentType, "application/json");
 
       assertEquals(outcome.output, {
@@ -173,6 +176,68 @@ Deno.test("runner rejects noncanonical JSON input spelling with exit 65", async 
   );
 });
 
+Deno.test("runner rejects malformed UTF-8 and BOM at schema and input boundaries with exit 65", async () => {
+  await withRunnerFixture(
+    { input: { value: 1 }, stepExport: "double" },
+    async ({ descriptor, store }) => {
+      for (
+        const bytes of [
+          new Uint8Array([0xff]),
+          new Uint8Array([0xef, 0xbb, 0xbf, 0x7b, 0x7d]),
+        ]
+      ) {
+        const inputHash = sha256RefBytes(bytes);
+        await store.put(inputKey(), bytes);
+        const outcome = await executeStep({
+          ...descriptor,
+          input: {
+            ...descriptor.input,
+            artifact: { ...descriptor.input.artifact, hash: inputHash },
+          },
+        });
+        assertEquals(outcome.kind, "schema-validation-failure");
+        if (outcome.kind !== "schema-validation-failure") continue;
+        assertEquals(outcome.error.role, "input");
+      }
+
+      const schemaBytes = new Uint8Array([0xff]);
+      const schemaHash = sha256RefBytes(schemaBytes);
+      await store.put(schemaKey(schemaHash), schemaBytes);
+      const outcome = await executeStep({
+        ...descriptor,
+        input: { ...descriptor.input, schema: schemaHash },
+        output: { ...descriptor.output, schema: schemaHash },
+      });
+      assertEquals(outcome.kind, "schema-validation-failure");
+      if (outcome.kind !== "schema-validation-failure") return;
+      assertEquals(outcome.error.role, "schema");
+    },
+  );
+});
+
+Deno.test("runner maps missing local input and schema objects to exit 65", async () => {
+  await withRunnerFixture(
+    { input: { value: 1 }, stepExport: "double" },
+    async ({ descriptor, store }) => {
+      await Deno.remove(join(store.root, inputKey()));
+      let outcome = await executeStep(descriptor);
+      assertEquals(outcome.kind, "schema-validation-failure");
+      if (outcome.kind === "schema-validation-failure") {
+        assertEquals(outcome.error.role, "input");
+      }
+
+      const inputText = stableStringify({ value: 1 });
+      await store.put(inputKey(), inputText);
+      await Deno.remove(join(store.root, schemaKey(schemaRef())));
+      outcome = await executeStep(descriptor);
+      assertEquals(outcome.kind, "schema-validation-failure");
+      if (outcome.kind === "schema-validation-failure") {
+        assertEquals(outcome.error.role, "schema");
+      }
+    },
+  );
+});
+
 Deno.test("runner maps immutable output manifest conflicts to exit 65", async () => {
   await withRunnerFixture(
     { input: { value: 21 }, stepExport: "double" },
@@ -229,7 +294,12 @@ Deno.test("runner reports step-execution failures with exit 66", async () => {
 });
 
 Deno.test("runner rejects verified unsafe, corrupted, and trailing source archives", async () => {
-  const unsafe = ustar([{ path: "../escape.ts", body: new TextEncoder().encode("export const double = () => ({ value: 42 });") }]);
+  const unsafe = ustar([{
+    path: "../escape.ts",
+    body: new TextEncoder().encode(
+      "export const double = () => ({ value: 42 });",
+    ),
+  }]);
   const corrupted = await sourceArchiveForFixture();
   corrupted[0] ^= 1;
   const trailing = await sourceArchiveForFixture();
@@ -240,14 +310,21 @@ Deno.test("runner rejects verified unsafe, corrupted, and trailing source archiv
       async ({ descriptor }) => {
         const outcome = await executeStep(descriptor);
         assertEquals(outcome.kind, "descriptor-resolution-failure");
-        assertEquals(outcome.exitCode, RUNNER_EXIT_CODES.descriptorResolutionFailure);
+        assertEquals(
+          outcome.exitCode,
+          RUNNER_EXIT_CODES.descriptorResolutionFailure,
+        );
       },
     );
   }
 });
 
 async function withRunnerFixture(
-  options: { readonly input: JsonValue; readonly stepExport: string; readonly sourceArchive?: Uint8Array },
+  options: {
+    readonly input: JsonValue;
+    readonly stepExport: string;
+    readonly sourceArchive?: Uint8Array;
+  },
   test: (fixture: {
     readonly descriptor: StepInvocationDescriptor;
     readonly descriptorPath: string;
@@ -257,7 +334,8 @@ async function withRunnerFixture(
   const root = await Deno.makeTempDir({ prefix: "massive-runner-" });
   try {
     const store = datastore.local({ path: join(root, "store") });
-    const sourceArchive = options.sourceArchive ?? await sourceArchiveForFixture();
+    const sourceArchive = options.sourceArchive ??
+      await sourceArchiveForFixture();
     const sourceHash = sha256RefBytes(sourceArchive);
     const inputText = stableStringify(options.input);
     const descriptor = await parseStepInvocationDescriptor({
@@ -377,10 +455,17 @@ function schemaKey(ref: string): string {
 }
 
 async function sourceArchiveForFixture(): Promise<Uint8Array> {
-  return ustar([{ path: "runner-workflow.ts", body: await Deno.readFile(new URL("./fixtures/runner-workflow.ts", import.meta.url)) }]);
+  return ustar([{
+    path: "runner-workflow.ts",
+    body: await Deno.readFile(
+      new URL("./fixtures/runner-workflow.ts", import.meta.url),
+    ),
+  }]);
 }
 
-function ustar(entries: readonly { readonly path: string; readonly body: Uint8Array }[]): Uint8Array {
+function ustar(
+  entries: readonly { readonly path: string; readonly body: Uint8Array }[],
+): Uint8Array {
   const blocks: Uint8Array[] = [];
   for (const entry of entries) {
     const header = new Uint8Array(512);
@@ -397,7 +482,11 @@ function ustar(entries: readonly { readonly path: string; readonly body: Uint8Ar
     let checksum = 0;
     for (const byte of header) checksum += byte;
     writeOctal(header, 148, 8, checksum);
-    blocks.push(header, entry.body, new Uint8Array((512 - (entry.body.length % 512)) % 512));
+    blocks.push(
+      header,
+      entry.body,
+      new Uint8Array((512 - (entry.body.length % 512)) % 512),
+    );
   }
   blocks.push(new Uint8Array(1024));
   const total = blocks.reduce((size, block) => size + block.length, 0);
@@ -410,7 +499,12 @@ function ustar(entries: readonly { readonly path: string; readonly body: Uint8Ar
   return result;
 }
 
-function writeOctal(target: Uint8Array, offset: number, length: number, value: number): void {
+function writeOctal(
+  target: Uint8Array,
+  offset: number,
+  length: number,
+  value: number,
+): void {
   const text = value.toString(8).padStart(length - 2, "0") + "\0 ";
   target.set(new TextEncoder().encode(text), offset);
 }

@@ -1,4 +1,8 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "jsr:@std/assert";
 import {
   ArtifactBodyConflictError,
   type ArtifactDestination,
@@ -13,6 +17,7 @@ import {
 } from "../src/artifact/runtime.ts";
 import { blobKeySHA256Hex, Key } from "../src/datastore/key.ts";
 import { LocalDatastoreClient } from "../src/datastore/local.ts";
+import { sha256RefBytes } from "../src/stable.ts";
 
 const decoder = new TextDecoder();
 
@@ -143,7 +148,10 @@ Deno.test("artifact runtime reports an absent manifest through the artifact erro
 
 Deno.test("artifact runtime ships the canonical manifest schema with the SDK", async () => {
   const packaged = await Deno.readTextFile(
-    new URL("../src/artifact/data-artifact-manifest.schema.json", import.meta.url),
+    new URL(
+      "../src/artifact/data-artifact-manifest.schema.json",
+      import.meta.url,
+    ),
   );
   const canonical = await Deno.readTextFile(
     new URL(
@@ -170,6 +178,79 @@ Deno.test("artifact runtime rejects noncanonical JSON before publishing", async 
       ArtifactValidationError,
     );
   });
+});
+
+Deno.test("artifact runtime rejects BOM and malformed UTF-8 at value, schema, and manifest boundaries", async () => {
+  await withRuntime(async (store, runtime) => {
+    for (
+      const bytes of [
+        new Uint8Array([0xef, 0xbb, 0xbf, 0x7b, 0x7d]),
+        new Uint8Array([0xff]),
+      ]
+    ) {
+      const error = await assertRejects(
+        () => runtime.publishJson(destination(), producer(), bytes),
+        ArtifactValidationError,
+      );
+      assertStringIncludes(error.message, "canonical JSON");
+    }
+
+    const invalidSchema = new Uint8Array([0xff]);
+    const invalidSchemaRef = sha256RefBytes(invalidSchema);
+    await store.put(
+      blobKeySHA256Hex(invalidSchemaRef.slice("sha256:".length)),
+      invalidSchema,
+      { contentType: JSON_CONTENT_TYPE },
+    );
+    await assertRejects(
+      () =>
+        runtime.publishJson(
+          { ...destination(), schema: invalidSchemaRef },
+          producer(),
+          BODY,
+        ),
+      ArtifactValidationError,
+    );
+
+    await runtime.publishJson(destination(), producer(), BODY);
+    await store.put(destination().manifestKey, new Uint8Array([0xff]), {
+      contentType: MANIFEST_CONTENT_TYPE,
+    });
+    await assertRejects(
+      () => runtime.resolveJson(destination(), producer()),
+      ArtifactIntegrityError,
+    );
+  });
+});
+
+Deno.test("artifact runtime maps only absent schemas to validation failures", async () => {
+  const root = await Deno.makeTempDir({
+    prefix: "massive-artifact-schema-errors-",
+  });
+  try {
+    const missing = new ArtifactRuntime(
+      new LocalDatastoreClient({ path: root }),
+    );
+    await assertRejects(
+      () => missing.publishJson(destination(), producer(), BODY),
+      ArtifactValidationError,
+    );
+
+    const blockedPath = `${root}.blocked`;
+    await Deno.writeTextFile(blockedPath, "not a datastore directory");
+    let thrown: unknown;
+    try {
+      await new ArtifactRuntime(new LocalDatastoreClient({ path: blockedPath }))
+        .publishJson(destination(), producer(), BODY);
+    } catch (error) {
+      thrown = error;
+    }
+    assertEquals(thrown instanceof ArtifactValidationError, false);
+    assertEquals(thrown instanceof Error, true);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(`${root}.blocked`);
+  }
 });
 
 async function withRuntime(

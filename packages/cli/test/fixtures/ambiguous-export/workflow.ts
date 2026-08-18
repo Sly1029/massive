@@ -6,14 +6,14 @@ import { z } from "zod";
 // beta" and exit 3. Zero-config on purpose (no massive.config.ts).
 export const alpha = workflow({
   name: "alpha",
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
 });
 alpha.start().to(alpha.end());
 
 export const beta = workflow({
   name: "beta",
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
 });
 beta.start().to(beta.end());

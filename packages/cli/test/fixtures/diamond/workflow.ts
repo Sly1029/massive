@@ -32,27 +32,27 @@ export function merge(args: { readonly input: readonly number[] }): number {
 
 const flow = workflow({
   name: "diamond",
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
 });
 const splitStep = flow.step("split", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: split,
 });
 const leftStep = flow.step("left", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: left,
 });
 const rightStep = flow.step("right", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: right,
 });
 const mergeStep = flow.step("merge", {
-  input: z.array(z.number()),
-  output: z.number(),
+  input: z.array(z.int()),
+  output: z.int(),
   run: merge,
 });
 

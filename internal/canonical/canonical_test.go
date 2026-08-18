@@ -2,6 +2,7 @@ package canonical
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,15 @@ import (
 
 func TestCanonicalJSONV0Corpus(t *testing.T) {
 	root := filepath.Join("..", "..", "conformance", "fixtures", "canonical-json-v0")
+	expectedHashBytes, err := os.ReadFile(filepath.Join(root, "hashes.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedHashes := map[string]string{}
+	if err := json.Unmarshal(expectedHashBytes, &expectedHashes); err != nil {
+		t.Fatal(err)
+	}
+	validFixtureCount := 0
 
 	for _, kind := range []string{"valid", "invalid"} {
 		entries, err := os.ReadDir(filepath.Join(root, kind))
@@ -20,9 +30,14 @@ func TestCanonicalJSONV0Corpus(t *testing.T) {
 			t.Fatalf("%s corpus is empty", kind)
 		}
 
+		fixtureCount := 0
 		for _, entry := range entries {
 			if entry.IsDir() {
 				t.Fatalf("unexpected nested corpus directory %s", entry.Name())
+			}
+			fixtureCount++
+			if kind == "valid" {
+				validFixtureCount++
 			}
 			t.Run(kind+"/"+entry.Name(), func(t *testing.T) {
 				payload, err := os.ReadFile(filepath.Join(root, kind, entry.Name()))
@@ -39,6 +54,9 @@ func TestCanonicalJSONV0Corpus(t *testing.T) {
 					if !bytes.Equal(canonicalPayload, payload) {
 						t.Fatalf("valid corpus payload changed\nactual:   %q\nexpected: %q", canonicalPayload, payload)
 					}
+					if actual := DigestBytes(canonicalPayload); actual != expectedHashes[entry.Name()] {
+						t.Fatalf("valid corpus digest mismatch\nactual:   %s\nexpected: %s", actual, expectedHashes[entry.Name()])
+					}
 					return
 				}
 
@@ -51,6 +69,12 @@ func TestCanonicalJSONV0Corpus(t *testing.T) {
 				}
 			})
 		}
+		if fixtureCount == 0 {
+			t.Fatalf("%s corpus is empty", kind)
+		}
+	}
+	if len(expectedHashes) != validFixtureCount {
+		t.Fatalf("canonical JSON valid fixture hashes = %d, want %d", len(expectedHashes), validFixtureCount)
 	}
 }
 

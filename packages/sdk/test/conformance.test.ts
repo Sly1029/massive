@@ -16,8 +16,8 @@ const GraphCatalogSchema = z.object({
       id: z.string().min(1),
       shape: z.string().min(1),
       topology: z.string().min(1),
-      executableSteps: z.number().int().nonnegative(),
-      directedEdges: z.number().int().nonnegative(),
+      executableSteps: z.int().nonnegative(),
+      directedEdges: z.int().nonnegative(),
       mergeInputs: z.array(MergeInputSchema),
     })
   ),

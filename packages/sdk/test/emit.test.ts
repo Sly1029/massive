@@ -131,13 +131,13 @@ Deno.test("contract merge emits effective contract refs and dedupes environments
     });
     const g = workflow({
       name: "contracts",
-      input: z.number(),
-      output: z.number(),
+      input: z.int(),
+      output: z.int(),
       defaults,
     });
     const first = g.step("first", {
-      input: z.number(),
-      output: z.number(),
+      input: z.int(),
+      output: z.int(),
       contract: contract({
         resources: { memory: "1Gi" },
         secrets: [secret.ref("STEP_TOKEN")],
@@ -146,8 +146,8 @@ Deno.test("contract merge emits effective contract refs and dedupes environments
       run: ({ input }) => input + 1,
     });
     const second = g.step("second", {
-      input: z.number(),
-      output: z.number(),
+      input: z.int(),
+      output: z.int(),
       contract: contract({
         resources: { cpu: "1" },
         secrets: [secret.ref("OTHER_TOKEN")],
@@ -305,13 +305,13 @@ Deno.test("emission rejects workflow-level channel declarations (post-M2)", asyn
   await withSourcePackage(async (root) => {
     const g = workflow({
       name: "channels-workflow",
-      input: z.number(),
-      output: z.number(),
-      state: { result: channel(z.number()) },
+      input: z.int(),
+      output: z.int(),
+      state: { result: channel(z.int()) },
     });
     const first = g.step("first", {
-      input: z.number(),
-      output: z.number(),
+      input: z.int(),
+      output: z.int(),
       run: ({ input }) => input + 1,
     });
     g.start().to(first).to(g.end());
@@ -331,12 +331,12 @@ Deno.test("emission rejects step-level channel publication (post-M2)", async () 
   await withSourcePackage(async (root) => {
     const g = workflow({
       name: "channel-step",
-      input: z.number(),
-      output: z.number(),
+      input: z.int(),
+      output: z.int(),
     });
     const first = g.step("first", {
-      input: z.number(),
-      output: z.number(),
+      input: z.int(),
+      output: z.int(),
       channel: "result",
       run: ({ input }) => input + 1,
     });
@@ -357,12 +357,12 @@ Deno.test("emission rejects step-level channel publications via publish (post-M2
   await withSourcePackage(async (root) => {
     const g = workflow({
       name: "channel-publish",
-      input: z.object({ value: z.number() }),
-      output: z.object({ findings: z.number() }),
+      input: z.object({ value: z.int() }),
+      output: z.object({ findings: z.int() }),
     });
     const scan = g.step("scan", {
-      input: z.object({ value: z.number() }),
-      output: z.object({ findings: z.number() }),
+      input: z.object({ value: z.int() }),
+      output: z.object({ findings: z.int() }),
       publish: { findings: "findings" },
       run: ({ input }) => ({ findings: input.value }),
     });

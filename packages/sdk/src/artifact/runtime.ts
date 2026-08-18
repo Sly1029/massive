@@ -1,6 +1,8 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ValidateFunction } from "ajv/dist/2020.js";
-import manifestSchema from "./data-artifact-manifest.schema.json" with { type: "json" };
+import manifestSchema from "./data-artifact-manifest.schema.json" with {
+  type: "json",
+};
 import { blobKeySHA256Hex, Key } from "../datastore/key.ts";
 import {
   type DatastoreClient,
@@ -9,6 +11,7 @@ import {
   type ObjectInfo,
 } from "../datastore/types.ts";
 import {
+  decodeCanonicalUtf8,
   type JsonValue,
   parseCanonicalJsonText,
   sha256RefBytes,
@@ -233,6 +236,9 @@ export class ArtifactRuntime {
     try {
       schemaObject = await this.store.get(schemaKey);
     } catch (error) {
+      if (!(error instanceof DatastoreNotFoundError)) {
+        throw error;
+      }
       throw new ArtifactValidationError(
         `Cannot read schema ${schemaRef}: ${
           error instanceof Error ? error.message : String(error)
@@ -368,7 +374,7 @@ let manifestValidator: Promise<ValidateFunction> | undefined;
 function validateManifest(body: Uint8Array): Promise<void> {
   manifestValidator ??= compileManifestValidator();
   return manifestValidator.then((validate) => {
-    const value = JSON.parse(new TextDecoder().decode(body));
+    const value = JSON.parse(decodeCanonicalUtf8(body));
     if (!validate(value)) {
       throw new Error(formatValidationError(validate));
     }
@@ -396,9 +402,8 @@ async function getArtifactObject(
 }
 
 function parseCanonicalJson(body: Uint8Array, role: string): JsonValue {
-  const text = new TextDecoder().decode(body);
   try {
-    return parseCanonicalJsonText(text);
+    return parseCanonicalJsonText(decodeCanonicalUtf8(body));
   } catch (error) {
     throw new ArtifactValidationError(
       `${role} is not canonical JSON: ${

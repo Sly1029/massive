@@ -16,21 +16,21 @@ export function label(args: { readonly input: number }): string {
 
 const flow = workflow({
   name: "settings-import",
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
 });
 const doubleStep = flow.step("double", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: double,
 });
 const incrementStep = flow.step("increment", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: increment,
 });
 const labelStep = flow.step("label", {
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
   run: label,
 });
