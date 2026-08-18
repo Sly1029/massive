@@ -163,17 +163,11 @@
     "sourcePackage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["packageId", "language", "packageHash", "root", "include", "files"],
+      "required": ["packageId", "language", "packageHash", "files"],
       "properties": {
         "packageId": { "$ref": "#/$defs/id" },
         "language": { "enum": ["typescript", "python"] },
         "packageHash": { "$ref": "#/$defs/hashRef" },
-        "root": { "type": "string", "minLength": 1 },
-        "include": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/relativePath" }
-        },
         "files": {
           "type": "array",
           "items": {
@@ -203,7 +197,7 @@
         "image": { "type": "string", "minLength": 1 },
         "command": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": { "type": "string", "minLength": 1 }
         },
         "workingDirectory": { "$ref": "#/$defs/relativePath" },
         "platform": {

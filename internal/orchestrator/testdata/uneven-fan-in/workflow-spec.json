@@ -115,8 +115,6 @@
       "packageId": "ts-main",
       "language": "typescript",
       "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "root": ".",
-      "include": ["workflow.ts"],
       "files": [
         {
           "path": "workflow.ts",

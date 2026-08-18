@@ -284,8 +284,6 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                         "packageId": source.package_id,
                         "language": "python",
                         "packageHash": package_hash,
-                        "root": str(source.root.resolve()),
-                        "include": list(source.include),
                         "files": source_files,
                     }
                 },

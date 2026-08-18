@@ -126,8 +126,9 @@ Containers are necessary for Argo and some advanced tools, but they should not b
 
 `env.container(...)` means the author accepts backend portability limits. Other backends may reject the plan or require a backend-specific adapter.
 
-Container recipes first compile to canonical, unbuilt `container-plan` entries. The plan
-records the immutable image reference, platform, command, and working directory.
+Direct-image recipes first compile to canonical, unbuilt `container-plan` entries. This
+is an invocation plan—not an environment build plan or build-cache key—and records the
+immutable image reference, platform, command, and working directory.
 Resource limits, runtime secrets, network, and scheduling remain execution-contract
 policy and never enter this identity. A target may accept this plan only when that
 selected image is directly runnable; dependency-building recipes remain future work.

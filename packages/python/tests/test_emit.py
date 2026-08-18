@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any, cast
 
 from massive import source_package
 
@@ -46,6 +47,13 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
     emitted = json.loads(spec_path.read_text())
     assert emitted["graph"]["irVersion"] == "0.1"
     step = next(node for node in emitted["graph"]["nodes"] if node["kind"] == "step")
+    catalog = json.loads((repository / "conformance/graph-catalog.json").read_text())
+    graph_case = next(item for item in catalog["cases"] if item["id"] == "single-step")
+    assert len([node for node in emitted["graph"]["nodes"] if node["kind"] == "step"]) == (
+        graph_case["executableSteps"]
+    )
+    assert len(emitted["graph"]["edges"]) == graph_case["directedEdges"]
+    assert graph_case["mergeInputs"] == []
     assert emitted["specHash"] == specification.spec_hash
     assert emitted["symbols"][step["symbolRef"]] == {
         "packageId": "python-main",
@@ -70,6 +78,32 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
         }
     ]
     assert compiled["contracts"][0]["environmentRef"] == environment_identity
+
+
+def test_source_checkout_location_does_not_change_workflow_identity(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures/emission_workflow.py"
+    emitted = []
+    for checkout in (tmp_path / "first", tmp_path / "second/nested"):
+        checkout.mkdir(parents=True)
+        source = checkout / fixture.name
+        source.write_bytes(fixture.read_bytes())
+        module = _load_fixture(source)
+        emitted.append(
+            module.graph.emit(
+                source=source_package(
+                    root=checkout,
+                    include=[source.name],
+                    package_id="python-main",
+                )
+            )
+        )
+
+    assert emitted[0].spec_hash == emitted[1].spec_hash
+    assert emitted[0].to_json() == emitted[1].to_json()
+    source_packages = cast(dict[str, Any], emitted[0].value["sourcePackages"])
+    package = cast(dict[str, Any], source_packages["python-main"])
+    assert "root" not in package
+    assert "include" not in package
 
 
 def _load_fixture(path: Path) -> ModuleType:

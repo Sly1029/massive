@@ -244,8 +244,8 @@ func TestOrchestratorCLIUnevenFanInRealRunner(t *testing.T) {
 }
 
 func TestOrchestratorCLIExternalSpecRoot(t *testing.T) {
-	// Source tree lives in one directory, the spec in another, and the spec's
-	// sourcePackages root points at the source tree by absolute path.
+	// Source tree lives in one directory and the location-independent spec in
+	// another. The operational source root is supplied only at invocation time.
 	sourceDir := t.TempDir()
 	sourceData := readRepoFile(t, "internal", "orchestrator", "testdata", "linear-chain", "workflow.ts")
 	if err := os.WriteFile(filepath.Join(sourceDir, "workflow.ts"), sourceData, 0o644); err != nil {
@@ -253,7 +253,6 @@ func TestOrchestratorCLIExternalSpecRoot(t *testing.T) {
 	}
 
 	specData := patchSpecSource(t, readRepoFile(t, "conformance", "fixtures", "specs", "linear-chain", "workflow-spec.json"), sourceDir)
-	specData = setSpecPackageRoots(t, specData, sourceDir)
 
 	specDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(specDir, "workflow-spec.json"), specData, 0o644); err != nil {
@@ -265,6 +264,7 @@ func TestOrchestratorCLIExternalSpecRoot(t *testing.T) {
 	result := runCommand(t,
 		"go", "run", "./cmd/massive-orchestrator", "run",
 		"--spec", filepath.Join(specDir, "workflow-spec.json"),
+		"--source-root", sourceDir,
 		"--store", storeRoot,
 		"--project", "acme/security-workflows",
 		"--run-id", runID,
@@ -278,12 +278,9 @@ func TestOrchestratorCLIExternalSpecRoot(t *testing.T) {
 	assertResultArtifact(t, storeRoot, projectKey, runID, `"value:41"`)
 }
 
-func TestOrchestratorCLIRelativeSourceRoot(t *testing.T) {
-	// The source package lives under a subdirectory of --source-root and the
-	// spec records a RELATIVE root ("pkg"); the spec file itself lives in an
-	// unrelated temp dir. With --source-root, the relative root resolves
-	// against it rather than dirname(--spec), so the handoff spec can live
-	// outside the package tree entirely.
+func TestOrchestratorCLIExplicitSourceRoot(t *testing.T) {
+	// The source package lives under a subdirectory while the spec lives in an
+	// unrelated directory. The explicit operational root points at the package.
 	sourceRoot := t.TempDir()
 	pkgDir := filepath.Join(sourceRoot, "pkg")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
@@ -295,7 +292,6 @@ func TestOrchestratorCLIRelativeSourceRoot(t *testing.T) {
 	}
 
 	specData := patchSpecSource(t, readRepoFile(t, "conformance", "fixtures", "specs", "linear-chain", "workflow-spec.json"), pkgDir)
-	specData = setSpecPackageRoots(t, specData, "pkg")
 
 	specDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(specDir, "workflow-spec.json"), specData, 0o644); err != nil {
@@ -307,7 +303,7 @@ func TestOrchestratorCLIRelativeSourceRoot(t *testing.T) {
 	result := runCommand(t,
 		"go", "run", "./cmd/massive-orchestrator", "run",
 		"--spec", filepath.Join(specDir, "workflow-spec.json"),
-		"--source-root", sourceRoot,
+		"--source-root", pkgDir,
 		"--store", storeRoot,
 		"--project", "acme/security-workflows",
 		"--run-id", runID,
@@ -539,33 +535,6 @@ func patchSpecSource(t *testing.T, specData []byte, sourceDir string) []byte {
 			t.Fatal(err)
 		}
 		pkg["packageHash"] = packageHash
-	}
-	patched, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return patched
-}
-
-// setSpecPackageRoots rewrites every source package's root to the given path,
-// used to exercise a spec whose source tree lives outside the spec directory.
-func setSpecPackageRoots(t *testing.T, specData []byte, root string) []byte {
-	t.Helper()
-
-	var doc map[string]any
-	if err := json.Unmarshal(specData, &doc); err != nil {
-		t.Fatal(err)
-	}
-	packages, ok := doc["sourcePackages"].(map[string]any)
-	if !ok {
-		t.Fatal("spec has no sourcePackages object")
-	}
-	for _, raw := range packages {
-		pkg, ok := raw.(map[string]any)
-		if !ok {
-			t.Fatal("source package is not an object")
-		}
-		pkg["root"] = root
 	}
 	patched, err := json.Marshal(doc)
 	if err != nil {

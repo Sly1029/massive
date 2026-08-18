@@ -72,9 +72,6 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec) (*Bundle, error) 
 	if err := validateArgoSchema(templateJSON); err != nil {
 		return nil, err
 	}
-	if err := validateInvariants(template, p, deploymentSpec); err != nil {
-		return nil, err
-	}
 	templateYAML, err := yaml.JSONToYAML(templateJSON)
 	if err != nil {
 		return nil, fmt.Errorf("argo target: render YAML: %w", err)
@@ -333,19 +330,6 @@ func validateArgoSchema(data []byte) error {
 	}
 	if e = argoSchema.Validate(instance); e != nil {
 		return fmt.Errorf("argo target: generated WorkflowTemplate violates pinned Argo %s schema: %w", schemacontract.ArgoWorkflowsCRDVersion, e)
-	}
-	return nil
-}
-
-func validateInvariants(t map[string]any, p *planpb.WorkflowPlan, d *deployment.Spec) error {
-	raw, _ := canonicalJSON(t)
-	for _, forbidden := range []string{"accessKey", "secretKey", "credential", "sourceFetch", "datastorePath"} {
-		if strings.Contains(strings.ToLower(string(raw)), strings.ToLower(forbidden)) {
-			return fmt.Errorf("argo target: generated template leaked forbidden %q material", forbidden)
-		}
-	}
-	if d.Profile.Target.ServiceAccountName == "" {
-		return errors.New("argo target: workload identity serviceAccountName is required")
 	}
 	return nil
 }

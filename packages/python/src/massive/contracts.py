@@ -12,8 +12,8 @@ _PLATFORM = re.compile(r"^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$")
 
 
 @dataclass(frozen=True, slots=True)
-class ContainerPlan:
-    """Canonical, unbuilt plan for a directly runnable container recipe."""
+class ContainerInvocationPlan:
+    """Canonical runtime selection for an already-built container image."""
 
     identity: str
     canonical_json: str
@@ -40,10 +40,10 @@ class ContainerRecipe:
             value["workingDirectory"] = self.working_directory
         return value
 
-    def plan(self) -> ContainerPlan:
+    def plan(self) -> ContainerInvocationPlan:
         value = {key: item for key, item in self.as_json().items() if key != "kind"}
         encoded = canonical_json(value)
-        return ContainerPlan(identity=sha256_ref(encoded), canonical_json=encoded)
+        return ContainerInvocationPlan(identity=sha256_ref(encoded), canonical_json=encoded)
 
     def extend(
         self,

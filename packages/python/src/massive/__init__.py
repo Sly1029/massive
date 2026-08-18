@@ -5,7 +5,7 @@ from .canonical import canonical_json, sha256_ref
 from .context import InvocationContext, StepContext
 from .contracts import (
     ContainerEnvironment,
-    ContainerPlan,
+    ContainerInvocationPlan,
     ContainerRecipe,
     ExecutionContract,
     container,
@@ -15,7 +15,7 @@ from .source_package import SourcePackage, source_package
 
 __all__ = [
     "ContainerEnvironment",
-    "ContainerPlan",
+    "ContainerInvocationPlan",
     "ContainerRecipe",
     "ExecutionContract",
     "GraphBuilder",

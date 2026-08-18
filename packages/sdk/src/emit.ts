@@ -92,8 +92,6 @@ export interface WorkflowSpecSourcePackage {
   readonly packageId: string;
   readonly language: "typescript";
   readonly packageHash: string;
-  readonly root: string;
-  readonly include: readonly string[];
   readonly files: readonly { readonly path: string; readonly hash: string }[];
 }
 
@@ -218,8 +216,6 @@ export async function emitWorkflowSpec<Input, Output>(
         packageId,
         language: "typescript" as const,
         packageHash: source.sourcePackageHash,
-        root: source.root,
-        include: source.include,
         files: source.files,
       },
     },

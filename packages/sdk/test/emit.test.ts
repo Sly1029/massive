@@ -73,6 +73,36 @@ Deno.test("WorkflowSpec emission is deterministic", async () => {
   });
 });
 
+Deno.test("source checkout location does not change WorkflowSpec identity", async () => {
+  const root = await Deno.makeTempDir({ prefix: "massive-emit-location-" });
+  try {
+    const firstRoot = join(root, "first");
+    const secondRoot = join(root, "nested", "second");
+    await Deno.mkdir(firstRoot, { recursive: true });
+    await Deno.mkdir(secondRoot, { recursive: true });
+    for (const checkout of [firstRoot, secondRoot]) {
+      await Deno.writeTextFile(
+        join(checkout, "workflow.ts"),
+        "export const workflowVersion = 1;\n",
+      );
+    }
+
+    const first = await emitWorkflowSpec(graphCases[1]!.build(), {
+      source: { root: firstRoot, include: ["workflow.ts"] },
+    });
+    const second = await emitWorkflowSpec(graphCases[1]!.build(), {
+      source: { root: secondRoot, include: ["workflow.ts"] },
+    });
+
+    assertEquals(second.specHash, first.specHash);
+    assertEquals(second, first);
+    assertEquals("root" in sourcePackage(first), false);
+    assertEquals("include" in sourcePackage(first), false);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("WorkflowSpec specHash excludes itself", async () => {
   await withSourcePackage(async (root) => {
     const spec = await emitWorkflowSpec(graphCases[3]!.build(), {

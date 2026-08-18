@@ -3,20 +3,23 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib
+import importlib.resources
 import inspect
 import json
 import sys
 import tarfile
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
+from functools import cache
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, cast
 
 from botocore.config import Config
 from botocore.session import get_session
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 from pydantic import TypeAdapter
 
 if TYPE_CHECKING:
@@ -33,8 +36,76 @@ _DESCRIPTOR_EXIT = 64
 _SCHEMA_EXIT = 65
 _STEP_EXIT = 66
 
-type Descriptor = dict[str, object]
 type StepFunction = Callable[[StepContext[None, object]], object | Awaitable[object]]
+
+
+class ArtifactRef(TypedDict):
+    key: str
+    hash: str
+    contentType: str
+
+
+class ArtifactDestination(TypedDict):
+    key: str
+    contentType: str
+
+
+class DataArtifactRef(TypedDict):
+    artifact: ArtifactRef
+    schema: str
+
+
+class DataArtifactDestination(TypedDict):
+    artifact: ArtifactDestination
+    schema: str
+
+
+class SymbolDescriptor(TypedDict):
+    packageId: str
+    language: Literal["typescript", "python"]
+    module: str
+    export: str
+
+
+class SourcePackageDescriptor(TypedDict):
+    packageId: str
+    language: Literal["typescript", "python"]
+    packageHash: str
+    sourceArchive: ArtifactRef
+    manifest: NotRequired[ArtifactRef]
+
+
+class LocalDatastoreDescriptor(TypedDict):
+    kind: Literal["local"]
+    path: str
+
+
+class S3DatastoreDescriptor(TypedDict):
+    kind: Literal["s3"]
+    bucket: str
+    region: str
+    prefix: NotRequired[str]
+    endpoint: NotRequired[str]
+    forcePathStyle: NotRequired[bool]
+
+
+type DatastoreDescriptor = LocalDatastoreDescriptor | S3DatastoreDescriptor
+
+
+class StepInvocationDescriptor(TypedDict):
+    kind: Literal["StepInvocationDescriptor"]
+    schemaVersion: Literal[0]
+    encoding: Literal["json-v0"]
+    planHash: str
+    runId: str
+    nodeId: str
+    attempt: int
+    symbol: SymbolDescriptor
+    sourcePackage: SourcePackageDescriptor
+    environmentRef: str
+    input: DataArtifactRef
+    output: DataArtifactDestination
+    datastore: DatastoreDescriptor
 
 
 class SchemaValidator(Protocol):
@@ -82,24 +153,21 @@ class LocalDatastore:
 
 
 class S3Datastore:
-    def __init__(self, descriptor: Descriptor) -> None:
-        endpoint_value = descriptor.get("endpoint")
-        endpoint = endpoint_value if isinstance(endpoint_value, str) else None
+    def __init__(self, descriptor: S3DatastoreDescriptor) -> None:
+        endpoint = descriptor.get("endpoint")
         config = (
             Config(s3={"addressing_style": "path"})
             if descriptor.get("forcePathStyle") is True
             else None
         )
-        self.bucket = _string(descriptor, "bucket")
+        self.bucket = descriptor["bucket"]
         prefix = descriptor.get("prefix", "")
-        if not isinstance(prefix, str):
-            raise DescriptorError("S3 datastore prefix must be a string")
         self.prefix = prefix.strip("/")
         self.client = cast(
             "S3Client",
             get_session().create_client(
                 "s3",
-                region_name=_string(descriptor, "region"),
+                region_name=descriptor["region"],
                 endpoint_url=endpoint,
                 config=config,
             ),
@@ -133,40 +201,44 @@ def run_descriptor_path(path: Path) -> int:
         return _STEP_EXIT
 
 
-def _load_descriptor(path: Path) -> Descriptor:
+@cache
+def _descriptor_validator() -> SchemaValidator:
+    packaged_schema = importlib.resources.files("massive").joinpath(
+        "schemas", "step-invocation-descriptor.schema.json"
+    )
+    if packaged_schema.is_file():
+        schema_text = packaged_schema.read_text(encoding="utf-8")
+    else:
+        # Editable installs use the repository's canonical schema directly.
+        schema_text = (
+            Path(__file__).resolve().parents[4]
+            / "conformance/schema/step-invocation-descriptor.schema.json"
+        ).read_text()
+    schema = cast(dict[str, object], json.loads(schema_text))
+    Draft202012Validator.check_schema(schema)
+    return cast(SchemaValidator, Draft202012Validator(schema))
+
+
+def _load_descriptor(path: Path) -> StepInvocationDescriptor:
     try:
         descriptor: object = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as error:
         raise DescriptorError(f"cannot read descriptor {path}: {error}") from error
-    if not isinstance(descriptor, dict):
-        raise DescriptorError("descriptor must be a JSON object")
-    typed_descriptor = cast(Descriptor, descriptor)
-    _require(typed_descriptor, "kind", "StepInvocationDescriptor")
-    _require(typed_descriptor, "schemaVersion", 0)
-    _require(typed_descriptor, "encoding", "json-v0")
-    _require_mapping(typed_descriptor, "symbol")
-    _require_mapping(typed_descriptor, "sourcePackage")
-    _require_mapping(typed_descriptor, "input")
-    _require_mapping(typed_descriptor, "output")
-    datastore = _require_mapping(typed_descriptor, "datastore")
-    if datastore.get("kind") == "local":
-        _string(datastore, "path")
-    elif datastore.get("kind") == "s3":
-        _string(datastore, "bucket")
-        _string(datastore, "region")
-    else:
-        raise DescriptorError("datastore kind must be local or s3")
-    return typed_descriptor
+    try:
+        _descriptor_validator().validate(descriptor)
+    except ValidationError as error:
+        raise DescriptorError(f"descriptor does not satisfy its JSON Schema: {error}") from error
+    return cast(StepInvocationDescriptor, descriptor)
 
 
-def _execute(descriptor: Descriptor) -> None:
-    symbol = _require_mapping(descriptor, "symbol")
-    source_package = _require_mapping(descriptor, "sourcePackage")
-    if symbol.get("language") != "python" or source_package.get("language") != "python":
+def _execute(descriptor: StepInvocationDescriptor) -> None:
+    symbol = descriptor["symbol"]
+    source_package = descriptor["sourcePackage"]
+    if symbol["language"] != "python" or source_package["language"] != "python":
         raise DescriptorError("Python runner requires Python symbol and source package")
-    if symbol.get("packageId") != source_package.get("packageId"):
+    if symbol["packageId"] != source_package["packageId"]:
         raise DescriptorError("symbol package does not match source package")
-    datastore = _datastore(_require_mapping(descriptor, "datastore"))
+    datastore = _datastore(descriptor["datastore"])
     input_value, _input_schema = _read_input(descriptor, datastore)
     with _source_root(source_package, datastore) as source_root:
         function, input_adapter, output_adapter = _resolve_step(symbol, source_root)
@@ -174,7 +246,7 @@ def _execute(descriptor: Descriptor) -> None:
 
 
 def _execute_source(
-    descriptor: Descriptor,
+    descriptor: StepInvocationDescriptor,
     datastore: Datastore,
     function: StepFunction,
     input_adapter: TypeAdapter[object] | None,
@@ -190,9 +262,9 @@ def _execute_source(
         inputs=input_value,
         deps=None,
         invocation=InvocationContext(
-            run_id=_string(descriptor, "runId"),
-            step_id=_string(descriptor, "nodeId"),
-            idempotency_key=f"{_string(descriptor, 'runId')}:{_string(descriptor, 'nodeId')}",
+            run_id=descriptor["runId"],
+            step_id=descriptor["nodeId"],
+            idempotency_key=f"{descriptor['runId']}:{descriptor['nodeId']}",
         ),
     )
     try:
@@ -206,15 +278,14 @@ def _execute_source(
             output = output_adapter.dump_python(output_adapter.validate_python(output), mode="json")
         except Exception as error:
             raise SchemaError(f"output does not satisfy the step output type: {error}") from error
-    output_descriptor = _require_mapping(descriptor, "output")
-    output_schema = _schema(datastore, _string(output_descriptor, "schema"))
+    output_descriptor = descriptor["output"]
+    output_schema = _schema(datastore, output_descriptor["schema"])
     _validate(output_schema, output, "output")
     try:
         output_text = canonical_json(cast(JsonValue, output))
     except (TypeError, ValueError) as error:
         raise SchemaError(f"output is not canonical JSON: {error}") from error
-    output_artifact = _require_mapping(output_descriptor, "artifact")
-    datastore.write(_string(output_artifact, "key"), output_text.encode())
+    datastore.write(output_descriptor["artifact"]["key"], output_text.encode())
 
 
 async def _await_output(value: Awaitable[object]) -> object:
@@ -222,12 +293,12 @@ async def _await_output(value: Awaitable[object]) -> object:
 
 
 def _read_input(
-    descriptor: Descriptor, datastore: Datastore
+    descriptor: StepInvocationDescriptor, datastore: Datastore
 ) -> tuple[JsonValue, dict[str, object]]:
-    input_descriptor = _require_mapping(descriptor, "input")
-    artifact = _require_mapping(input_descriptor, "artifact")
-    expected_hash = _string(artifact, "hash")
-    text = _read(datastore, _string(artifact, "key"))
+    input_descriptor = descriptor["input"]
+    artifact = input_descriptor["artifact"]
+    expected_hash = artifact["hash"]
+    text = _read(datastore, artifact["key"])
     if sha256_ref(text) != expected_hash:
         raise SchemaError("input artifact hash mismatch")
     try:
@@ -236,7 +307,7 @@ def _read_input(
         raise SchemaError(f"input artifact is not JSON: {error}") from error
     if canonical_json(value) != text:
         raise SchemaError("input artifact is not canonical JSON")
-    schema = _schema(datastore, _string(input_descriptor, "schema"))
+    schema = _schema(datastore, input_descriptor["schema"])
     _validate(schema, value, "input")
     return value, schema
 
@@ -266,12 +337,14 @@ def _validate(schema: Mapping[str, object], value: object, role: str) -> None:
 
 
 @contextmanager
-def _source_root(source_package: Descriptor, datastore: Datastore) -> Generator[Path, None, None]:
-    archive = _require_mapping(source_package, "sourceArchive")
-    if archive.get("contentType") != _SOURCE_ARCHIVE_CONTENT_TYPE:
+def _source_root(
+    source_package: SourcePackageDescriptor, datastore: Datastore
+) -> Generator[Path, None, None]:
+    archive = source_package["sourceArchive"]
+    if archive["contentType"] != _SOURCE_ARCHIVE_CONTENT_TYPE:
         raise DescriptorError("Python runner requires application/vnd.massive.source-tar")
-    body = datastore.read(_string(archive, "key"))
-    if _sha256_ref_bytes(body) != _string(archive, "hash"):
+    body = datastore.read(archive["key"])
+    if _sha256_ref_bytes(body) != archive["hash"]:
         raise DescriptorError("source archive hash mismatch")
     with TemporaryDirectory(prefix="massive-source-") as temporary:
         root = Path(temporary)
@@ -307,12 +380,12 @@ def _source_root(source_package: Descriptor, datastore: Datastore) -> Generator[
 
 
 def _resolve_step(
-    symbol: Descriptor, source_root: Path
+    symbol: SymbolDescriptor, source_root: Path
 ) -> tuple[StepFunction, TypeAdapter[object] | None, TypeAdapter[object] | None]:
-    module_name = _string(symbol, "module")
+    module_name = symbol["module"]
     if not module_name or any(not part.isidentifier() for part in module_name.split(".")):
         raise DescriptorError("Python module must be a dotted identifier")
-    export = _string(symbol, "export")
+    export = symbol["export"]
     if not export.isidentifier():
         raise DescriptorError("Python export must be an identifier")
     with _source_import_path(source_root):
@@ -347,12 +420,12 @@ def _read(store: Datastore, key: str) -> str:
     return store.read(key).decode()
 
 
-def _datastore(descriptor: Descriptor) -> Datastore:
-    if descriptor.get("kind") == "local":
-        return LocalDatastore(Path(_string(descriptor, "path")))
-    if descriptor.get("kind") == "s3":
+def _datastore(descriptor: DatastoreDescriptor) -> Datastore:
+    if descriptor["kind"] == "local":
+        return LocalDatastore(Path(descriptor["path"]))
+    if descriptor["kind"] == "s3":
         return S3Datastore(descriptor)
-    raise DescriptorError("datastore kind must be local or s3")
+    raise AssertionError("unreachable datastore kind")
 
 
 def _sha256_ref_bytes(body: bytes) -> str:
@@ -373,25 +446,6 @@ def _path(root: Path, key: str) -> Path:
     if root not in candidate.parents:
         raise DescriptorError("datastore key escapes the local datastore root")
     return candidate
-
-
-def _require(value: Mapping[str, object], key: str, expected: object) -> None:
-    if value.get(key) != expected:
-        raise DescriptorError(f"descriptor field {key!r} must equal {expected!r}")
-
-
-def _require_mapping(value: Mapping[str, object], key: str) -> Descriptor:
-    child = value.get(key)
-    if not isinstance(child, dict):
-        raise DescriptorError(f"descriptor field {key!r} must be an object")
-    return cast(Descriptor, child)
-
-
-def _string(value: Mapping[str, object], key: str) -> str:
-    child = value.get(key)
-    if not isinstance(child, str) or not child:
-        raise DescriptorError(f"descriptor field {key!r} must be a non-empty string")
-    return child
 
 
 def main() -> int:

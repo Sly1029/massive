@@ -79,8 +79,6 @@ type SourcePackage struct {
 	PackageID   string              `json:"packageId"`
 	Language    string              `json:"language"`
 	PackageHash string              `json:"packageHash"`
-	Root        string              `json:"root"`
-	Include     []string            `json:"include"`
 	Files       []SourcePackageFile `json:"files"`
 }
 

@@ -33,6 +33,8 @@ def test_python_workflow_runs_through_go_orchestrator(tmp_path: Path) -> None:
             "run",
             "--spec",
             str(spec_path),
+            "--source-root",
+            str(fixture.parent),
             "--store",
             str(store),
             "--project",

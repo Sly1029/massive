@@ -65,7 +65,9 @@ func run(args []string) (bool, error) {
 	projectID := flags.String("project", "", "project id")
 	runID := flags.String("run-id", "", "run id")
 	input := flags.String("input", "", "workflow input JSON")
-	sourceRoot := flags.String("source-root", "", "base directory for resolving relative source-package roots (defaults to the spec's directory)")
+	sourceRoot := flags.String("source-root", "", "operational source-package root (defaults to the spec's directory)")
+	sourcePackageRoots := packageRootFlags{}
+	flags.Var(sourcePackageRoots, "source-package-root", "repeatable package-id=path operational source binding")
 	jsonOutput := flags.Bool("json", false, "emit a single machine-readable JSON run object to stdout instead of human-readable lines")
 	if err := flags.Parse(args[1:]); err != nil {
 		return false, fmt.Errorf("parse run flags: %w", err)
@@ -104,10 +106,8 @@ func run(args []string) (bool, error) {
 			return *jsonOutput, err
 		}
 	}
-	// resolveBase is the directory relative source-package roots resolve
-	// against. It defaults to the spec's own directory, but --source-root
-	// overrides it so the spec file can live outside the package tree (absolute
-	// spec roots still win — see resolvePackageRoot).
+	// resolveBase is an operational materialization input, deliberately absent
+	// from the location-independent WorkflowSpec identity.
 	resolveBase, err := filepath.Abs(filepath.Dir(*specPath))
 	if err != nil {
 		return *jsonOutput, fmt.Errorf("resolve spec directory: %w", err)
@@ -117,6 +117,10 @@ func run(args []string) (bool, error) {
 		if err != nil {
 			return *jsonOutput, fmt.Errorf("resolve source root %q: %w", *sourceRoot, err)
 		}
+	}
+	resolvedPackageRoots, err := resolvePackageRoots(workflowSpec, resolveBase, sourcePackageRoots)
+	if err != nil {
+		return *jsonOutput, err
 	}
 	repoRoot, err := repoRoot()
 	if err != nil {
@@ -138,7 +142,7 @@ func run(args []string) (bool, error) {
 		RunID:             *runID,
 		RunnerWorkingDir:  repoRoot,
 		SourcePackageRoot: resolveBase,
-		SourceManifests:   sourceManifests(workflowSpec, resolveBase),
+		SourceManifests:   sourceManifests(workflowSpec, resolvedPackageRoots),
 	}, []byte(*input))
 	if err != nil {
 		return *jsonOutput, err
@@ -168,7 +172,41 @@ func persistCompiledPlan(storeRoot string, compiled *plan.CompileResult) error {
 	return nil
 }
 
-func sourceManifests(workflowSpec *spec.WorkflowSpec, resolveBase string) map[string]orchestrator.SourcePackageManifest {
+type packageRootFlags map[string]string
+
+func (roots packageRootFlags) String() string { return "" }
+
+func (roots packageRootFlags) Set(value string) error {
+	packageID, root, ok := strings.Cut(value, "=")
+	if !ok || packageID == "" || root == "" {
+		return fmt.Errorf("source package root must be package-id=path")
+	}
+	if _, exists := roots[packageID]; exists {
+		return fmt.Errorf("source package root for %q was supplied more than once", packageID)
+	}
+	roots[packageID] = root
+	return nil
+}
+
+func resolvePackageRoots(workflowSpec *spec.WorkflowSpec, defaultRoot string, overrides packageRootFlags) (map[string]string, error) {
+	resolved := make(map[string]string, len(workflowSpec.SourcePackages))
+	for packageID := range workflowSpec.SourcePackages {
+		resolved[packageID] = defaultRoot
+	}
+	for packageID, root := range overrides {
+		if _, exists := workflowSpec.SourcePackages[packageID]; !exists {
+			return nil, fmt.Errorf("source package root references unknown package %q", packageID)
+		}
+		absolute, err := filepath.Abs(root)
+		if err != nil {
+			return nil, fmt.Errorf("resolve source package root for %q: %w", packageID, err)
+		}
+		resolved[packageID] = absolute
+	}
+	return resolved, nil
+}
+
+func sourceManifests(workflowSpec *spec.WorkflowSpec, packageRoots map[string]string) map[string]orchestrator.SourcePackageManifest {
 	manifests := make(map[string]orchestrator.SourcePackageManifest, len(workflowSpec.SourcePackages))
 	for packageID, sourcePackage := range workflowSpec.SourcePackages {
 		files := make([]orchestrator.SourcePackageFile, 0, len(sourcePackage.Files))
@@ -176,25 +214,11 @@ func sourceManifests(workflowSpec *spec.WorkflowSpec, resolveBase string) map[st
 			files = append(files, orchestrator.SourcePackageFile{Path: file.Path, Hash: file.Hash})
 		}
 		manifests[packageID] = orchestrator.SourcePackageManifest{
-			Root:  resolvePackageRoot(sourcePackage.Root, resolveBase),
+			Root:  packageRoots[packageID],
 			Files: files,
 		}
 	}
 	return manifests
-}
-
-// resolvePackageRoot honours the spec's recorded source root: absolute roots
-// are used as-is, relative roots resolve against resolveBase, and a missing or
-// "." root falls back to resolveBase. resolveBase is dirname(--spec) by default
-// or --source-root when supplied.
-func resolvePackageRoot(specRoot string, resolveBase string) string {
-	if specRoot == "" || specRoot == "." {
-		return resolveBase
-	}
-	if filepath.IsAbs(specRoot) {
-		return specRoot
-	}
-	return filepath.Join(resolveBase, specRoot)
 }
 
 // jsonRunStep and jsonRun are the --json wire shape: a single object built from
