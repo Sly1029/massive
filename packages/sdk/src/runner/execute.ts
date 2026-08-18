@@ -39,40 +39,44 @@ export async function executeStep(
     const resolved = await resolveStepSymbol(descriptor, store);
     let output: unknown;
     try {
-      output = await resolved.run({
+      try {
+        output = await resolved.run({
         input,
         state: {},
         context: {
           runId: descriptor.runId,
           stepId: descriptor.nodeId,
         },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new StepExecutionError(message);
-    }
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new StepExecutionError(message);
+      }
 
-    validateJson(outputSchema, output, "output");
+      validateJson(outputSchema, output, "output");
 
-    const serializedOutput = stableStringify(output);
-    const outputHash = sha256RefText(serializedOutput);
-    await store.put(descriptor.output.artifact.key, serializedOutput, {
-      contentType: descriptor.output.artifact.contentType,
-    });
-
-    return {
-      kind: "success",
-      exitCode: RUNNER_EXIT_CODES.success,
-      runId: descriptor.runId,
-      nodeId: descriptor.nodeId,
-      attempt: descriptor.attempt,
-      output: {
-        key: descriptor.output.artifact.key,
-        hash: outputHash,
+      const serializedOutput = stableStringify(output);
+      const outputHash = sha256RefText(serializedOutput);
+      await store.put(descriptor.output.artifact.key, serializedOutput, {
         contentType: descriptor.output.artifact.contentType,
-        schema: descriptor.output.schema,
-      },
-    };
+      });
+
+      return {
+        kind: "success",
+        exitCode: RUNNER_EXIT_CODES.success,
+        runId: descriptor.runId,
+        nodeId: descriptor.nodeId,
+        attempt: descriptor.attempt,
+        output: {
+          key: descriptor.output.artifact.key,
+          hash: outputHash,
+          contentType: descriptor.output.artifact.contentType,
+          schema: descriptor.output.schema,
+        },
+      };
+    } finally {
+      await resolved.cleanup();
+    }
   } catch (error) {
     if (
       error instanceof DescriptorError || error instanceof SymbolResolutionError

@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import tarfile
+import uuid
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import boto3
 import pytest
 
 from massive import canonical_json, sha256_ref
+from massive.canonical import JsonValue
 
 
 @pytest.mark.parametrize(
@@ -23,7 +29,7 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
 
     assert result.returncode == 0, result.stderr
     output = (store / descriptor["output"]["artifact"]["key"]).read_text()
-    assert output == canonical_json(expected)
+    assert output == canonical_json(cast(JsonValue, expected))
     metadata = (
         store
         / ".massive-datastore-metadata"
@@ -71,6 +77,58 @@ def test_runner_reports_malformed_schema_as_schema_failure(tmp_path: Path) -> No
     assert result.returncode == 65
 
 
+def test_runner_rejects_a_verified_traversal_archive(tmp_path: Path) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    body = _archive_entry("../escape.py", b"raise RuntimeError('unsafe')\n")
+    archive = descriptor["sourcePackage"]["sourceArchive"]
+    archive["hash"] = "sha256:" + sha256(body).hexdigest()
+    path = store / archive["key"]
+    path.write_bytes(body)
+    descriptor_path.write_text(canonical_json(descriptor))
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 64
+    assert not (tmp_path / "escape.py").exists()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("MASSIVE_TEST_S3_ENDPOINT"),
+    reason="requires a configured MinIO/S3 endpoint",
+)
+def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path) -> None:
+    endpoint = os.environ["MASSIVE_TEST_S3_ENDPOINT"]
+    access_key = os.environ.get("MASSIVE_TEST_S3_ACCESS_KEY")
+    secret_key = os.environ.get("MASSIVE_TEST_S3_SECRET_KEY")
+    if access_key is None or secret_key is None:
+        pytest.skip("MASSIVE_TEST_S3_ENDPOINT requires test access credentials")
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    bucket = f"massive-python-{uuid.uuid4().hex}"
+    client = boto3.client(
+        "s3", endpoint_url=endpoint, region_name="us-east-1", aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+    )
+    client.create_bucket(Bucket=bucket)
+    for path in store.rglob("*"):
+        if path.is_file() and ".massive-datastore-metadata" not in path.parts:
+            client.put_object(Bucket=bucket, Key=str(path.relative_to(store)), Body=path.read_bytes())
+    descriptor["datastore"] = {
+        "kind": "s3", "bucket": bucket, "region": "us-east-1", "endpoint": endpoint,
+        "forcePathStyle": True,
+    }
+    serialized = canonical_json(cast(JsonValue, descriptor))
+    assert access_key not in serialized
+    assert secret_key not in serialized
+    descriptor_path.write_text(serialized)
+    environment = {**os.environ, "AWS_ACCESS_KEY_ID": access_key, "AWS_SECRET_ACCESS_KEY": secret_key}
+
+    result = _run(descriptor_path, environment)
+
+    assert result.returncode == 0, result.stderr
+    output = client.get_object(Bucket=bucket, Key=descriptor["output"]["artifact"]["key"])["Body"].read()
+    assert output == canonical_json(cast(JsonValue, {"value": 42})).encode()
+
+
 def _descriptor(
     tmp_path: Path, *, export: str, input_value: dict[str, object] | None = None
 ) -> tuple[Path, dict[str, Any], Path]:
@@ -84,8 +142,8 @@ def _descriptor(
     }
     schema_text = canonical_json(schema)
     schema_hash = sha256_ref(schema_text)
-    input_text = canonical_json(input_value or {"value": 21})
-    pointer_text = canonical_json({"sourceFetch": str(source_root)})
+    input_text = canonical_json(cast(JsonValue, input_value or {"value": 21}))
+    archive_body = _source_archive(source_root)
     package_hash = "sha256:" + "d" * 64
     descriptor: dict[str, Any] = {
         "kind": "StepInvocationDescriptor",
@@ -106,9 +164,9 @@ def _descriptor(
             "language": "python",
             "packageHash": package_hash,
             "sourceArchive": {
-                "key": f"packages/{package_hash.replace(':', '-')}/source.tar.zst",
-                "hash": sha256_ref(pointer_text),
-                "contentType": "application/vnd.massive.source-directory+json",
+                "key": f"packages/{package_hash.replace(':', '-')}/source.tar",
+                "hash": "sha256:" + sha256(archive_body).hexdigest(),
+                "contentType": "application/vnd.massive.source-tar",
             },
         },
         "environmentRef": "sha256:" + "b" * 64,
@@ -129,7 +187,9 @@ def _descriptor(
         },
         "datastore": {"kind": "local", "path": str(store)},
     }
-    _write(store, descriptor["sourcePackage"]["sourceArchive"]["key"], pointer_text)
+    archive_path = store / descriptor["sourcePackage"]["sourceArchive"]["key"]
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    archive_path.write_bytes(archive_body)
     _write(store, f"blobs/sha256/{schema_hash.removeprefix('sha256:')}", schema_text)
     _write(store, descriptor["input"]["artifact"]["key"], input_text)
     descriptor_path = tmp_path / "descriptor.json"
@@ -137,13 +197,14 @@ def _descriptor(
     return descriptor_path, descriptor, store
 
 
-def _run(descriptor_path: Path) -> subprocess.CompletedProcess[str]:
+def _run(descriptor_path: Path, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     repository = Path(__file__).resolve().parents[3]
     return subprocess.run(
         [sys.executable, "-m", "massive.runner", str(descriptor_path)],
         cwd=repository,
         check=False,
         capture_output=True,
+        env=environment,
         text=True,
     )
 
@@ -152,3 +213,27 @@ def _write(root: Path, key: str, body: str) -> None:
     path = root / key
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
+
+
+def _source_archive(source_root: Path, entries: tuple[str, ...] = ("runner_workflow.py",)) -> bytes:
+    buffer = BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+        for name in entries:
+            body = (source_root / name).read_bytes()
+            info = tarfile.TarInfo(name)
+            info.mode = 0o644
+            info.size = len(body)
+            info.mtime = 0
+            archive.addfile(info, BytesIO(body))
+    return buffer.getvalue()
+
+
+def _archive_entry(name: str, body: bytes) -> bytes:
+    buffer = BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+        info = tarfile.TarInfo(name)
+        info.mode = 0o644
+        info.size = len(body)
+        info.mtime = 0
+        archive.addfile(info, BytesIO(body))
+    return buffer.getvalue()

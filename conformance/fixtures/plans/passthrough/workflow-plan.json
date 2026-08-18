@@ -52,9 +52,9 @@
       "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "packageId": "ts-main",
       "sourceArchive": {
-        "contentType": "application/zstd",
+        "contentType": "application/vnd.massive.source-tar",
         "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst"
+        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar"
       }
     }
   ],

@@ -105,14 +105,14 @@ Templates:
 
 ```text
 packages/<package-key>/source-manifest.json
-packages/<package-key>/source.tar.zst
+packages/<package-key>/source.tar
 ```
 
 Examples:
 
 ```text
 packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source-manifest.json
-packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst
+packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar
 ```
 
 ### Compiled plan
@@ -236,7 +236,7 @@ specs/<spec-key>/workflow-spec.json
 envs/<env-key>/manifest.json
 envs/<env-key>/runtime.tar.zst
 packages/<package-key>/source-manifest.json
-packages/<package-key>/source.tar.zst
+packages/<package-key>/source.tar
 plans/<plan-key>/workflow.json
 plans/<plan-key>/provenance.json
 targets/<plan-key>/<target>/bundle-manifest.json

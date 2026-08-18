@@ -74,7 +74,7 @@ Shape:
       "manifest": { "contentType": "application/json", "hash": "sha256:<hex>", "key": "packages/sha256-<hex>/source-manifest.json" },
       "packageHash": "sha256:<hex>",
       "packageId": "ts-main",
-      "sourceArchive": { "contentType": "application/zstd", "hash": "sha256:<hex>", "key": "packages/sha256-<hex>/source.tar.zst" }
+      "sourceArchive": { "contentType": "application/vnd.massive.source-tar", "hash": "sha256:<hex>", "key": "packages/sha256-<hex>/source.tar" }
     }
   ],
   "environments": [

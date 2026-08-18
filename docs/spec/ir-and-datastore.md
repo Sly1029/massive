@@ -50,7 +50,7 @@ sourcePackages:
   ts-main:
     language: typescript
     packageHash: sha256:...
-    artifact: packages/<package-key>/source.tar.zst
+    artifact: packages/<package-key>/source.tar
 
 symbols:
   math/double:
@@ -208,7 +208,7 @@ specs/<spec-key>/workflow-spec.json
 envs/<env-key>/manifest.json
 envs/<env-key>/runtime.tar.zst
 packages/<package-key>/source-manifest.json
-packages/<package-key>/source.tar.zst
+packages/<package-key>/source.tar
 plans/<plan-key>/workflow.json
 plans/<plan-key>/provenance.json
 targets/<plan-key>/<target>/bundle-manifest.json
@@ -287,7 +287,7 @@ Example:
     "export": "double"
   },
   "sourcePackage": {
-    "artifact": "packages/.../source.tar.zst",
+    "artifact": "packages/.../source.tar",
     "hash": "sha256:..."
   },
   "input": {

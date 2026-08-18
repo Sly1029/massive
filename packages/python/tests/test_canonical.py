@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from massive import canonical_json, sha256_ref
+from massive.canonical import JsonValue
 
 
 def test_canonical_hash_matches_shared_golden_vector() -> None:
@@ -23,4 +25,4 @@ def test_canonical_hash_matches_shared_golden_vector() -> None:
 @pytest.mark.parametrize("value", [1.5, 1 << 53, -(1 << 53)])
 def test_canonical_json_rejects_values_outside_v0_number_contract(value: float) -> None:
     with pytest.raises((TypeError, ValueError)):
-        canonical_json(value)
+        canonical_json(cast(JsonValue, value))

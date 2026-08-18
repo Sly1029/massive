@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,11 +17,10 @@ import (
 const descriptorPathToken = "{descriptor}"
 
 type DefaultRunnerCommandInputs struct {
-	Language          string
-	WorkingDir        string
-	DescriptorDir     string
-	DatastoreRoot     string
-	SourcePackageRoot string
+	Language      string
+	WorkingDir    string
+	DescriptorDir string
+	DatastoreRoot string
 }
 
 func DefaultRunnerCommand(inputs DefaultRunnerCommandInputs) ([]string, error) {
@@ -65,20 +63,6 @@ func DefaultRunnerCommand(inputs DefaultRunnerCommandInputs) ([]string, error) {
 	}
 
 	readRoots := []string{workingDir, descriptorDir, datastoreRoot}
-	if inputs.SourcePackageRoot != "" {
-		sourcePackageRoot, err := filepath.Abs(inputs.SourcePackageRoot)
-		if err != nil {
-			return nil, fmt.Errorf("resolve source package root: %w", err)
-		}
-		relative, err := filepath.Rel(workingDir, sourcePackageRoot)
-		if err != nil {
-			return nil, fmt.Errorf("compare source package root with runner working directory: %w", err)
-		}
-		if relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			readRoots = append(readRoots, sourcePackageRoot)
-		}
-	}
-
 	return []string{
 		"deno",
 		"run",
@@ -151,31 +135,6 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 			WorkingDir:    i.WorkingDir,
 			DescriptorDir: descriptorDir,
 			DatastoreRoot: localDatastore.Path,
-		}
-		if descriptor.SourcePackage.SourceArchive.ContentType == SourceDirectoryContentType {
-			store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: localDatastore.Path})
-			if err != nil {
-				return StepInvocationOutcome{}, fmt.Errorf("open local datastore for source package: %w", err)
-			}
-			key, err := datastore.ParseKey(descriptor.SourcePackage.SourceArchive.Key)
-			if err != nil {
-				return StepInvocationOutcome{}, err
-			}
-			object, err := store.Get(ctx, key)
-			if err != nil {
-				return StepInvocationOutcome{}, fmt.Errorf("read source package pointer %s: %w", key, err)
-			}
-			if err := verifyDigest(descriptor.SourcePackage.SourceArchive.Hash, object.Body); err != nil {
-				return StepInvocationOutcome{}, fmt.Errorf("source package pointer %s: %w", key, err)
-			}
-			var pointer sourceFetchPointer
-			if err := json.Unmarshal(object.Body, &pointer); err != nil {
-				return StepInvocationOutcome{}, fmt.Errorf("decode source package pointer %s: %w", key, err)
-			}
-			if pointer.SourceFetch == "" {
-				return StepInvocationOutcome{}, fmt.Errorf("source package pointer %s is missing sourceFetch", key)
-			}
-			inputs.SourcePackageRoot = pointer.SourceFetch
 		}
 		argv, err = DefaultRunnerCommand(inputs)
 		if err != nil {

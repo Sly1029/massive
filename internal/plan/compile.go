@@ -324,7 +324,7 @@ func compileSourcePackages(workflowSpec *spec.WorkflowSpec) ([]*planpb.SourcePac
 		packagePathHash := strings.TrimPrefix(sourcePackage.PackageHash, "sha256:")
 		archiveKey := sourcePackage.Artifact
 		if archiveKey == "" {
-			archiveKey = "packages/sha256-" + packagePathHash + "/source.tar.zst"
+			archiveKey = "packages/sha256-" + packagePathHash + "/source.tar"
 		}
 		entries = append(entries, &planpb.SourcePackageRef{
 			PackageId:   stringPtr(sourcePackage.PackageID),
@@ -338,7 +338,7 @@ func compileSourcePackages(workflowSpec *spec.WorkflowSpec) ([]*planpb.SourcePac
 			SourceArchive: &planpb.ArtifactRef{
 				Key:         stringPtr(archiveKey),
 				Hash:        stringPtr(sourcePackage.PackageHash),
-				ContentType: stringPtr("application/zstd"),
+				ContentType: stringPtr("application/vnd.massive.source-tar"),
 			},
 		})
 	}

@@ -39,7 +39,7 @@
           "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         }
       ],
-      "artifact": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst"
+      "artifact": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar"
     }
   },
   "environments": {

@@ -2,7 +2,7 @@ import {
   CreateBucketCommand,
   HeadBucketCommand,
   S3Client,
-} from "npm:@aws-sdk/client-s3";
+} from "npm:@aws-sdk/client-s3@^3.700.0";
 import { assertEquals } from "jsr:@std/assert";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
 } from "../src/runner/descriptor.ts";
 import {
   type JsonValue,
+  sha256RefBytes,
   sha256RefText,
   stableStringify,
 } from "../src/stable.ts";
@@ -22,7 +23,7 @@ const accessKey = "massive-runner-test-access";
 const secretKey = "massive-runner-test-secret";
 const dockerAccessKeyEnv = "MASSIVE_RUNNER_S3_ACCESS_KEY";
 const dockerSecretAccessKeyEnv = "MASSIVE_RUNNER_S3_SECRET_KEY";
-const sourceFetchContentType = "application/vnd.massive.source-directory+json";
+const sourceArchiveContentType = "application/vnd.massive.source-tar";
 const valueSchema = {
   type: "object",
   additionalProperties: false,
@@ -53,10 +54,10 @@ Deno.test("S3 invocation descriptors carry transport but no credentials", async 
         "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       sourceArchive: {
         key:
-          "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst",
+          "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar",
         hash:
           "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-        contentType: sourceFetchContentType,
+        contentType: sourceArchiveContentType,
       },
     },
     environmentRef:
@@ -124,8 +125,7 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
       },
     });
 
-    const sourceRoot = fileURLToPath(new URL("./fixtures", import.meta.url));
-    const sourcePointer = stableStringify({ sourceFetch: sourceRoot });
+    const sourceArchive = await sourceArchiveForFixture();
     const schemaText = stableStringify(valueSchema);
     const inputText = stableStringify({ value: 21 });
     const descriptor = await parseStepInvocationDescriptor({
@@ -150,9 +150,9 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
           "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         sourceArchive: {
           key:
-            "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst",
-          hash: sha256RefText(sourcePointer),
-          contentType: sourceFetchContentType,
+            "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar",
+          hash: sha256RefBytes(sourceArchive),
+          contentType: sourceArchiveContentType,
         },
       },
       environmentRef:
@@ -185,7 +185,7 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
 
     await store.put(
       Key.parse(descriptor.sourcePackage.sourceArchive.key),
-      sourcePointer,
+      sourceArchive,
     );
     await store.put(Key.parse(schemaKey(descriptor.input.schema)), schemaText);
     await store.put(Key.parse(descriptor.input.artifact.key), inputText);
@@ -197,8 +197,8 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
         "run",
         "--config",
         "deno.json",
-        `--allow-read=${root},${sourceRoot}`,
-        `--allow-write=${root}`,
+        `--allow-read=${root}`,
+        `--allow-write=${root},${repoRoot()}`,
         `--allow-net=${minio.host}`,
         "--allow-env",
         "packages/sdk/src/runner/main.ts",
@@ -396,4 +396,29 @@ function restoreEnvironment(name: string, value: string | undefined): void {
   } else {
     Deno.env.set(name, value);
   }
+}
+
+async function sourceArchiveForFixture(): Promise<Uint8Array> {
+  return ustar([{ path: "runner-workflow.ts", body: await Deno.readFile(new URL("./fixtures/runner-workflow.ts", import.meta.url)) }]);
+}
+
+function ustar(entries: readonly { readonly path: string; readonly body: Uint8Array }[]): Uint8Array {
+  const blocks: Uint8Array[] = [];
+  for (const entry of entries) {
+    const header = new Uint8Array(512);
+    header.set(new TextEncoder().encode(entry.path));
+    writeOctal(header, 100, 8, 0o644); writeOctal(header, 108, 8, 0); writeOctal(header, 116, 8, 0);
+    writeOctal(header, 124, 12, entry.body.length); writeOctal(header, 136, 12, 0); header.fill(32, 148, 156); header[156] = 48;
+    header.set(new TextEncoder().encode("ustar\0"), 257); header.set(new TextEncoder().encode("00"), 263);
+    let checksum = 0; for (const byte of header) checksum += byte; writeOctal(header, 148, 8, checksum);
+    blocks.push(header, entry.body, new Uint8Array((512 - entry.body.length % 512) % 512));
+  }
+  blocks.push(new Uint8Array(1024));
+  const result = new Uint8Array(blocks.reduce((size, block) => size + block.length, 0));
+  let offset = 0; for (const block of blocks) { result.set(block, offset); offset += block.length; }
+  return result;
+}
+
+function writeOctal(target: Uint8Array, offset: number, length: number, value: number): void {
+  target.set(new TextEncoder().encode(value.toString(8).padStart(length - 2, "0") + "\0 "), offset);
 }

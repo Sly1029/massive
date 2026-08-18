@@ -17,9 +17,9 @@
     "language": "typescript",
     "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "sourceArchive": {
-      "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar.zst",
+      "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar",
       "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "contentType": "application/zstd"
+      "contentType": "application/vnd.massive.source-tar"
     }
   },
   "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",

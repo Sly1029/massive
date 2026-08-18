@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -48,8 +50,8 @@ type sourcePackageArtifact struct {
 	PackageHash string
 	Key         string
 	// ArchiveHash is the digest of the actual artifact body written to the
-	// datastore (the source-fetch pointer JSON), which is distinct from the
-	// plan's PackageHash under the v0 directory-pointer artifact shape.
+	// datastore (the portable source archive), which is distinct from the
+	// plan's semantic PackageHash.
 	ArchiveHash string
 	ContentType string
 }
@@ -274,27 +276,23 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 			return nil, fmt.Errorf("resolve source package root for %q: %w", packageID, err)
 		}
 
-		// Materialize a content-addressed, read-only snapshot keyed by the plan
-		// package hash. The snapshot is created once per (store, package hash):
-		// its path and therefore the pointer body are deterministic, so
-		// concurrent or repeated runs converge on identical artifact bytes
-		// instead of overwriting each other's descriptors.
+		// Snapshot verified source locally before packaging it. The snapshot is an
+		// implementation detail: runners receive only the portable archive.
 		snapshotDir := sourceSnapshotDir(config.DatastoreRoot, planPackageHash)
 		if err := ensureSourceSnapshot(config.DatastoreRoot, sourceRoot, snapshotDir, manifest.Files); err != nil {
 			return nil, err
 		}
 
-		pointer, err := marshalCanonicalJSON(sourceFetchPointer{SourceFetch: snapshotDir})
+		archive, err := deterministicSourceArchive(snapshotDir, manifest.Files)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("package source archive for %q: %w", packageID, err)
 		}
-		bodyHash := canonical.DigestBytes(pointer)
+		bodyHash := canonical.DigestBytes(archive)
 		// The archive key is templated on the plan's package hash per
-		// datastore-layout.md, not on the pointer body digest. Writing is
-		// if-absent: the deterministic body makes a pre-existing object from a
-		// prior run byte-identical, so an already-exists result is success.
+		// datastore-layout.md. Writing is if-absent because deterministic bytes
+		// make repeated materialization converge.
 		key := sourcePackageKey(planPackageHash)
-		if _, err := store.Put(ctx, datastore.MustKey(key), pointer, datastore.PutOptions{ContentType: SourceDirectoryContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
+		if _, err := store.Put(ctx, datastore.MustKey(key), archive, datastore.PutOptions{ContentType: SourceArchiveContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
 			return nil, fmt.Errorf("write source package artifact for %q: %w", packageID, err)
 		}
 
@@ -304,14 +302,64 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 			PackageHash: planPackageHash,
 			Key:         key,
 			ArchiveHash: bodyHash,
-			ContentType: SourceDirectoryContentType,
+			ContentType: SourceArchiveContentType,
 		}
 	}
 	return packages, nil
 }
 
-type sourceFetchPointer struct {
-	SourceFetch string `json:"sourceFetch"`
+// deterministicSourceArchive emits a USTAR stream with fixed metadata and a
+// lexicographic file order. The source manifest has already authenticated each
+// snapshot file; this function rejects any non-regular or unsafe entry before
+// emitting it so a runner can hydrate the artifact without host paths.
+func deterministicSourceArchive(snapshotDir string, files []SourcePackageFile) ([]byte, error) {
+	ordered := append([]SourcePackageFile(nil), files...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
+	var body bytes.Buffer
+	writer := tar.NewWriter(&body)
+	for _, file := range ordered {
+		if !safeArchivePath(file.Path) {
+			return nil, fmt.Errorf("unsafe source archive path %q", file.Path)
+		}
+		path := filepath.Join(snapshotDir, filepath.FromSlash(file.Path))
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, fmt.Errorf("stat source snapshot file %q: %w", file.Path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("source snapshot file %q is not regular", file.Path)
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read source snapshot file %q: %w", file.Path, err)
+		}
+		if canonical.DigestBytes(content) != file.Hash {
+			return nil, fmt.Errorf("source snapshot file %q failed integrity verification", file.Path)
+		}
+		header := &tar.Header{Name: file.Path, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}
+		if err := writer.WriteHeader(header); err != nil {
+			return nil, fmt.Errorf("write source archive header for %q: %w", file.Path, err)
+		}
+		if _, err := writer.Write(content); err != nil {
+			return nil, fmt.Errorf("write source archive file %q: %w", file.Path, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close source archive: %w", err)
+	}
+	return body.Bytes(), nil
+}
+
+func safeArchivePath(path string) bool {
+	if path == "" || strings.HasPrefix(path, "/") || strings.Contains(path, "\\") {
+		return false
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // sourceSnapshotDir is the content-addressed, immutable snapshot location for a
@@ -915,7 +963,7 @@ func runResultKey(projectKey string, runID string) datastore.Key {
 }
 
 func sourcePackageKey(hash string) string {
-	return "packages/" + strings.Replace(hash, "sha256:", "sha256-", 1) + "/source.tar.zst"
+	return "packages/" + strings.Replace(hash, "sha256:", "sha256-", 1) + "/source.tar"
 }
 
 func blobKeyForHash(hash string) (datastore.Key, error) {

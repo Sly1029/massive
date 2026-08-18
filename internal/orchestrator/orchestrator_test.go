@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -53,11 +54,22 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 		t.Fatalf("descriptor packageHash = %s, want plan packageHash %s", descriptor.SourcePackage.PackageHash, planPackageHash)
 	}
 	archiveBody := getObject(t, storeRoot, descriptor.SourcePackage.SourceArchive.Key)
+	if descriptor.SourcePackage.SourceArchive.ContentType != SourceArchiveContentType || !strings.HasSuffix(descriptor.SourcePackage.SourceArchive.Key, "/source.tar") {
+		t.Fatalf("source archive reference = %#v, want portable source.tar", descriptor.SourcePackage.SourceArchive)
+	}
+	if bytes.Contains(archiveBody.Body, []byte(storeRoot)) {
+		t.Fatal("portable source archive contains local datastore path")
+	}
+	archive := tar.NewReader(bytes.NewReader(archiveBody.Body))
+	header, err := archive.Next()
+	if err != nil || header.Name != "workflow.ts" || header.Typeflag != tar.TypeReg {
+		t.Fatalf("source archive first entry = %#v, %v; want regular workflow.ts", header, err)
+	}
 	if wantHash := canonical.DigestBytes(archiveBody.Body); descriptor.SourcePackage.SourceArchive.Hash != wantHash {
 		t.Fatalf("descriptor sourceArchive.hash = %s, want stored body digest %s", descriptor.SourcePackage.SourceArchive.Hash, wantHash)
 	}
 	if descriptor.SourcePackage.SourceArchive.Hash == descriptor.SourcePackage.PackageHash {
-		t.Fatal("sourceArchive.hash must differ from packageHash under the v0 pointer artifact shape")
+		t.Fatal("sourceArchive.hash must differ from packageHash under the portable archive shape")
 	}
 
 	validateDescriptorSchema(t, descriptor)
@@ -439,7 +451,7 @@ func normalizeDescriptorJSON(t *testing.T, data []byte, runID string, storeRoot 
 	normalized := string(data)
 	normalized = strings.ReplaceAll(normalized, runID, "run-linear-chain-0001")
 	normalized = strings.ReplaceAll(normalized, storeRoot, "/tmp/massive-conformance-store")
-	normalized = strings.ReplaceAll(normalized, SourceDirectoryContentType, "application/zstd")
+	normalized = strings.ReplaceAll(normalized, SourceArchiveContentType, "application/vnd.massive.source-tar")
 	normalized = descriptorDigestRefPattern.ReplaceAllString(normalized, "sha256:0000000000000000000000000000000000000000000000000000000000000000")
 	normalized = descriptorDigestPathPattern.ReplaceAllString(normalized, "sha256-0000000000000000000000000000000000000000000000000000000000000000")
 	canonicalJSON, err := canonical.CanonicalizeJSON([]byte(normalized))

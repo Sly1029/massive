@@ -222,7 +222,7 @@ export async function emitWorkflowSpec<Input, Output>(
         files: source.files,
         artifact: `packages/${
           hashPathSegment(source.sourcePackageHash)
-        }/source.tar.zst`,
+        }/source.tar`,
       },
     },
     environments: sortedRecord(environments),

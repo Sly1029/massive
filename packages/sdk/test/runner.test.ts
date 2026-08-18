@@ -23,12 +23,12 @@ import {
 } from "../src/runner/outcomes.ts";
 import {
   type JsonValue,
+  sha256RefBytes,
   sha256RefText,
   stableStringify,
 } from "../src/stable.ts";
 
-const SOURCE_FETCH_CONTENT_TYPE =
-  "application/vnd.massive.source-directory+json";
+const SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar";
 const PLAN_PACKAGE_HASH =
   "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const VALUE_SCHEMA = {
@@ -156,8 +156,26 @@ Deno.test("runner reports step-execution failures with exit 66", async () => {
   );
 });
 
+Deno.test("runner rejects verified unsafe, corrupted, and trailing source archives", async () => {
+  const unsafe = ustar([{ path: "../escape.ts", body: new TextEncoder().encode("export const double = () => ({ value: 42 });") }]);
+  const corrupted = await sourceArchiveForFixture();
+  corrupted[0] ^= 1;
+  const trailing = await sourceArchiveForFixture();
+  trailing[trailing.length - 1] = 1;
+  for (const archive of [unsafe, corrupted, trailing]) {
+    await withRunnerFixture(
+      { input: { value: 21 }, stepExport: "double", sourceArchive: archive },
+      async ({ descriptor }) => {
+        const outcome = await executeStep(descriptor);
+        assertEquals(outcome.kind, "descriptor-resolution-failure");
+        assertEquals(outcome.exitCode, RUNNER_EXIT_CODES.descriptorResolutionFailure);
+      },
+    );
+  }
+});
+
 async function withRunnerFixture(
-  options: { readonly input: JsonValue; readonly stepExport: string },
+  options: { readonly input: JsonValue; readonly stepExport: string; readonly sourceArchive?: Uint8Array },
   test: (fixture: {
     readonly descriptor: StepInvocationDescriptor;
     readonly descriptorPath: string;
@@ -167,9 +185,8 @@ async function withRunnerFixture(
   const root = await Deno.makeTempDir({ prefix: "massive-runner-" });
   try {
     const store = datastore.local({ path: join(root, "store") });
-    const sourceRoot = fileURLToPath(new URL("./fixtures", import.meta.url));
-    const sourcePointer = stableStringify({ sourceFetch: sourceRoot });
-    const sourceHash = sha256RefText(sourcePointer);
+    const sourceArchive = options.sourceArchive ?? await sourceArchiveForFixture();
+    const sourceHash = sha256RefBytes(sourceArchive);
     const inputText = stableStringify(options.input);
     const descriptor = await parseStepInvocationDescriptor({
       kind: "StepInvocationDescriptor",
@@ -189,14 +206,13 @@ async function withRunnerFixture(
       sourcePackage: {
         packageId: "ts-main",
         language: "typescript",
-        // packageHash (the plan's content-addressed package hash) is distinct
-        // from sourceArchive.hash (the digest of the pointer artifact body);
-        // the runner must not require them to be equal.
+        // packageHash is the plan's semantic package identity and sourceArchive
+        // hashes its portable tar transport body.
         packageHash: PLAN_PACKAGE_HASH,
         sourceArchive: {
-          key: `packages/${hashPathSegment(PLAN_PACKAGE_HASH)}/source.tar.zst`,
+          key: `packages/${hashPathSegment(PLAN_PACKAGE_HASH)}/source.tar`,
           hash: sourceHash,
-          contentType: SOURCE_FETCH_CONTENT_TYPE,
+          contentType: SOURCE_ARCHIVE_CONTENT_TYPE,
         },
       },
       environmentRef:
@@ -224,7 +240,7 @@ async function withRunnerFixture(
       },
     });
 
-    await store.put(descriptor.sourcePackage.sourceArchive.key, sourcePointer);
+    await store.put(descriptor.sourcePackage.sourceArchive.key, sourceArchive);
     await store.put(schemaKey(schemaRef()), stableStringify(VALUE_SCHEMA));
     await store.put(descriptor.input.artifact.key, inputText);
 
@@ -277,6 +293,45 @@ function schemaRef(): string {
 
 function schemaKey(ref: string): string {
   return `blobs/sha256/${ref.slice("sha256:".length)}`;
+}
+
+async function sourceArchiveForFixture(): Promise<Uint8Array> {
+  return ustar([{ path: "runner-workflow.ts", body: await Deno.readFile(new URL("./fixtures/runner-workflow.ts", import.meta.url)) }]);
+}
+
+function ustar(entries: readonly { readonly path: string; readonly body: Uint8Array }[]): Uint8Array {
+  const blocks: Uint8Array[] = [];
+  for (const entry of entries) {
+    const header = new Uint8Array(512);
+    header.set(new TextEncoder().encode(entry.path), 0);
+    writeOctal(header, 100, 8, 0o644);
+    writeOctal(header, 108, 8, 0);
+    writeOctal(header, 116, 8, 0);
+    writeOctal(header, 124, 12, entry.body.length);
+    writeOctal(header, 136, 12, 0);
+    header.fill(32, 148, 156);
+    header[156] = 48;
+    header.set(new TextEncoder().encode("ustar\0"), 257);
+    header.set(new TextEncoder().encode("00"), 263);
+    let checksum = 0;
+    for (const byte of header) checksum += byte;
+    writeOctal(header, 148, 8, checksum);
+    blocks.push(header, entry.body, new Uint8Array((512 - (entry.body.length % 512)) % 512));
+  }
+  blocks.push(new Uint8Array(1024));
+  const total = blocks.reduce((size, block) => size + block.length, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const block of blocks) {
+    result.set(block, offset);
+    offset += block.length;
+  }
+  return result;
+}
+
+function writeOctal(target: Uint8Array, offset: number, length: number, value: number): void {
+  const text = value.toString(8).padStart(length - 2, "0") + "\0 ";
+  target.set(new TextEncoder().encode(text), offset);
 }
 
 function hashPathSegment(ref: string): string {

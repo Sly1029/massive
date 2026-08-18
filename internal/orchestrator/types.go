@@ -14,7 +14,9 @@ const (
 	StatusFailed    = "failed"
 )
 
-const SourceDirectoryContentType = "application/vnd.massive.source-directory+json"
+// SourceArchiveContentType identifies the portable, deterministic USTAR source
+// package produced by the orchestrator. It contains regular files only.
+const SourceArchiveContentType = "application/vnd.massive.source-tar"
 
 type RunConfig struct {
 	Plan              *planpb.WorkflowPlan

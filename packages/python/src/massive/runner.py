@@ -6,11 +6,16 @@ import importlib
 import inspect
 import json
 import sys
+import tarfile
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol, cast
 
+import boto3
+from botocore.config import Config
 from jsonschema import Draft202012Validator
 from pydantic import TypeAdapter
 
@@ -18,7 +23,9 @@ from .builder import StepDefinition
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InvocationContext, StepContext
 
-_SOURCE_DIRECTORY_CONTENT_TYPE = "application/vnd.massive.source-directory+json"
+_SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
+_MAX_SOURCE_FILES = 1024
+_MAX_SOURCE_BYTES = 50 * 1024 * 1024
 _DESCRIPTOR_EXIT = 64
 _SCHEMA_EXIT = 65
 _STEP_EXIT = 66
@@ -41,6 +48,54 @@ class SchemaError(Exception):
 
 class StepError(Exception):
     pass
+
+
+class Datastore(Protocol):
+    def read(self, key: str) -> bytes: ...
+
+    def write(self, key: str, body: bytes) -> None: ...
+
+
+class LocalDatastore:
+    def __init__(self, root: Path) -> None:
+        self.root = root.resolve()
+
+    def read(self, key: str) -> bytes:
+        return _path(self.root, key).read_bytes()
+
+    def write(self, key: str, body: bytes) -> None:
+        target = _path(self.root, key)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".tmp-{target.name}")
+        temporary.write_bytes(body)
+        temporary.replace(target)
+        metadata = self.root / ".massive-datastore-metadata" / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
+        metadata.parent.mkdir(parents=True, exist_ok=True)
+        metadata.write_text('{"contentType":"application/json"}')
+
+
+class S3Datastore:
+    def __init__(self, descriptor: Descriptor) -> None:
+        kwargs: dict[str, object] = {"region_name": _string(descriptor, "region")}
+        if isinstance(descriptor.get("endpoint"), str):
+            kwargs["endpoint_url"] = descriptor["endpoint"]
+        if descriptor.get("forcePathStyle") is True:
+            kwargs["config"] = Config(s3={"addressing_style": "path"})
+        self.bucket = _string(descriptor, "bucket")
+        prefix = descriptor.get("prefix", "")
+        if not isinstance(prefix, str):
+            raise DescriptorError("S3 datastore prefix must be a string")
+        self.prefix = prefix.strip("/")
+        self.client = boto3.client("s3", **kwargs)
+
+    def read(self, key: str) -> bytes:
+        return self.client.get_object(Bucket=self.bucket, Key=self._key(key))["Body"].read()
+
+    def write(self, key: str, body: bytes) -> None:
+        self.client.put_object(Bucket=self.bucket, Key=self._key(key), Body=body, ContentType="application/json")
+
+    def _key(self, key: str) -> str:
+        return key if self.prefix == "" else f"{self.prefix}/{key}"
 
 
 def run_descriptor_path(path: Path) -> int:
@@ -75,9 +130,13 @@ def _load_descriptor(path: Path) -> Descriptor:
     _require_mapping(typed_descriptor, "input")
     _require_mapping(typed_descriptor, "output")
     datastore = _require_mapping(typed_descriptor, "datastore")
-    _require(datastore, "kind", "local")
-    if not isinstance(datastore.get("path"), str) or not datastore["path"]:
-        raise DescriptorError("local datastore requires a path")
+    if datastore.get("kind") == "local":
+        _string(datastore, "path")
+    elif datastore.get("kind") == "s3":
+        _string(datastore, "bucket")
+        _string(datastore, "region")
+    else:
+        raise DescriptorError("datastore kind must be local or s3")
     return typed_descriptor
 
 
@@ -88,10 +147,21 @@ def _execute(descriptor: Descriptor) -> None:
         raise DescriptorError("Python runner requires Python symbol and source package")
     if symbol.get("packageId") != source_package.get("packageId"):
         raise DescriptorError("symbol package does not match source package")
-    datastore = Path(_string(_require_mapping(descriptor, "datastore"), "path")).resolve()
+    datastore = _datastore(_require_mapping(descriptor, "datastore"))
     input_value, _input_schema = _read_input(descriptor, datastore)
-    source_root = _source_root(source_package, datastore)
-    function, input_adapter, output_adapter = _resolve_step(symbol, source_root)
+    with _source_root(source_package, datastore) as source_root:
+        function, input_adapter, output_adapter = _resolve_step(symbol, source_root)
+        _execute_source(descriptor, datastore, function, input_adapter, output_adapter, input_value)
+
+
+def _execute_source(
+    descriptor: Descriptor,
+    datastore: Datastore,
+    function: StepFunction,
+    input_adapter: TypeAdapter[object] | None,
+    output_adapter: TypeAdapter[object] | None,
+    input_value: object,
+) -> None:
     if input_adapter is not None:
         try:
             input_value = input_adapter.validate_python(input_value)
@@ -125,14 +195,14 @@ def _execute(descriptor: Descriptor) -> None:
     except (TypeError, ValueError) as error:
         raise SchemaError(f"output is not canonical JSON: {error}") from error
     output_artifact = _require_mapping(output_descriptor, "artifact")
-    _write(datastore, _string(output_artifact, "key"), output_text)
+    datastore.write(_string(output_artifact, "key"), output_text.encode())
 
 
 async def _await_output(value: Awaitable[object]) -> object:
     return await value
 
 
-def _read_input(descriptor: Descriptor, datastore: Path) -> tuple[JsonValue, dict[str, object]]:
+def _read_input(descriptor: Descriptor, datastore: Datastore) -> tuple[JsonValue, dict[str, object]]:
     input_descriptor = _require_mapping(descriptor, "input")
     artifact = _require_mapping(input_descriptor, "artifact")
     expected_hash = _string(artifact, "hash")
@@ -150,7 +220,7 @@ def _read_input(descriptor: Descriptor, datastore: Path) -> tuple[JsonValue, dic
     return value, schema
 
 
-def _schema(datastore: Path, reference: str) -> dict[str, object]:
+def _schema(datastore: Datastore, reference: str) -> dict[str, object]:
     if not reference.startswith("sha256:"):
         raise SchemaError("schema reference is not a SHA-256 reference")
     text = _read(datastore, f"blobs/sha256/{reference.removeprefix('sha256:')}")
@@ -174,23 +244,37 @@ def _validate(schema: Mapping[str, object], value: object, role: str) -> None:
         raise SchemaError(f"{role} does not satisfy its JSON Schema: {error}") from error
 
 
-def _source_root(source_package: Descriptor, datastore: Path) -> Path:
+@contextmanager
+def _source_root(source_package: Descriptor, datastore: Datastore) -> Generator[Path, None, None]:
     archive = _require_mapping(source_package, "sourceArchive")
-    if archive.get("contentType") != _SOURCE_DIRECTORY_CONTENT_TYPE:
-        raise DescriptorError("Python runner currently requires a local source-directory package")
-    text = _read(datastore, _string(archive, "key"))
-    if sha256_ref(text) != _string(archive, "hash"):
+    if archive.get("contentType") != _SOURCE_ARCHIVE_CONTENT_TYPE:
+        raise DescriptorError("Python runner requires application/vnd.massive.source-tar")
+    body = datastore.read(_string(archive, "key"))
+    if _sha256_ref_bytes(body) != _string(archive, "hash"):
         raise DescriptorError("source archive hash mismatch")
-    try:
-        pointer: object = json.loads(text)
-    except json.JSONDecodeError as error:
-        raise DescriptorError(f"source pointer is not JSON: {error}") from error
-    if not isinstance(pointer, dict):
-        raise DescriptorError("source pointer must contain a sourceFetch path")
-    root = Path(_string(cast(Descriptor, pointer), "sourceFetch")).resolve()
-    if not root.is_dir():
-        raise DescriptorError("source package root does not exist")
-    return root
+    with TemporaryDirectory(prefix="massive-source-") as temporary:
+        root = Path(temporary)
+        try:
+            with tarfile.open(fileobj=BytesIO(body), mode="r:") as archive_file:
+                names: set[str] = set()
+                total_size = 0
+                for member in archive_file:
+                    if not member.isfile() or not _safe_archive_path(member.name) or member.name in names:
+                        raise DescriptorError(f"source archive contains unsafe entry {member.name!r}")
+                    total_size += member.size
+                    if len(names) >= _MAX_SOURCE_FILES or total_size > _MAX_SOURCE_BYTES:
+                        raise DescriptorError("source archive exceeds source package limits")
+                    source = archive_file.extractfile(member)
+                    if source is None:
+                        raise DescriptorError(f"source archive entry {member.name!r} cannot be read")
+                    target = root / member.name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(source.read())
+                    target.chmod(0o444)
+                    names.add(member.name)
+        except (tarfile.TarError, OSError) as error:
+            raise DescriptorError(f"source archive is invalid: {error}") from error
+        yield root
 
 
 def _resolve_step(
@@ -230,21 +314,26 @@ def _source_import_path(root: Path) -> Generator[None, None, None]:
         sys.path.remove(root_text)
 
 
-def _read(root: Path, key: str) -> str:
-    return _path(root, key).read_text()
+def _read(store: Datastore, key: str) -> str:
+    return store.read(key).decode()
 
 
-def _write(root: Path, key: str, body: str) -> None:
-    target = _path(root, key)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".tmp-{target.name}")
-    temporary.write_text(body)
-    temporary.replace(target)
-    metadata = (
-        root / ".massive-datastore-metadata" / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
+def _datastore(descriptor: Descriptor) -> Datastore:
+    if descriptor.get("kind") == "local":
+        return LocalDatastore(Path(_string(descriptor, "path")))
+    if descriptor.get("kind") == "s3":
+        return S3Datastore(descriptor)
+    raise DescriptorError("datastore kind must be local or s3")
+
+
+def _sha256_ref_bytes(body: bytes) -> str:
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+
+def _safe_archive_path(path: str) -> bool:
+    return bool(path) and not path.startswith("/") and "\\" not in path and all(
+        part not in {"", ".", ".."} for part in path.split("/")
     )
-    metadata.parent.mkdir(parents=True, exist_ok=True)
-    metadata.write_text('{"contentType":"application/json"}')
 
 
 def _path(root: Path, key: str) -> Path:

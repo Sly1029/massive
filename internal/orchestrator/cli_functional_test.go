@@ -468,7 +468,7 @@ func patchSpecSource(t *testing.T, specData []byte, sourceDir string) []byte {
 			t.Fatal(err)
 		}
 		pkg["packageHash"] = packageHash
-		pkg["artifact"] = "packages/" + strings.Replace(packageHash, "sha256:", "sha256-", 1) + "/source.tar.zst"
+		pkg["artifact"] = "packages/" + strings.Replace(packageHash, "sha256:", "sha256-", 1) + "/source.tar"
 	}
 	patched, err := json.Marshal(doc)
 	if err != nil {
