@@ -161,6 +161,9 @@ func validateCanonicalInteger(number json.Number) error {
 	if !canonicalIntegerPattern.MatchString(text) {
 		return fmt.Errorf("non-canonical number %q: v0 canonical field trees restrict numbers to canonical safe integers", text)
 	}
+	if text == "-0" {
+		return fmt.Errorf("non-canonical number %q: v0 canonical field trees require zero to use 0", text)
+	}
 
 	parsed, err := strconv.ParseInt(text, 10, 64)
 	if err != nil {

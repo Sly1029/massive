@@ -1,11 +1,65 @@
 package canonical
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCanonicalJSONV0Corpus(t *testing.T) {
+	root := filepath.Join("..", "..", "conformance", "fixtures", "canonical-json-v0")
+
+	for _, kind := range []string{"valid", "invalid"} {
+		entries, err := os.ReadDir(filepath.Join(root, kind))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) == 0 {
+			t.Fatalf("%s corpus is empty", kind)
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				t.Fatalf("unexpected nested corpus directory %s", entry.Name())
+			}
+			t.Run(kind+"/"+entry.Name(), func(t *testing.T) {
+				payload, err := os.ReadFile(filepath.Join(root, kind, entry.Name()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload = trimFixtureNewline(payload)
+
+				canonicalPayload, err := CanonicalizeJSON(payload)
+				if kind == "valid" {
+					if err != nil {
+						t.Fatalf("canonicalize valid corpus payload: %v", err)
+					}
+					if !bytes.Equal(canonicalPayload, payload) {
+						t.Fatalf("valid corpus payload changed\nactual:   %q\nexpected: %q", canonicalPayload, payload)
+					}
+					return
+				}
+
+				// Artifact publication accepts a body only when this same
+				// canonicalizer reproduces its bytes exactly. An invalid fixture
+				// may fail canonicalization outright, or normalize to different
+				// bytes (for example, whitespace and lone-surrogate escapes).
+				if err == nil && bytes.Equal(canonicalPayload, payload) {
+					t.Fatalf("invalid corpus payload was accepted by the canonical byte boundary: %q", payload)
+				}
+			})
+		}
+	}
+}
+
+func trimFixtureNewline(payload []byte) []byte {
+	if bytes.HasSuffix(payload, []byte("\r\n")) {
+		return payload[:len(payload)-2]
+	}
+	return bytes.TrimSuffix(payload, []byte("\n"))
+}
 
 func TestDigestJSONGoldenVector(t *testing.T) {
 	input, err := os.ReadFile(filepath.Join("..", "..", "conformance", "fixtures", "hashing", "canonical-input.json"))
