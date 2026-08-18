@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertNotEquals,
   assertRejects,
+  assertThrows,
 } from "jsr:@std/assert";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,12 +12,28 @@ import {
   datastore,
   DatastoreKeyError,
   emitWorkflowSpec,
+  env,
   GraphValidationError,
   SchemaPortabilityError,
   workflow,
   type WorkflowSpec,
 } from "../src/index.ts";
 import { batchMergeGraphCase, graphCases } from "./graph-fixtures.ts";
+
+Deno.test("container recipes reject mutable images before emission", () => {
+  assertThrows(
+    () => env.container({ image: "registry.example/runtime:latest" }),
+    Error,
+    "immutable sha256 digest",
+  );
+  assertEquals(
+    env.container({
+      image:
+        "registry.example/runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    }).platform,
+    "linux/amd64",
+  );
+});
 
 Deno.test("linear workflow builds runtime registry and emits graph spec", async () => {
   const g = workflow({

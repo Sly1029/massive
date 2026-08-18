@@ -1,5 +1,8 @@
 import { compareCodeUnits } from "./stable.ts";
 
+const immutableImage = /^[^@\s]+@sha256:[0-9a-f]{64}$/;
+const containerPlatform = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
+
 export type PackageManager = "npm" | "pnpm" | "yarn";
 
 export type EnvironmentSpec = ContainerEnvironmentSpec | NodeEnvironmentSpec;
@@ -55,10 +58,25 @@ export const env = {
   container(
     spec: Omit<ContainerEnvironmentSpec, "kind">,
   ): ContainerEnvironmentSpec {
+    const platform = spec.platform ?? "linux/amd64";
+    if (!immutableImage.test(spec.image)) {
+      throw new Error(
+        "env.container() image must be an immutable sha256 digest reference",
+      );
+    }
+    if (!containerPlatform.test(platform)) {
+      throw new Error("env.container() platform must be an os/architecture pair");
+    }
+    if (spec.command?.some((value) => value.length === 0)) {
+      throw new Error("env.container() command values must be non-empty");
+    }
+    if (spec.workingDirectory === "") {
+      throw new Error("env.container() workingDirectory must not be empty");
+    }
     return {
       kind: "container",
       image: spec.image,
-      platform: spec.platform ?? "linux/amd64",
+      platform,
       ...(spec.command === undefined ? {} : { command: [...spec.command] }),
       ...(spec.workingDirectory === undefined
         ? {}
