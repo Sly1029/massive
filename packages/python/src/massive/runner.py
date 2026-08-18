@@ -272,7 +272,7 @@ def _source_root(
     archive = source_package["sourceArchive"]
     if archive["contentType"] != _SOURCE_ARCHIVE_CONTENT_TYPE:
         raise DescriptorError("Python runner requires application/vnd.massive.source-tar")
-    body = datastore.read(archive["key"])
+    body = datastore.get(archive["key"]).body
     if _sha256_ref_bytes(body) != archive["hash"]:
         raise DescriptorError("source archive hash mismatch")
     with TemporaryDirectory(prefix="massive-source-") as temporary:
@@ -346,7 +346,7 @@ def _source_import_path(root: Path) -> Generator[None, None, None]:
 
 
 def _read(store: Datastore, key: str) -> str:
-    return store.read(key).decode()
+    return store.get(key).body.decode()
 
 
 def _datastore(descriptor: DatastoreDescriptor) -> Datastore:

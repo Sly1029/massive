@@ -62,10 +62,6 @@ class Datastore(Protocol):
 
     def get(self, key: str) -> DatastoreObject: ...
 
-    def read(self, key: str) -> bytes: ...
-
-    def write(self, key: str, body: bytes) -> None: ...
-
 
 class LocalDatastore:
     def __init__(self, root: Path) -> None:
@@ -76,6 +72,8 @@ class LocalDatastore:
     ) -> ObjectInfo:
         target = self.path_for_key(key)
         target.parent.mkdir(parents=True, exist_ok=True)
+        if if_absent:
+            self._ensure_immutable_metadata(key, content_type)
         temporary = target.with_name(f".tmp-{target.name}-{uuid4()}")
         installed = False
         try:
@@ -94,7 +92,8 @@ class LocalDatastore:
         finally:
             if not installed:
                 temporary.unlink(missing_ok=True)
-        self._write_content_type(key, content_type)
+        if not if_absent:
+            self._write_content_type(key, content_type)
         return ObjectInfo(key=key, size=len(body), content_type=content_type)
 
     def get(self, key: str) -> DatastoreObject:
@@ -106,12 +105,6 @@ class LocalDatastore:
             info=ObjectInfo(key=key, size=len(body), content_type=self._read_content_type(key)),
             body=body,
         )
-
-    def read(self, key: str) -> bytes:
-        return self.get(key).body
-
-    def write(self, key: str, body: bytes) -> None:
-        self.put(key, body, content_type="application/json")
 
     def path_for_key(self, key: str) -> Path:
         _validate_key(key)
@@ -133,6 +126,28 @@ class LocalDatastore:
             file.write(json.dumps({"contentType": content_type}, separators=(",", ":")))
             temporary = Path(file.name)
         temporary.replace(metadata)
+
+    # An IfAbsent object publishes its immutable metadata before its body. That
+    # prevents a concurrent reader from observing an installed body with the
+    # default content type. A metadata-only crash is recoverable: an identical
+    # retry installs the absent body, while a differing content type cannot
+    # change the record established by the first publisher.
+    def _ensure_immutable_metadata(self, key: str, content_type: str) -> None:
+        metadata = self._metadata_path(key)
+        metadata.parent.mkdir(parents=True, exist_ok=True)
+        expected = json.dumps({"contentType": content_type}, separators=(",", ":")).encode()
+        temporary = metadata.with_name(f".tmp-{metadata.name}-{uuid4()}")
+        try:
+            temporary.write_bytes(expected)
+            try:
+                os.link(temporary, metadata)
+                return
+            except FileExistsError:
+                pass
+            if metadata.read_bytes() != expected:
+                raise DatastoreConflictError(f"datastore object already exists: {key}")
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _read_content_type(self, key: str) -> str:
         try:
@@ -213,12 +228,6 @@ class S3Datastore:
             ),
             body=body,
         )
-
-    def read(self, key: str) -> bytes:
-        return self.get(key).body
-
-    def write(self, key: str, body: bytes) -> None:
-        self.put(key, body, content_type="application/json")
 
     def _key(self, key: str) -> str:
         return key if self.prefix == "" else f"{self.prefix}/{key}"

@@ -19,6 +19,8 @@ from massive.artifact import ArtifactRuntime, Destination, Producer
 from massive.canonical import JsonValue
 from massive.datastore import LocalDatastore
 
+PROJECT_KEY = "sha256-" + "b" * 64
+
 
 @pytest.mark.parametrize(
     ("export", "expected"), [("double", {"value": 42}), ("increment", {"value": 22})]
@@ -91,7 +93,7 @@ def test_runner_reports_an_invalid_immutable_output_slot_as_schema_failure(
 ) -> None:
     descriptor_path, descriptor, _store = _descriptor(tmp_path, export="double")
     descriptor["output"]["manifestKey"] = (
-        "projects/project/runs/python-runner-test/steps/other/1/output-manifest.json"
+        f"projects/{PROJECT_KEY}/runs/python-runner-test/steps/other/1/output-manifest.json"
     )
     descriptor_path.write_text(canonical_json(cast(JsonValue, descriptor)))
 
@@ -177,7 +179,7 @@ def _descriptor(
         "schemaVersion": 1,
         "encoding": "json-v1",
         "planHash": "sha256:" + "a" * 64,
-        "projectKey": "project",
+        "projectKey": PROJECT_KEY,
         "runId": "python-runner-test",
         "nodeId": export,
         "attempt": 1,
@@ -207,7 +209,7 @@ def _descriptor(
             "schema": schema_hash,
         },
         "output": {
-            "manifestKey": f"projects/project/runs/python-runner-test/steps/{export}/1/output-manifest.json",
+            "manifestKey": f"projects/{PROJECT_KEY}/runs/python-runner-test/steps/{export}/1/output-manifest.json",
             "schema": schema_hash,
         },
         "datastore": {"kind": "local", "path": str(store)},

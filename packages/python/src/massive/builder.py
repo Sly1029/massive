@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -37,7 +37,7 @@ GRAPH_IR_VERSION = "0.1"
 
 @dataclass(frozen=True, slots=True)
 class StepDefinition(Generic[DepsT, InputT, OutputT]):
-    function: Callable[[StepContext[DepsT, InputT]], OutputT]
+    function: Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]]
     input_type: Any
     output_type: Any
     deps_type: Any
@@ -120,10 +120,11 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
     def step(
         self, *, contract: ExecutionContract | None = None
     ) -> Callable[
-        [Callable[[StepContext[DepsT, InputT]], OutputT]], StepDefinition[DepsT, InputT, OutputT]
+        [Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]]],
+        StepDefinition[DepsT, InputT, OutputT],
     ]:
         def register(
-            function: Callable[[StepContext[DepsT, InputT]], OutputT],
+            function: Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]],
         ) -> StepDefinition[DepsT, InputT, OutputT]:
             if "<locals>" in function.__qualname__ or function.__name__ == "<lambda>":
                 raise TypeError("workflow steps must be top-level named functions")

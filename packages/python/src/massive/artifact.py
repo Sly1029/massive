@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import re
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -26,6 +27,10 @@ class ArtifactValidationError(ArtifactError):
 
 
 class ArtifactIntegrityError(ArtifactError):
+    pass
+
+
+class ArtifactNotFoundError(ArtifactError):
     pass
 
 
@@ -146,7 +151,7 @@ class ArtifactRuntime:
         try:
             manifest_object = self._datastore.get(destination.manifest_key)
         except DatastoreNotFoundError as error:
-            raise ArtifactIntegrityError(
+            raise ArtifactNotFoundError(
                 f"artifact manifest {destination.manifest_key} is missing"
             ) from error
         if manifest_object.info.content_type != MANIFEST_CONTENT_TYPE:
@@ -225,6 +230,8 @@ def _validate_destination(destination: Destination, producer: Producer) -> None:
         )
     ):
         raise ArtifactValidationError("producer and schema identity must be present")
+    if re.fullmatch(r"sha256-[0-9a-f]{64}", producer.project_key) is None:
+        raise ArtifactValidationError("project key must be a normalized SHA-256 identity")
     try:
         _blob_key(destination.schema)
     except ArtifactValidationError as error:
