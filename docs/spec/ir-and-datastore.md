@@ -41,7 +41,10 @@ The emitting SDK is responsible for language-specific validation before it write
 
 ## Source Packages
 
-Source packages are separate content-addressed artifacts. A `WorkflowSpec` references them by package ID and content hash. Symbols point at a package ID plus language-specific entrypoint metadata.
+Source packages have a content-addressed semantic identity that is separate from
+their eventual archive artifact. A `WorkflowSpec` references them by package ID
+and content hash. Symbols point at a package ID plus language-specific
+entrypoint metadata.
 
 Example:
 
@@ -50,7 +53,6 @@ sourcePackages:
   ts-main:
     language: typescript
     packageHash: sha256:...
-    artifact: packages/<package-key>/source.tar
 
 symbols:
   math/double:
@@ -73,6 +75,12 @@ Package roots are explicit. A file entrypoint such as `massive run workflow.ts` 
 - optional deployment profiles, lowered separately from `WorkflowSpec`.
 
 The compiler should avoid broad implicit packaging. For v0, packaging should be driven by explicit include patterns plus required manifests and lockfiles. Future SDKs may add dependency-graph-assisted suggestions, but the emitted source package manifest must list exact files and content hashes.
+
+`WorkflowSpec` records source identity, not a predicted artifact location. A
+source archive becomes an artifact only after deterministic packaging commits
+the bytes and records their body hash in a separate materialization manifest.
+Local execution may perform that step immediately before running; remote target
+lowering must require the committed manifest.
 
 For TypeScript v0, the package config file is `massive.config.ts`.
 

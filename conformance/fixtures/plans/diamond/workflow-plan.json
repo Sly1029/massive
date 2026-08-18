@@ -87,18 +87,8 @@
   "sourcePackages": [
     {
       "language": "typescript",
-      "manifest": {
-        "contentType": "application/json",
-        "hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source-manifest.json"
-      },
       "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "packageId": "ts-main",
-      "sourceArchive": {
-        "contentType": "application/vnd.massive.source-tar",
-        "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-        "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar"
-      }
+      "packageId": "ts-main"
     }
   ],
   "specHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",

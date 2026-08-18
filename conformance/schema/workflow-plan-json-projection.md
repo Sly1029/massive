@@ -71,10 +71,8 @@ Shape:
   "sourcePackages": [
     {
       "language": "typescript",
-      "manifest": { "contentType": "application/json", "hash": "sha256:<hex>", "key": "packages/sha256-<hex>/source-manifest.json" },
       "packageHash": "sha256:<hex>",
-      "packageId": "ts-main",
-      "sourceArchive": { "contentType": "application/vnd.massive.source-tar", "hash": "sha256:<hex>", "key": "packages/sha256-<hex>/source.tar" }
+      "packageId": "ts-main"
     }
   ],
   "environments": [
@@ -99,5 +97,11 @@ Shape:
   }
 }
 ```
+
+`manifest` and `sourceArchive` are optional post-materialization fields. The
+pure WorkflowSpec compiler does not emit them because no bytes have been
+committed yet. Remote target lowering must obtain concrete, body-hash-verified
+artifact references from a materialization manifest; it must not predict keys
+or reuse `packageHash` as an archive-body hash.
 
 This JSON shape is the compatibility promise for runners. `WorkflowPlan`, source manifests, environment manifests, provenance records, and target bundle manifests are canonical JSON artifacts typed by the `.proto` schemas.

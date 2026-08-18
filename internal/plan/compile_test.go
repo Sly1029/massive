@@ -53,6 +53,24 @@ func TestCompileFixturesMatchGoldenPlans(t *testing.T) {
 	}
 }
 
+func TestCompileDoesNotInventMaterializedSourceArtifacts(t *testing.T) {
+	specData := readFixture(t, "specs", "passthrough", "workflow-spec.json")
+	workflowSpec, err := spec.Parse(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(workflowSpec, specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, sourcePackage := range compiled.Plan.GetSourcePackages() {
+		if sourcePackage.GetManifest() != nil || sourcePackage.GetSourceArchive() != nil {
+			t.Fatalf("unmaterialized source package contains artifact refs: %#v", sourcePackage)
+		}
+	}
+}
+
 func readFixture(t *testing.T, fixtureKind, name, file string) []byte {
 	t.Helper()
 

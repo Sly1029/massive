@@ -185,8 +185,7 @@
               "hash": { "$ref": "#/$defs/hashRef" }
             }
           }
-        },
-        "artifact": { "$ref": "#/$defs/relativePath" }
+        }
       }
     },
     "environment": {

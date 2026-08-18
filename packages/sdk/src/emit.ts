@@ -95,7 +95,6 @@ export interface WorkflowSpecSourcePackage {
   readonly root: string;
   readonly include: readonly string[];
   readonly files: readonly { readonly path: string; readonly hash: string }[];
-  readonly artifact: string;
 }
 
 export type WorkflowSpecEnvironment = EnvironmentSpec;
@@ -220,9 +219,6 @@ export async function emitWorkflowSpec<Input, Output>(
         root: source.root,
         include: source.include,
         files: source.files,
-        artifact: `packages/${
-          hashPathSegment(source.sourcePackageHash)
-        }/source.tar`,
       },
     },
     environments: sortedRecord(environments),
@@ -441,8 +437,4 @@ function symbolRef(
   exportName: string,
 ): string {
   return `${packageId}:${module}#${exportName}`;
-}
-
-function hashPathSegment(hash: string): string {
-  return hash.replace(":", "-");
 }

@@ -85,6 +85,9 @@ message SourcePackageRef {
   optional string package_id = 1;
   optional string language = 2;
   optional string package_hash = 3;
+  // Populated only after real bytes have been committed. The pure WorkflowSpec
+  // compiler leaves these absent; a materialization manifest supplies them to
+  // remote target lowering.
   optional ArtifactRef manifest = 4;
   optional ArtifactRef source_archive = 5;
 }

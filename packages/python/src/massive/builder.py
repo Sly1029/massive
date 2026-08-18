@@ -287,7 +287,6 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                         "root": str(source.root.resolve()),
                         "include": list(source.include),
                         "files": source_files,
-                        "artifact": f"packages/{package_hash.replace(':', '-')}/source.tar",
                     }
                 },
                 "environments": environments,

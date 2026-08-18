@@ -79,7 +79,6 @@ type SourcePackage struct {
 	Root        string              `json:"root"`
 	Include     []string            `json:"include"`
 	Files       []SourcePackageFile `json:"files"`
-	Artifact    string              `json:"artifact,omitempty"`
 }
 
 type SourcePackageFile struct {

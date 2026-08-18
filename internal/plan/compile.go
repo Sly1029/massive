@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
@@ -317,45 +316,13 @@ func compileSourcePackages(workflowSpec *spec.WorkflowSpec) ([]*planpb.SourcePac
 	entries := make([]*planpb.SourcePackageRef, 0, len(packageIDs))
 	for _, packageID := range packageIDs {
 		sourcePackage := workflowSpec.SourcePackages[packageID]
-		manifestHash, err := hashSourceManifest(sourcePackage)
-		if err != nil {
-			return nil, err
-		}
-		packagePathHash := strings.TrimPrefix(sourcePackage.PackageHash, "sha256:")
-		archiveKey := sourcePackage.Artifact
-		if archiveKey == "" {
-			archiveKey = "packages/sha256-" + packagePathHash + "/source.tar"
-		}
 		entries = append(entries, &planpb.SourcePackageRef{
 			PackageId:   stringPtr(sourcePackage.PackageID),
 			Language:    stringPtr(sourcePackage.Language),
 			PackageHash: stringPtr(sourcePackage.PackageHash),
-			Manifest: &planpb.ArtifactRef{
-				Key:         stringPtr("packages/sha256-" + packagePathHash + "/source-manifest.json"),
-				Hash:        stringPtr(manifestHash),
-				ContentType: stringPtr("application/json"),
-			},
-			SourceArchive: &planpb.ArtifactRef{
-				Key:         stringPtr(archiveKey),
-				Hash:        stringPtr(sourcePackage.PackageHash),
-				ContentType: stringPtr("application/vnd.massive.source-tar"),
-			},
 		})
 	}
 	return entries, nil
-}
-
-func hashSourceManifest(sourcePackage spec.SourcePackage) (string, error) {
-	manifest := struct {
-		Files []spec.SourcePackageFile `json:"files"`
-	}{
-		Files: sourcePackage.Files,
-	}
-	hash, err := hashJSONValue(manifest)
-	if err != nil {
-		return "", fmt.Errorf("hash source manifest for package %s: %w", sourcePackage.PackageID, err)
-	}
-	return hash, nil
 }
 
 func hashJSONValue(value any) (string, error) {

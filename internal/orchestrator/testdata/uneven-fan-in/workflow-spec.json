@@ -122,8 +122,7 @@
           "path": "workflow.ts",
           "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         }
-      ],
-      "artifact": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar"
+      ]
     }
   },
   "environments": {
