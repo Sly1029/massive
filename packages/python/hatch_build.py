@@ -5,7 +5,10 @@ from typing import Any
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
-_SCHEMA = Path("conformance/schema/step-invocation-descriptor.schema.json")
+_SCHEMAS = (
+    Path("conformance/schema/step-invocation-descriptor.schema.json"),
+    Path("conformance/schema/data-artifact-manifest.schema.json"),
+)
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -13,13 +16,14 @@ class CustomBuildHook(BuildHookInterface):
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         root = Path(self.root)
-        candidates = (root.parents[1] / _SCHEMA, root / _SCHEMA)
-        schema = next((candidate for candidate in candidates if candidate.is_file()), None)
-        if schema is None:
-            raise FileNotFoundError("canonical step invocation descriptor schema is unavailable")
-        destination = (
-            _SCHEMA.as_posix()
-            if self.target_name == "sdist"
-            else "massive/schemas/step-invocation-descriptor.schema.json"
-        )
-        build_data["force_include"][str(schema)] = destination
+        for schema_path in _SCHEMAS:
+            candidates = (root.parents[1] / schema_path, root / schema_path)
+            schema = next((candidate for candidate in candidates if candidate.is_file()), None)
+            if schema is None:
+                raise FileNotFoundError(f"canonical schema {schema_path} is unavailable")
+            destination = (
+                schema_path.as_posix()
+                if self.target_name == "sdist"
+                else f"massive/schemas/{schema_path.name}"
+            )
+            build_data["force_include"][str(schema)] = destination

@@ -14,20 +14,16 @@ from functools import cache
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, cast
+from typing import Literal, NotRequired, Protocol, TypedDict, cast
 
-from botocore.config import Config
-from botocore.session import get_session
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from pydantic import TypeAdapter
 
-if TYPE_CHECKING:
-    from mypy_boto3_s3 import S3Client
-
 from .builder import StepDefinition
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InvocationContext, StepContext
+from .datastore import Datastore, DatastoreDescriptor, LocalDatastore, S3Datastore
 
 _SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
 _MAX_SOURCE_FILES = 1024
@@ -75,23 +71,6 @@ class SourcePackageDescriptor(TypedDict):
     manifest: NotRequired[ArtifactRef]
 
 
-class LocalDatastoreDescriptor(TypedDict):
-    kind: Literal["local"]
-    path: str
-
-
-class S3DatastoreDescriptor(TypedDict):
-    kind: Literal["s3"]
-    bucket: str
-    region: str
-    prefix: NotRequired[str]
-    endpoint: NotRequired[str]
-    forcePathStyle: NotRequired[bool]
-
-
-type DatastoreDescriptor = LocalDatastoreDescriptor | S3DatastoreDescriptor
-
-
 class StepInvocationDescriptor(TypedDict):
     kind: Literal["StepInvocationDescriptor"]
     schemaVersion: Literal[0]
@@ -122,67 +101,6 @@ class SchemaError(Exception):
 
 class StepError(Exception):
     pass
-
-
-class Datastore(Protocol):
-    def read(self, key: str) -> bytes: ...
-
-    def write(self, key: str, body: bytes) -> None: ...
-
-
-class LocalDatastore:
-    def __init__(self, root: Path) -> None:
-        self.root = root.resolve()
-
-    def read(self, key: str) -> bytes:
-        return _path(self.root, key).read_bytes()
-
-    def write(self, key: str, body: bytes) -> None:
-        target = _path(self.root, key)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_name(f".tmp-{target.name}")
-        temporary.write_bytes(body)
-        temporary.replace(target)
-        metadata = (
-            self.root
-            / ".massive-datastore-metadata"
-            / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
-        )
-        metadata.parent.mkdir(parents=True, exist_ok=True)
-        metadata.write_text('{"contentType":"application/json"}')
-
-
-class S3Datastore:
-    def __init__(self, descriptor: S3DatastoreDescriptor) -> None:
-        endpoint = descriptor.get("endpoint")
-        config = (
-            Config(s3={"addressing_style": "path"})
-            if descriptor.get("forcePathStyle") is True
-            else None
-        )
-        self.bucket = descriptor["bucket"]
-        prefix = descriptor.get("prefix", "")
-        self.prefix = prefix.strip("/")
-        self.client = cast(
-            "S3Client",
-            get_session().create_client(
-                "s3",
-                region_name=descriptor["region"],
-                endpoint_url=endpoint,
-                config=config,
-            ),
-        )
-
-    def read(self, key: str) -> bytes:
-        return self.client.get_object(Bucket=self.bucket, Key=self._key(key))["Body"].read()
-
-    def write(self, key: str, body: bytes) -> None:
-        self.client.put_object(
-            Bucket=self.bucket, Key=self._key(key), Body=body, ContentType="application/json"
-        )
-
-    def _key(self, key: str) -> str:
-        return key if self.prefix == "" else f"{self.prefix}/{key}"
 
 
 def run_descriptor_path(path: Path) -> int:
@@ -439,13 +357,6 @@ def _safe_archive_path(path: str) -> bool:
         and "\\" not in path
         and all(part not in {"", ".", ".."} for part in path.split("/"))
     )
-
-
-def _path(root: Path, key: str) -> Path:
-    candidate = (root / key).resolve()
-    if root not in candidate.parents:
-        raise DescriptorError("datastore key escapes the local datastore root")
-    return candidate
 
 
 def main() -> int:
