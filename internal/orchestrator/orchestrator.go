@@ -25,6 +25,10 @@ import (
 
 const jsonContentType = "application/json"
 
+// The shared schemas cap safe segments at 128 JSON characters. The allowed
+// character class is ASCII-only, so Go's byte length has the same boundary.
+const maxSafePathSegmentLength = 128
+
 // sha256RefPattern is the exact canonical digest-ref form. Package hashes are
 // interpolated into filesystem paths and datastore keys, so they are validated
 // against this before any path is derived from them.
@@ -38,7 +42,7 @@ func validSHA256Ref(ref string) bool {
 }
 
 func validSafePathSegment(value string) bool {
-	if value == "." || value == ".." || !safePathSegmentPattern.MatchString(value) {
+	if len(value) > maxSafePathSegmentLength || value == "." || value == ".." || !safePathSegmentPattern.MatchString(value) {
 		return false
 	}
 	_, err := datastore.ParseKey(value)
@@ -92,10 +96,6 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	}
 	config.DatastoreRoot = datastoreRoot
 
-	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: config.DatastoreRoot})
-	if err != nil {
-		return nil, fmt.Errorf("open local datastore: %w", err)
-	}
 	projectKey := NormalizeProjectKey(config.ProjectID)
 	runID := config.RunID
 	if runID == "" {
@@ -106,7 +106,10 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	// segment rules the datastore key parser enforces, before any run artifact
 	// is written. A run id must be a single normalized path segment.
 	if !validSafePathSegment(runID) {
-		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "must be a single safe path segment (datastore key segment rules)"}
+		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "must be a single safe path segment of at most 128 characters (datastore key segment rules)"}
+	}
+	if err := validatePlanIdentitySegments(config.Plan); err != nil {
+		return nil, err
 	}
 	// Every source-package hash is interpolated into a snapshot directory name
 	// and a datastore key. The spec schema constrains it, but Run also accepts a
@@ -117,10 +120,9 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 			return nil, &InvalidRunInputError{Field: "source package hash", Value: sourcePackage.GetPackageHash(), Message: "must be a canonical sha256:<64 lowercase hex> digest"}
 		}
 	}
-	for _, node := range config.Plan.GetGraph().GetNodes() {
-		if !validSafePathSegment(node.GetId()) {
-			return nil, &InvalidRunInputError{Field: "plan graph node id", Value: node.GetId(), Message: "must be a single safe path segment (descriptor and datastore key rules)"}
-		}
+	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: config.DatastoreRoot})
+	if err != nil {
+		return nil, fmt.Errorf("open local datastore: %w", err)
 	}
 
 	index, err := buildExecutionIndex(config.Plan)
@@ -245,6 +247,42 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	result.ResultKey = resultArtifact.Key
 	result.Steps = summariesFromManifest(manifest)
 	return result, nil
+}
+
+func validatePlanIdentitySegments(plan *planpb.WorkflowPlan) error {
+	graph := plan.GetGraph()
+	if graph == nil {
+		return &InvalidRunInputError{Field: "plan graph", Message: "is required"}
+	}
+	if !validSafePathSegment(graph.GetStartNode()) {
+		return invalidPlanIdentity("plan graph start node", graph.GetStartNode())
+	}
+	if !validSafePathSegment(graph.GetEndNode()) {
+		return invalidPlanIdentity("plan graph end node", graph.GetEndNode())
+	}
+	for _, node := range graph.GetNodes() {
+		if !validSafePathSegment(node.GetId()) {
+			return invalidPlanIdentity("plan graph node id", node.GetId())
+		}
+		for _, sourceID := range node.GetMergeInputs() {
+			if !validSafePathSegment(sourceID) {
+				return invalidPlanIdentity("plan graph node merge input", sourceID)
+			}
+		}
+	}
+	for _, edge := range graph.GetEdges() {
+		if !validSafePathSegment(edge.GetFrom()) {
+			return invalidPlanIdentity("plan graph edge from", edge.GetFrom())
+		}
+		if !validSafePathSegment(edge.GetTo()) {
+			return invalidPlanIdentity("plan graph edge to", edge.GetTo())
+		}
+	}
+	return nil
+}
+
+func invalidPlanIdentity(field string, value string) *InvalidRunInputError {
+	return &InvalidRunInputError{Field: field, Value: value, Message: "must be a single safe path segment of at most 128 characters (descriptor and datastore key rules)"}
 }
 
 func materializePrerequisites(ctx context.Context, store datastore.Datastore, config RunConfig) (map[string]sourcePackageArtifact, error) {

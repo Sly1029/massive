@@ -270,6 +270,12 @@ The step invocation descriptor is the narrow runtime protocol between Go orchest
 
 V1 serializes this descriptor as JSON for ease of implementation in TypeScript and Python. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so a future transport can reuse the same semantics.
 
+The first `json-v1` descriptor release is coupled to the v2 rewrite, so
+pre-release tightening of identity-segment validation needs no transport bump.
+The Graph IR remains explicitly unstable at `0.x`; v2 workflows are rewritten
+rather than run through a compatibility mode. After release, an incompatible
+change must use the relevant versioning rules.
+
 It includes:
 
 - schema version,
