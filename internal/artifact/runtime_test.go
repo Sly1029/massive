@@ -93,6 +93,64 @@ func TestPublishJSONRejectsBodyAndManifestConflicts(t *testing.T) {
 	})
 }
 
+func TestPublishJSONValidatesBeforeWritingAnything(t *testing.T) {
+	ctx := context.Background()
+	store := localStore(t)
+	putSchema(t, store)
+
+	_, err := PublishJSON(ctx, store, testDestination(), testProducer(), []byte(`{"value":"wrong"}`))
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("PublishJSON error = %v, want ErrValidation", err)
+	}
+	published, err := store.Exists(ctx, testDestination().ManifestKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published {
+		t.Fatal("invalid value published a manifest")
+	}
+	blobs, err := store.List(ctx, datastore.MustKey("blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blobs) != 1 || blobs[0].Key.String() != "blobs/sha256/cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a" {
+		t.Fatalf("invalid value wrote content bodies: %#v", blobs)
+	}
+}
+
+func TestResolveJSONRejectsTamperedManifestAndBody(t *testing.T) {
+	t.Run("manifest", func(t *testing.T) {
+		ctx := context.Background()
+		store := localStore(t)
+		putSchema(t, store)
+		if _, err := PublishJSON(ctx, store, testDestination(), testProducer(), []byte(testBody)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Put(ctx, testDestination().ManifestKey, []byte(`{}`), datastore.PutOptions{ContentType: ManifestContentType}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ResolveJSON(ctx, store, testDestination(), testProducer()); !errors.Is(err, ErrIntegrity) {
+			t.Fatalf("ResolveJSON error = %v, want ErrIntegrity", err)
+		}
+	})
+
+	t.Run("body", func(t *testing.T) {
+		ctx := context.Background()
+		store := localStore(t)
+		putSchema(t, store)
+		published, err := PublishJSON(ctx, store, testDestination(), testProducer(), []byte(testBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Put(ctx, datastore.MustKey(published.Body.Key), []byte(`{"value":0}`), datastore.PutOptions{ContentType: JSONContentType}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ResolveJSON(ctx, store, testDestination(), testProducer()); !errors.Is(err, ErrIntegrity) {
+			t.Fatalf("ResolveJSON error = %v, want ErrIntegrity", err)
+		}
+	})
+}
+
 func testDestination() Destination {
 	return Destination{
 		ManifestKey: datastore.MustKey("projects/project/runs/run-1/steps/task/1/output-manifest.json"),

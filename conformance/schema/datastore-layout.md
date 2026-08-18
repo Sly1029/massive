@@ -209,7 +209,7 @@ Templates:
 ```text
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
-projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
+projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.json
 projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```
@@ -221,12 +221,17 @@ Examples:
 ```text
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/run-manifest.json
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/inputs/double.json
-projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/steps/double/1/output.json
+projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/steps/double/1/output-manifest.json
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/channels/intermediate/value.json
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/result.json
 ```
 
-V0 runtime data artifacts (step inputs, step outputs, channel values, final run results) are canonical JSON. Each artifact record carries its schema hash, content hash, content type, datastore key, and producing run/node/attempt when applicable.
+V1 step outputs are committed by an immutable canonical JSON manifest at the
+attempt key; the manifest references a canonical JSON body under
+`blobs/sha256/<digestHex>`. Inputs, channel values, and final result locations
+retain their current run-scoped JSON layout until their own protocol slice is
+migrated. Each artifact record carries its schema hash, content hash, content
+type, datastore key, and producing run/node/attempt when applicable.
 
 ## Layout overview
 
@@ -242,7 +247,7 @@ plans/<plan-key>/provenance.json
 targets/<plan-key>/<target>/bundle-manifest.json
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
-projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
+projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.json
 projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```

@@ -8,6 +8,7 @@ Draft specification for Massive.
 - [Authoring Model](authoring-model.md)
 - [IR And Datastore](ir-and-datastore.md)
 - [Environment Materialization](environment-materialization.md)
+- [Artifact Runtime](artifact-runtime.md)
 - [Argo Backend](argo-backend.md)
 - [Testing Strategy](testing-strategy.md)
 - [Implementation Roadmap](implementation-roadmap.md)
