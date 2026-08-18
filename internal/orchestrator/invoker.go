@@ -18,6 +18,7 @@ import (
 const descriptorPathToken = "{descriptor}"
 
 type DefaultRunnerCommandInputs struct {
+	Language          string
 	WorkingDir        string
 	DescriptorDir     string
 	DatastoreRoot     string
@@ -46,6 +47,21 @@ func DefaultRunnerCommand(inputs DefaultRunnerCommandInputs) ([]string, error) {
 	datastoreRoot, err := filepath.Abs(inputs.DatastoreRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve datastore root: %w", err)
+	}
+
+	if inputs.Language == "python" {
+		return []string{
+			"uv",
+			"run",
+			"--project",
+			filepath.Join(workingDir, "packages", "python"),
+			"--frozen",
+			"massive-python-runner",
+			descriptorPathToken,
+		}, nil
+	}
+	if inputs.Language != "typescript" {
+		return nil, fmt.Errorf("unsupported runner language %q", inputs.Language)
 	}
 
 	readRoots := []string{workingDir, descriptorDir, datastoreRoot}
@@ -131,6 +147,7 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 			return StepInvocationOutcome{}, fmt.Errorf("build runner command for %s: local process invoker requires a local datastore descriptor, got %T", descriptor.NodeID, descriptor.Datastore)
 		}
 		inputs := DefaultRunnerCommandInputs{
+			Language:      descriptor.Symbol.Language,
 			WorkingDir:    i.WorkingDir,
 			DescriptorDir: descriptorDir,
 			DatastoreRoot: localDatastore.Path,

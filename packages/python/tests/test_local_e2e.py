@@ -10,11 +10,10 @@ from types import ModuleType
 from massive import source_package
 
 
-def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path: Path) -> None:
+def test_python_workflow_runs_through_go_orchestrator(tmp_path: Path) -> None:
     repository = Path(__file__).resolve().parents[3]
     fixture = Path(__file__).parent / "fixtures/emission_workflow.py"
     module = _load_fixture(fixture)
-
     specification = module.graph.emit(
         source=source_package(
             root=fixture.parent,
@@ -24,17 +23,25 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
     )
     spec_path = tmp_path / "workflow-spec.json"
     spec_path.write_text(specification.to_json() + "\n")
+    store = tmp_path / "store"
 
     result = subprocess.run(
         [
             "go",
             "run",
-            "./cmd/massive-compiler",
-            "compile",
+            "./cmd/massive-orchestrator",
+            "run",
             "--spec",
             str(spec_path),
-            "--out",
-            str(tmp_path / "compiled"),
+            "--store",
+            str(store),
+            "--project",
+            "example/python-e2e",
+            "--run-id",
+            "python-e2e",
+            "--input",
+            '{"value":21}',
+            "--json",
         ],
         cwd=repository,
         check=False,
@@ -43,23 +50,14 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
     )
 
     assert result.returncode == 0, result.stderr
-    emitted = json.loads(spec_path.read_text())
-    assert emitted["graph"]["irVersion"] == "0.1"
-    step = next(node for node in emitted["graph"]["nodes"] if node["kind"] == "step")
-    assert emitted["specHash"] == specification.spec_hash
-    assert emitted["symbols"][step["symbolRef"]] == {
-        "packageId": "python-main",
-        "language": "python",
-        "module": "emission_workflow",
-        "export": "increment",
-    }
-    assert json.loads((tmp_path / "compiled/workflow-plan.json").read_text())["graph"][
-        "workflowName"
-    ] == ("python-emission")
+    run = json.loads(result.stdout)
+    assert run["status"] == "succeeded"
+    assert run["steps"] == [{"nodeId": "increment", "status": "succeeded"}]
+    assert json.loads((store / run["resultKey"]).read_text()) == {"value": 22}
 
 
 def _load_fixture(path: Path) -> ModuleType:
-    specification = importlib.util.spec_from_file_location("emission_workflow", path)
+    specification = importlib.util.spec_from_file_location("python_e2e_workflow", path)
     assert specification is not None
     assert specification.loader is not None
     module = importlib.util.module_from_spec(specification)

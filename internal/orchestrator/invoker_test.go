@@ -14,6 +14,7 @@ func TestDefaultRunnerCommandScopesDenoPermissions(t *testing.T) {
 	sourcePackageRoot := t.TempDir()
 
 	argv, err := DefaultRunnerCommand(DefaultRunnerCommandInputs{
+		Language:          "typescript",
 		WorkingDir:        workingDir,
 		DescriptorDir:     descriptorDir,
 		DatastoreRoot:     datastoreRoot,
@@ -53,6 +54,7 @@ func TestDefaultRunnerCommandOmitsSourcePackageRootInsideWorkingDir(t *testing.T
 	sourcePackageRoot := filepath.Join(workingDir, "workflow")
 
 	argv, err := DefaultRunnerCommand(DefaultRunnerCommandInputs{
+		Language:          "typescript",
 		WorkingDir:        workingDir,
 		DescriptorDir:     t.TempDir(),
 		DatastoreRoot:     t.TempDir(),
@@ -66,6 +68,44 @@ func TestDefaultRunnerCommandOmitsSourcePackageRootInsideWorkingDir(t *testing.T
 		if strings.HasPrefix(arg, "--allow-read=") && strings.Contains(arg, sourcePackageRoot) {
 			t.Fatalf("allow-read includes source package root inside working dir: %q", arg)
 		}
+	}
+}
+
+func TestDefaultRunnerCommandSelectsPythonRunner(t *testing.T) {
+	workingDir := t.TempDir()
+	argv, err := DefaultRunnerCommand(DefaultRunnerCommandInputs{
+		Language:      "python",
+		WorkingDir:    workingDir,
+		DescriptorDir: t.TempDir(),
+		DatastoreRoot: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"uv",
+		"run",
+		"--project",
+		filepath.Join(mustAbs(t, workingDir), "packages", "python"),
+		"--frozen",
+		"massive-python-runner",
+		descriptorPathToken,
+	}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv = %#v, want %#v", argv, want)
+	}
+}
+
+func TestDefaultRunnerCommandRejectsUnsupportedLanguage(t *testing.T) {
+	_, err := DefaultRunnerCommand(DefaultRunnerCommandInputs{
+		Language:      "ruby",
+		WorkingDir:    t.TempDir(),
+		DescriptorDir: t.TempDir(),
+		DatastoreRoot: t.TempDir(),
+	})
+	if err == nil || !strings.Contains(err.Error(), `unsupported runner language "ruby"`) {
+		t.Fatalf("error = %v, want unsupported runner language", err)
 	}
 }
 

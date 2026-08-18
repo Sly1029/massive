@@ -272,6 +272,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                     "outputSchema": output_schema,
                 },
                 "graph": {
+                    "irVersion": GRAPH_IR_VERSION,
                     "start": _START,
                     "end": _END,
                     "nodes": nodes,
