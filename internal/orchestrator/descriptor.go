@@ -1,21 +1,22 @@
 package orchestrator
 
 type StepInvocationDescriptor struct {
-	Kind           string                       `json:"kind"`
-	SchemaVersion  uint32                       `json:"schemaVersion"`
-	Encoding       string                       `json:"encoding"`
-	PlanHash       string                       `json:"planHash"`
-	RunID          string                       `json:"runId"`
-	NodeID         string                       `json:"nodeId"`
-	Attempt        int                          `json:"attempt"`
-	Symbol         StepSymbolRef                `json:"symbol"`
-	SourcePackage  SourcePackageRef             `json:"sourcePackage"`
-	EnvironmentRef string                       `json:"environmentRef"`
-	Input          DataArtifactRef              `json:"input"`
-	Output         DataArtifactDestination      `json:"output"`
-	ChannelReads   []ChannelArtifactRef         `json:"channelReads"`
-	ChannelWrites  []ChannelArtifactDestination `json:"channelWrites"`
-	Datastore      DatastoreDescriptor          `json:"datastore"`
+	Kind           string                          `json:"kind"`
+	SchemaVersion  uint32                          `json:"schemaVersion"`
+	Encoding       string                          `json:"encoding"`
+	PlanHash       string                          `json:"planHash"`
+	ProjectKey     string                          `json:"projectKey"`
+	RunID          string                          `json:"runId"`
+	NodeID         string                          `json:"nodeId"`
+	Attempt        int                             `json:"attempt"`
+	Symbol         StepSymbolRef                   `json:"symbol"`
+	SourcePackage  SourcePackageRef                `json:"sourcePackage"`
+	EnvironmentRef string                          `json:"environmentRef"`
+	Input          DataArtifactRef                 `json:"input"`
+	Output         DataArtifactManifestDestination `json:"output"`
+	ChannelReads   []ChannelArtifactRef            `json:"channelReads"`
+	ChannelWrites  []ChannelArtifactDestination    `json:"channelWrites"`
+	Datastore      DatastoreDescriptor             `json:"datastore"`
 }
 
 type StepSymbolRef struct {
@@ -52,6 +53,15 @@ type DataArtifactRef struct {
 type DataArtifactDestination struct {
 	Artifact ArtifactDestination `json:"artifact"`
 	Schema   string              `json:"schema"`
+}
+
+// DataArtifactManifestDestination names the immutable commit point for a
+// canonical JSON output. The runner does not receive a mutable body key: the
+// artifact runtime derives and conditionally publishes its content-addressed
+// body before publishing this manifest.
+type DataArtifactManifestDestination struct {
+	ManifestKey string `json:"manifestKey"`
+	Schema      string `json:"schema"`
 }
 
 type ChannelArtifactRef struct {

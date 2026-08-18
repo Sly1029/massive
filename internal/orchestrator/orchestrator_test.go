@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 )
@@ -50,6 +50,26 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	// Assert their distinct provenance on the un-normalized descriptor.
 	planPackageHash := compiled.Plan.GetSourcePackages()[0].GetPackageHash()
 	descriptor := invoker.descriptors[0]
+	if descriptor.SchemaVersion != 1 || descriptor.Encoding != "json-v1" {
+		t.Fatalf("descriptor protocol = (%d, %q), want v1/json-v1", descriptor.SchemaVersion, descriptor.Encoding)
+	}
+	if descriptor.ProjectKey != NormalizeProjectKey("acme/security-workflows") {
+		t.Fatalf("descriptor projectKey = %q", descriptor.ProjectKey)
+	}
+	if descriptor.Output.ManifestKey != runOutputManifestKey(descriptor.ProjectKey, descriptor.RunID, descriptor.NodeID, descriptor.Attempt).String() {
+		t.Fatalf("descriptor output manifest key = %q", descriptor.Output.ManifestKey)
+	}
+	runManifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
+	output := runManifest.Steps[0].Attempts[0].Output
+	if output == nil {
+		t.Fatal("first successful attempt has no published output")
+	}
+	if output.Manifest.Key != descriptor.Output.ManifestKey || output.Manifest.ContentType != artifact.ManifestContentType {
+		t.Fatalf("journal manifest ref = %#v, want immutable published manifest", output.Manifest)
+	}
+	if !strings.HasPrefix(output.Body.Key, "blobs/sha256/") || output.Body.ContentType != artifact.JSONContentType {
+		t.Fatalf("journal body ref = %#v, want content-addressed canonical JSON", output.Body)
+	}
 	if descriptor.SourcePackage.PackageHash != planPackageHash {
 		t.Fatalf("descriptor packageHash = %s, want plan packageHash %s", descriptor.SourcePackage.PackageHash, planPackageHash)
 	}
@@ -72,7 +92,6 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 		t.Fatal("sourceArchive.hash must differ from packageHash under the portable archive shape")
 	}
 
-	validateDescriptorSchema(t, descriptor)
 	actual := normalizeDescriptorJSON(t, mustMarshalCanonical(t, descriptor), "run-descriptor-0001", storeRoot)
 	golden := normalizeDescriptorJSON(t, readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json"), "run-linear-chain-0001", "/tmp/massive-conformance-store")
 	if !bytes.Equal(actual, golden) {
@@ -80,7 +99,7 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	}
 }
 
-func TestTamperedOutputFailsHashValidation(t *testing.T) {
+func TestTamperedOutputManifestFailsIntegrityValidation(t *testing.T) {
 	storeRoot := newStoreRoot(t)
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
 	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
@@ -99,7 +118,7 @@ func TestTamperedOutputFailsHashValidation(t *testing.T) {
 				if descriptor.NodeID != "double" {
 					return nil
 				}
-				return os.WriteFile(filepath.Join(storeRoot, filepath.FromSlash(descriptor.Output.Artifact.Key)), []byte("41"), 0o644)
+				return os.WriteFile(filepath.Join(storeRoot, filepath.FromSlash(descriptor.Output.ManifestKey)), []byte("41"), 0o644)
 			},
 		},
 	}, []byte("20"))
@@ -110,8 +129,8 @@ func TestTamperedOutputFailsHashValidation(t *testing.T) {
 	if !errors.As(err, &runErr) {
 		t.Fatalf("error = %T, want RunError", err)
 	}
-	if !strings.Contains(runErr.Diagnostic, "hash mismatch") {
-		t.Fatalf("diagnostic = %q, want hash mismatch", runErr.Diagnostic)
+	if !strings.Contains(runErr.Diagnostic, "integrity") {
+		t.Fatalf("diagnostic = %q, want integrity failure", runErr.Diagnostic)
 	}
 	if runErr.Result == nil || runErr.Result.Status != StatusFailed {
 		t.Fatalf("result = %#v, want failed result", runErr.Result)
@@ -383,14 +402,26 @@ func (i *functionalStepInvoker) InvokeSteps(ctx context.Context, batch StepInvoc
 		if err != nil {
 			return nil, err
 		}
-		if _, err := store.Put(ctx, datastore.MustKey(descriptor.Output.Artifact.Key), output, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
+		manifestKey, err := datastore.ParseKey(descriptor.Output.ManifestKey)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := artifact.PublishJSON(ctx, store, artifact.Destination{
+			ManifestKey: manifestKey,
+			Schema:      descriptor.Output.Schema,
+		}, artifact.Producer{
+			ProjectKey: descriptor.ProjectKey,
+			PlanHash:   descriptor.PlanHash,
+			RunID:      descriptor.RunID,
+			NodeID:     descriptor.NodeID,
+			Attempt:    descriptor.Attempt,
+		}, output); err != nil {
 			return nil, err
 		}
 		outcomes = append(outcomes, StepInvocationOutcome{
-			NodeID:             descriptor.NodeID,
-			Attempt:            descriptor.Attempt,
-			Status:             StatusSucceeded,
-			ExpectedOutputHash: canonical.DigestBytes(output),
+			NodeID:  descriptor.NodeID,
+			Attempt: descriptor.Attempt,
+			Status:  StatusSucceeded,
 		})
 	}
 	return outcomes, nil
@@ -414,30 +445,6 @@ func runFixtureStep(nodeID string, inputBytes []byte) ([]byte, error) {
 		return nil, errors.New("unknown fixture step " + nodeID)
 	}
 	return marshalCanonicalJSON(output)
-}
-
-func validateDescriptorSchema(t *testing.T, descriptor StepInvocationDescriptor) {
-	t.Helper()
-
-	repoRoot := repoRootForTest(t)
-	workspace := t.TempDir()
-	descriptorPath := filepath.Join(workspace, "descriptor.json")
-	if err := os.WriteFile(descriptorPath, mustMarshalCanonical(t, descriptor), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	scriptPath := filepath.Join(workspace, "validate_descriptor.ts")
-	script := `import { parseStepInvocationDescriptorText } from "` + filepath.ToSlash(filepath.Join(repoRoot, "packages", "sdk", "src", "runner", "descriptor.ts")) + `";
-await parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[0]));
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("deno", "run", "--config", filepath.Join(repoRoot, "deno.json"), "--allow-read="+strings.Join([]string{repoRoot, workspace}, ","), scriptPath, descriptorPath)
-	cmd.Dir = repoRoot
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("descriptor schema validation failed: %v\n%s", err, output)
-	}
 }
 
 var (

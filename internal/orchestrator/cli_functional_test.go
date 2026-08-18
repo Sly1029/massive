@@ -635,7 +635,7 @@ func assertStepOutputs(t *testing.T, storeRoot string, projectKey string, runID 
 		if node.GetKind() != "step" {
 			continue
 		}
-		key := runOutputKey(projectKey, runID, node.GetId(), 1)
+		key := runOutputManifestKey(projectKey, runID, node.GetId(), 1)
 		object := getObject(t, storeRoot, key.String())
 		if canonical.DigestBytes(object.Body) == "" {
 			t.Fatalf("empty digest for %s", key)
@@ -665,9 +665,13 @@ func assertRunManifestSucceeded(t *testing.T, storeRoot string, projectKey strin
 			t.Fatalf("step[%d] attempts = %#v, want one output attempt", index, step.Attempts)
 		}
 		output := step.Attempts[0].Output
-		object := getObject(t, storeRoot, output.Key)
-		if canonical.DigestBytes(object.Body) != output.Hash {
-			t.Fatalf("%s hash = %s, manifest records %s", output.Key, canonical.DigestBytes(object.Body), output.Hash)
+		manifestObject := getObject(t, storeRoot, output.Manifest.Key)
+		if canonical.DigestBytes(manifestObject.Body) != output.Manifest.Hash {
+			t.Fatalf("%s hash = %s, manifest records %s", output.Manifest.Key, canonical.DigestBytes(manifestObject.Body), output.Manifest.Hash)
+		}
+		bodyObject := getObject(t, storeRoot, output.Body.Key)
+		if canonical.DigestBytes(bodyObject.Body) != output.Body.Hash {
+			t.Fatalf("%s hash = %s, manifest records %s", output.Body.Key, canonical.DigestBytes(bodyObject.Body), output.Body.Hash)
 		}
 	}
 }

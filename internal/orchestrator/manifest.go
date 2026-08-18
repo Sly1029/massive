@@ -18,11 +18,27 @@ type manifestStep struct {
 }
 
 type manifestAttempt struct {
-	Attempt    int                   `json:"attempt"`
-	Status     string                `json:"status"`
-	Input      manifestDataArtifact  `json:"input"`
-	Output     *manifestDataArtifact `json:"output,omitempty"`
-	Diagnostic string                `json:"diagnostic,omitempty"`
+	Attempt    int                        `json:"attempt"`
+	Status     string                     `json:"status"`
+	Input      manifestDataArtifact       `json:"input"`
+	Output     *manifestPublishedArtifact `json:"output,omitempty"`
+	Diagnostic string                     `json:"diagnostic,omitempty"`
+}
+
+// manifestPublishedArtifact records both legs of manifest-last publication.
+// The manifest is the logical attempt output; Body is its independently
+// content-addressed canonical JSON value.
+type manifestPublishedArtifact struct {
+	Manifest manifestArtifactRef `json:"manifest"`
+	Body     manifestArtifactRef `json:"body"`
+	Schema   string              `json:"schema"`
+}
+
+type manifestArtifactRef struct {
+	Key         string `json:"key"`
+	Hash        string `json:"hash"`
+	Size        int    `json:"size"`
+	ContentType string `json:"contentType"`
 }
 
 type manifestDataArtifact struct {

@@ -1,8 +1,9 @@
 {
   "kind": "StepInvocationDescriptor",
-  "schemaVersion": 0,
-  "encoding": "json-v0",
+  "schemaVersion": 1,
+  "encoding": "json-v1",
   "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "projectKey": "sha256-9999999999999999999999999999999999999999999999999999999999999999",
   "runId": "run-linear-chain-0001",
   "nodeId": "double",
   "attempt": 1,
@@ -32,10 +33,7 @@
     "schema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   },
   "output": {
-    "artifact": {
-      "key": "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-linear-chain-0001/steps/double/1/output.json",
-      "contentType": "application/json"
-    },
+    "manifestKey": "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-linear-chain-0001/steps/double/1/output-manifest.json",
     "schema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   },
   "channelReads": [],

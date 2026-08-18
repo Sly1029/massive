@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/google/uuid"
@@ -57,8 +58,9 @@ type sourcePackageArtifact struct {
 }
 
 type nodeOutput struct {
-	Artifact manifestDataArtifact
-	Body     []byte
+	Artifact  manifestDataArtifact
+	Published manifestPublishedArtifact
+	Body      []byte
 }
 
 func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, error) {
@@ -202,13 +204,13 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, diagnostic)
 		}
 
-		output, err := validateOutputArtifact(ctx, store, descriptor, outcome.ExpectedOutputHash, index)
+		output, err := resolveOutputArtifact(ctx, store, descriptor, index)
 		if err != nil {
 			markAttemptFailed(&manifest, nodeID, err.Error())
 			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
 		}
 		outputs[nodeID] = output
-		markAttemptSucceeded(&manifest, nodeID, output.Artifact)
+		markAttemptSucceeded(&manifest, nodeID, output.Published)
 		if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
 			return nil, err
 		}
@@ -577,9 +579,10 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 
 	return StepInvocationDescriptor{
 		Kind:          "StepInvocationDescriptor",
-		SchemaVersion: 0,
-		Encoding:      "json-v0",
+		SchemaVersion: 1,
+		Encoding:      "json-v1",
 		PlanHash:      config.Plan.GetPlanHash(),
+		ProjectKey:    projectKey,
 		RunID:         runID,
 		NodeID:        node.GetId(),
 		Attempt:       1,
@@ -608,12 +611,9 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 			},
 			Schema: input.Schema,
 		},
-		Output: DataArtifactDestination{
-			Artifact: ArtifactDestination{
-				Key:         runOutputKey(projectKey, runID, node.GetId(), 1).String(),
-				ContentType: jsonContentType,
-			},
-			Schema: node.GetOutputSchema(),
+		Output: DataArtifactManifestDestination{
+			ManifestKey: runOutputManifestKey(projectKey, runID, node.GetId(), 1).String(),
+			Schema:      node.GetOutputSchema(),
 		},
 		ChannelReads:  []ChannelArtifactRef{},
 		ChannelWrites: []ChannelArtifactDestination{},
@@ -665,51 +665,41 @@ func inputForNode(node *planpb.GraphNode, inbound []*planpb.GraphEdge, outputs m
 	return canonical.CanonicalizeJSON(out.Bytes())
 }
 
-func validateOutputArtifact(ctx context.Context, store datastore.Datastore, descriptor StepInvocationDescriptor, expectedHash string, index executionIndex) (nodeOutput, error) {
+func resolveOutputArtifact(ctx context.Context, store datastore.Datastore, descriptor StepInvocationDescriptor, index executionIndex) (nodeOutput, error) {
 	if !index.schemaRefs[descriptor.Output.Schema] {
 		return nodeOutput{}, fmt.Errorf("output schema ref %s is not present in the plan", descriptor.Output.Schema)
 	}
-
-	outputKey, err := datastore.ParseKey(descriptor.Output.Artifact.Key)
+	manifestKey, err := datastore.ParseKey(descriptor.Output.ManifestKey)
 	if err != nil {
 		return nodeOutput{}, err
 	}
-	object, err := store.Get(ctx, outputKey)
+	published, body, err := artifact.ResolveJSON(ctx, store, artifact.Destination{
+		ManifestKey: manifestKey,
+		Schema:      descriptor.Output.Schema,
+	}, artifact.Producer{
+		ProjectKey: descriptor.ProjectKey,
+		PlanHash:   descriptor.PlanHash,
+		RunID:      descriptor.RunID,
+		NodeID:     descriptor.NodeID,
+		Attempt:    descriptor.Attempt,
+	})
 	if err != nil {
-		return nodeOutput{}, fmt.Errorf("output artifact %s is missing: %w", outputKey, err)
-	}
-	if object.Info.ContentType != descriptor.Output.Artifact.ContentType {
-		return nodeOutput{}, fmt.Errorf("output artifact %s content type mismatch: descriptor requires %s, stored object has %s", outputKey, descriptor.Output.Artifact.ContentType, object.Info.ContentType)
-	}
-
-	actualHash := canonical.DigestBytes(object.Body)
-	if expectedHash != "" && actualHash != expectedHash {
-		return nodeOutput{}, fmt.Errorf("output artifact %s hash mismatch: expected %s, got %s", outputKey, expectedHash, actualHash)
-	}
-	canonicalBody, err := canonical.CanonicalizeJSON(object.Body)
-	if err != nil {
-		return nodeOutput{}, fmt.Errorf("output artifact %s is not canonical JSON: %w", outputKey, err)
-	}
-	if !bytes.Equal(canonicalBody, object.Body) {
-		return nodeOutput{}, fmt.Errorf("output artifact %s is not canonical JSON", outputKey)
-	}
-
-	schemaBytes, err := validateSchemaBlob(ctx, store, descriptor.Output.Schema)
-	if err != nil {
-		return nodeOutput{}, err
-	}
-	if err := validateJSON(schemaBytes, object.Body); err != nil {
-		return nodeOutput{}, fmt.Errorf("output artifact %s violates schema %s: %w", outputKey, descriptor.Output.Schema, err)
+		return nodeOutput{}, fmt.Errorf("resolve output artifact manifest %s: %w", manifestKey, err)
 	}
 
 	return nodeOutput{
 		Artifact: manifestDataArtifact{
-			Key:         outputKey.String(),
-			Hash:        actualHash,
-			ContentType: descriptor.Output.Artifact.ContentType,
+			Key:         published.Body.Key,
+			Hash:        published.Body.Hash,
+			ContentType: published.Body.ContentType,
 			Schema:      descriptor.Output.Schema,
 		},
-		Body: object.Body,
+		Published: manifestPublishedArtifact{
+			Manifest: manifestArtifactRef(published.Manifest),
+			Body:     manifestArtifactRef(published.Body),
+			Schema:   published.Schema,
+		},
+		Body: body,
 	}, nil
 }
 
@@ -854,7 +844,7 @@ func markAttemptRunning(manifest *runManifest, nodeID string, input manifestData
 	}
 }
 
-func markAttemptSucceeded(manifest *runManifest, nodeID string, output manifestDataArtifact) {
+func markAttemptSucceeded(manifest *runManifest, nodeID string, output manifestPublishedArtifact) {
 	for index := range manifest.Steps {
 		if manifest.Steps[index].NodeID != nodeID {
 			continue
@@ -954,8 +944,8 @@ func runInputKey(projectKey string, runID string, stepID string) datastore.Key {
 	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/inputs/" + stepID + ".json")
 }
 
-func runOutputKey(projectKey string, runID string, stepID string, attempt int) datastore.Key {
-	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/steps/" + stepID + "/" + fmt.Sprint(attempt) + "/output.json")
+func runOutputManifestKey(projectKey string, runID string, stepID string, attempt int) datastore.Key {
+	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/steps/" + stepID + "/" + fmt.Sprint(attempt) + "/output-manifest.json")
 }
 
 func runResultKey(projectKey string, runID string) datastore.Key {

@@ -19,6 +19,12 @@ var WorkflowSpecSchemaJSON []byte
 //go:embed deployment-spec.schema.json
 var DeploymentSpecSchemaJSON []byte
 
+// StepInvocationDescriptorSchemaJSON is the frozen cross-language runner
+// descriptor transport contract.
+//
+//go:embed step-invocation-descriptor.schema.json
+var StepInvocationDescriptorSchemaJSON []byte
+
 // DataArtifactManifestSchemaJSON is the frozen manifest-last publication
 // contract for canonical JSON step outputs.
 //

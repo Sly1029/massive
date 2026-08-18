@@ -133,12 +133,12 @@ Deno.test("WorkflowPlan JSON projection is structurally consistent with matching
 Deno.test("StepInvocationDescriptor JSON Schema rejects datastore keys that violate key syntax", async () => {
   const validate = await compileStepInvocationDescriptorValidator();
   const descriptor = (await readJson("../../../conformance/fixtures/descriptors/linear-chain/descriptor.json")) as {
-    output: { artifact: { key: string } };
+    output: { manifestKey: string };
   };
 
-  for (const key of ["..\\..\\etc\\passwd", "a//b/output.json", "./x", "/absolute/output.json", "a/../b.json"]) {
+  for (const key of ["..\\..\\etc\\passwd", "a//b/output-manifest.json", "./x", "/absolute/output-manifest.json", "a/../b.json"]) {
     const tampered = structuredClone(descriptor);
-    tampered.output.artifact.key = key;
+    tampered.output.manifestKey = key;
     assertEquals(validate(tampered), false, `key ${JSON.stringify(key)} should be rejected`);
   }
 });
