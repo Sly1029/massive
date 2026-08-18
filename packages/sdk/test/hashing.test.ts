@@ -164,21 +164,23 @@ Deno.test("canonical JSON v0 conformance corpus keeps only canonical wire payloa
     for await (const entry of Deno.readDir(join(root, validity))) {
       if (!entry.isFile || !entry.name.endsWith(".json")) continue;
       fixtureCount += 1;
-      const text = await Deno.readTextFile(join(root, validity, entry.name));
+      const payload = canonicalFixturePayload(
+        await Deno.readTextFile(join(root, validity, entry.name)),
+      );
       if (validity === "valid") {
         validFixtureNames.push(entry.name);
         assertEquals(
-          `sha256:${sha256Text(text.trimEnd())}`,
+          `sha256:${sha256Text(payload)}`,
           expectedHashes[entry.name],
           `${entry.name} must match its pinned canonical bytes`,
         );
         assertEquals(
-          stableStringify(parseCanonicalJsonText(text.trimEnd())),
-          text.trimEnd(),
+          stableStringify(parseCanonicalJsonText(payload)),
+          payload,
         );
       } else {
         assertThrows(
-          () => parseCanonicalJsonText(text.trimEnd()),
+          () => parseCanonicalJsonText(payload),
           CanonicalJsonError,
         );
       }
@@ -191,3 +193,12 @@ Deno.test("canonical JSON v0 conformance corpus keeps only canonical wire payloa
   }
   assertEquals(Object.keys(expectedHashes).sort(), validFixtureNames.sort());
 });
+
+function canonicalFixturePayload(fixture: string): string {
+  if (!fixture.endsWith("\n") || fixture.endsWith("\r\n")) {
+    throw new Error(
+      "canonical fixture must use exactly one final LF as repository transport",
+    );
+  }
+  return fixture.slice(0, -1);
+}

@@ -372,9 +372,12 @@ async function decodeManifest(
 let manifestValidator: Promise<ValidateFunction> | undefined;
 
 function validateManifest(body: Uint8Array): Promise<void> {
+  // Manifest JSON is also an immutable, hashed wire artifact. Parsing through
+  // the canonical boundary before AJV prevents a second permissive JSON.parse
+  // path from accepting whitespace or normalized numeric spellings.
+  const value = parseCanonicalJson(body, "manifest");
   manifestValidator ??= compileManifestValidator();
   return manifestValidator.then((validate) => {
-    const value = JSON.parse(decodeCanonicalUtf8(body));
     if (!validate(value)) {
       throw new Error(formatValidationError(validate));
     }

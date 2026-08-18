@@ -180,6 +180,25 @@ Deno.test("artifact runtime rejects noncanonical JSON before publishing", async 
   });
 });
 
+Deno.test("artifact runtime rejects a schema-valid noncanonical manifest", async () => {
+  await withRuntime(async (store, runtime) => {
+    await runtime.publishJson(destination(), producer(), BODY);
+    const manifest = await store.get(destination().manifestKey);
+    const noncanonical = decoder
+      .decode(manifest.body)
+      .replace('{"body"', '{ "body"');
+    await store.put(destination().manifestKey, noncanonical, {
+      contentType: MANIFEST_CONTENT_TYPE,
+    });
+
+    const error = await assertRejects(
+      () => runtime.resolveJson(destination(), producer()),
+      ArtifactIntegrityError,
+    );
+    assertStringIncludes(error.message, "not canonical JSON");
+  });
+});
+
 Deno.test("artifact runtime rejects BOM and malformed UTF-8 at value, schema, and manifest boundaries", async () => {
   await withRuntime(async (store, runtime) => {
     for (

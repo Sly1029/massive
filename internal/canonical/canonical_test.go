@@ -44,7 +44,7 @@ func TestCanonicalJSONV0Corpus(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				payload = trimFixtureNewline(payload)
+				payload = canonicalFixturePayload(t, payload)
 
 				canonicalPayload, err := CanonicalizeJSON(payload)
 				if kind == "valid" {
@@ -78,11 +78,12 @@ func TestCanonicalJSONV0Corpus(t *testing.T) {
 	}
 }
 
-func trimFixtureNewline(payload []byte) []byte {
-	if bytes.HasSuffix(payload, []byte("\r\n")) {
-		return payload[:len(payload)-2]
+func canonicalFixturePayload(t *testing.T, fixture []byte) []byte {
+	t.Helper()
+	if !bytes.HasSuffix(fixture, []byte("\n")) || bytes.HasSuffix(fixture, []byte("\r\n")) {
+		t.Fatal("canonical fixture must use exactly one final LF as repository transport")
 	}
-	return bytes.TrimSuffix(payload, []byte("\n"))
+	return fixture[:len(fixture)-1]
 }
 
 func TestDigestJSONGoldenVector(t *testing.T) {
