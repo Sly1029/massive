@@ -45,6 +45,7 @@ func (d *LocalDatastore) Put(ctx context.Context, key Key, body []byte, options 
 	if err := ctx.Err(); err != nil {
 		return ObjectInfo{}, fmt.Errorf("put %s: %w", key, err)
 	}
+	contentType := defaultContentType(options.ContentType)
 
 	target, err := d.pathForKey(key)
 	if err != nil {
@@ -68,6 +69,19 @@ func (d *LocalDatastore) Put(ctx context.Context, key Key, body []byte, options 
 	}()
 
 	if options.IfAbsent {
+		metadataInstalled, err := d.writeMetadataIfAbsent(key, contentType)
+		if err != nil {
+			return ObjectInfo{}, err
+		}
+		if !metadataInstalled {
+			existingContentType, err := d.readContentType(key)
+			if err != nil {
+				return ObjectInfo{}, err
+			}
+			if existingContentType != contentType {
+				return ObjectInfo{}, fmt.Errorf("put %s if absent: existing content type %q differs from %q: %w", key, existingContentType, contentType, ErrAlreadyExists)
+			}
+		}
 		if err := os.Link(temporary, target); err != nil {
 			if errors.Is(err, os.ErrExist) {
 				return ObjectInfo{}, fmt.Errorf("put %s if absent: %w", key, ErrAlreadyExists)
@@ -85,9 +99,10 @@ func (d *LocalDatastore) Put(ctx context.Context, key Key, body []byte, options 
 		installed = true
 	}
 
-	contentType := defaultContentType(options.ContentType)
-	if err := d.writeMetadata(key, contentType); err != nil {
-		return ObjectInfo{}, err
+	if !options.IfAbsent {
+		if err := d.writeMetadata(key, contentType); err != nil {
+			return ObjectInfo{}, err
+		}
 	}
 
 	return ObjectInfo{Key: key, Size: int64(len(body)), ContentType: contentType}, nil
@@ -239,6 +254,35 @@ func (d *LocalDatastore) writeMetadata(key Key, contentType string) error {
 		return fmt.Errorf("rename temporary metadata for %s: %w", key, err)
 	}
 	return nil
+}
+
+// writeMetadataIfAbsent establishes a complete metadata record before an
+// IfAbsent body can become visible. A metadata-only record is an intentional
+// recoverable crash state: a later matching IfAbsent call may install the
+// missing body, while a differing content type cannot replace the record.
+func (d *LocalDatastore) writeMetadataIfAbsent(key Key, contentType string) (bool, error) {
+	metadataPath := d.metadataPath(key)
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
+		return false, fmt.Errorf("create metadata parent for %s: %w", key, err)
+	}
+
+	body, err := json.Marshal(localMetadata{ContentType: contentType})
+	if err != nil {
+		return false, fmt.Errorf("encode metadata for %s: %w", key, err)
+	}
+	temporary := metadataPath + ".tmp-" + uuid.NewString()
+	if err := os.WriteFile(temporary, body, 0o644); err != nil {
+		return false, fmt.Errorf("write temporary metadata for %s: %w", key, err)
+	}
+	defer func() { _ = os.Remove(temporary) }()
+
+	if err := os.Link(temporary, metadataPath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("install metadata for %s if absent: %w", key, err)
+	}
+	return true, nil
 }
 
 func (d *LocalDatastore) readContentType(key Key) (string, error) {

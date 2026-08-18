@@ -25,12 +25,12 @@ export function triple(args: { readonly input: number }): number {
 // alpha: input 20 -> double -> 40.
 const alphaFlow = workflow({
   name: "alpha",
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
 });
 const alphaDouble = alphaFlow.step("double", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: double,
 });
 alphaFlow.start().to(alphaDouble).to(alphaFlow.end());
@@ -39,12 +39,12 @@ alphaFlow.start().to(alphaDouble).to(alphaFlow.end());
 // executed beta's graph rather than reusing alpha's cached spec.
 const betaFlow = workflow({
   name: "beta",
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
 });
 const betaTriple = betaFlow.step("triple", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: triple,
 });
 betaFlow.start().to(betaTriple).to(betaFlow.end());

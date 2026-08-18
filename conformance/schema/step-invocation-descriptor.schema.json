@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://massive.dev/conformance/schema/step-invocation-descriptor.schema.json",
   "title": "Massive StepInvocationDescriptor",
-  "description": "V0 StepInvocationDescriptor JSON transport between backend orchestration and language runtime adapters. The logical field shape is kept compatible with future transports.",
+  "description": "V1 StepInvocationDescriptor JSON transport between backend orchestration and language runtime adapters. Output publication is manifest-last and immutable.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,6 +10,7 @@
     "schemaVersion",
     "encoding",
     "planHash",
+    "projectKey",
     "runId",
     "nodeId",
     "attempt",
@@ -22,11 +23,12 @@
   ],
   "properties": {
     "kind": { "const": "StepInvocationDescriptor" },
-    "schemaVersion": { "const": 0 },
-    "encoding": { "const": "json-v0" },
+    "schemaVersion": { "const": 1 },
+    "encoding": { "const": "json-v1" },
     "planHash": { "$ref": "#/$defs/hashRef" },
-    "runId": { "$ref": "#/$defs/id" },
-    "nodeId": { "$ref": "#/$defs/id" },
+    "projectKey": { "$ref": "#/$defs/projectKey" },
+    "runId": { "$ref": "#/$defs/safePathSegment" },
+    "nodeId": { "$ref": "#/$defs/safePathSegment" },
     "attempt": {
       "type": "integer",
       "minimum": 1
@@ -35,7 +37,7 @@
     "sourcePackage": { "$ref": "#/$defs/sourcePackageRef" },
     "environmentRef": { "$ref": "#/$defs/hashRef" },
     "input": { "$ref": "#/$defs/dataArtifactRef" },
-    "output": { "$ref": "#/$defs/dataArtifactDestination" },
+    "output": { "$ref": "#/$defs/dataArtifactManifestDestination" },
     "channelReads": {
       "type": "array",
       "items": { "$ref": "#/$defs/channelArtifactRef" }
@@ -51,6 +53,17 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^[A-Za-z0-9_.@/:#-]+$"
+    },
+    "safePathSegment": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.@:#-]+$",
+      "not": { "enum": [".", ".."] }
+    },
+    "projectKey": {
+      "type": "string",
+      "pattern": "^sha256-[0-9a-f]{64}$"
     },
     "relativePath": {
       "type": "string",
@@ -121,12 +134,12 @@
         "schema": { "$ref": "#/$defs/hashRef" }
       }
     },
-    "dataArtifactDestination": {
+    "dataArtifactManifestDestination": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["artifact", "schema"],
+      "required": ["manifestKey", "schema"],
       "properties": {
-        "artifact": { "$ref": "#/$defs/artifactDestination" },
+        "manifestKey": { "$ref": "#/$defs/datastoreKey" },
         "schema": { "$ref": "#/$defs/hashRef" }
       }
     },

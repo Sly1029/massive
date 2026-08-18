@@ -19,24 +19,24 @@ export function label(args: { readonly input: number }): string {
 
 const flow = workflow({
   name: "schema-invalid",
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
 });
 // The builder's `run` for `double` is a well-typed placeholder (number -> number)
 // so emission type-checks; execution uses the exported `double` symbol above,
 // which is the one that violates the output schema.
 const doubleStep = flow.step("double", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: ({ input }) => input * 2,
 });
 const incrementStep = flow.step("increment", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: increment,
 });
 const labelStep = flow.step("label", {
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
   run: label,
 });

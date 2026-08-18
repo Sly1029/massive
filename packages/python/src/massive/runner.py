@@ -6,6 +6,7 @@ import importlib
 import importlib.resources
 import inspect
 import json
+import re
 import sys
 import tarfile
 from collections.abc import Awaitable, Callable, Generator, Mapping
@@ -14,20 +15,34 @@ from functools import cache
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, cast
+from typing import Literal, NotRequired, Protocol, TypedDict, cast
 
-from botocore.config import Config
-from botocore.session import get_session
 from jsonschema import Draft202012Validator
-from jsonschema.exceptions import ValidationError
+from jsonschema.exceptions import SchemaError as JsonSchemaError
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from pydantic import TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
+from pydantic_core import PydanticSerializationError
+from referencing.exceptions import Unresolvable
 
-if TYPE_CHECKING:
-    from mypy_boto3_s3 import S3Client
-
+from .artifact import ArtifactError, ArtifactRuntime, Destination, Producer
 from .builder import StepDefinition
-from .canonical import JsonValue, canonical_json, sha256_ref
+from .canonical import (
+    CanonicalJsonError,
+    JsonValue,
+    canonical_json,
+    parse_canonical_json,
+    sha256_ref,
+)
 from .context import InvocationContext, StepContext
+from .datastore import (
+    Datastore,
+    DatastoreDescriptor,
+    DatastoreNotFoundError,
+    LocalDatastore,
+    S3Datastore,
+)
+from .identity import SHA256_REFERENCE
 
 _SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
 _MAX_SOURCE_FILES = 1024
@@ -45,18 +60,13 @@ class ArtifactRef(TypedDict):
     contentType: str
 
 
-class ArtifactDestination(TypedDict):
-    key: str
-    contentType: str
-
-
 class DataArtifactRef(TypedDict):
     artifact: ArtifactRef
     schema: str
 
 
-class DataArtifactDestination(TypedDict):
-    artifact: ArtifactDestination
+class DataArtifactManifestDestination(TypedDict):
+    manifestKey: str
     schema: str
 
 
@@ -75,28 +85,12 @@ class SourcePackageDescriptor(TypedDict):
     manifest: NotRequired[ArtifactRef]
 
 
-class LocalDatastoreDescriptor(TypedDict):
-    kind: Literal["local"]
-    path: str
-
-
-class S3DatastoreDescriptor(TypedDict):
-    kind: Literal["s3"]
-    bucket: str
-    region: str
-    prefix: NotRequired[str]
-    endpoint: NotRequired[str]
-    forcePathStyle: NotRequired[bool]
-
-
-type DatastoreDescriptor = LocalDatastoreDescriptor | S3DatastoreDescriptor
-
-
 class StepInvocationDescriptor(TypedDict):
     kind: Literal["StepInvocationDescriptor"]
-    schemaVersion: Literal[0]
-    encoding: Literal["json-v0"]
+    schemaVersion: Literal[1]
+    encoding: Literal["json-v1"]
     planHash: str
+    projectKey: str
     runId: str
     nodeId: str
     attempt: int
@@ -104,7 +98,7 @@ class StepInvocationDescriptor(TypedDict):
     sourcePackage: SourcePackageDescriptor
     environmentRef: str
     input: DataArtifactRef
-    output: DataArtifactDestination
+    output: DataArtifactManifestDestination
     datastore: DatastoreDescriptor
 
 
@@ -122,67 +116,6 @@ class SchemaError(Exception):
 
 class StepError(Exception):
     pass
-
-
-class Datastore(Protocol):
-    def read(self, key: str) -> bytes: ...
-
-    def write(self, key: str, body: bytes) -> None: ...
-
-
-class LocalDatastore:
-    def __init__(self, root: Path) -> None:
-        self.root = root.resolve()
-
-    def read(self, key: str) -> bytes:
-        return _path(self.root, key).read_bytes()
-
-    def write(self, key: str, body: bytes) -> None:
-        target = _path(self.root, key)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_name(f".tmp-{target.name}")
-        temporary.write_bytes(body)
-        temporary.replace(target)
-        metadata = (
-            self.root
-            / ".massive-datastore-metadata"
-            / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
-        )
-        metadata.parent.mkdir(parents=True, exist_ok=True)
-        metadata.write_text('{"contentType":"application/json"}')
-
-
-class S3Datastore:
-    def __init__(self, descriptor: S3DatastoreDescriptor) -> None:
-        endpoint = descriptor.get("endpoint")
-        config = (
-            Config(s3={"addressing_style": "path"})
-            if descriptor.get("forcePathStyle") is True
-            else None
-        )
-        self.bucket = descriptor["bucket"]
-        prefix = descriptor.get("prefix", "")
-        self.prefix = prefix.strip("/")
-        self.client = cast(
-            "S3Client",
-            get_session().create_client(
-                "s3",
-                region_name=descriptor["region"],
-                endpoint_url=endpoint,
-                config=config,
-            ),
-        )
-
-    def read(self, key: str) -> bytes:
-        return self.client.get_object(Bucket=self.bucket, Key=self._key(key))["Body"].read()
-
-    def write(self, key: str, body: bytes) -> None:
-        self.client.put_object(
-            Bucket=self.bucket, Key=self._key(key), Body=body, ContentType="application/json"
-        )
-
-    def _key(self, key: str) -> str:
-        return key if self.prefix == "" else f"{self.prefix}/{key}"
 
 
 def run_descriptor_path(path: Path) -> int:
@@ -226,7 +159,7 @@ def _load_descriptor(path: Path) -> StepInvocationDescriptor:
         raise DescriptorError(f"cannot read descriptor {path}: {error}") from error
     try:
         _descriptor_validator().validate(descriptor)
-    except ValidationError as error:
+    except JsonSchemaValidationError as error:
         raise DescriptorError(f"descriptor does not satisfy its JSON Schema: {error}") from error
     return cast(StepInvocationDescriptor, descriptor)
 
@@ -256,7 +189,7 @@ def _execute_source(
     if input_adapter is not None:
         try:
             input_value = input_adapter.validate_python(input_value)
-        except Exception as error:
+        except PydanticValidationError as error:
             raise SchemaError(f"input does not satisfy the step input type: {error}") from error
     context = StepContext[None, object](
         inputs=input_value,
@@ -275,17 +208,35 @@ def _execute_source(
         raise StepError(str(error)) from error
     if output_adapter is not None:
         try:
-            output = output_adapter.dump_python(output_adapter.validate_python(output), mode="json")
-        except Exception as error:
+            validated_output = output_adapter.validate_python(output)
+        except PydanticValidationError as error:
             raise SchemaError(f"output does not satisfy the step output type: {error}") from error
-    output_descriptor = descriptor["output"]
-    output_schema = _schema(datastore, output_descriptor["schema"])
-    _validate(output_schema, output, "output")
+        try:
+            output = output_adapter.dump_python(validated_output, mode="json")
+        except PydanticSerializationError as error:
+            raise SchemaError(f"output cannot be serialized as JSON: {error}") from error
     try:
         output_text = canonical_json(cast(JsonValue, output))
     except (TypeError, ValueError) as error:
         raise SchemaError(f"output is not canonical JSON: {error}") from error
-    datastore.write(output_descriptor["artifact"]["key"], output_text.encode())
+    output_descriptor = descriptor["output"]
+    try:
+        ArtifactRuntime(datastore).publish_json(
+            Destination(
+                manifest_key=output_descriptor["manifestKey"],
+                schema_ref=output_descriptor["schema"],
+            ),
+            Producer(
+                project_key=descriptor["projectKey"],
+                plan_hash=descriptor["planHash"],
+                run_id=descriptor["runId"],
+                node_id=descriptor["nodeId"],
+                attempt=descriptor["attempt"],
+            ),
+            output_text.encode(),
+        )
+    except (ArtifactError, PydanticValidationError) as error:
+        raise SchemaError(f"output artifact publication failed: {error}") from error
 
 
 async def _await_output(value: Awaitable[object]) -> object:
@@ -298,31 +249,25 @@ def _read_input(
     input_descriptor = descriptor["input"]
     artifact = input_descriptor["artifact"]
     expected_hash = artifact["hash"]
-    text = _read(datastore, artifact["key"])
-    if sha256_ref(text) != expected_hash:
+    body = _read(datastore, artifact["key"])
+    if sha256_ref(body) != expected_hash:
         raise SchemaError("input artifact hash mismatch")
-    try:
-        value = cast(JsonValue, json.loads(text))
-    except json.JSONDecodeError as error:
-        raise SchemaError(f"input artifact is not JSON: {error}") from error
-    if canonical_json(value) != text:
-        raise SchemaError("input artifact is not canonical JSON")
+    value = _parse_canonical_json(body, "input artifact")
     schema = _schema(datastore, input_descriptor["schema"])
     _validate(schema, value, "input")
     return value, schema
 
 
 def _schema(datastore: Datastore, reference: str) -> dict[str, object]:
-    if not reference.startswith("sha256:"):
-        raise SchemaError("schema reference is not a SHA-256 reference")
-    text = _read(datastore, f"blobs/sha256/{reference.removeprefix('sha256:')}")
     try:
-        schema: object = json.loads(text)
-    except json.JSONDecodeError as error:
-        raise SchemaError(f"schema is not JSON: {error}") from error
+        SHA256_REFERENCE.validate_python(reference)
+    except PydanticValidationError:
+        raise SchemaError("schema reference is not a SHA-256 reference")
+    body = _read(datastore, f"blobs/sha256/{reference.removeprefix('sha256:')}")
+    schema = _parse_canonical_json(body, "schema")
     if not isinstance(schema, dict):
         raise SchemaError("schema must be an object")
-    if sha256_ref(canonical_json(cast(JsonValue, schema))) != reference:
+    if sha256_ref(body) != reference:
         raise SchemaError("schema hash mismatch")
     return cast(dict[str, object], schema)
 
@@ -331,9 +276,21 @@ def _validate(schema: Mapping[str, object], value: object, role: str) -> None:
     try:
         Draft202012Validator.check_schema(schema)
         validator = cast(SchemaValidator, Draft202012Validator(schema))
+    except (JsonSchemaError, re.error, Unresolvable) as error:
+        raise SchemaError(f"{role} JSON Schema cannot be used: {error}") from error
+    try:
         validator.validate(value)
-    except Exception as error:
+    except JsonSchemaValidationError as error:
         raise SchemaError(f"{role} does not satisfy its JSON Schema: {error}") from error
+    except (re.error, Unresolvable) as error:
+        raise SchemaError(f"{role} JSON Schema cannot be used: {error}") from error
+
+
+def _parse_canonical_json(body: bytes, label: str) -> JsonValue:
+    try:
+        return parse_canonical_json(body)
+    except CanonicalJsonError as error:
+        raise SchemaError(f"{label} is not canonical JSON: {error}") from error
 
 
 @contextmanager
@@ -343,7 +300,7 @@ def _source_root(
     archive = source_package["sourceArchive"]
     if archive["contentType"] != _SOURCE_ARCHIVE_CONTENT_TYPE:
         raise DescriptorError("Python runner requires application/vnd.massive.source-tar")
-    body = datastore.read(archive["key"])
+    body = datastore.get(archive["key"]).body
     if _sha256_ref_bytes(body) != archive["hash"]:
         raise DescriptorError("source archive hash mismatch")
     with TemporaryDirectory(prefix="massive-source-") as temporary:
@@ -416,8 +373,11 @@ def _source_import_path(root: Path) -> Generator[None, None, None]:
         sys.path.remove(root_text)
 
 
-def _read(store: Datastore, key: str) -> str:
-    return store.read(key).decode()
+def _read(store: Datastore, key: str) -> bytes:
+    try:
+        return store.get(key).body
+    except DatastoreNotFoundError as error:
+        raise SchemaError(f"required datastore object is missing: {key}") from error
 
 
 def _datastore(descriptor: DatastoreDescriptor) -> Datastore:
@@ -439,13 +399,6 @@ def _safe_archive_path(path: str) -> bool:
         and "\\" not in path
         and all(part not in {"", ".", ".."} for part in path.split("/"))
     )
-
-
-def _path(root: Path, key: str) -> Path:
-    candidate = (root / key).resolve()
-    if root not in candidate.parents:
-        raise DescriptorError("datastore key escapes the local datastore root")
-    return candidate
 
 
 def main() -> int:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from massive import GraphBuilder, StepContext, container, execution
+from massive import GraphBuilder, NodeHandle, StepContext, container, execution
 
 
 class Request(BaseModel):
@@ -31,5 +31,11 @@ def increment(context: StepContext[None, Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
-node = graph.add(increment)
-graph.edge_from(graph.start).to(node).to(graph.end)
+@graph.step()
+async def increment_async(context: StepContext[None, Request]) -> Result:
+    return Result(value=context.inputs.value + 1)
+
+
+sync_node: NodeHandle[Result] = graph.add(increment)
+async_node: NodeHandle[Result] = graph.add(increment_async)
+graph.edge_from(graph.start).to(sync_node).to(async_node).to(graph.end)

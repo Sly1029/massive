@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import inspect
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from types import ModuleType
 from typing import (
@@ -17,11 +18,12 @@ from typing import (
     overload,
 )
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import DepsT, InputT, StepContext
 from .contracts import ExecutionContract
+from .identity import SAFE_PATH_SEGMENT, SafePathSegment
 from .source_package import SourcePackage
 
 OutputT = TypeVar("OutputT")
@@ -35,9 +37,20 @@ _END = "__end"
 GRAPH_IR_VERSION = "0.1"
 
 
+class SchemaPurpose(str, Enum):
+    INPUT = "validation"
+    OUTPUT = "serialization"
+
+
+class _WorkflowIdentity(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: SafePathSegment
+
+
 @dataclass(frozen=True, slots=True)
 class StepDefinition(Generic[DepsT, InputT, OutputT]):
-    function: Callable[[StepContext[DepsT, InputT]], OutputT]
+    function: Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]]
     input_type: Any
     output_type: Any
     deps_type: Any
@@ -104,9 +117,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         defaults: ExecutionContract,
         deps_type: type[DepsT] | None = None,
     ) -> None:
-        if not name:
-            raise ValueError("workflow name must not be empty")
-        self.name = name
+        self.name = _WorkflowIdentity(name=name).name
         self.input_type = input_type
         self.output_type = output_type
         self.deps_type = deps_type
@@ -120,10 +131,11 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
     def step(
         self, *, contract: ExecutionContract | None = None
     ) -> Callable[
-        [Callable[[StepContext[DepsT, InputT]], OutputT]], StepDefinition[DepsT, InputT, OutputT]
+        [Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]]],
+        StepDefinition[DepsT, InputT, OutputT],
     ]:
         def register(
-            function: Callable[[StepContext[DepsT, InputT]], OutputT],
+            function: Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]],
         ) -> StepDefinition[DepsT, InputT, OutputT]:
             if "<locals>" in function.__qualname__ or function.__name__ == "<lambda>":
                 raise TypeError("workflow steps must be top-level named functions")
@@ -168,7 +180,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             return None
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        node_id = id or item.function.__name__
+        node_id = SAFE_PATH_SEGMENT.validate_python(id or item.function.__name__)
         if node_id in {_START, _END} or node_id in self._nodes:
             raise ValueError(f"duplicate or reserved step id {node_id!r}")
         handle = NodeHandle[OutputT](
@@ -213,14 +225,26 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         source_files, package_hash = source.manifest()
         schema_table: dict[str, JsonValue] = {}
 
-        def schema_ref(annotation: Any) -> str:
-            schema = cast(JsonValue, TypeAdapter(annotation).json_schema(mode="validation"))
+        def schema_ref(annotation: Any, role: str, purpose: SchemaPurpose) -> str:
+            adapter = TypeAdapter(annotation)
+            schema = cast(JsonValue, adapter.json_schema(mode=purpose.value))
+            canonical_shape = cast(
+                JsonValue,
+                adapter.json_schema(
+                    mode=(
+                        SchemaPurpose.OUTPUT.value
+                        if purpose is SchemaPurpose.INPUT
+                        else purpose.value
+                    )
+                ),
+            )
+            _assert_canonical_json_schema(canonical_shape, role)
             reference = sha256_ref(canonical_json(schema))
             schema_table[reference] = schema
             return reference
 
-        input_schema = schema_ref(self.input_type)
-        output_schema = schema_ref(self.output_type)
+        input_schema = schema_ref(self.input_type, "workflow input schema", SchemaPurpose.INPUT)
+        output_schema = schema_ref(self.output_type, "workflow output schema", SchemaPurpose.OUTPUT)
         environments: dict[str, JsonValue] = {}
         contracts: dict[str, JsonValue] = {}
 
@@ -252,8 +276,12 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                 {
                     "id": node_id,
                     "kind": "step",
-                    "inputSchema": schema_ref(step.input_type),
-                    "outputSchema": schema_ref(step.output_type),
+                    "inputSchema": schema_ref(
+                        step.input_type, f"step {node_id!r} input schema", SchemaPurpose.INPUT
+                    ),
+                    "outputSchema": schema_ref(
+                        step.output_type, f"step {node_id!r} output schema", SchemaPurpose.OUTPUT
+                    ),
                     "symbolRef": symbol_ref,
                     "contractRef": contract_ref(step.contract or self.defaults),
                 }
@@ -311,3 +339,99 @@ def _symbol_module(function: Callable[..., Any], root: Path) -> str:
     if not isinstance(loaded, ModuleType) or getattr(loaded, function.__name__, None) is None:
         raise TypeError("workflow step must remain exported from its module")
     return module
+
+
+def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
+    """Reject Pydantic schemas that cannot describe canonical JSON v0 values.
+
+    This follows the schema containers Pydantic emits, including local
+    definitions and references. It is deliberately conservative for Pydantic
+    output rather than a general JSON Schema satisfiability checker.
+    """
+
+    try:
+        canonical_json(schema)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{role} contains a schema value canonical-json-v0 cannot encode; "
+            "use safe integers and strings instead of floats or unsafe integers."
+        ) from error
+
+    def pointer(path: str, token: str | int) -> str:
+        escaped = str(token).replace("~", "~0").replace("/", "~1")
+        return f"{path}/{escaped}"
+
+    metadata = {
+        "$comment",
+        "default",
+        "deprecated",
+        "description",
+        "examples",
+        "readOnly",
+        "title",
+        "writeOnly",
+    }
+    mappings = {"$defs", "dependentSchemas", "patternProperties", "properties"}
+    single_schemas = {
+        "contains",
+        "contentSchema",
+        "else",
+        "items",
+        "propertyNames",
+        "then",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+    }
+    schema_arrays = {"allOf", "anyOf", "oneOf", "prefixItems"}
+
+    def visit(value: JsonValue, path: str) -> None:
+        if value is True:
+            raise ValueError(
+                f"{role} is unconstrained at {path}; canonical-json-v0 cannot represent "
+                "an Any value. Use an explicit integer, string, object, or collection schema."
+            )
+        if not isinstance(value, dict):
+            return
+        non_metadata = set(value) - metadata
+        if not non_metadata:
+            raise ValueError(
+                f"{role} is unconstrained at {path}; canonical-json-v0 cannot represent "
+                "an Any value. Use an explicit integer, string, object, or collection schema."
+            )
+        type_value = value.get("type")
+        if type_value == "number" or (
+            isinstance(type_value, list) and "number" in type_value
+        ):
+            raise ValueError(
+                f"{role} uses JSON Schema type 'number' at {path}; "
+                "canonical-json-v0 is integer-only. Use an integer field or "
+                "model fractional values as strings."
+            )
+        for key in mappings:
+            child = value.get(key)
+            if isinstance(child, dict):
+                for name, definition in child.items():
+                    if isinstance(definition, (bool, dict)):
+                        visit(definition, pointer(pointer(path, key), name))
+        for key in single_schemas:
+            child = value.get(key)
+            if isinstance(child, (bool, dict)):
+                visit(child, pointer(path, key))
+        # `if` and `not` are polarity-sensitive: a nested number may be
+        # conditionally constrained or forbidden, so neither is traversed here.
+        additional_properties = value.get("additionalProperties")
+        if additional_properties is True:
+            raise ValueError(
+                f"{role} permits unconstrained object values at "
+                f"{pointer(path, 'additionalProperties')}; canonical-json-v0 cannot "
+                "represent an Any value. Use dict[str, int] or dict[str, str]."
+            )
+        if isinstance(additional_properties, dict):
+            visit(cast(JsonValue, additional_properties), pointer(path, "additionalProperties"))
+        for key in schema_arrays:
+            child = value.get(key)
+            if isinstance(child, list):
+                for index, item in enumerate(child):
+                    visit(item, pointer(pointer(path, key), index))
+
+    visit(schema, "#")

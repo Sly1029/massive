@@ -29,7 +29,7 @@ export function passthroughGraphCase(): GraphCase {
     expectedTasks: 0,
     expectedEdges: 1,
     build() {
-      const g = workflow({ name: "passthrough", input: z.number(), output: z.number() });
+      const g = workflow({ name: "passthrough", input: z.int(), output: z.int() });
       g.start().to(g.end());
       return g;
     },
@@ -44,10 +44,10 @@ export function singleStepGraphCase(): GraphCase {
     expectedTasks: 1,
     expectedEdges: 2,
     build() {
-      const g = workflow({ name: "single-step", input: z.number(), output: z.number() });
+      const g = workflow({ name: "single-step", input: z.int(), output: z.int() });
       const hello = g.step("hello", {
-        input: z.number(),
-        output: z.number(),
+        input: z.int(),
+        output: z.int(),
         run: ({ input }) => input + 1,
       });
       g.start().to(hello).to(g.end());
@@ -64,19 +64,19 @@ export function linearChainGraphCase(): GraphCase {
     expectedTasks: 3,
     expectedEdges: 4,
     build() {
-      const g = workflow({ name: "linear-chain", input: z.number(), output: z.string() });
+      const g = workflow({ name: "linear-chain", input: z.int(), output: z.string() });
       const double = g.step("double", {
-        input: z.number(),
-        output: z.number(),
+        input: z.int(),
+        output: z.int(),
         run: ({ input }) => input * 2,
       });
       const increment = g.step("increment", {
-        input: z.number(),
-        output: z.number(),
+        input: z.int(),
+        output: z.int(),
         run: ({ input }) => input + 2,
       });
       const label = g.step("label", {
-        input: z.number(),
+        input: z.int(),
         output: z.string(),
         run: ({ input }) => `hello:${input}`,
       });
@@ -95,13 +95,13 @@ export function diamondGraphCase(): GraphCase {
     expectedEdges: 6,
     mergeExpectations: { merge: ["left", "right"] },
     build() {
-      const g = workflow({ name: "diamond", input: z.number(), output: z.number() });
-      const split = g.step("split", { input: z.number(), output: z.number(), run: ({ input }) => input });
-      const left = g.step("left", { input: z.number(), output: z.number(), run: ({ input }) => input + 1 });
-      const right = g.step("right", { input: z.number(), output: z.number(), run: ({ input }) => input * 10 });
+      const g = workflow({ name: "diamond", input: z.int(), output: z.int() });
+      const split = g.step("split", { input: z.int(), output: z.int(), run: ({ input }) => input });
+      const left = g.step("left", { input: z.int(), output: z.int(), run: ({ input }) => input + 1 });
+      const right = g.step("right", { input: z.int(), output: z.int(), run: ({ input }) => input * 10 });
       const merge = g.step("merge", {
-        input: z.array(z.number()),
-        output: z.number(),
+        input: z.array(z.int()),
+        output: z.int(),
         run: ({ input }) => input.reduce((sum, value) => sum + value, 0),
       });
 
@@ -123,14 +123,14 @@ export function unevenFanInGraphCase(): GraphCase {
     expectedEdges: 7,
     mergeExpectations: { merge: ["short", "long-tail"] },
     build() {
-      const g = workflow({ name: "uneven-fan-in", input: z.number(), output: z.number() });
-      const split = g.step("split", { input: z.number(), output: z.number(), run: ({ input }) => input });
-      const short = g.step("short", { input: z.number(), output: z.number(), run: ({ input }) => input + 5 });
-      const long = g.step("long", { input: z.number(), output: z.number(), run: ({ input }) => input * 10 });
-      const longTail = g.step("long-tail", { input: z.number(), output: z.number(), run: ({ input }) => input + 12 });
+      const g = workflow({ name: "uneven-fan-in", input: z.int(), output: z.int() });
+      const split = g.step("split", { input: z.int(), output: z.int(), run: ({ input }) => input });
+      const short = g.step("short", { input: z.int(), output: z.int(), run: ({ input }) => input + 5 });
+      const long = g.step("long", { input: z.int(), output: z.int(), run: ({ input }) => input * 10 });
+      const longTail = g.step("long-tail", { input: z.int(), output: z.int(), run: ({ input }) => input + 12 });
       const merge = g.step("merge", {
-        input: z.array(z.number()),
-        output: z.number(),
+        input: z.array(z.int()),
+        output: z.int(),
         run: ({ input }) => input.reduce((sum, value) => sum + value, 0),
       });
 
@@ -156,25 +156,25 @@ export function multiStageMergeGraphCase(): GraphCase {
       "merge-final": ["merge-a", "merge-b"],
     },
     build() {
-      const g = workflow({ name: "multi-stage-merge", input: z.number(), output: z.number() });
-      const split = g.step("split", { input: z.number(), output: z.number(), run: ({ input }) => input });
-      const a1 = g.step("a1", { input: z.number(), output: z.number(), run: ({ input }) => input + 10 });
-      const a2 = g.step("a2", { input: z.number(), output: z.number(), run: ({ input }) => input + 20 });
-      const b1 = g.step("b1", { input: z.number(), output: z.number(), run: ({ input }) => input + 30 });
-      const b2 = g.step("b2", { input: z.number(), output: z.number(), run: ({ input }) => input + 40 });
+      const g = workflow({ name: "multi-stage-merge", input: z.int(), output: z.int() });
+      const split = g.step("split", { input: z.int(), output: z.int(), run: ({ input }) => input });
+      const a1 = g.step("a1", { input: z.int(), output: z.int(), run: ({ input }) => input + 10 });
+      const a2 = g.step("a2", { input: z.int(), output: z.int(), run: ({ input }) => input + 20 });
+      const b1 = g.step("b1", { input: z.int(), output: z.int(), run: ({ input }) => input + 30 });
+      const b2 = g.step("b2", { input: z.int(), output: z.int(), run: ({ input }) => input + 40 });
       const mergeA = g.step("merge-a", {
-        input: z.array(z.number()),
-        output: z.number(),
+        input: z.array(z.int()),
+        output: z.int(),
         run: ({ input }) => input.reduce((sum, value) => sum + value, 0),
       });
       const mergeB = g.step("merge-b", {
-        input: z.array(z.number()),
-        output: z.number(),
+        input: z.array(z.int()),
+        output: z.int(),
         run: ({ input }) => input.reduce((sum, value) => sum + value, 0),
       });
       const mergeFinal = g.step("merge-final", {
-        input: z.array(z.number()),
-        output: z.number(),
+        input: z.array(z.int()),
+        output: z.int(),
         run: ({ input }) => input.reduce((sum, value) => sum + value, 0),
       });
 
@@ -202,18 +202,18 @@ export function batchMergeGraphCase(size: number): GraphCase {
       merge: Array.from({ length: size }, (_, index) => workerId(index)),
     },
     build() {
-      const g = workflow({ name: `batch-merge-${size}`, input: z.number(), output: z.number() });
-      const split = g.step("split", { input: z.number(), output: z.number(), run: ({ input }) => input });
+      const g = workflow({ name: `batch-merge-${size}`, input: z.int(), output: z.int() });
+      const split = g.step("split", { input: z.int(), output: z.int(), run: ({ input }) => input });
       const workers = Array.from({ length: size }, (_, index) =>
         g.step(workerId(index), {
-          input: z.number(),
-          output: z.number(),
+          input: z.int(),
+          output: z.int(),
           run: async ({ input }) => input + index,
         })
       );
       const merge = g.step("merge", {
-        input: z.array(z.number()),
-        output: z.number(),
+        input: z.array(z.int()),
+        output: z.int(),
         run: ({ input }) => input.reduce((sum, value) => sum + value, 0),
       });
 

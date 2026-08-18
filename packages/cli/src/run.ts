@@ -1,6 +1,7 @@
 import { dirname, relative, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stat } from "node:fs/promises";
+import { z } from "zod";
 import {
   computeSpecHash,
   type Datastore,
@@ -588,7 +589,9 @@ async function resolveSourceConfig(
   const configHash = sha256Text(stableStringify({
     entrypoint: config.entrypoint,
     include: config.include,
-    environment: config.environment,
+    ...(config.environment === undefined
+      ? {}
+      : { environment: config.environment }),
   }));
   return {
     packageRoot,
@@ -616,29 +619,126 @@ function stripExport(specifier: string): string {
 
 // --- Run manifest read (authoritative) -------------------------------------
 
-interface ManifestView {
-  readonly planHash: string;
-  readonly status: string;
-  readonly steps: readonly {
-    readonly nodeId: string;
-    readonly status: string;
-    readonly attempts?: readonly {
-      readonly output?: { readonly key: string; readonly hash: string };
-      readonly diagnostic?: string;
-    }[];
-  }[];
-  readonly result?: { readonly key: string; readonly hash: string };
+const RUN_MANIFEST_SCHEMA_VERSION = 1;
+const RUN_MANIFEST_ENCODING = "json-v1";
+
+// This matches the Go-owned run-manifest v1 transport in
+// internal/orchestrator/manifest.go. Keep the complete model here because the
+// CLI reads every layer below directly when rendering `inspect` and `run`.
+const ManifestArtifactRefSchema = z.object({
+  key: z.string(),
+  hash: z.string(),
+  size: z.number().int().nonnegative(),
+  contentType: z.string(),
+}).strict();
+
+const ManifestDataArtifactSchema = z.object({
+  key: z.string(),
+  hash: z.string(),
+  contentType: z.string(),
+  schema: z.string(),
+}).strict();
+
+const ManifestPublishedArtifactSchema = z.object({
+  manifest: ManifestArtifactRefSchema,
+  body: ManifestArtifactRefSchema,
+  schema: z.string(),
+}).strict();
+
+const ManifestAttemptSchema = z.object({
+  attempt: z.number().int().positive(),
+  status: z.string(),
+  input: ManifestDataArtifactSchema,
+  output: ManifestPublishedArtifactSchema.optional(),
+  diagnostic: z.string().optional(),
+}).strict();
+
+const ManifestStepSchema = z.object({
+  nodeId: z.string(),
+  status: z.string(),
+  attempts: z.array(ManifestAttemptSchema),
+}).strict();
+
+const ManifestViewSchema = z.object({
+  kind: z.literal("RunManifest"),
+  schemaVersion: z.literal(RUN_MANIFEST_SCHEMA_VERSION),
+  encoding: z.literal(RUN_MANIFEST_ENCODING),
+  planHash: z.string(),
+  projectKey: z.string(),
+  runId: z.string(),
+  status: z.string(),
+  steps: z.array(ManifestStepSchema),
+  result: ManifestDataArtifactSchema.optional(),
+}).strict();
+
+type ManifestView = z.infer<typeof ManifestViewSchema>;
+
+// Run and inspect must never read nested fields from a transport version they
+// do not understand. Keep this error distinct so `run` can retain its
+// best-effort behavior for a missing/malformed manifest while refusing a
+// successfully read, explicitly incompatible protocol.
+export class UnsupportedRunManifestProtocolError extends Error {
+  constructor(
+    key: string,
+    schemaVersion: unknown,
+    encoding: unknown,
+  ) {
+    super(
+      `unsupported run manifest protocol at ${key}: expected schemaVersion ${RUN_MANIFEST_SCHEMA_VERSION} and encoding ${
+        JSON.stringify(RUN_MANIFEST_ENCODING)
+      }, got schemaVersion ${JSON.stringify(schemaVersion)} and encoding ${
+        JSON.stringify(encoding)
+      }`,
+    );
+    this.name = "UnsupportedRunManifestProtocolError";
+  }
 }
 
-// Reads a manifest at a known key; undefined on any failure (best-effort — the
-// caller degrades to the run JSON for step statuses).
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Reads and validates the independently-versioned run manifest before exposing
+// any nested result or attempt data to callers.
+export async function readRunManifestAt(
+  store: Datastore,
+  key: string,
+): Promise<ManifestView> {
+  const value: unknown = JSON.parse(decoder.decode(await store.get(key)));
+  if (!isRecord(value)) {
+    throw new Error(`invalid run manifest at ${key}: expected a JSON object`);
+  }
+  if (
+    value.schemaVersion !== RUN_MANIFEST_SCHEMA_VERSION ||
+    value.encoding !== RUN_MANIFEST_ENCODING
+  ) {
+    throw new UnsupportedRunManifestProtocolError(
+      key,
+      value.schemaVersion,
+      value.encoding,
+    );
+  }
+  const parsed = ManifestViewSchema.safeParse(value);
+  if (!parsed.success) {
+    const details = parsed.error.issues.map((issue) =>
+      `${issue.path.join(".") || "manifest"}: ${issue.message}`
+    ).join("; ");
+    throw new Error(`invalid run manifest at ${key}: ${details}`);
+  }
+  return parsed.data;
+}
+
+// Reads a manifest at a known key; undefined for ordinary best-effort read
+// failures so the caller can degrade to the Go run JSON. An explicitly
+// unsupported protocol is never silently ignored.
 async function readManifestAt(
   store: Datastore,
   key: string,
 ): Promise<ManifestView | undefined> {
   try {
-    return JSON.parse(decoder.decode(await store.get(key))) as ManifestView;
-  } catch {
+    return await readRunManifestAt(store, key);
+  } catch (error) {
+    if (error instanceof UnsupportedRunManifestProtocolError) throw error;
     return undefined;
   }
 }
@@ -692,7 +792,7 @@ function buildSteps(
       ...(diagnostic === undefined || diagnostic === "" ? {} : { diagnostic }),
       ...(attempt?.output === undefined
         ? {}
-        : { outputKey: attempt.output.key }),
+        : { outputKey: attempt.output.manifest.key }),
     };
     return summary;
   });

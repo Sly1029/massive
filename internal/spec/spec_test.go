@@ -116,6 +116,54 @@ func TestParseReportsUnsupportedGraphIRVersion(t *testing.T) {
 	}
 }
 
+func TestParseConstrainsGraphNodeIDsToSafeDatastoreSegments(t *testing.T) {
+	for _, nodeID := range []string{"nested/double", `nested\\double`, ".", ".."} {
+		t.Run("rejects "+nodeID, func(t *testing.T) {
+			data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				nodes := graph["nodes"].([]any)
+				nodes[2].(map[string]any)["id"] = nodeID
+				for _, rawEdge := range graph["edges"].([]any) {
+					edge := rawEdge.(map[string]any)
+					if edge["from"] == "double" {
+						edge["from"] = nodeID
+					}
+					if edge["to"] == "double" {
+						edge["to"] = nodeID
+					}
+				}
+			})
+
+			if _, err := Parse(data); err == nil {
+				t.Fatalf("Parse accepted unsafe graph node id %q", nodeID)
+			}
+		})
+	}
+
+	for _, nodeID := range []string{"_step", ".hidden"} {
+		t.Run("accepts "+nodeID, func(t *testing.T) {
+			data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				nodes := graph["nodes"].([]any)
+				nodes[2].(map[string]any)["id"] = nodeID
+				for _, rawEdge := range graph["edges"].([]any) {
+					edge := rawEdge.(map[string]any)
+					if edge["from"] == "double" {
+						edge["from"] = nodeID
+					}
+					if edge["to"] == "double" {
+						edge["to"] = nodeID
+					}
+				}
+			})
+
+			if _, err := Parse(data); err != nil {
+				t.Fatalf("Parse rejected safe graph node id %q: %v", nodeID, err)
+			}
+		})
+	}
+}
+
 func TestParseRejectsDuplicateEdge(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
 		graph := root["graph"].(map[string]any)

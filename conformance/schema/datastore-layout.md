@@ -202,31 +202,47 @@ Project keys must not embed run IDs, timestamps, branch names, or other transien
 
 ### Run object templates
 
-`<run-id>` is an opaque run identifier chosen by the orchestrator (for example a UUID string). `<step-id>` is the graph node id. `<attempt>` is a positive integer attempt number (v0 uses `1` on first success path). `<channel-name>` is the portable channel name from the graph.
+`<run-id>` is an opaque run identifier chosen by the orchestrator (for example a UUID string). `<step-id>` is the graph node id. `<attempt>` is a positive integer attempt number (the local v1 executor currently uses only `1`). `<channel-name>` is the portable channel name from the graph.
 
 Templates:
 
 ```text
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
-projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
+projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.json
 projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```
 
-`run-manifest.json` is the run manifest the orchestrator records when it creates a run (WS-5.1): plan hash, run status, and per-step attempt/artifact records. `result.json` is the final run result artifact the CLI surfaces as the run's output location (WS-6.1). Both are canonical JSON.
+`run-manifest.json` is the v1 (`schemaVersion: 1`, `encoding: "json-v1"`) run
+manifest the orchestrator records when it creates a run: plan hash, run status,
+and per-step attempt/artifact records. Its output record contains the immutable
+attempt-manifest reference and its content-addressed body reference.
+`result.json` is the final run result artifact the CLI surfaces as the run's
+output location. Both are canonical JSON. The local v1 executor currently
+records only attempt `1` for each node; retry scheduling is intentionally not
+implemented by this transport slice.
 
 Examples:
 
 ```text
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/run-manifest.json
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/inputs/double.json
-projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/steps/double/1/output.json
+projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/steps/double/1/output-manifest.json
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/channels/intermediate/value.json
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/result.json
 ```
 
-V0 runtime data artifacts (step inputs, step outputs, channel values, final run results) are canonical JSON. Each artifact record carries its schema hash, content hash, content type, datastore key, and producing run/node/attempt when applicable.
+V1 step outputs are committed by an immutable canonical JSON manifest at the
+attempt key; the manifest references a canonical JSON body under
+`blobs/sha256/<digestHex>`. Inputs, channel values, and final result locations
+retain their current run-scoped JSON layout until their own protocol slice is
+migrated. Each artifact record carries its schema hash, content hash, content
+type, datastore key, and producing run/node/attempt when applicable.
+
+This is a breaking v0 step-output rename from `output.json` to
+`output-manifest.json`. There is no compatibility read or dual write: a
+workflow adopts the v2 SDK and deployment namespace as one migration.
 
 ## Layout overview
 
@@ -242,7 +258,7 @@ plans/<plan-key>/provenance.json
 targets/<plan-key>/<target>/bundle-manifest.json
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
-projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
+projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.json
 projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```

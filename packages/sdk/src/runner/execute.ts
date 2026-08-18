@@ -1,8 +1,17 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject } from "ajv/dist/2020.js";
-import { type Datastore, datastore } from "../datastore/facade.ts";
+import { ArtifactError, ArtifactRuntime } from "../artifact/runtime.ts";
+import { Key } from "../datastore/key.ts";
+import { LocalDatastoreClient } from "../datastore/local.ts";
 import {
+  type DatastoreClient,
+  DatastoreNotFoundError,
+} from "../datastore/types.ts";
+import {
+  CanonicalJsonError,
+  decodeCanonicalUtf8,
   type JsonValue,
+  parseCanonicalJsonText,
   sha256RefBytes,
   sha256RefText,
   stableStringify,
@@ -41,12 +50,12 @@ export async function executeStep(
     try {
       try {
         output = await resolved.run({
-        input,
-        state: {},
-        context: {
-          runId: descriptor.runId,
-          stepId: descriptor.nodeId,
-        },
+          input,
+          state: {},
+          context: {
+            runId: descriptor.runId,
+            stepId: descriptor.nodeId,
+          },
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -55,11 +64,20 @@ export async function executeStep(
 
       validateJson(outputSchema, output, "output");
 
-      const serializedOutput = stableStringify(output);
-      const outputHash = sha256RefText(serializedOutput);
-      await store.put(descriptor.output.artifact.key, serializedOutput, {
-        contentType: descriptor.output.artifact.contentType,
-      });
+      const published = await new ArtifactRuntime(store).publishJson(
+        {
+          manifestKey: Key.parse(descriptor.output.manifestKey),
+          schema: descriptor.output.schema,
+        },
+        {
+          projectKey: descriptor.projectKey,
+          planHash: descriptor.planHash,
+          runId: descriptor.runId,
+          nodeId: descriptor.nodeId,
+          attempt: descriptor.attempt,
+        },
+        stableStringify(output),
+      );
 
       return {
         kind: "success",
@@ -68,10 +86,9 @@ export async function executeStep(
         nodeId: descriptor.nodeId,
         attempt: descriptor.attempt,
         output: {
-          key: descriptor.output.artifact.key,
-          hash: outputHash,
-          contentType: descriptor.output.artifact.contentType,
-          schema: descriptor.output.schema,
+          manifest: published.manifest,
+          body: published.body,
+          schema: published.schema,
         },
       };
     } finally {
@@ -89,21 +106,29 @@ export async function executeStep(
     if (error instanceof StepExecutionError) {
       return stepExecutionFailure(error);
     }
+    if (error instanceof ArtifactError || error instanceof CanonicalJsonError) {
+      return schemaValidationFailure(
+        new StepSchemaValidationError("output", error.message),
+      );
+    }
 
-    const message = error instanceof Error ? error.message : String(error);
-    return stepExecutionFailure(new StepExecutionError(message));
+    // Datastore and runtime failures are infrastructure failures, not user
+    // code failures. Let the process boundary surface them with its generic
+    // non-user error path rather than misreporting exit 66.
+    throw error;
   }
 }
 
 async function datastoreForDescriptor(
   descriptor: StepInvocationDescriptor,
-): Promise<Datastore> {
+): Promise<DatastoreClient> {
   if (descriptor.datastore.kind === "local") {
-    return datastore.local({ path: descriptor.datastore.path });
+    return new LocalDatastoreClient({ path: descriptor.datastore.path });
   }
 
   try {
-    return await datastore.s3({
+    const { S3DatastoreClient } = await import("../datastore/s3.ts");
+    return new S3DatastoreClient({
       bucket: descriptor.datastore.bucket,
       region: descriptor.datastore.region,
       ...(descriptor.datastore.prefix === undefined
@@ -123,14 +148,15 @@ async function datastoreForDescriptor(
 }
 
 async function readSchema(
-  store: Datastore,
+  store: DatastoreClient,
   schemaRef: string,
 ): Promise<JsonValue> {
   const key = schemaKey(schemaRef);
   let bytes: Uint8Array;
   try {
-    bytes = await store.get(key);
+    bytes = (await store.get(Key.parse(key))).body;
   } catch (error) {
+    if (!(error instanceof DatastoreNotFoundError)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw new StepSchemaValidationError(
       "schema",
@@ -143,7 +169,16 @@ async function readSchema(
     "schema",
     `schema ${schemaRef}`,
   ) as JsonValue;
-  const actualHash = sha256RefText(stableStringify(schema));
+  let actualHash: string;
+  try {
+    actualHash = sha256RefText(stableStringify(schema));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new StepSchemaValidationError(
+      "schema",
+      `schema ${schemaRef} is not canonical JSON: ${message}`,
+    );
+  }
   if (actualHash !== schemaRef) {
     throw new StepSchemaValidationError(
       "schema",
@@ -155,14 +190,15 @@ async function readSchema(
 }
 
 async function readCanonicalJsonArtifact(
-  store: Datastore,
+  store: DatastoreClient,
   key: string,
   expectedHash: string,
 ): Promise<JsonValue> {
   let bytes: Uint8Array;
   try {
-    bytes = await store.get(key);
+    bytes = (await store.get(Key.parse(key))).body;
   } catch (error) {
+    if (!(error instanceof DatastoreNotFoundError)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw new StepSchemaValidationError(
       "input",
@@ -178,19 +214,11 @@ async function readCanonicalJsonArtifact(
     );
   }
 
-  const text = new TextDecoder().decode(bytes);
-  const value = parseJsonText(
-    text,
+  const value = parseJsonBytes(
+    bytes,
     "input",
     `input artifact ${key}`,
   ) as JsonValue;
-  if (stableStringify(value) !== text) {
-    throw new StepSchemaValidationError(
-      "input",
-      `input artifact ${key} is not canonical JSON`,
-    );
-  }
-
   return value;
 }
 
@@ -226,7 +254,16 @@ function parseJsonBytes(
   boundary: "schema" | "input" | "output",
   role: string,
 ): unknown {
-  return parseJsonText(new TextDecoder().decode(bytes), boundary, role);
+  try {
+    return parseJsonText(decodeCanonicalUtf8(bytes), boundary, role);
+  } catch (error) {
+    if (error instanceof StepSchemaValidationError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new StepSchemaValidationError(
+      boundary,
+      `${role} is not valid JSON: ${message}`,
+    );
+  }
 }
 
 function parseJsonText(
@@ -235,7 +272,7 @@ function parseJsonText(
   role: string,
 ): unknown {
   try {
-    return JSON.parse(text);
+    return parseCanonicalJsonText(text);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new StepSchemaValidationError(

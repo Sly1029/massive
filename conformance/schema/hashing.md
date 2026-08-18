@@ -47,9 +47,11 @@ must reproduce them byte for byte, and the golden vector exercises each rule.
   beginning with U+E000 in UTF-16, but after it in UTF-8 byte order.
 - **String escaping is exactly `JSON.stringify`'s:** `\"`, `\\`, `\b`, `\t`,
   `\n`, `\f`, `\r`, and `\u00XX` for other control characters below U+0020.
-  Everything else is emitted raw — including `<`, `>`, `&`, U+2028, and
-  U+2029. Implementations must not apply HTML-safety or JS-source-safety
-  escaping. Strings must be well-formed Unicode (no lone surrogates).
+  Everything else is emitted raw — including DEL (U+007F), `<`, `>`, `&`,
+  U+2028, U+2029, and non-BMP scalars. Implementations must not apply HTML-
+  safety or JS-source-safety escaping. A canonical document ends at its final
+  JSON token; no trailing newline or other whitespace is part of the hashed
+  payload. Strings must be well-formed Unicode (no lone surrogates).
 - **Numbers in v0 canonical field trees are restricted to canonical safe
   integers:** base-10, no leading zeros, no sign on zero, no fraction or
   exponent, absolute value at most 2^53 − 1. This is a strict subset of RFC

@@ -28,19 +28,19 @@ The simplest case is step output flowing into the next step's input:
 ```ts
 const g = workflow({
   name: "math",
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
   defaults: nodeDefaults,
 });
 
 const double = g.step("double", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: async ({ input }) => input * 2,
 });
 
 const stringify = g.step("stringify", {
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
   run: async ({ input }) => `Result: ${input}`,
 });
@@ -49,6 +49,11 @@ g.start().to(double).to(stringify).to(g.end());
 ```
 
 Each step return value is persisted as a step output artifact. It is not automatically promoted to a named channel.
+
+V0 artifact values use canonical JSON with safe integers only. In TypeScript,
+use `z.int()` for numeric inputs and outputs; `z.number()` is rejected during
+emission because it admits fractional values that no portable runtime can
+publish canonically.
 
 ## Step Output
 

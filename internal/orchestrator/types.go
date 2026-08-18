@@ -108,10 +108,9 @@ type StepInvocation struct {
 }
 
 type StepInvocationOutcome struct {
-	NodeID             string
-	Attempt            int
-	Status             string
-	ExitCode           int
-	Diagnostic         string
-	ExpectedOutputHash string
+	NodeID     string
+	Attempt    int
+	Status     string
+	ExitCode   int
+	Diagnostic string
 }

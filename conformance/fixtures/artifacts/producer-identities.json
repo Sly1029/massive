@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "contract": "artifact-producer-v1",
+  "valid": [
+    {
+      "name": "all-allowed-path-segment-characters",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run._@:#-9",
+        "nodeId": "node._@:#-9",
+        "attempt": 1
+      }
+    },
+    {
+      "name": "path-segment-at-maximum-length",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "nodeId": "task",
+        "attempt": 9007199254740991
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "project-key-must-be-normalized-sha256-segment",
+      "producer": {
+        "projectKey": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 1
+      }
+    },
+    {
+      "name": "plan-hash-must-be-lowercase-sha256-reference",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 1
+      }
+    },
+    {
+      "name": "run-id-cannot-be-a-dot-segment",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "..",
+        "nodeId": "task",
+        "attempt": 1
+      }
+    },
+    {
+      "name": "node-id-cannot-contain-a-path-separator",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "nested/task",
+        "attempt": 1
+      }
+    },
+    {
+      "name": "run-id-cannot-exceed-128-characters",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "nodeId": "task",
+        "attempt": 1
+      }
+    },
+    {
+      "name": "attempt-must-be-positive",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 0
+      }
+    },
+    {
+      "name": "attempt-must-not-be-boolean",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": true
+      }
+    },
+    {
+      "name": "attempt-must-not-be-fractional",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 1.5
+      }
+    },
+    {
+      "name": "attempt-must-not-exceed-json-safe-integer",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 9007199254740992
+      }
+    }
+  ]
+}

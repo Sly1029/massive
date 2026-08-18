@@ -6,8 +6,8 @@ import { z } from "zod";
 // refused by the SDK entrypoint resolver before any emission.
 const flow = workflow({
   name: "zero-config",
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
 });
 flow.start().to(flow.end());
 

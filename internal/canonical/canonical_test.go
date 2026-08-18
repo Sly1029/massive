@@ -1,11 +1,90 @@
 package canonical
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCanonicalJSONV0Corpus(t *testing.T) {
+	root := filepath.Join("..", "..", "conformance", "fixtures", "canonical-json-v0")
+	expectedHashBytes, err := os.ReadFile(filepath.Join(root, "hashes.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedHashes := map[string]string{}
+	if err := json.Unmarshal(expectedHashBytes, &expectedHashes); err != nil {
+		t.Fatal(err)
+	}
+	validFixtureCount := 0
+
+	for _, kind := range []string{"valid", "invalid"} {
+		entries, err := os.ReadDir(filepath.Join(root, kind))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) == 0 {
+			t.Fatalf("%s corpus is empty", kind)
+		}
+
+		fixtureCount := 0
+		for _, entry := range entries {
+			if entry.IsDir() {
+				t.Fatalf("unexpected nested corpus directory %s", entry.Name())
+			}
+			fixtureCount++
+			if kind == "valid" {
+				validFixtureCount++
+			}
+			t.Run(kind+"/"+entry.Name(), func(t *testing.T) {
+				payload, err := os.ReadFile(filepath.Join(root, kind, entry.Name()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				payload = canonicalFixturePayload(t, payload)
+
+				canonicalPayload, err := CanonicalizeJSON(payload)
+				if kind == "valid" {
+					if err != nil {
+						t.Fatalf("canonicalize valid corpus payload: %v", err)
+					}
+					if !bytes.Equal(canonicalPayload, payload) {
+						t.Fatalf("valid corpus payload changed\nactual:   %q\nexpected: %q", canonicalPayload, payload)
+					}
+					if actual := DigestBytes(canonicalPayload); actual != expectedHashes[entry.Name()] {
+						t.Fatalf("valid corpus digest mismatch\nactual:   %s\nexpected: %s", actual, expectedHashes[entry.Name()])
+					}
+					return
+				}
+
+				// Artifact publication accepts a body only when this same
+				// canonicalizer reproduces its bytes exactly. An invalid fixture
+				// may fail canonicalization outright, or normalize to different
+				// bytes (for example, whitespace and lone-surrogate escapes).
+				if err == nil && bytes.Equal(canonicalPayload, payload) {
+					t.Fatalf("invalid corpus payload was accepted by the canonical byte boundary: %q", payload)
+				}
+			})
+		}
+		if fixtureCount == 0 {
+			t.Fatalf("%s corpus is empty", kind)
+		}
+	}
+	if len(expectedHashes) != validFixtureCount {
+		t.Fatalf("canonical JSON valid fixture hashes = %d, want %d", len(expectedHashes), validFixtureCount)
+	}
+}
+
+func canonicalFixturePayload(t *testing.T, fixture []byte) []byte {
+	t.Helper()
+	if !bytes.HasSuffix(fixture, []byte("\n")) || bytes.HasSuffix(fixture, []byte("\r\n")) {
+		t.Fatal("canonical fixture must use exactly one final LF as repository transport")
+	}
+	return fixture[:len(fixture)-1]
+}
 
 func TestDigestJSONGoldenVector(t *testing.T) {
 	input, err := os.ReadFile(filepath.Join("..", "..", "conformance", "fixtures", "hashing", "canonical-input.json"))

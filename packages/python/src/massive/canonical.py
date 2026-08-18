@@ -8,9 +8,24 @@ type JsonValue = None | bool | int | str | list["JsonValue"] | dict[str, "JsonVa
 _MAX_SAFE_INTEGER = (1 << 53) - 1
 
 
+class CanonicalJsonError(ValueError):
+    """Bytes are not a valid canonical JSON v0 value."""
+
+
 def canonical_json(value: JsonValue) -> str:
     """Encode a v0 Massive field tree with the shared canonical JSON rules."""
     return _encode(value)
+
+
+def parse_canonical_json(body: bytes) -> JsonValue:
+    """Decode canonical JSON v0 bytes, rejecting malformed or noncanonical input."""
+    try:
+        value = json.loads(body)
+        if canonical_json(value).encode() != body:
+            raise ValueError("JSON body is not canonical")
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+        raise CanonicalJsonError("JSON body is not canonical") from error
+    return value
 
 
 def sha256_ref(value: str | bytes) -> str:

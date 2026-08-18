@@ -130,10 +130,10 @@ Deno.test("DeploymentSpec shared fixtures retain their canonical hashes", async 
 });
 
 function mathWorkflow() {
-  const g = workflow({ name: "math", input: z.number(), output: z.number() });
+  const g = workflow({ name: "math", input: z.int(), output: z.int() });
   const double = g.step("double", {
-    input: z.number(),
-    output: z.number(),
+    input: z.int(),
+    output: z.int(),
     run: ({ input }) => input * 2,
   });
   g.start().to(double).to(g.end());

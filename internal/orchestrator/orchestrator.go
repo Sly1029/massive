@@ -17,21 +17,36 @@ import (
 	"strings"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/google/uuid"
-	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const jsonContentType = "application/json"
 
+// The shared schemas cap safe segments at 128 JSON characters. The allowed
+// character class is ASCII-only, so Go's byte length has the same boundary.
+const maxSafePathSegmentLength = 128
+
 // sha256RefPattern is the exact canonical digest-ref form. Package hashes are
 // interpolated into filesystem paths and datastore keys, so they are validated
 // against this before any path is derived from them.
-var sha256RefPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var (
+	sha256RefPattern       = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	safePathSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9_.@:#-]+$`)
+)
 
 func validSHA256Ref(ref string) bool {
 	return sha256RefPattern.MatchString(ref)
+}
+
+func validSafePathSegment(value string) bool {
+	if len(value) > maxSafePathSegmentLength || value == "." || value == ".." || !safePathSegmentPattern.MatchString(value) {
+		return false
+	}
+	_, err := datastore.ParseKey(value)
+	return err == nil
 }
 
 type executionIndex struct {
@@ -57,8 +72,9 @@ type sourcePackageArtifact struct {
 }
 
 type nodeOutput struct {
-	Artifact manifestDataArtifact
-	Body     []byte
+	Artifact  manifestDataArtifact
+	Published manifestPublishedArtifact
+	Body      []byte
 }
 
 func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, error) {
@@ -80,10 +96,6 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	}
 	config.DatastoreRoot = datastoreRoot
 
-	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: config.DatastoreRoot})
-	if err != nil {
-		return nil, fmt.Errorf("open local datastore: %w", err)
-	}
 	projectKey := NormalizeProjectKey(config.ProjectID)
 	runID := config.RunID
 	if runID == "" {
@@ -93,8 +105,11 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	// paths). Reject a traversal or otherwise unsafe id up front, using the same
 	// segment rules the datastore key parser enforces, before any run artifact
 	// is written. A run id must be a single normalized path segment.
-	if _, err := datastore.ParseKey(runID); err != nil || strings.Contains(runID, "/") {
-		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "must be a single safe path segment (datastore key segment rules)"}
+	if !validSafePathSegment(runID) {
+		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "must be a single safe path segment of at most 128 characters (datastore key segment rules)"}
+	}
+	if err := validatePlanIdentitySegments(config.Plan); err != nil {
+		return nil, err
 	}
 	// Every source-package hash is interpolated into a snapshot directory name
 	// and a datastore key. The spec schema constrains it, but Run also accepts a
@@ -104,6 +119,10 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 		if !validSHA256Ref(sourcePackage.GetPackageHash()) {
 			return nil, &InvalidRunInputError{Field: "source package hash", Value: sourcePackage.GetPackageHash(), Message: "must be a canonical sha256:<64 lowercase hex> digest"}
 		}
+	}
+	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: config.DatastoreRoot})
+	if err != nil {
+		return nil, fmt.Errorf("open local datastore: %w", err)
 	}
 
 	index, err := buildExecutionIndex(config.Plan)
@@ -202,13 +221,13 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, diagnostic)
 		}
 
-		output, err := validateOutputArtifact(ctx, store, descriptor, outcome.ExpectedOutputHash, index)
+		output, err := resolveOutputArtifact(ctx, store, descriptor, index)
 		if err != nil {
 			markAttemptFailed(&manifest, nodeID, err.Error())
 			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
 		}
 		outputs[nodeID] = output
-		markAttemptSucceeded(&manifest, nodeID, output.Artifact)
+		markAttemptSucceeded(&manifest, nodeID, output.Published)
 		if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
 			return nil, err
 		}
@@ -228,6 +247,42 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	result.ResultKey = resultArtifact.Key
 	result.Steps = summariesFromManifest(manifest)
 	return result, nil
+}
+
+func validatePlanIdentitySegments(plan *planpb.WorkflowPlan) error {
+	graph := plan.GetGraph()
+	if graph == nil {
+		return &InvalidRunInputError{Field: "plan graph", Message: "is required"}
+	}
+	if !validSafePathSegment(graph.GetStartNode()) {
+		return invalidPlanIdentity("plan graph start node", graph.GetStartNode())
+	}
+	if !validSafePathSegment(graph.GetEndNode()) {
+		return invalidPlanIdentity("plan graph end node", graph.GetEndNode())
+	}
+	for _, node := range graph.GetNodes() {
+		if !validSafePathSegment(node.GetId()) {
+			return invalidPlanIdentity("plan graph node id", node.GetId())
+		}
+		for _, sourceID := range node.GetMergeInputs() {
+			if !validSafePathSegment(sourceID) {
+				return invalidPlanIdentity("plan graph node merge input", sourceID)
+			}
+		}
+	}
+	for _, edge := range graph.GetEdges() {
+		if !validSafePathSegment(edge.GetFrom()) {
+			return invalidPlanIdentity("plan graph edge from", edge.GetFrom())
+		}
+		if !validSafePathSegment(edge.GetTo()) {
+			return invalidPlanIdentity("plan graph edge to", edge.GetTo())
+		}
+	}
+	return nil
+}
+
+func invalidPlanIdentity(field string, value string) *InvalidRunInputError {
+	return &InvalidRunInputError{Field: field, Value: value, Message: "must be a single safe path segment of at most 128 characters (descriptor and datastore key rules)"}
 }
 
 func materializePrerequisites(ctx context.Context, store datastore.Datastore, config RunConfig) (map[string]sourcePackageArtifact, error) {
@@ -577,9 +632,10 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 
 	return StepInvocationDescriptor{
 		Kind:          "StepInvocationDescriptor",
-		SchemaVersion: 0,
-		Encoding:      "json-v0",
+		SchemaVersion: 1,
+		Encoding:      "json-v1",
 		PlanHash:      config.Plan.GetPlanHash(),
+		ProjectKey:    projectKey,
 		RunID:         runID,
 		NodeID:        node.GetId(),
 		Attempt:       1,
@@ -608,12 +664,9 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 			},
 			Schema: input.Schema,
 		},
-		Output: DataArtifactDestination{
-			Artifact: ArtifactDestination{
-				Key:         runOutputKey(projectKey, runID, node.GetId(), 1).String(),
-				ContentType: jsonContentType,
-			},
-			Schema: node.GetOutputSchema(),
+		Output: DataArtifactManifestDestination{
+			ManifestKey: runOutputManifestKey(projectKey, runID, node.GetId(), 1).String(),
+			Schema:      node.GetOutputSchema(),
 		},
 		ChannelReads:  []ChannelArtifactRef{},
 		ChannelWrites: []ChannelArtifactDestination{},
@@ -665,97 +718,52 @@ func inputForNode(node *planpb.GraphNode, inbound []*planpb.GraphEdge, outputs m
 	return canonical.CanonicalizeJSON(out.Bytes())
 }
 
-func validateOutputArtifact(ctx context.Context, store datastore.Datastore, descriptor StepInvocationDescriptor, expectedHash string, index executionIndex) (nodeOutput, error) {
+func resolveOutputArtifact(ctx context.Context, store datastore.Datastore, descriptor StepInvocationDescriptor, index executionIndex) (nodeOutput, error) {
 	if !index.schemaRefs[descriptor.Output.Schema] {
 		return nodeOutput{}, fmt.Errorf("output schema ref %s is not present in the plan", descriptor.Output.Schema)
 	}
-
-	outputKey, err := datastore.ParseKey(descriptor.Output.Artifact.Key)
+	manifestKey, err := datastore.ParseKey(descriptor.Output.ManifestKey)
 	if err != nil {
 		return nodeOutput{}, err
 	}
-	object, err := store.Get(ctx, outputKey)
+	published, body, err := artifact.ResolveJSON(ctx, store, artifact.Destination{
+		ManifestKey: manifestKey,
+		Schema:      descriptor.Output.Schema,
+	}, artifact.Producer{
+		ProjectKey: descriptor.ProjectKey,
+		PlanHash:   descriptor.PlanHash,
+		RunID:      descriptor.RunID,
+		NodeID:     descriptor.NodeID,
+		Attempt:    descriptor.Attempt,
+	})
 	if err != nil {
-		return nodeOutput{}, fmt.Errorf("output artifact %s is missing: %w", outputKey, err)
-	}
-	if object.Info.ContentType != descriptor.Output.Artifact.ContentType {
-		return nodeOutput{}, fmt.Errorf("output artifact %s content type mismatch: descriptor requires %s, stored object has %s", outputKey, descriptor.Output.Artifact.ContentType, object.Info.ContentType)
-	}
-
-	actualHash := canonical.DigestBytes(object.Body)
-	if expectedHash != "" && actualHash != expectedHash {
-		return nodeOutput{}, fmt.Errorf("output artifact %s hash mismatch: expected %s, got %s", outputKey, expectedHash, actualHash)
-	}
-	canonicalBody, err := canonical.CanonicalizeJSON(object.Body)
-	if err != nil {
-		return nodeOutput{}, fmt.Errorf("output artifact %s is not canonical JSON: %w", outputKey, err)
-	}
-	if !bytes.Equal(canonicalBody, object.Body) {
-		return nodeOutput{}, fmt.Errorf("output artifact %s is not canonical JSON", outputKey)
-	}
-
-	schemaBytes, err := validateSchemaBlob(ctx, store, descriptor.Output.Schema)
-	if err != nil {
-		return nodeOutput{}, err
-	}
-	if err := validateJSON(schemaBytes, object.Body); err != nil {
-		return nodeOutput{}, fmt.Errorf("output artifact %s violates schema %s: %w", outputKey, descriptor.Output.Schema, err)
+		return nodeOutput{}, fmt.Errorf("resolve output artifact manifest %s: %w", manifestKey, err)
 	}
 
 	return nodeOutput{
 		Artifact: manifestDataArtifact{
-			Key:         outputKey.String(),
-			Hash:        actualHash,
-			ContentType: descriptor.Output.Artifact.ContentType,
+			Key:         published.Body.Key,
+			Hash:        published.Body.Hash,
+			ContentType: published.Body.ContentType,
 			Schema:      descriptor.Output.Schema,
 		},
-		Body: object.Body,
+		Published: manifestPublishedArtifact{
+			Manifest: manifestArtifactRef{
+				Key:         published.Manifest.Key,
+				Hash:        published.Manifest.Hash,
+				Size:        published.Manifest.Size,
+				ContentType: published.Manifest.ContentType,
+			},
+			Body: manifestArtifactRef{
+				Key:         published.Body.Key,
+				Hash:        published.Body.Hash,
+				Size:        published.Body.Size,
+				ContentType: published.Body.ContentType,
+			},
+			Schema: published.Schema,
+		},
+		Body: body,
 	}, nil
-}
-
-func validateSchemaBlob(ctx context.Context, store datastore.Datastore, schemaRef string) ([]byte, error) {
-	key, err := blobKeyForHash(schemaRef)
-	if err != nil {
-		return nil, err
-	}
-	object, err := store.Get(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("schema blob %s is missing: %w", key, err)
-	}
-	if err := verifyDigest(schemaRef, object.Body); err != nil {
-		return nil, fmt.Errorf("schema blob %s: %w", key, err)
-	}
-	canonicalBody, err := canonical.CanonicalizeJSON(object.Body)
-	if err != nil {
-		return nil, fmt.Errorf("schema blob %s is not canonical JSON: %w", key, err)
-	}
-	if !bytes.Equal(canonicalBody, object.Body) {
-		return nil, fmt.Errorf("schema blob %s is not canonical JSON", key)
-	}
-	return object.Body, nil
-}
-
-func validateJSON(schemaBytes []byte, documentBytes []byte) error {
-	schemaDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaBytes))
-	if err != nil {
-		return fmt.Errorf("decode schema: %w", err)
-	}
-	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(documentBytes))
-	if err != nil {
-		return fmt.Errorf("decode document: %w", err)
-	}
-	compiler := jsonschema.NewCompiler()
-	if err := compiler.AddResource("schema.json", schemaDocument); err != nil {
-		return fmt.Errorf("register schema: %w", err)
-	}
-	compiled, err := compiler.Compile("schema.json")
-	if err != nil {
-		return fmt.Errorf("compile schema: %w", err)
-	}
-	if err := compiled.Validate(instance); err != nil {
-		return err
-	}
-	return nil
 }
 
 func resultForEnd(ctx context.Context, store datastore.Datastore, projectKey string, runID string, endNode string, index executionIndex, outputs map[string]nodeOutput) (manifestDataArtifact, error) {
@@ -830,7 +838,8 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 	}
 	return runManifest{
 		Kind:          "RunManifest",
-		SchemaVersion: 0,
+		SchemaVersion: 1,
+		Encoding:      "json-v1",
 		PlanHash:      planHash,
 		ProjectKey:    projectKey,
 		RunID:         runID,
@@ -854,7 +863,7 @@ func markAttemptRunning(manifest *runManifest, nodeID string, input manifestData
 	}
 }
 
-func markAttemptSucceeded(manifest *runManifest, nodeID string, output manifestDataArtifact) {
+func markAttemptSucceeded(manifest *runManifest, nodeID string, output manifestPublishedArtifact) {
 	for index := range manifest.Steps {
 		if manifest.Steps[index].NodeID != nodeID {
 			continue
@@ -954,8 +963,8 @@ func runInputKey(projectKey string, runID string, stepID string) datastore.Key {
 	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/inputs/" + stepID + ".json")
 }
 
-func runOutputKey(projectKey string, runID string, stepID string, attempt int) datastore.Key {
-	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/steps/" + stepID + "/" + fmt.Sprint(attempt) + "/output.json")
+func runOutputManifestKey(projectKey string, runID string, stepID string, attempt int) datastore.Key {
+	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/steps/" + stepID + "/" + fmt.Sprint(attempt) + "/output-manifest.json")
 }
 
 func runResultKey(projectKey string, runID string) datastore.Key {

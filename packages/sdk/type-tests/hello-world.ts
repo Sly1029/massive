@@ -22,7 +22,7 @@ const exclaim = helloWorld.step("exclaim", {
 helloWorld.start().to(hello).to(exclaim).to(helloWorld.end());
 
 const numberInput = helloWorld.step("number-input", {
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
   run: ({ input }) => String(input),
 });
@@ -32,18 +32,18 @@ helloWorld.start().to(numberInput);
 
 const numeric = workflow({
   name: "numeric",
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
 });
 
 const double = numeric.step("double", {
-  input: z.number(),
-  output: z.number(),
+  input: z.int(),
+  output: z.int(),
   run: ({ input }) => input * 2,
 });
 
 const stringify = numeric.step("stringify", {
-  input: z.number(),
+  input: z.int(),
   output: z.string(),
   run: ({ input }) => String(input),
 });

@@ -38,18 +38,18 @@ Deno.test("container recipes reject mutable images before emission", () => {
 Deno.test("linear workflow builds runtime registry and emits graph spec", async () => {
   const g = workflow({
     name: "math",
-    input: z.number(),
+    input: z.int(),
     output: z.string(),
   });
 
   const double = g.step("double", {
-    input: z.number(),
-    output: z.number(),
+    input: z.int(),
+    output: z.int(),
     run: async ({ input }) => input * 2,
   });
 
   const stringify = g.step("stringify", {
-    input: z.number(),
+    input: z.int(),
     output: z.string(),
     run: async ({ input }) => `Result: ${input}`,
   });
@@ -137,12 +137,12 @@ Deno.test("non-portable Zod schemas fail emission with schema diagnostics", asyn
   const g = workflow({
     name: "bad-schema",
     input: z.string().transform((value) => value.length),
-    output: z.number(),
+    output: z.int(),
   });
   g.start()
     .to(g.step("noop", {
-      input: z.number(),
-      output: z.number(),
+      input: z.int(),
+      output: z.int(),
       run: ({ input }) => input,
     }))
     .to(g.end());
@@ -157,17 +157,17 @@ Deno.test("non-portable Zod schemas fail emission with schema diagnostics", asyn
 Deno.test("graph validation rejects cycles and missing paths to end", async () => {
   const cyclic = workflow({
     name: "cyclic",
-    input: z.number(),
-    output: z.number(),
+    input: z.int(),
+    output: z.int(),
   });
   const one = cyclic.step("one", {
-    input: z.number(),
-    output: z.number(),
+    input: z.int(),
+    output: z.int(),
     run: ({ input }) => input,
   });
   const two = cyclic.step("two", {
-    input: z.number(),
-    output: z.number(),
+    input: z.int(),
+    output: z.int(),
     run: ({ input }) => input,
   });
   cyclic.start().to(one).to(two).to(one);
@@ -180,13 +180,13 @@ Deno.test("graph validation rejects cycles and missing paths to end", async () =
 
   const missingEnd = workflow({
     name: "missing-end",
-    input: z.number(),
-    output: z.number(),
+    input: z.int(),
+    output: z.int(),
   });
   missingEnd.start().to(
     missingEnd.step("one", {
-      input: z.number(),
-      output: z.number(),
+      input: z.int(),
+      output: z.int(),
       run: ({ input }) => input,
     }),
   );
@@ -199,8 +199,8 @@ Deno.test("graph validation rejects cycles and missing paths to end", async () =
 
   const noEdges = workflow({
     name: "no-edges",
-    input: z.number(),
-    output: z.number(),
+    input: z.int(),
+    output: z.int(),
   });
   await assertRejects(
     () => emitWorkflowSpec(noEdges, { source: sourceSpec() }),
@@ -300,14 +300,14 @@ Deno.test("100-way batch split and merge emits stable topology", async () => {
 });
 
 function makeMathWorkflow() {
-  const g = workflow({ name: "math", input: z.number(), output: z.string() });
+  const g = workflow({ name: "math", input: z.int(), output: z.string() });
   const double = g.step("double", {
-    input: z.number(),
-    output: z.number(),
+    input: z.int(),
+    output: z.int(),
     run: ({ input }) => input * 2,
   });
   const stringify = g.step("stringify", {
-    input: z.number(),
+    input: z.int(),
     output: z.string(),
     run: ({ input }) => `Result: ${input}`,
   });

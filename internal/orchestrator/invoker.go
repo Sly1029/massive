@@ -9,9 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/Sly1029/massive/internal/canonical"
-	"github.com/Sly1029/massive/internal/datastore"
 )
 
 const descriptorPathToken = "{descriptor}"
@@ -154,17 +151,12 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 	diagnostic := strings.TrimSpace(combined.String())
 
 	if err == nil {
-		outputHash, hashErr := hashLocalOutput(ctx, descriptor)
-		if hashErr != nil {
-			return StepInvocationOutcome{}, hashErr
-		}
 		return StepInvocationOutcome{
-			NodeID:             descriptor.NodeID,
-			Attempt:            descriptor.Attempt,
-			Status:             StatusSucceeded,
-			ExitCode:           0,
-			Diagnostic:         diagnostic,
-			ExpectedOutputHash: outputHash,
+			NodeID:     descriptor.NodeID,
+			Attempt:    descriptor.Attempt,
+			Status:     StatusSucceeded,
+			ExitCode:   0,
+			Diagnostic: diagnostic,
 		}, nil
 	}
 
@@ -197,24 +189,4 @@ func substituteDescriptorPath(command []string, descriptorPath string) []string 
 		argv = append(argv, descriptorPath)
 	}
 	return argv
-}
-
-func hashLocalOutput(ctx context.Context, descriptor StepInvocationDescriptor) (string, error) {
-	localDatastore, ok := descriptor.Datastore.(LocalDatastoreDescriptor)
-	if !ok {
-		return "", fmt.Errorf("hash runner output for %s: local process invoker requires a local datastore descriptor, got %T", descriptor.NodeID, descriptor.Datastore)
-	}
-	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: localDatastore.Path})
-	if err != nil {
-		return "", fmt.Errorf("open local datastore for runner output: %w", err)
-	}
-	key, err := datastore.ParseKey(descriptor.Output.Artifact.Key)
-	if err != nil {
-		return "", err
-	}
-	object, err := store.Get(ctx, key)
-	if err != nil {
-		return "", fmt.Errorf("read runner output %s: %w", key, err)
-	}
-	return canonical.DigestBytes(object.Body), nil
 }

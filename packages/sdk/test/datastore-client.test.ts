@@ -117,6 +117,36 @@ Deno.test("local datastore string API rejects invalid keys asynchronously", asyn
   }
 });
 
+Deno.test("local conditional writes establish immutable metadata before publishing their body", async () => {
+  const root = await Deno.makeTempDir({ prefix: "massive-datastore-" });
+  try {
+    const first = new LocalDatastoreClient({ path: root });
+    const second = new LocalDatastoreClient({ path: root });
+
+    for (let index = 0; index < 16; index += 1) {
+      const key = Key.parse(`objects/concurrent-${index}.txt`);
+      const results = await Promise.allSettled([
+        first.put(key, "same-body", {
+          contentType: "application/json",
+          ifAbsent: true,
+        }),
+        second.put(key, "same-body", {
+          contentType: "text/plain",
+          ifAbsent: true,
+        }),
+      ]);
+      const winner = results.find((result) => result.status === "fulfilled");
+      assert(winner?.status === "fulfilled", "one writer must publish the object");
+      assertEquals(
+        (await first.get(key)).info.contentType,
+        winner.value.contentType,
+      );
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 async function runDatastoreClientContract(
   factory: () => Promise<DatastoreClient>,
 ): Promise<void> {

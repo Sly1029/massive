@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,8 +14,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/spec"
 )
 
 func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
@@ -41,7 +45,10 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	if len(invoker.descriptors) != 3 {
 		t.Fatalf("captured descriptors = %d, want 3", len(invoker.descriptors))
 	}
-	assertNoCredentialMaterial(t, mustMarshalCanonical(t, invoker.descriptors[0]))
+	for _, descriptor := range invoker.descriptors {
+		assertNoCredentialMaterial(t, mustMarshalCanonical(t, descriptor))
+		assertLiveDescriptorValidAgainstFrozenSchema(t, descriptor)
+	}
 	manifest := getObject(t, storeRoot, result.ManifestKey)
 	assertNoCredentialMaterial(t, manifest.Body)
 
@@ -50,6 +57,46 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	// Assert their distinct provenance on the un-normalized descriptor.
 	planPackageHash := compiled.Plan.GetSourcePackages()[0].GetPackageHash()
 	descriptor := invoker.descriptors[0]
+	if descriptor.SchemaVersion != 1 || descriptor.Encoding != "json-v1" {
+		t.Fatalf("descriptor protocol = (%d, %q), want v1/json-v1", descriptor.SchemaVersion, descriptor.Encoding)
+	}
+	if descriptor.ProjectKey != NormalizeProjectKey("acme/security-workflows") {
+		t.Fatalf("descriptor projectKey = %q", descriptor.ProjectKey)
+	}
+	if descriptor.Output.ManifestKey != runOutputManifestKey(descriptor.ProjectKey, descriptor.RunID, descriptor.NodeID, descriptor.Attempt).String() {
+		t.Fatalf("descriptor output manifest key = %q", descriptor.Output.ManifestKey)
+	}
+	runManifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
+	outputsByNode := make(map[string]manifestPublishedArtifact, len(runManifest.Steps))
+	for _, step := range runManifest.Steps {
+		if len(step.Attempts) != 1 || step.Attempts[0].Output == nil {
+			t.Fatalf("journal step %q attempts = %#v, want one published output", step.NodeID, step.Attempts)
+		}
+		outputsByNode[step.NodeID] = *step.Attempts[0].Output
+	}
+	for _, live := range invoker.descriptors {
+		output, ok := outputsByNode[live.NodeID]
+		if !ok {
+			t.Fatalf("journal omitted output for descriptor node %q", live.NodeID)
+		}
+		if output.Manifest.Key != live.Output.ManifestKey || output.Manifest.ContentType != artifact.ManifestContentType {
+			t.Fatalf("journal manifest ref for %q = %#v, want immutable published manifest", live.NodeID, output.Manifest)
+		}
+		if !strings.HasPrefix(output.Body.Key, "blobs/sha256/") || output.Body.ContentType != artifact.JSONContentType {
+			t.Fatalf("journal body ref for %q = %#v, want content-addressed canonical JSON", live.NodeID, output.Body)
+		}
+		if output.Schema != live.Output.Schema {
+			t.Fatalf("journal schema for %q = %q, descriptor output schema = %q", live.NodeID, output.Schema, live.Output.Schema)
+		}
+		manifestObject := getObject(t, storeRoot, output.Manifest.Key)
+		if output.Manifest.Size != len(manifestObject.Body) {
+			t.Fatalf("journal manifest size for %q = %d, stored size = %d", live.NodeID, output.Manifest.Size, len(manifestObject.Body))
+		}
+		bodyObject := getObject(t, storeRoot, output.Body.Key)
+		if output.Body.Size != len(bodyObject.Body) {
+			t.Fatalf("journal body size for %q = %d, stored size = %d", live.NodeID, output.Body.Size, len(bodyObject.Body))
+		}
+	}
 	if descriptor.SourcePackage.PackageHash != planPackageHash {
 		t.Fatalf("descriptor packageHash = %s, want plan packageHash %s", descriptor.SourcePackage.PackageHash, planPackageHash)
 	}
@@ -72,7 +119,6 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 		t.Fatal("sourceArchive.hash must differ from packageHash under the portable archive shape")
 	}
 
-	validateDescriptorSchema(t, descriptor)
 	actual := normalizeDescriptorJSON(t, mustMarshalCanonical(t, descriptor), "run-descriptor-0001", storeRoot)
 	golden := normalizeDescriptorJSON(t, readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json"), "run-linear-chain-0001", "/tmp/massive-conformance-store")
 	if !bytes.Equal(actual, golden) {
@@ -80,7 +126,241 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	}
 }
 
-func TestTamperedOutputFailsHashValidation(t *testing.T) {
+func assertLiveDescriptorValidAgainstFrozenSchema(t *testing.T, descriptor StepInvocationDescriptor) {
+	t.Helper()
+
+	descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
+	if err := os.WriteFile(descriptorPath, mustMarshalCanonical(t, descriptor), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := repoRootForTest(t)
+	parserURL := "file://" + filepath.ToSlash(filepath.Join(root, "packages", "sdk", "src", "runner", "descriptor.ts"))
+	cmd := exec.Command(
+		"deno", "eval", "--config", filepath.Join(root, "deno.json"),
+		`const module = await import(Deno.args[0]); await module.parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[1]));`,
+		parserURL, descriptorPath,
+	)
+	cmd.Dir = root
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("live Go descriptor violates frozen schema: %v\n%s", err, output)
+	}
+}
+
+func TestFrozenDescriptorSchemaRejectsRawProjectID(t *testing.T) {
+	document := readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json")
+	document = replaceJSONFixtureField(
+		t,
+		document,
+		"projectKey",
+		"sha256-"+strings.Repeat("9", 64),
+		"acme/security-workflows",
+	)
+	descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
+	if err := os.WriteFile(descriptorPath, document, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := repoRootForTest(t)
+	parserURL := "file://" + filepath.ToSlash(filepath.Join(root, "packages", "sdk", "src", "runner", "descriptor.ts"))
+	cmd := exec.Command(
+		"deno", "eval", "--config", filepath.Join(root, "deno.json"),
+		`const module = await import(Deno.args[0]); await module.parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[1]));`,
+		parserURL, descriptorPath,
+	)
+	cmd.Dir = root
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("frozen descriptor schema accepted raw project id")
+	}
+	if !strings.Contains(string(output), "StepInvocationDescriptor JSON schema violation") {
+		t.Fatalf("descriptor rejection = %q, want frozen schema diagnostic", output)
+	}
+	if !strings.Contains(string(output), "projectKey") {
+		t.Fatalf("descriptor validation error = %q, want projectKey", output)
+	}
+}
+
+func TestFrozenDescriptorSchemaConstrainsArtifactIdentitySegments(t *testing.T) {
+	fixture := readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json")
+	root := repoRootForTest(t)
+	parserURL := "file://" + filepath.ToSlash(filepath.Join(root, "packages", "sdk", "src", "runner", "descriptor.ts"))
+
+	for field, original := range map[string]string{
+		"runId":  "run-linear-chain-0001",
+		"nodeId": "double",
+	} {
+		for _, value := range []string{"nested/value", ".", "..", strings.Repeat("a", 129)} {
+			t.Run(field+" rejects "+value, func(t *testing.T) {
+				document := replaceJSONFixtureField(t, fixture, field, original, value)
+				descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
+				if err := os.WriteFile(descriptorPath, document, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command(
+					"deno", "eval", "--config", filepath.Join(root, "deno.json"),
+					`const module = await import(Deno.args[0]); await module.parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[1]));`,
+					parserURL, descriptorPath,
+				)
+				cmd.Dir = root
+				output, err := cmd.CombinedOutput()
+				if err == nil {
+					t.Fatalf("frozen descriptor schema accepted unsafe %s %q", field, value)
+				}
+				if !strings.Contains(string(output), "StepInvocationDescriptor JSON schema violation") {
+					t.Fatalf("descriptor rejection = %q, want frozen schema diagnostic", output)
+				}
+				if !strings.Contains(string(output), field) {
+					t.Fatalf("descriptor validation error = %q, want %s", output, field)
+				}
+			})
+		}
+	}
+
+	for field, original := range map[string]string{
+		"runId":  "run-linear-chain-0001",
+		"nodeId": "double",
+	} {
+		for _, value := range []string{"_step", ".hidden", strings.Repeat("a", 128)} {
+			t.Run(field+" accepts "+value, func(t *testing.T) {
+				document := replaceJSONFixtureField(t, fixture, field, original, value)
+				descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
+				if err := os.WriteFile(descriptorPath, document, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command(
+					"deno", "eval", "--config", filepath.Join(root, "deno.json"),
+					`const module = await import(Deno.args[0]); await module.parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[1]));`,
+					parserURL, descriptorPath,
+				)
+				cmd.Dir = root
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("frozen descriptor schema rejected safe %s %q: %v\\n%s", field, value, err, output)
+				}
+			})
+		}
+	}
+}
+
+func replaceJSONFixtureField(t *testing.T, document []byte, field string, oldValue string, newValue string) []byte {
+	t.Helper()
+	return replaceFixtureValue(
+		t,
+		document,
+		fmt.Sprintf(`"%s": %s`, field, mustJSONString(t, oldValue)),
+		fmt.Sprintf(`"%s": %s`, field, mustJSONString(t, newValue)),
+	)
+}
+
+func mustJSONString(t *testing.T, value string) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
+func replaceFixtureValue(t *testing.T, document []byte, old string, new string) []byte {
+	t.Helper()
+	if !bytes.Contains(document, []byte(old)) {
+		t.Fatalf("fixture does not contain replacement target %q", old)
+	}
+	updated := bytes.Replace(document, []byte(old), []byte(new), 1)
+	if bytes.Equal(updated, document) {
+		t.Fatalf("fixture replacement %q -> %q did not change document", old, new)
+	}
+	return updated
+}
+
+func TestSafePathSegmentContractAgreesAcrossSchemasAndGo(t *testing.T) {
+	type boundaryCase struct {
+		value string
+		valid bool
+	}
+	cases := []boundaryCase{
+		{value: "safe_SEGMENT.@:#-Z", valid: true},
+		{value: "_step", valid: true},
+		{value: ".hidden", valid: true},
+		{value: strings.Repeat("a", 128), valid: true},
+		{value: "", valid: false},
+		{value: ".", valid: false},
+		{value: "..", valid: false},
+		{value: "nested/value", valid: false},
+		{value: `nested\value`, valid: false},
+		{value: strings.Repeat("a", 129), valid: false},
+	}
+	descriptorFixture := readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json")
+	workflowSpecFixture := readRepoFile(t, "conformance", "fixtures", "specs", "linear-chain", "workflow-spec.json")
+	root := repoRootForTest(t)
+	parserURL := "file://" + filepath.ToSlash(filepath.Join(root, "packages", "sdk", "src", "runner", "descriptor.ts"))
+
+	for _, testCase := range cases {
+		t.Run(fmt.Sprintf("%q", testCase.value), func(t *testing.T) {
+			if got := validSafePathSegment(testCase.value); got != testCase.valid {
+				t.Fatalf("Go safe path segment validation = %t, want %t", got, testCase.valid)
+			}
+
+			descriptor := replaceJSONFixtureField(t, descriptorFixture, "runId", "run-linear-chain-0001", testCase.value)
+			descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
+			if err := os.WriteFile(descriptorPath, descriptor, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(
+				"deno", "eval", "--config", filepath.Join(root, "deno.json"),
+				`const module = await import(Deno.args[0]); await module.parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[1]));`,
+				parserURL, descriptorPath,
+			)
+			cmd.Dir = root
+			output, err := cmd.CombinedOutput()
+			if testCase.valid {
+				if err != nil {
+					t.Fatalf("descriptor schema rejected valid segment: %v\n%s", err, output)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("descriptor schema accepted invalid segment")
+				}
+				if !strings.Contains(string(output), "StepInvocationDescriptor JSON schema violation") {
+					t.Fatalf("descriptor rejection = %q, want frozen schema diagnostic", output)
+				}
+			}
+
+			workflowSpec := replaceAllFixtureValues(t, workflowSpecFixture, mustJSONString(t, "__start"), mustJSONString(t, testCase.value))
+			_, err = spec.Parse(workflowSpec)
+			if got := err == nil; got != testCase.valid {
+				t.Fatalf("WorkflowSpec schema acceptance = %t, want %t (error: %v)", got, testCase.valid, err)
+			}
+		})
+	}
+}
+
+func replaceAllFixtureValues(t *testing.T, document []byte, old string, new string) []byte {
+	t.Helper()
+	if !bytes.Contains(document, []byte(old)) {
+		t.Fatalf("fixture does not contain replacement target %q", old)
+	}
+	updated := bytes.ReplaceAll(document, []byte(old), []byte(new))
+	if bytes.Equal(updated, document) {
+		t.Fatalf("fixture replacement %q -> %q did not change document", old, new)
+	}
+	return updated
+}
+
+func TestRunOutputManifestKeyIncludesAttempt(t *testing.T) {
+	projectKey := NormalizeProjectKey("acme/security-workflows")
+	first := runOutputManifestKey(projectKey, "run-key-attempt", "double", 1)
+	second := runOutputManifestKey(projectKey, "run-key-attempt", "double", 2)
+	if first == second {
+		t.Fatalf("attempt-specific manifest keys collide: %s", first)
+	}
+	if !strings.Contains(first.String(), "/double/1/output-manifest.json") {
+		t.Fatalf("first attempt key = %q", first)
+	}
+	if !strings.Contains(second.String(), "/double/2/output-manifest.json") {
+		t.Fatalf("second attempt key = %q", second)
+	}
+}
+
+func TestTamperedOutputManifestFailsIntegrityValidation(t *testing.T) {
 	storeRoot := newStoreRoot(t)
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
 	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
@@ -99,7 +379,7 @@ func TestTamperedOutputFailsHashValidation(t *testing.T) {
 				if descriptor.NodeID != "double" {
 					return nil
 				}
-				return os.WriteFile(filepath.Join(storeRoot, filepath.FromSlash(descriptor.Output.Artifact.Key)), []byte("41"), 0o644)
+				return os.WriteFile(filepath.Join(storeRoot, filepath.FromSlash(descriptor.Output.ManifestKey)), []byte("41"), 0o644)
 			},
 		},
 	}, []byte("20"))
@@ -110,8 +390,8 @@ func TestTamperedOutputFailsHashValidation(t *testing.T) {
 	if !errors.As(err, &runErr) {
 		t.Fatalf("error = %T, want RunError", err)
 	}
-	if !strings.Contains(runErr.Diagnostic, "hash mismatch") {
-		t.Fatalf("diagnostic = %q, want hash mismatch", runErr.Diagnostic)
+	if !strings.Contains(runErr.Diagnostic, "integrity") {
+		t.Fatalf("diagnostic = %q, want integrity failure", runErr.Diagnostic)
 	}
 	if runErr.Result == nil || runErr.Result.Status != StatusFailed {
 		t.Fatalf("result = %#v, want failed result", runErr.Result)
@@ -214,7 +494,7 @@ func TestHostileRunIDRejectedBeforeSideEffects(t *testing.T) {
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
 	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
 
-	for _, hostile := range []string{"../escape", "../../etc", "a/b", "..", "foo/../bar"} {
+	for _, hostile := range []string{"../escape", "../../etc", "a/b", ".", "..", "foo/../bar", strings.Repeat("a", 129)} {
 		t.Run(hostile, func(t *testing.T) {
 			_, err := Run(context.Background(), RunConfig{
 				Plan:              compiled.Plan,
@@ -238,6 +518,146 @@ func TestHostileRunIDRejectedBeforeSideEffects(t *testing.T) {
 			assertNoRunSideEffects(t, storeRoot)
 		})
 	}
+}
+
+func TestUnsafeRawPlanIdentityRejectedBeforeArtifactWrites(t *testing.T) {
+	type mutation struct {
+		field  string
+		mutate func(*planpb.WorkflowPlan, string)
+	}
+
+	mutations := []mutation{
+		{
+			field:  "plan graph start node",
+			mutate: func(plan *planpb.WorkflowPlan, value string) { plan.Graph.StartNode = &value },
+		},
+		{
+			field:  "plan graph end node",
+			mutate: func(plan *planpb.WorkflowPlan, value string) { plan.Graph.EndNode = &value },
+		},
+		{
+			field:  "plan graph node id",
+			mutate: func(plan *planpb.WorkflowPlan, value string) { plan.Graph.Nodes[1].Id = &value },
+		},
+		{
+			field:  "plan graph edge from",
+			mutate: func(plan *planpb.WorkflowPlan, value string) { plan.Graph.Edges[0].From = &value },
+		},
+		{
+			field:  "plan graph edge to",
+			mutate: func(plan *planpb.WorkflowPlan, value string) { plan.Graph.Edges[0].To = &value },
+		},
+		{
+			field:  "plan graph node merge input",
+			mutate: func(plan *planpb.WorkflowPlan, value string) { plan.Graph.Nodes[1].MergeInputs = []string{value} },
+		},
+	}
+
+	for _, mutation := range mutations {
+		for _, hostile := range []string{"nested/value", ".", "..", strings.Repeat("a", 129)} {
+			t.Run(mutation.field+" rejects "+hostile, func(t *testing.T) {
+				storeRoot := newStoreRoot(t)
+				sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+				compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+				if compiled.Plan.GetGraph() == nil || len(compiled.Plan.GetGraph().GetNodes()) < 2 || len(compiled.Plan.GetGraph().GetEdges()) == 0 {
+					t.Fatal("linear-chain fixture no longer has the graph entries this raw-plan test mutates")
+				}
+				mutation.mutate(compiled.Plan, hostile)
+				invoker := &functionalStepInvoker{storeRoot: storeRoot}
+
+				_, err := Run(context.Background(), RunConfig{
+					Plan:              compiled.Plan,
+					DatastoreRoot:     storeRoot,
+					ProjectID:         "acme/security-workflows",
+					RunID:             "run-hostile-raw-plan",
+					SourcePackageRoot: sourceRoot,
+					SourceManifests:   manifests,
+					StepInvoker:       invoker,
+				}, []byte("20"))
+				if err == nil {
+					t.Fatalf("Run accepted unsafe %s %q", mutation.field, hostile)
+				}
+				var invalid *InvalidRunInputError
+				if !errors.As(err, &invalid) {
+					t.Fatalf("error = %T (%v), want *InvalidRunInputError", err, err)
+				}
+				if invalid.Field != mutation.field {
+					t.Fatalf("error field = %q, want %q", invalid.Field, mutation.field)
+				}
+				if len(invoker.descriptors) != 0 {
+					t.Fatalf("runner received %d descriptors after identifier rejection", len(invoker.descriptors))
+				}
+				assertNoRunSideEffects(t, storeRoot)
+			})
+		}
+	}
+}
+
+func TestNilRawPlanGraphRejectedBeforeArtifactWrites(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	invoker := &functionalStepInvoker{storeRoot: storeRoot}
+
+	_, err := Run(context.Background(), RunConfig{
+		Plan:              &planpb.WorkflowPlan{},
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "acme/security-workflows",
+		RunID:             "run-nil-graph",
+		SourcePackageRoot: t.TempDir(),
+		StepInvoker:       invoker,
+	}, []byte("20"))
+	if err == nil {
+		t.Fatal("Run accepted a plan without graph IR")
+	}
+	var invalid *InvalidRunInputError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("error = %T (%v), want *InvalidRunInputError", err, err)
+	}
+	if invalid.Field != "plan graph" {
+		t.Fatalf("error field = %q, want plan graph", invalid.Field)
+	}
+	if len(invoker.descriptors) != 0 {
+		t.Fatalf("runner received %d descriptors after graph rejection", len(invoker.descriptors))
+	}
+	assertNoRunSideEffects(t, storeRoot)
+}
+
+func TestUnsafePlanNodeIDRejectedBeforeArtifactWrites(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+
+	for _, node := range compiled.Plan.GetGraph().GetNodes() {
+		if node.GetId() == "double" {
+			hostile := "nested/double"
+			node.Id = &hostile
+			break
+		}
+	}
+	invoker := &functionalStepInvoker{storeRoot: storeRoot}
+
+	_, err := Run(context.Background(), RunConfig{
+		Plan:              compiled.Plan,
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "acme/security-workflows",
+		RunID:             "run-hostile-node-id",
+		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
+		StepInvoker:       invoker,
+	}, []byte("20"))
+	if err == nil {
+		t.Fatal("Run accepted a plan graph node id with a path separator")
+	}
+	var invalid *InvalidRunInputError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("error = %T (%v), want *InvalidRunInputError", err, err)
+	}
+	if invalid.Field != "plan graph node id" {
+		t.Fatalf("error field = %q, want plan graph node id", invalid.Field)
+	}
+	if len(invoker.descriptors) != 0 {
+		t.Fatalf("runner received %d descriptors after identifier rejection", len(invoker.descriptors))
+	}
+	assertNoRunSideEffects(t, storeRoot)
 }
 
 func TestHostilePackageHashRejectedBeforeSideEffects(t *testing.T) {
@@ -383,14 +803,26 @@ func (i *functionalStepInvoker) InvokeSteps(ctx context.Context, batch StepInvoc
 		if err != nil {
 			return nil, err
 		}
-		if _, err := store.Put(ctx, datastore.MustKey(descriptor.Output.Artifact.Key), output, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
+		manifestKey, err := datastore.ParseKey(descriptor.Output.ManifestKey)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := artifact.PublishJSON(ctx, store, artifact.Destination{
+			ManifestKey: manifestKey,
+			Schema:      descriptor.Output.Schema,
+		}, artifact.Producer{
+			ProjectKey: descriptor.ProjectKey,
+			PlanHash:   descriptor.PlanHash,
+			RunID:      descriptor.RunID,
+			NodeID:     descriptor.NodeID,
+			Attempt:    descriptor.Attempt,
+		}, output); err != nil {
 			return nil, err
 		}
 		outcomes = append(outcomes, StepInvocationOutcome{
-			NodeID:             descriptor.NodeID,
-			Attempt:            descriptor.Attempt,
-			Status:             StatusSucceeded,
-			ExpectedOutputHash: canonical.DigestBytes(output),
+			NodeID:  descriptor.NodeID,
+			Attempt: descriptor.Attempt,
+			Status:  StatusSucceeded,
 		})
 	}
 	return outcomes, nil
@@ -414,30 +846,6 @@ func runFixtureStep(nodeID string, inputBytes []byte) ([]byte, error) {
 		return nil, errors.New("unknown fixture step " + nodeID)
 	}
 	return marshalCanonicalJSON(output)
-}
-
-func validateDescriptorSchema(t *testing.T, descriptor StepInvocationDescriptor) {
-	t.Helper()
-
-	repoRoot := repoRootForTest(t)
-	workspace := t.TempDir()
-	descriptorPath := filepath.Join(workspace, "descriptor.json")
-	if err := os.WriteFile(descriptorPath, mustMarshalCanonical(t, descriptor), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	scriptPath := filepath.Join(workspace, "validate_descriptor.ts")
-	script := `import { parseStepInvocationDescriptorText } from "` + filepath.ToSlash(filepath.Join(repoRoot, "packages", "sdk", "src", "runner", "descriptor.ts")) + `";
-await parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[0]));
-`
-	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("deno", "run", "--config", filepath.Join(repoRoot, "deno.json"), "--allow-read="+strings.Join([]string{repoRoot, workspace}, ","), scriptPath, descriptorPath)
-	cmd.Dir = repoRoot
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("descriptor schema validation failed: %v\n%s", err, output)
-	}
 }
 
 var (
