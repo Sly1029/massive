@@ -26,3 +26,10 @@ Language SDK tests must consume both directories. In-memory values which JSON
 cannot express (such as `undefined`, sparse arrays, functions, symbols,
 bigints, and cyclic values) are covered by language-local tests at the
 canonicalizer boundary.
+
+Readers must hash the final-LF-stripped fixture **bytes**, not a decoded and
+re-encoded string. The invalid vectors include semantically equivalent but
+noncanonical JSON spellings (`\\u003c`, escaped non-ASCII scalars and
+surrogate pairs, `\\u2028`, uppercase control escapes, `\\/`, and
+`\\u0041`); a text round trip can accidentally erase the distinction this
+corpus is intended to enforce.

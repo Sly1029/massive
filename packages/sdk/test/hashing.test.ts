@@ -6,7 +6,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CanonicalJsonError,
+  decodeCanonicalUtf8,
   parseCanonicalJsonText,
+  sha256Bytes,
   sha256Text,
   stableStringify,
 } from "../src/stable.ts";
@@ -164,13 +166,14 @@ Deno.test("canonical JSON v0 conformance corpus keeps only canonical wire payloa
     for await (const entry of Deno.readDir(join(root, validity))) {
       if (!entry.isFile || !entry.name.endsWith(".json")) continue;
       fixtureCount += 1;
-      const payload = canonicalFixturePayload(
-        await Deno.readTextFile(join(root, validity, entry.name)),
+      const payloadBytes = canonicalFixturePayload(
+        await Deno.readFile(join(root, validity, entry.name)),
       );
+      const payload = decodeCanonicalUtf8(payloadBytes);
       if (validity === "valid") {
         validFixtureNames.push(entry.name);
         assertEquals(
-          `sha256:${sha256Text(payload)}`,
+          `sha256:${sha256Bytes(payloadBytes)}`,
           expectedHashes[entry.name],
           `${entry.name} must match its pinned canonical bytes`,
         );
@@ -192,10 +195,33 @@ Deno.test("canonical JSON v0 conformance corpus keeps only canonical wire payloa
     );
   }
   assertEquals(Object.keys(expectedHashes).sort(), validFixtureNames.sort());
+
+  const escaping = parseCanonicalJsonText(
+    decodeCanonicalUtf8(
+      canonicalFixturePayload(
+        await Deno.readFile(join(root, "valid", "escaping.json")),
+      ),
+    ),
+  ) as { controls: string; raw: string };
+  assertEquals(
+    escaping.controls,
+    String.fromCodePoint(...Array.from({ length: 32 }, (_, index) => index)),
+    "the escaping vector preserves every invisible C0 control",
+  );
+  assertEquals(
+    escaping.raw,
+    "<>&\u2028\u2029",
+    "the escaping vector keeps non-control source characters unescaped",
+  );
 });
 
-function canonicalFixturePayload(fixture: string): string {
-  if (!fixture.endsWith("\n") || fixture.endsWith("\r\n")) {
+function canonicalFixturePayload(fixture: Uint8Array): Uint8Array {
+  if (
+    fixture.byteLength < 1 ||
+    fixture.at(-1) !== 0x0a ||
+    fixture.at(-2) === 0x0d ||
+    fixture.at(-2) === 0x0a
+  ) {
     throw new Error(
       "canonical fixture must use exactly one final LF as repository transport",
     );
