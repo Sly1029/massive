@@ -1,11 +1,16 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject } from "ajv/dist/2020.js";
-import { ArtifactRuntime } from "../artifact/runtime.ts";
+import { ArtifactError, ArtifactRuntime } from "../artifact/runtime.ts";
 import { Key } from "../datastore/key.ts";
 import { LocalDatastoreClient } from "../datastore/local.ts";
-import type { DatastoreClient } from "../datastore/types.ts";
+import {
+  type DatastoreClient,
+  DatastoreNotFoundError,
+} from "../datastore/types.ts";
 import {
   type JsonValue,
+  CanonicalJsonError,
+  parseCanonicalJsonText,
   sha256RefBytes,
   sha256RefText,
   stableStringify,
@@ -100,9 +105,16 @@ export async function executeStep(
     if (error instanceof StepExecutionError) {
       return stepExecutionFailure(error);
     }
+    if (error instanceof ArtifactError || error instanceof CanonicalJsonError) {
+      return schemaValidationFailure(
+        new StepSchemaValidationError("output", error.message),
+      );
+    }
 
-    const message = error instanceof Error ? error.message : String(error);
-    return stepExecutionFailure(new StepExecutionError(message));
+    // Datastore and runtime failures are infrastructure failures, not user
+    // code failures. Let the process boundary surface them with its generic
+    // non-user error path rather than misreporting exit 66.
+    throw error;
   }
 }
 
@@ -143,6 +155,7 @@ async function readSchema(
   try {
     bytes = (await store.get(Key.parse(key))).body;
   } catch (error) {
+    if (!(error instanceof DatastoreNotFoundError)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw new StepSchemaValidationError(
       "schema",
@@ -155,7 +168,16 @@ async function readSchema(
     "schema",
     `schema ${schemaRef}`,
   ) as JsonValue;
-  const actualHash = sha256RefText(stableStringify(schema));
+  let actualHash: string;
+  try {
+    actualHash = sha256RefText(stableStringify(schema));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new StepSchemaValidationError(
+      "schema",
+      `schema ${schemaRef} is not canonical JSON: ${message}`,
+    );
+  }
   if (actualHash !== schemaRef) {
     throw new StepSchemaValidationError(
       "schema",
@@ -175,6 +197,7 @@ async function readCanonicalJsonArtifact(
   try {
     bytes = (await store.get(Key.parse(key))).body;
   } catch (error) {
+    if (!(error instanceof DatastoreNotFoundError)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw new StepSchemaValidationError(
       "input",
@@ -196,13 +219,6 @@ async function readCanonicalJsonArtifact(
     "input",
     `input artifact ${key}`,
   ) as JsonValue;
-  if (stableStringify(value) !== text) {
-    throw new StepSchemaValidationError(
-      "input",
-      `input artifact ${key} is not canonical JSON`,
-    );
-  }
-
   return value;
 }
 
@@ -247,7 +263,7 @@ function parseJsonText(
   role: string,
 ): unknown {
   try {
-    return JSON.parse(text);
+    return parseCanonicalJsonText(text);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new StepSchemaValidationError(

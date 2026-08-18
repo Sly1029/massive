@@ -588,7 +588,9 @@ async function resolveSourceConfig(
   const configHash = sha256Text(stableStringify({
     entrypoint: config.entrypoint,
     include: config.include,
-    environment: config.environment,
+    ...(config.environment === undefined
+      ? {}
+      : { environment: config.environment }),
   }));
   return {
     packageRoot,

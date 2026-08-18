@@ -1,4 +1,9 @@
-import { assert, assertEquals, assertInstanceOf } from "jsr:@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+} from "jsr:@std/assert";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,6 +146,70 @@ Deno.test("runner reports schema-validation failures with exit 65", async () => 
       if (outcome.kind !== "schema-validation-failure") return;
       assertInstanceOf(outcome.error, StepSchemaValidationError);
       assertEquals(outcome.error.role, "input");
+    },
+  );
+});
+
+Deno.test("runner rejects noncanonical JSON input spelling with exit 65", async () => {
+  await withRunnerFixture(
+    { input: { value: 1 }, stepExport: "double" },
+    async ({ descriptor, store }) => {
+      const source = `{"value":1e3}`;
+      await store.put(inputKey(), source);
+      const outcome = await executeStep({
+        ...descriptor,
+        input: {
+          ...descriptor.input,
+          artifact: {
+            ...descriptor.input.artifact,
+            hash: sha256RefText(source),
+          },
+        },
+      });
+
+      assertEquals(outcome.kind, "schema-validation-failure");
+      assertEquals(outcome.exitCode, RUNNER_EXIT_CODES.schemaValidationFailure);
+    },
+  );
+});
+
+Deno.test("runner maps immutable output manifest conflicts to exit 65", async () => {
+  await withRunnerFixture(
+    { input: { value: 21 }, stepExport: "double" },
+    async ({ descriptor, store }) => {
+      await new ArtifactRuntime(new LocalDatastoreClient({ path: store.root }))
+        .publishJson(
+          {
+            manifestKey: Key.parse(descriptor.output.manifestKey),
+            schema: descriptor.output.schema,
+          },
+          producerFor(descriptor),
+          stableStringify({ value: 43 }),
+        );
+
+      const outcome = await executeStep(descriptor);
+      assertEquals(outcome.kind, "schema-validation-failure");
+      assertEquals(outcome.exitCode, RUNNER_EXIT_CODES.schemaValidationFailure);
+      if (outcome.kind !== "schema-validation-failure") return;
+      assertEquals(outcome.error.role, "output");
+    },
+  );
+});
+
+Deno.test("runner leaves local datastore outages outside user-step exit 66", async () => {
+  await withRunnerFixture(
+    { input: { value: 21 }, stepExport: "double" },
+    async ({ descriptor, descriptorPath }) => {
+      const blockedPath = `${descriptorPath}.datastore-file`;
+      await Deno.writeTextFile(blockedPath, "not a datastore directory");
+      const unavailable = {
+        ...descriptor,
+        datastore: { kind: "local" as const, path: blockedPath },
+      };
+      await Deno.writeTextFile(descriptorPath, stableStringify(unavailable));
+
+      await assertRejects(() => executeStep(unavailable));
+      await assertRejects(() => runStep(descriptorPath));
     },
   );
 });

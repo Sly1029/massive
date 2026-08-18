@@ -14,11 +14,11 @@ interface DenoRuntime {
 }
 
 export async function runStep(descriptorPath: string): Promise<StepOutcome> {
+  let descriptor;
   try {
-    const descriptor = await parseStepInvocationDescriptorText(
+    descriptor = await parseStepInvocationDescriptorText(
       await readFile(descriptorPath, "utf8"),
     );
-    return await executeStep(descriptor);
   } catch (error) {
     if (error instanceof DescriptorError) {
       return descriptorResolutionFailure(error);
@@ -31,6 +31,7 @@ export async function runStep(descriptorPath: string): Promise<StepOutcome> {
       ),
     );
   }
+  return executeStep(descriptor);
 }
 
 // Intended package bin wiring once packaging is ready:

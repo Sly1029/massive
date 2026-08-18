@@ -8,7 +8,12 @@ import {
   DatastoreNotFoundError,
   type ObjectInfo,
 } from "../datastore/types.ts";
-import { type JsonValue, sha256RefBytes, stableStringify } from "../stable.ts";
+import {
+  type JsonValue,
+  parseCanonicalJsonText,
+  sha256RefBytes,
+  stableStringify,
+} from "../stable.ts";
 
 export const JSON_CONTENT_TYPE = "application/json";
 export const MANIFEST_CONTENT_TYPE =
@@ -54,35 +59,42 @@ interface DataArtifactManifest {
   readonly body: ArtifactRef;
 }
 
-export class ArtifactValidationError extends Error {
+export class ArtifactError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ArtifactError";
+  }
+}
+
+export class ArtifactValidationError extends ArtifactError {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ArtifactValidationError";
   }
 }
 
-export class ArtifactIntegrityError extends Error {
+export class ArtifactIntegrityError extends ArtifactError {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ArtifactIntegrityError";
   }
 }
 
-export class ArtifactBodyConflictError extends Error {
+export class ArtifactBodyConflictError extends ArtifactError {
   constructor(readonly key: Key) {
     super(`Artifact body conflict at ${key.toString()}`);
     this.name = "ArtifactBodyConflictError";
   }
 }
 
-export class ArtifactManifestConflictError extends Error {
+export class ArtifactManifestConflictError extends ArtifactError {
   constructor(readonly key: Key) {
     super(`Artifact manifest conflict at ${key.toString()}`);
     this.name = "ArtifactManifestConflictError";
   }
 }
 
-export class ArtifactNotFoundError extends Error {
+export class ArtifactNotFoundError extends ArtifactError {
   constructor(readonly key: Key) {
     super(`Artifact object not found: ${key.toString()}`);
     this.name = "ArtifactNotFoundError";
@@ -385,21 +397,16 @@ async function getArtifactObject(
 
 function parseCanonicalJson(body: Uint8Array, role: string): JsonValue {
   const text = new TextDecoder().decode(body);
-  let value: JsonValue;
   try {
-    value = JSON.parse(text) as JsonValue;
+    return parseCanonicalJsonText(text);
   } catch (error) {
     throw new ArtifactValidationError(
-      `${role} is not valid JSON: ${
+      `${role} is not canonical JSON: ${
         error instanceof Error ? error.message : String(error)
       }`,
       { cause: error },
     );
   }
-  if (stableStringify(value) !== text) {
-    throw new ArtifactValidationError(`${role} is not canonical JSON`);
-  }
-  return value;
 }
 
 function publishedJson(
