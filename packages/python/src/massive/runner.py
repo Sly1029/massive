@@ -20,6 +20,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from pydantic import TypeAdapter
 
+from .artifact import ArtifactError, ArtifactRuntime, Destination, Producer
 from .builder import StepDefinition
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InvocationContext, StepContext
@@ -41,18 +42,13 @@ class ArtifactRef(TypedDict):
     contentType: str
 
 
-class ArtifactDestination(TypedDict):
-    key: str
-    contentType: str
-
-
 class DataArtifactRef(TypedDict):
     artifact: ArtifactRef
     schema: str
 
 
-class DataArtifactDestination(TypedDict):
-    artifact: ArtifactDestination
+class DataArtifactManifestDestination(TypedDict):
+    manifestKey: str
     schema: str
 
 
@@ -73,9 +69,10 @@ class SourcePackageDescriptor(TypedDict):
 
 class StepInvocationDescriptor(TypedDict):
     kind: Literal["StepInvocationDescriptor"]
-    schemaVersion: Literal[0]
-    encoding: Literal["json-v0"]
+    schemaVersion: Literal[1]
+    encoding: Literal["json-v1"]
     planHash: str
+    projectKey: str
     runId: str
     nodeId: str
     attempt: int
@@ -83,7 +80,7 @@ class StepInvocationDescriptor(TypedDict):
     sourcePackage: SourcePackageDescriptor
     environmentRef: str
     input: DataArtifactRef
-    output: DataArtifactDestination
+    output: DataArtifactManifestDestination
     datastore: DatastoreDescriptor
 
 
@@ -196,14 +193,28 @@ def _execute_source(
             output = output_adapter.dump_python(output_adapter.validate_python(output), mode="json")
         except Exception as error:
             raise SchemaError(f"output does not satisfy the step output type: {error}") from error
-    output_descriptor = descriptor["output"]
-    output_schema = _schema(datastore, output_descriptor["schema"])
-    _validate(output_schema, output, "output")
     try:
         output_text = canonical_json(cast(JsonValue, output))
     except (TypeError, ValueError) as error:
         raise SchemaError(f"output is not canonical JSON: {error}") from error
-    datastore.write(output_descriptor["artifact"]["key"], output_text.encode())
+    output_descriptor = descriptor["output"]
+    try:
+        ArtifactRuntime(datastore).publish_json(
+            Destination(
+                manifest_key=output_descriptor["manifestKey"],
+                schema=output_descriptor["schema"],
+            ),
+            Producer(
+                project_key=descriptor["projectKey"],
+                plan_hash=descriptor["planHash"],
+                run_id=descriptor["runId"],
+                node_id=descriptor["nodeId"],
+                attempt=descriptor["attempt"],
+            ),
+            output_text.encode(),
+        )
+    except ArtifactError as error:
+        raise SchemaError(f"output artifact publication failed: {error}") from error
 
 
 async def _await_output(value: Awaitable[object]) -> object:

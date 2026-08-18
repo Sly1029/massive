@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from hashlib import sha256
 from pathlib import Path
 from types import ModuleType
 
@@ -56,6 +57,17 @@ def test_python_workflow_runs_through_go_orchestrator(tmp_path: Path) -> None:
     assert run["status"] == "succeeded"
     assert run["steps"] == [{"nodeId": "increment", "status": "succeeded"}]
     assert json.loads((store / run["resultKey"]).read_text()) == {"value": 22}
+    project_key = f"sha256-{sha256(b'example/python-e2e').hexdigest()}"
+    journal_key = f"projects/{project_key}/runs/python-e2e/run-manifest.json"
+    journal = json.loads((store / journal_key).read_text())
+    output = journal["steps"][0]["attempts"][0]["output"]
+    assert output["manifest"]["key"] == (
+        f"projects/{project_key}/runs/python-e2e/steps/increment/1/output-manifest.json"
+    )
+    assert output["manifest"]["contentType"] == "application/vnd.massive.data-artifact-manifest+json"
+    assert output["body"]["contentType"] == "application/json"
+    published_manifest = json.loads((store / output["manifest"]["key"]).read_text())
+    assert published_manifest["body"] == output["body"]
 
 
 def _load_fixture(path: Path) -> ModuleType:

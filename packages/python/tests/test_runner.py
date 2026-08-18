@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -14,7 +15,9 @@ import boto3
 import pytest
 
 from massive import canonical_json, sha256_ref
+from massive.artifact import ArtifactRuntime, Destination, Producer
 from massive.canonical import JsonValue
+from massive.datastore import LocalDatastore
 
 
 @pytest.mark.parametrize(
@@ -28,14 +31,20 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
     result = _run(descriptor_path)
 
     assert result.returncode == 0, result.stderr
-    output = (store / descriptor["output"]["artifact"]["key"]).read_text()
-    assert output == canonical_json(cast(JsonValue, expected))
-    metadata = (
-        store
-        / ".massive-datastore-metadata"
-        / f"{sha256(descriptor['output']['artifact']['key'].encode()).hexdigest()}.json"
+    output = descriptor["output"]
+    publication, body = ArtifactRuntime(LocalDatastore(store)).resolve_json(
+        Destination(manifest_key=output["manifestKey"], schema=output["schema"]),
+        Producer(
+            project_key=descriptor["projectKey"],
+            plan_hash=descriptor["planHash"],
+            run_id=descriptor["runId"],
+            node_id=descriptor["nodeId"],
+            attempt=descriptor["attempt"],
+        ),
     )
-    assert metadata.read_text() == '{"contentType":"application/json"}'
+    assert body == canonical_json(cast(JsonValue, expected)).encode()
+    assert publication.manifest.content_type == "application/vnd.massive.data-artifact-manifest+json"
+    assert publication.body.content_type == "application/json"
 
 
 @pytest.mark.parametrize(
@@ -71,6 +80,20 @@ def test_runner_reports_malformed_schema_as_schema_failure(tmp_path: Path) -> No
     descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
     schema_ref = descriptor["input"]["schema"]
     _write(store, f"blobs/sha256/{schema_ref.removeprefix('sha256:')}", "{")
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 65
+
+
+def test_runner_reports_an_invalid_immutable_output_slot_as_schema_failure(
+    tmp_path: Path,
+) -> None:
+    descriptor_path, descriptor, _store = _descriptor(tmp_path, export="double")
+    descriptor["output"]["manifestKey"] = (
+        "projects/project/runs/python-runner-test/steps/other/1/output-manifest.json"
+    )
+    descriptor_path.write_text(canonical_json(cast(JsonValue, descriptor)))
 
     result = _run(descriptor_path)
 
@@ -125,7 +148,11 @@ def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path) -> None:
     result = _run(descriptor_path, environment)
 
     assert result.returncode == 0, result.stderr
-    output = client.get_object(Bucket=bucket, Key=descriptor["output"]["artifact"]["key"])["Body"].read()
+    manifest = json.loads(
+        client.get_object(Bucket=bucket, Key=descriptor["output"]["manifestKey"])["Body"].read()
+    )
+    output = client.get_object(Bucket=bucket, Key=manifest["body"]["key"])["Body"].read()
+    assert manifest["kind"] == "DataArtifactManifest"
     assert output == canonical_json(cast(JsonValue, {"value": 42})).encode()
 
 
@@ -147,9 +174,10 @@ def _descriptor(
     package_hash = "sha256:" + "d" * 64
     descriptor: dict[str, Any] = {
         "kind": "StepInvocationDescriptor",
-        "schemaVersion": 0,
-        "encoding": "json-v0",
+        "schemaVersion": 1,
+        "encoding": "json-v1",
         "planHash": "sha256:" + "a" * 64,
+        "projectKey": "project",
         "runId": "python-runner-test",
         "nodeId": export,
         "attempt": 1,
@@ -179,10 +207,7 @@ def _descriptor(
             "schema": schema_hash,
         },
         "output": {
-            "artifact": {
-                "key": "runs/python-runner-test/outputs/task.json",
-                "contentType": "application/json",
-            },
+            "manifestKey": f"projects/project/runs/python-runner-test/steps/{export}/1/output-manifest.json",
             "schema": schema_hash,
         },
         "datastore": {"kind": "local", "path": str(store)},
