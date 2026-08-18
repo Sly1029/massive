@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from massive import canonical_json, sha256_ref
+
+
+def test_canonical_hash_matches_shared_golden_vector() -> None:
+    repository = Path(__file__).resolve().parents[3]
+    value = json.loads(
+        (repository / "conformance/fixtures/hashing/canonical-input.json").read_text()
+    )
+    expected = (
+        (repository / "conformance/fixtures/hashing/canonical-input.sha256").read_text().strip()
+    )
+
+    assert sha256_ref(canonical_json(value)) == expected
+
+
+@pytest.mark.parametrize("value", [1.5, 1 << 53, -(1 << 53)])
+def test_canonical_json_rejects_values_outside_v0_number_contract(value: float) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        canonical_json(value)
