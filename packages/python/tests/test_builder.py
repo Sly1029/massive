@@ -12,7 +12,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from massive import GraphBuilder, StepContext, container, execution, source_package
-from massive.builder import _assert_canonical_json_schema
+from massive.builder import SchemaPurpose, _assert_canonical_json_schema
 
 
 class Request(BaseModel):
@@ -28,6 +28,10 @@ class DecimalRequest(BaseModel):
 
 
 class DecimalResult(BaseModel):
+    value: Decimal
+
+
+class DecimalInput(BaseModel):
     value: Decimal
 
 
@@ -102,6 +106,10 @@ def decimal_result(context: StepContext[None, Request]) -> DecimalResult:
     return DecimalResult(value=Decimal(context.inputs.value) / Decimal(2))
 
 
+def decimal_echo(context: StepContext[None, DecimalResult]) -> DecimalResult:
+    return context.inputs
+
+
 def nested_decimal_result(context: StepContext[None, Request]) -> NestedDecimalResult:
     return NestedDecimalResult(values=[float(context.inputs.value)])
 
@@ -172,7 +180,6 @@ def test_end_is_terminal() -> None:
 @pytest.mark.parametrize(
     ("input_type", "output_type", "step", "message"),
     [
-        (DecimalRequest, Result, decimal_identity, "workflow input schema"),
         (Request, NestedDecimalResult, nested_decimal_result, "workflow output schema"),
         (Request, ReferencedDecimalResult, referenced_decimal_result, "workflow output schema"),
     ],
@@ -241,6 +248,32 @@ def test_emit_uses_validation_schemas_for_inputs_and_serialization_schemas_for_o
         "required": ["value"],
         "title": "DecimalResult",
         "type": "object",
+    }
+
+
+def test_emit_accepts_decimal_string_transport_between_steps() -> None:
+    graph = GraphBuilder(
+        name="decimal-pipeline",
+        input_type=Request,
+        output_type=DecimalResult,
+        defaults=_defaults(),
+    )
+    first = graph.add(graph.step()(decimal_result))
+    second = graph.add(graph.step()(decimal_echo))
+    graph.edge_from(graph.start).to(first).to(second).to(graph.end)
+
+    specification = _emit(graph)
+    schemas = specification.value["schemas"]
+    step = next(node for node in specification.value["graph"]["nodes"] if node["id"] == "decimal_echo")
+
+    assert schemas[step["inputSchema"]]["properties"]["value"]["anyOf"] == [
+        {"type": "number"},
+        {"pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$", "type": "string"},
+    ]
+    assert schemas[step["outputSchema"]]["properties"]["value"] == {
+        "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+        "title": "Value",
+        "type": "string",
     }
 
 
@@ -349,7 +382,7 @@ def test_emit_accepts_supported_integer_and_string_json_shapes() -> None:
 def test_schema_validation_rejects_a_float_constant_with_step_role_diagnostics() -> None:
     with pytest.raises(ValueError, match="step 'float-constant' output schema.*canonical-json-v0"):
         _assert_canonical_json_schema(
-            {"const": 1.5}, "step 'float-constant' output schema"
+            {"const": 1.5}, "step 'float-constant' output schema", SchemaPurpose.OUTPUT
         )
 
 
@@ -364,7 +397,7 @@ def test_schema_validation_rejects_unsafe_integer_constants_and_enums(
     schema: dict[str, Any],
 ) -> None:
     with pytest.raises(ValueError, match="step 'unsafe' output schema.*canonical-json-v0"):
-        _assert_canonical_json_schema(schema, "step 'unsafe' output schema")
+        _assert_canonical_json_schema(schema, "step 'unsafe' output schema", SchemaPurpose.OUTPUT)
 
 
 def test_schema_validation_escapes_json_pointer_tokens_in_diagnostics() -> None:
@@ -372,6 +405,7 @@ def test_schema_validation_escapes_json_pointer_tokens_in_diagnostics() -> None:
         _assert_canonical_json_schema(
             {"properties": {"name/with~tokens": {"type": "number"}}},
             "step 'pointer' output schema",
+            SchemaPurpose.OUTPUT,
         )
 
 
@@ -384,7 +418,7 @@ def test_schema_validation_escapes_json_pointer_tokens_in_diagnostics() -> None:
 )
 def test_schema_validation_rejects_noncanonical_metadata_and_bounds(schema: dict[str, Any]) -> None:
     with pytest.raises(ValueError, match="step 'metadata' output schema.*canonical-json-v0"):
-        _assert_canonical_json_schema(schema, "step 'metadata' output schema")
+        _assert_canonical_json_schema(schema, "step 'metadata' output schema", SchemaPurpose.OUTPUT)
 
 
 @pytest.mark.parametrize(
@@ -396,7 +430,7 @@ def test_schema_validation_rejects_noncanonical_metadata_and_bounds(schema: dict
 )
 def test_schema_validation_rejects_true_boolean_child_schemas(schema: dict[str, Any]) -> None:
     with pytest.raises(ValueError, match="step 'any-child' output schema.*unconstrained"):
-        _assert_canonical_json_schema(schema, "step 'any-child' output schema")
+        _assert_canonical_json_schema(schema, "step 'any-child' output schema", SchemaPurpose.OUTPUT)
 
 
 @pytest.mark.parametrize(
@@ -410,7 +444,7 @@ def test_schema_validation_rejects_true_boolean_child_schemas(schema: dict[str, 
 def test_schema_validation_keeps_false_and_polarity_sensitive_children_safe(
     schema: dict[str, Any]
 ) -> None:
-    _assert_canonical_json_schema(schema, "step 'safe' output schema")
+    _assert_canonical_json_schema(schema, "step 'safe' output schema", SchemaPurpose.OUTPUT)
 
 
 def _defaults():

@@ -227,7 +227,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
 
         def schema_ref(annotation: Any, role: str, purpose: SchemaPurpose) -> str:
             schema = cast(JsonValue, TypeAdapter(annotation).json_schema(mode=purpose.value))
-            _assert_canonical_json_schema(schema, role)
+            _assert_canonical_json_schema(schema, role, purpose)
             reference = sha256_ref(canonical_json(schema))
             schema_table[reference] = schema
             return reference
@@ -330,7 +330,9 @@ def _symbol_module(function: Callable[..., Any], root: Path) -> str:
     return module
 
 
-def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
+def _assert_canonical_json_schema(
+    schema: JsonValue, role: str, purpose: SchemaPurpose = SchemaPurpose.OUTPUT
+) -> None:
     """Reject Pydantic schemas that cannot describe canonical JSON v0 values.
 
     This follows the schema containers Pydantic emits, including local
@@ -388,9 +390,9 @@ def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
                 "an Any value. Use an explicit integer, string, object, or collection schema."
             )
         type_value = value.get("type")
-        if type_value == "number" or (
+        if purpose is SchemaPurpose.OUTPUT and (type_value == "number" or (
             isinstance(type_value, list) and "number" in type_value
-        ):
+        )):
             raise ValueError(
                 f"{role} uses JSON Schema type 'number' at {path}; "
                 "canonical-json-v0 is integer-only. Use an integer field or "
