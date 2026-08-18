@@ -126,10 +126,11 @@ Containers are necessary for Argo and some advanced tools, but they should not b
 
 `env.container(...)` means the author accepts backend portability limits. Other backends may reject the plan or require a backend-specific adapter.
 
-Container recipes first compile to canonical, unbuilt environment plans. The plan
-records the immutable image reference, platform, runtime/package inputs, and
-declared non-secret build arguments. Resource limits, runtime secrets, network,
-and scheduling remain execution-contract policy and never enter this identity.
+Container recipes first compile to canonical, unbuilt `container-plan` entries. The plan
+records the immutable image reference, platform, command, and working directory.
+Resource limits, runtime secrets, network, and scheduling remain execution-contract
+policy and never enter this identity. A target may accept this plan only when that
+selected image is directly runnable; dependency-building recipes remain future work.
 
 An environment artifact exists only when a materializer has committed real bytes
 or an OCI digest. The compiler must not emit an artifact reference for an

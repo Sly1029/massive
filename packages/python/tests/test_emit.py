@@ -59,14 +59,13 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
     assert compiled["environments"] == [
         {
             "envRef": environment_identity,
-            "kind": "container",
+            "kind": "container-plan",
             "specHash": environment_identity,
             "container": {
                 "image": "example.invalid/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "platform": "linux/amd64",
-                "runtime": {"kind": "python", "version": "3.12.3"},
-                "packages": [{"name": "pydantic", "version": "2.10.6"}],
-                "buildArgs": [{"name": "UV_COMPILE_BYTECODE", "value": "1"}],
+                "command": ["python", "-m", "massive"],
+                "workingDirectory": "app",
             },
         }
     ]

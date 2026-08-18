@@ -90,32 +90,14 @@ type SourcePackageFile struct {
 }
 
 type Environment struct {
-	Kind             string          `json:"kind"`
-	Image            string          `json:"image,omitempty"`
-	Platform         string          `json:"platform,omitempty"`
-	Runtime          *RuntimeInput   `json:"runtime,omitempty"`
-	Packages         []PackageInput  `json:"packages,omitempty"`
-	BuildArgs        []BuildArgument `json:"buildArgs,omitempty"`
-	Command          []string        `json:"command,omitempty"`
-	WorkingDirectory string          `json:"workingDirectory,omitempty"`
-	Version          string          `json:"version,omitempty"`
-	PackageManager   string          `json:"packageManager,omitempty"`
-	Lockfile         string          `json:"lockfile,omitempty"`
-}
-
-type RuntimeInput struct {
-	Kind    string `json:"kind"`
-	Version string `json:"version"`
-}
-
-type PackageInput struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-type BuildArgument struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
+	Kind             string   `json:"kind"`
+	Image            string   `json:"image,omitempty"`
+	Platform         string   `json:"platform,omitempty"`
+	Command          []string `json:"command,omitempty"`
+	WorkingDirectory string   `json:"workingDirectory,omitempty"`
+	Version          string   `json:"version,omitempty"`
+	PackageManager   string   `json:"packageManager,omitempty"`
+	Lockfile         string   `json:"lockfile,omitempty"`
 }
 
 type ExecutionContract struct {
@@ -494,11 +476,6 @@ func validateContainerRecipe(environmentRef string, environment Environment) []D
 	if environment.Kind != "container" {
 		return nil
 	}
-	usesRecipeFields := environment.Platform != "" || environment.Runtime != nil || len(environment.Packages) > 0 || len(environment.BuildArgs) > 0
-	if !usesRecipeFields {
-		return nil
-	}
-
 	path := "$.environments." + environmentRef
 	var diagnostics []Diagnostic
 	if environment.Platform == "" {
@@ -506,21 +483,6 @@ func validateContainerRecipe(environmentRef string, environment Environment) []D
 	}
 	if !immutableContainerImage.MatchString(environment.Image) {
 		diagnostics = append(diagnostics, Diagnostic{Path: path + ".image", Ref: environment.Image, Message: "container recipe requires an immutable image digest reference"})
-	}
-	diagnostics = append(diagnostics, duplicateRecipeInputDiagnostics(path+".packages", environment.Packages, func(input PackageInput) string { return input.Name })...)
-	diagnostics = append(diagnostics, duplicateRecipeInputDiagnostics(path+".buildArgs", environment.BuildArgs, func(input BuildArgument) string { return input.Name })...)
-	return diagnostics
-}
-
-func duplicateRecipeInputDiagnostics[T any](path string, values []T, name func(T) string) []Diagnostic {
-	seen := make(map[string]bool, len(values))
-	var diagnostics []Diagnostic
-	for index, value := range values {
-		inputName := name(value)
-		if seen[inputName] {
-			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("%s[%d].name", path, index), Ref: inputName, Message: "container recipe input names must be unique"})
-		}
-		seen[inputName] = true
 	}
 	return diagnostics
 }

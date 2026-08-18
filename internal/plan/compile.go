@@ -221,7 +221,7 @@ func compileEnvironments(workflowSpec *spec.WorkflowSpec) (map[string]string, []
 			entries = append(entries, &planpb.MaterializedEnvironment{
 				EnvRef:    stringPtr(newRef),
 				SpecHash:  stringPtr(newRef),
-				Kind:      stringPtr("container"),
+				Kind:      stringPtr("container-plan"),
 				Container: containerPlan(environment),
 			})
 			continue
@@ -239,30 +239,10 @@ func compileEnvironments(workflowSpec *spec.WorkflowSpec) (map[string]string, []
 
 func containerPlan(environment spec.Environment) *planpb.ContainerRuntime {
 	compiled := &planpb.ContainerRuntime{Image: stringPtr(environment.Image)}
-	if environment.Platform != "" {
-		compiled.Platform = stringPtr(environment.Platform)
-	}
-	if environment.Runtime != nil {
-		compiled.Runtime = &planpb.RuntimeInput{
-			Kind:    stringPtr(environment.Runtime.Kind),
-			Version: stringPtr(environment.Runtime.Version),
-		}
-	}
-	packages := append([]spec.PackageInput(nil), environment.Packages...)
-	sort.Slice(packages, func(i, j int) bool { return canonical.LessUTF16(packages[i].Name, packages[j].Name) })
-	for _, input := range packages {
-		compiled.Packages = append(compiled.Packages, &planpb.PackageInput{
-			Name:    stringPtr(input.Name),
-			Version: stringPtr(input.Version),
-		})
-	}
-	buildArgs := append([]spec.BuildArgument(nil), environment.BuildArgs...)
-	sort.Slice(buildArgs, func(i, j int) bool { return canonical.LessUTF16(buildArgs[i].Name, buildArgs[j].Name) })
-	for _, input := range buildArgs {
-		compiled.BuildArgs = append(compiled.BuildArgs, &planpb.BuildArgument{
-			Name:  stringPtr(input.Name),
-			Value: stringPtr(input.Value),
-		})
+	compiled.Platform = stringPtr(environment.Platform)
+	compiled.Command = append([]string{}, environment.Command...)
+	if environment.WorkingDirectory != "" {
+		compiled.WorkingDirectory = stringPtr(environment.WorkingDirectory)
 	}
 	return compiled
 }
