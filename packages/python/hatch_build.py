@@ -8,6 +8,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 _SCHEMAS = (
     Path("conformance/schema/step-invocation-descriptor.schema.json"),
     Path("conformance/schema/data-artifact-manifest.schema.json"),
+    Path("conformance/schema/workflow-spec.schema.json"),
 )
 
 
@@ -20,7 +21,7 @@ class CustomBuildHook(BuildHookInterface):
             candidates = (root.parents[1] / schema_path, root / schema_path)
             schema = next((candidate for candidate in candidates if candidate.is_file()), None)
             if schema is None:
-                raise FileNotFoundError(f"canonical schema {schema_path} is unavailable")
+                raise FileNotFoundError(f"canonical schema is unavailable: {schema_path}")
             destination = (
                 schema_path.as_posix()
                 if self.target_name == "sdist"
