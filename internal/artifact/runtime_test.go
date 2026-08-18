@@ -16,6 +16,7 @@ const (
 	testSchema     = `{"additionalProperties":false,"properties":{"value":{"type":"integer"}},"required":["value"],"type":"object"}`
 	testSchemaHash = "sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a"
 	testPlanHash   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	testProjectKey = "sha256-0000000000000000000000000000000000000000000000000000000000000000"
 )
 
 func TestPublishJSONCommitsBodyBeforeManifestAndConvergesOnRetry(t *testing.T) {
@@ -27,10 +28,10 @@ func TestPublishJSONCommitsBodyBeforeManifestAndConvergesOnRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	destination := Destination{
-		ManifestKey: datastore.MustKey("projects/project/runs/run-1/steps/task/1/output-manifest.json"),
+		ManifestKey: datastore.MustKey("projects/sha256-0000000000000000000000000000000000000000000000000000000000000000/runs/run-1/steps/task/1/output-manifest.json"),
 		Schema:      testSchemaHash,
 	}
-	producer := Producer{ProjectKey: "project", PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1}
+	producer := Producer{ProjectKey: testProjectKey, PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1}
 
 	first, err := PublishJSON(ctx, store, destination, producer, []byte(testBody))
 	if err != nil {
@@ -51,7 +52,7 @@ func TestPublishJSONCommitsBodyBeforeManifestAndConvergesOnRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantManifest := `{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v0","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"project","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":0}`
+	wantManifest := `{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v0","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"sha256-0000000000000000000000000000000000000000000000000000000000000000","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":0}`
 	if !bytes.Equal(manifest.Body, []byte(wantManifest)) {
 		t.Fatalf("manifest bytes\n got: %s\nwant: %s", manifest.Body, wantManifest)
 	}
@@ -121,11 +122,13 @@ func TestPublishJSONValidatesBeforeWritingAnything(t *testing.T) {
 
 func TestPublishJSONRejectsUnsafeProducerIdentityBeforeWriting(t *testing.T) {
 	invalidProducers := []Producer{
-		{ProjectKey: "example/../escape", PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1},
-		{ProjectKey: "example/python-e2e", PlanHash: testPlanHash, RunID: "../escape", NodeID: "task", Attempt: 1},
-		{ProjectKey: "example/python-e2e", PlanHash: testPlanHash, RunID: "run-1", NodeID: "nested/task", Attempt: 1},
-		{ProjectKey: "example\\python", PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1},
-		{ProjectKey: "example/python-e2e", PlanHash: testPlanHash, RunID: ".", NodeID: "task", Attempt: 1},
+		{ProjectKey: "project", PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1},
+		{ProjectKey: testProjectKey + "/nested", PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1},
+		{ProjectKey: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1},
+		{ProjectKey: testProjectKey[:len(testProjectKey)-1], PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1},
+		{ProjectKey: testProjectKey, PlanHash: testPlanHash, RunID: "../escape", NodeID: "task", Attempt: 1},
+		{ProjectKey: testProjectKey, PlanHash: testPlanHash, RunID: "run-1", NodeID: "nested/task", Attempt: 1},
+		{ProjectKey: testProjectKey, PlanHash: testPlanHash, RunID: ".", NodeID: "task", Attempt: 1},
 	}
 
 	for _, producer := range invalidProducers {
@@ -148,13 +151,13 @@ func TestPublishJSONRejectsUnsafeProducerIdentityBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestPublishJSONAcceptsExistingSafeIdentifierCharacters(t *testing.T) {
+func TestPublishJSONAcceptsSafeRunAndNodeIdentifiers(t *testing.T) {
 	ctx := context.Background()
 	store := localStore(t)
 	putSchema(t, store)
-	producer := Producer{ProjectKey: ".example/_python-e2e", PlanHash: testPlanHash, RunID: "_run", NodeID: ".task", Attempt: 1}
+	producer := Producer{ProjectKey: testProjectKey, PlanHash: testPlanHash, RunID: "_run", NodeID: ".task", Attempt: 1}
 	destination := Destination{
-		ManifestKey: datastore.MustKey("projects/.example/_python-e2e/runs/_run/steps/.task/1/output-manifest.json"),
+		ManifestKey: datastore.MustKey("projects/sha256-0000000000000000000000000000000000000000000000000000000000000000/runs/_run/steps/.task/1/output-manifest.json"),
 		Schema:      testSchemaHash,
 	}
 	if _, err := PublishJSON(ctx, store, destination, producer, []byte(testBody)); err != nil {
@@ -262,18 +265,20 @@ func TestPublishJSONConcurrentConflictsHaveOneWinnerAndNeverOverwrite(t *testing
 }
 
 func TestDataArtifactManifestSchemaContract(t *testing.T) {
-	valid := []byte(`{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v0","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"example/python-e2e","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":0}`)
+	valid := []byte(`{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v0","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"sha256-0000000000000000000000000000000000000000000000000000000000000000","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":0}`)
 	if err := validateManifestSchema(valid); err != nil {
 		t.Fatalf("valid shared manifest schema rejected fixture: %v", err)
 	}
 
 	for name, document := range map[string][]byte{
-		"additional property": bytes.Replace(valid, []byte(`"schemaVersion":0`), []byte(`"schemaVersion":0,"unexpected":true`), 1),
-		"content type":        bytes.Replace(valid, []byte(`"application/json"`), []byte(`"text/plain"`), 1),
-		"schema version":      bytes.Replace(valid, []byte(`"schemaVersion":0`), []byte(`"schemaVersion":1`), 1),
-		"unsafe project key":  bytes.Replace(valid, []byte(`"example/python-e2e"`), []byte(`"example/../escape"`), 1),
-		"unsafe run ID":       bytes.Replace(valid, []byte(`"run-1"`), []byte(`"nested/run"`), 1),
-		"unsafe node ID":      bytes.Replace(valid, []byte(`"nodeId":"task"`), []byte(`"nodeId":".."`), 1),
+		"additional property":      bytes.Replace(valid, []byte(`"schemaVersion":0`), []byte(`"schemaVersion":0,"unexpected":true`), 1),
+		"content type":             bytes.Replace(valid, []byte(`"application/json"`), []byte(`"text/plain"`), 1),
+		"schema version":           bytes.Replace(valid, []byte(`"schemaVersion":0`), []byte(`"schemaVersion":1`), 1),
+		"raw project identity":     bytes.Replace(valid, []byte(`"sha256-0000000000000000000000000000000000000000000000000000000000000000"`), []byte(`"example/python-e2e"`), 1),
+		"hierarchical project key": bytes.Replace(valid, []byte(`"sha256-0000000000000000000000000000000000000000000000000000000000000000"`), []byte(`"sha256-0000000000000000000000000000000000000000000000000000000000000000/nested"`), 1),
+		"uppercase project key":    bytes.Replace(valid, []byte(`"sha256-0000000000000000000000000000000000000000000000000000000000000000"`), []byte(`"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"`), 1),
+		"unsafe run ID":            bytes.Replace(valid, []byte(`"run-1"`), []byte(`"nested/run"`), 1),
+		"unsafe node ID":           bytes.Replace(valid, []byte(`"nodeId":"task"`), []byte(`"nodeId":".."`), 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateManifestSchema(document); err == nil {
@@ -318,13 +323,13 @@ func TestResolveJSONRejectsTamperedManifestAndBody(t *testing.T) {
 
 func testDestination() Destination {
 	return Destination{
-		ManifestKey: datastore.MustKey("projects/project/runs/run-1/steps/task/1/output-manifest.json"),
+		ManifestKey: datastore.MustKey("projects/sha256-0000000000000000000000000000000000000000000000000000000000000000/runs/run-1/steps/task/1/output-manifest.json"),
 		Schema:      testSchemaHash,
 	}
 }
 
 func testProducer() Producer {
-	return Producer{ProjectKey: "project", PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1}
+	return Producer{ProjectKey: testProjectKey, PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1}
 }
 
 func localStore(t *testing.T) datastore.Datastore {

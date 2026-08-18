@@ -35,7 +35,7 @@ var (
 
 var (
 	safePathSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9_.@:#-]+$`)
-	safeProjectKeyPattern  = regexp.MustCompile(`^[A-Za-z0-9_.@:#-]+(/[A-Za-z0-9_.@:#-]+)*$`)
+	projectKeyPattern      = regexp.MustCompile(`^sha256-[0-9a-f]{64}$`)
 )
 
 type Destination struct {
@@ -187,7 +187,7 @@ func validateDestination(destination Destination, producer Producer) error {
 
 func validateProducerIdentity(producer Producer) error {
 	if !isSafeProjectKey(producer.ProjectKey) {
-		return fmt.Errorf("%w: project key %q is not a safe relative path", ErrValidation, producer.ProjectKey)
+		return fmt.Errorf("%w: project key %q is not a normalized project namespace key", ErrValidation, producer.ProjectKey)
 	}
 	if !isSafePathSegment(producer.RunID) {
 		return fmt.Errorf("%w: run ID %q is not a safe path segment", ErrValidation, producer.RunID)
@@ -206,15 +206,7 @@ func isSafePathSegment(value string) bool {
 }
 
 func isSafeProjectKey(value string) bool {
-	if !safeProjectKeyPattern.MatchString(value) {
-		return false
-	}
-	for _, segment := range strings.Split(value, "/") {
-		if !isSafePathSegment(segment) {
-			return false
-		}
-	}
-	return true
+	return projectKeyPattern.MatchString(value)
 }
 
 func validateCanonicalJSON(ctx context.Context, store datastore.Datastore, schemaRef string, body []byte) error {

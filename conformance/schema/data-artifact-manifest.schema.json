@@ -23,9 +23,8 @@
     },
     "projectKey": {
       "type": "string",
-      "minLength": 1,
-      "pattern": "^[A-Za-z0-9_.@:#-]+(/[A-Za-z0-9_.@:#-]+)*$",
-      "not": { "pattern": "(^|/)(\\.|\\.\\.)(/|$)" }
+      "description": "Normalized, single-segment project datastore namespace key; it is the SHA-256 digest of the normalized project identity, prefixed with sha256-.",
+      "pattern": "^sha256-[0-9a-f]{64}$"
     },
     "hashRef": {
       "type": "string",

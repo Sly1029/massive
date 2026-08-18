@@ -23,6 +23,10 @@ ResolveJSON(destination, expectedProducer) -> PublishedJSON + canonicalBody
 `destination` contains the pinned schema reference and deterministic manifest
 key. The key must match the producer's project, run, node, and attempt slot.
 Callers cannot choose a body key: the runtime derives it from the exact bytes.
+`producer.projectKey` is the normalized datastore namespace key, exactly
+`sha256-` followed by 64 lowercase hexadecimal characters. It is the digest of
+the normalized project identity, not the raw identity, repository path, or a
+hierarchical path segment.
 
 The versioned manifest shape is frozen by
 `conformance/schema/data-artifact-manifest.schema.json`. Its encoding is
@@ -53,6 +57,14 @@ manifest may leave an unreachable body. A crash after the manifest is
 recoverable from the deterministic attempt key. Consumers never discover
 outputs by listing body keys.
 
+## Breaking Output Migration
+
+This is a breaking v0 output migration: a step output is now published at
+`.../output-manifest.json`, rather than the legacy `.../output.json` value
+location. The runtime provides neither a compatibility reader nor dual
+publication. Workflows move to the v2 SDK and its separate deployment namespace
+as a complete unit.
+
 ## Integrity And Trust
 
 Manifest `producer` fields are provenance assertions checked against the
@@ -82,10 +94,12 @@ Artifact immutability is enforced at this module boundary: publication uses
 requires the existing object to match exactly. `Datastore` itself deliberately
 also supports ordinary replacement writes for mutable control records such as
 run journals; it is not an immutable-store abstraction. The local adapter
-publishes an `IfAbsent` object's complete content-type sidecar before making
-its body visible. A crash can therefore leave metadata without a body, which a
-matching retry completes; it cannot expose a body with a default or competing
-content type.
+uses link-based conditional installation to publish an `IfAbsent` object's
+complete content-type sidecar before its body becomes visible to concurrent
+processes. It does not fsync object, metadata, or directory entries, so this
+is process-atomic behavior—not a power-loss durability guarantee. An
+interrupted process can leave metadata without a body, which a matching retry
+completes.
 
 Content bodies are shared within one configured security realm. Retention must
 eventually mark reachable bodies from immutable manifests, apply a grace period

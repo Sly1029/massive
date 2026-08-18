@@ -233,6 +233,10 @@ retain their current run-scoped JSON layout until their own protocol slice is
 migrated. Each artifact record carries its schema hash, content hash, content
 type, datastore key, and producing run/node/attempt when applicable.
 
+This is a breaking v0 step-output rename from `output.json` to
+`output-manifest.json`. There is no compatibility read or dual write: a
+workflow adopts the v2 SDK and deployment namespace as one migration.
+
 ## Layout overview
 
 ```text
