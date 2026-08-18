@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tarfile
 import uuid
+from decimal import Decimal
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any, cast
 
 import boto3
 import pytest
+from pydantic import BaseModel, TypeAdapter
 
 from massive import canonical_json, sha256_ref
 from massive.artifact import ArtifactRuntime, Destination, Producer
@@ -35,7 +37,7 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
     assert result.returncode == 0, result.stderr
     output = descriptor["output"]
     publication, body = ArtifactRuntime(LocalDatastore(store)).resolve_json(
-        Destination(manifest_key=output["manifestKey"], schema=output["schema"]),
+        Destination(manifest_key=output["manifestKey"], schema_ref=output["schema"]),
         Producer(
             project_key=descriptor["projectKey"],
             plan_hash=descriptor["planHash"],
@@ -86,6 +88,85 @@ def test_runner_reports_malformed_schema_as_schema_failure(tmp_path: Path) -> No
     result = _run(descriptor_path)
 
     assert result.returncode == 65
+
+
+@pytest.mark.parametrize("body", [b"\x80", b"1.5", b'{"value":21 }'])
+def test_runner_reports_invalid_utf8_float_and_noncanonical_input_as_schema_failures(
+    tmp_path: Path, body: bytes
+) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    store.joinpath(descriptor["input"]["artifact"]["key"]).write_bytes(body)
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 65
+
+
+@pytest.mark.parametrize("body", [b"\x80", b'{"type":"object" }'])
+def test_runner_reports_invalid_utf8_and_noncanonical_schema_as_schema_failures(
+    tmp_path: Path, body: bytes
+) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    schema_ref = descriptor["input"]["schema"]
+    store.joinpath(f"blobs/sha256/{schema_ref.removeprefix('sha256:')}").write_bytes(body)
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 65
+
+
+class DecimalResult(BaseModel):
+    value: Decimal
+
+
+def test_runner_uses_serialized_decimal_output_as_valid_downstream_input(tmp_path: Path) -> None:
+    output_schema = TypeAdapter(DecimalResult).json_schema(mode="serialization")
+    input_schema = TypeAdapter(DecimalResult).json_schema(mode="validation")
+    first_path, first, store = _descriptor(tmp_path, export="decimal_result")
+    output_schema_text = canonical_json(cast(JsonValue, output_schema))
+    output_schema_ref = sha256_ref(output_schema_text)
+    _write(store, f"blobs/sha256/{output_schema_ref.removeprefix('sha256:')}", output_schema_text)
+    first["output"]["schema"] = output_schema_ref
+    first_path.write_text(canonical_json(cast(JsonValue, first)))
+
+    first_result = _run(first_path)
+
+    assert first_result.returncode == 0, first_result.stderr
+    publication, first_body = ArtifactRuntime(LocalDatastore(store)).resolve_json(
+        Destination(manifest_key=first["output"]["manifestKey"], schema_ref=output_schema_ref),
+        Producer(
+            project_key=first["projectKey"],
+            plan_hash=first["planHash"],
+            run_id=first["runId"],
+            node_id=first["nodeId"],
+            attempt=first["attempt"],
+        ),
+    )
+    assert first_body == b'{"value":"10.5"}'
+
+    validation_schema_text = canonical_json(cast(JsonValue, input_schema))
+    validation_schema_ref = sha256_ref(validation_schema_text)
+    _write(
+        store,
+        f"blobs/sha256/{validation_schema_ref.removeprefix('sha256:')}",
+        validation_schema_text,
+    )
+    second_path, second, _unused_store = _descriptor(tmp_path / "second", export="decimal_echo")
+    second["input"] = {
+        "artifact": {
+            "key": publication.body.key,
+            "hash": publication.body.hash,
+            "contentType": publication.body.content_type,
+        },
+        "schema": validation_schema_ref,
+    }
+    second["output"]["schema"] = output_schema_ref
+    second["datastore"] = {"kind": "local", "path": str(store)}
+    second_path.write_text(canonical_json(cast(JsonValue, second)))
+
+    second_result = _run(second_path)
+
+    assert second_result.returncode == 0, second_result.stderr
 
 
 def test_runner_reports_an_invalid_immutable_output_slot_as_schema_failure(

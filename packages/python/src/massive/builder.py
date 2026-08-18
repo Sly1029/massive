@@ -4,6 +4,7 @@ import inspect
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from types import ModuleType
 from typing import (
@@ -17,11 +18,12 @@ from typing import (
     overload,
 )
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import DepsT, InputT, StepContext
 from .contracts import ExecutionContract
+from .identity import SAFE_PATH_SEGMENT, SafePathSegment
 from .source_package import SourcePackage
 
 OutputT = TypeVar("OutputT")
@@ -33,6 +35,17 @@ _END = "__end"
 # Graph IR versioning is independent from the outer WorkflowSpec transport
 # schema so graph evolution remains an explicit compiler contract.
 GRAPH_IR_VERSION = "0.1"
+
+
+class SchemaPurpose(str, Enum):
+    INPUT = "validation"
+    OUTPUT = "serialization"
+
+
+class _WorkflowIdentity(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: SafePathSegment
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,9 +117,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         defaults: ExecutionContract,
         deps_type: type[DepsT] | None = None,
     ) -> None:
-        if not name:
-            raise ValueError("workflow name must not be empty")
-        self.name = name
+        self.name = _WorkflowIdentity(name=name).name
         self.input_type = input_type
         self.output_type = output_type
         self.deps_type = deps_type
@@ -169,7 +180,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             return None
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        node_id = id or item.function.__name__
+        node_id = SAFE_PATH_SEGMENT.validate_python(id or item.function.__name__)
         if node_id in {_START, _END} or node_id in self._nodes:
             raise ValueError(f"duplicate or reserved step id {node_id!r}")
         handle = NodeHandle[OutputT](
@@ -214,15 +225,15 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         source_files, package_hash = source.manifest()
         schema_table: dict[str, JsonValue] = {}
 
-        def schema_ref(annotation: Any, role: str) -> str:
-            schema = cast(JsonValue, TypeAdapter(annotation).json_schema(mode="validation"))
+        def schema_ref(annotation: Any, role: str, purpose: SchemaPurpose) -> str:
+            schema = cast(JsonValue, TypeAdapter(annotation).json_schema(mode=purpose.value))
             _assert_canonical_json_schema(schema, role)
             reference = sha256_ref(canonical_json(schema))
             schema_table[reference] = schema
             return reference
 
-        input_schema = schema_ref(self.input_type, "workflow input schema")
-        output_schema = schema_ref(self.output_type, "workflow output schema")
+        input_schema = schema_ref(self.input_type, "workflow input schema", SchemaPurpose.INPUT)
+        output_schema = schema_ref(self.output_type, "workflow output schema", SchemaPurpose.OUTPUT)
         environments: dict[str, JsonValue] = {}
         contracts: dict[str, JsonValue] = {}
 
@@ -254,8 +265,12 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                 {
                     "id": node_id,
                     "kind": "step",
-                    "inputSchema": schema_ref(step.input_type, f"step {node_id!r} input schema"),
-                    "outputSchema": schema_ref(step.output_type, f"step {node_id!r} output schema"),
+                    "inputSchema": schema_ref(
+                        step.input_type, f"step {node_id!r} input schema", SchemaPurpose.INPUT
+                    ),
+                    "outputSchema": schema_ref(
+                        step.output_type, f"step {node_id!r} output schema", SchemaPurpose.OUTPUT
+                    ),
                     "symbolRef": symbol_ref,
                     "contractRef": contract_ref(step.contract or self.defaults),
                 }

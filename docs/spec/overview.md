@@ -2,21 +2,29 @@
 
 Status: draft
 
-> This document describes the implemented TypeScript-first v0 substrate. The
-> accepted next-version product and architecture direction is
+> This document describes the implemented v0 substrate. The accepted
+> next-version product and architecture direction is
 > [Workflow Platform v2 Direction](workflow-platform-v2.md). It makes Python the
 > priority frontend for v2 and replaces mutable-state/channel proposals
 > with explicit immutable dataflow.
 
-Massive is a portable workflow compiler. It is not, at least initially, a durable execution runtime. Authors define typed workflows in TypeScript, the SDK lowers them into a language-neutral workflow specification, and backend compilers render that specification into runnable artifacts such as a local async plan or an Argo deploy bundle.
+Massive is a portable workflow compiler. It is not, at least initially, a durable execution runtime. Authors define typed workflows in Python or TypeScript, the SDK lowers them into a language-neutral workflow specification, and backend compilers render that specification into runnable artifacts such as a local async plan or an Argo deploy bundle.
 
-Two audiences anchor the design. Workflow authors get a typed TypeScript SDK and a one-command local loop. Platform teams get the differentiating layer: compiled, deterministic, provenance-carrying deploy bundles whose execution contracts (environment, resources, secrets, network) are verifiable artifacts rather than runtime configuration. When scope decisions are close, the compile/verify/provenance layer wins.
+Python is the primary authoring SDK for v2. It uses Pydantic validation schemas
+for values entering a workflow or step and serialization schemas for values
+leaving one. Runtimes validate inputs with `TypeAdapter`, serialize outputs with
+`dump_python(mode="json")`, then publish canonical immutable JSON artifacts.
+This lets Pydantic `Decimal` cross the wire as its serialized string form while
+keeping v0's prohibition on floating-point JSON numbers. TypeScript remains a
+supported frontend and consumes the same versioned graph and artifact contracts.
+
+Two audiences anchor the design. Workflow authors get a typed Python SDK and a one-command local loop, with TypeScript also supported. Platform teams get the differentiating layer: compiled, deterministic, provenance-carrying deploy bundles whose execution contracts (environment, resources, secrets, network) are verifiable artifacts rather than runtime configuration. When scope decisions are close, the compile/verify/provenance layer wins.
 
 The core bet is that workflow authoring, graph analysis, execution requirements, environment materialization, and backend-specific deployment can be separated cleanly:
 
 ```text
-TypeScript authoring source
-  -> Graphology-backed graph model
+Python or TypeScript authoring source
+  -> typed SDK graph model
   -> canonical WorkflowSpec JSON conforming to the shared schema
   -> Go backend compiler
   -> canonical WorkflowPlan JSON + TargetBundleManifest JSON typed by proto schemas
@@ -28,7 +36,11 @@ All workflows are compiled before running. This includes local development. Loca
 
 There is no separate in-memory local execution contract. A good local developer experience may hide the emit/compile/run steps behind one command, but it must still use the same `WorkflowSpec`, Go compiler, persisted `WorkflowPlan`, datastore artifacts, and language runtime adapter path as deployable targets.
 
-Language SDKs may ship their own runtime adapters. For TypeScript, the SDK should include the local step runner used by the local target and by containerized Argo steps. Go still owns graph orchestration, target compilation, and artifact validation; the TypeScript runner owns TypeScript module loading, function invocation, and schema validation at the step boundary.
+Language SDKs may ship their own runtime adapters. Python and TypeScript SDKs
+include local step runners that are also suitable for containerized Argo steps.
+Go still owns graph orchestration, target compilation, and artifact validation;
+each language runner owns module loading, function invocation, and schema
+validation at its step boundary.
 
 ## Developer Experience
 
@@ -62,7 +74,7 @@ For v0, `.proto` schemas define the typed compiled-plan and manifest contracts, 
 
 ## Goals
 
-- Provide a TypeScript-first workflow SDK with a declarative, functional authoring style inspired by `pydantic-graph`.
+- Provide a Python-first workflow SDK with a declarative, functional authoring style inspired by `pydantic-graph`, while retaining a supported TypeScript SDK.
 - Use native graph libraries instead of reimplementing graph algorithms. TypeScript uses Graphology internally. The IR stays language-neutral by design, but TypeScript/JavaScript is the only planned authoring language for now.
 - Keep the canonical compiled workflow representation language-neutral with proto-typed JSON artifacts.
 - Treat execution requirements as first-class. A compiled workflow includes graph topology plus environment, resources, secrets, storage, network, and observability contracts.
@@ -75,7 +87,8 @@ For v0, `.proto` schemas define the typed compiled-plan and manifest contracts, 
 - Owning a durable execution runtime.
 - Supporting arbitrary cyclic workflows. The portable v0 IR is DAG-only.
 - Supporting Cloudflare Workers/Workflows or Vercel Workflows as v0 backends.
-- Supporting authoring languages other than TypeScript/JavaScript. The IR remains language-neutral by design, but no second-language SDK is scheduled.
+- Treating every language runtime as equally mature. Python is the priority SDK;
+  TypeScript is supported through the shared IR and artifact contracts.
 - Implementing uv, Nix, or container image builders beyond the TypeScript/Node path and container escape hatch.
 - Requiring a metadata database or hosted control plane.
 - Implementing the full runtime sidecar/proxy security model in v0.
@@ -94,13 +107,13 @@ The compiled plan still contains three joined surfaces:
 - `ExecutionContract`: how the computation is allowed to run. Contracts reference environment specs by content hash and include resources, secrets, network intents, storage requirements, observability, and runtime mediation mode.
 - `WorkflowPlan`: the compiled unit that joins `GraphIR`, `ExecutionContract`, symbol tables, materialized artifact references, and provenance.
 
-Backends consume `WorkflowPlan`. They should not need to inspect TypeScript source.
+Backends consume `WorkflowPlan`. They should not need to inspect authoring source.
 
 ## V0 Scope
 
 V0 should include:
 
-- TypeScript SDK.
+- Python SDK and supported TypeScript SDK.
 - Graphology-backed builder model.
 - Proto schemas for the compiled plan and target manifests.
 - Deterministic `WorkflowSpec` JSON emission from the TypeScript SDK.

@@ -3,7 +3,8 @@
 Massive lets a Python author describe a typed, static workflow graph. Pydantic
 models are the source of the JSON Schemas carried in the emitted workflow
 specification; a step receives one typed input through `StepContext` and
-returns one typed output.
+returns one typed output. Python is the primary Massive authoring surface;
+TypeScript uses the same portable artifact protocol.
 
 ```python
 from pydantic import BaseModel
@@ -87,13 +88,19 @@ primary SDK; the artifact manifest protocol is shared with the other Massive
 runtimes.
 
 `canonical-json-v0` deliberately supports integers, but not floating-point
-numbers. `emit()` rejects Pydantic input or output schemas containing JSON
-Schema `type: "number"` before a workflow is submitted, including nested
-models and collection items. Model a fractional value as a string (or scale it
-to an integer) until a future protocol version defines a cross-runtime decimal
-representation. This includes Python's `Decimal`: it is unsupported unless the
-model field is explicitly a `str` and the step serializes the decimal into that
-string itself.
+numbers. Massive emits Pydantic's **validation schema** for workflow and step
+inputs, and its **serialization schema** for workflow and step outputs. This
+matches the runtime boundary: inputs are parsed into Python values with
+`TypeAdapter.validate_python`, while outputs are validated and then converted
+with `dump_python(mode="json")` before publication.
+
+That distinction makes `Decimal` useful without inventing a second wire
+format. Pydantic accepts a Decimal input in its validation schema and serializes
+the output as a JSON string, so an output such as `Decimal("10.5")` is stored as
+`{"value":"10.5"}`. A following Decimal-typed step can validate that string
+again. Actual float/`number` output schemas are rejected at `emit()` because
+their serialized values cannot be represented by v0; use `Decimal`, a string,
+or a scaled integer instead.
 
 `Any` and unconstrained mappings are also rejected at `emit()` in v0. They can
 admit floats that no runtime can encode consistently. Prefer a concrete model,

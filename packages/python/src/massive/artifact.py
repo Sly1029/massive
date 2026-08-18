@@ -10,10 +10,12 @@ from typing import Protocol, cast
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StrictStr
 from referencing.exceptions import Unresolvable
 
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .datastore import Datastore, DatastoreConflictError, DatastoreNotFoundError
+from .identity import PositiveAttempt, ProjectKey, SafePathSegment, Sha256Reference
 
 JSON_CONTENT_TYPE = "application/json"
 MANIFEST_CONTENT_TYPE = "application/vnd.massive.data-artifact-manifest+json"
@@ -47,28 +49,38 @@ class SchemaValidator(Protocol):
     def validate(self, value: object) -> None: ...
 
 
-@dataclass(frozen=True, slots=True)
-class Destination:
-    manifest_key: str
-    schema: str
+class Destination(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    manifest_key: StrictStr = Field(
+        validation_alias=AliasChoices("manifest_key", "manifestKey"),
+        serialization_alias="manifestKey",
+        min_length=1,
+    )
+    schema_ref: Sha256Reference = Field(
+        validation_alias=AliasChoices("schema_ref", "schema"), serialization_alias="schema"
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class Producer:
-    project_key: str
-    plan_hash: str
-    run_id: str
-    node_id: str
-    attempt: int
+class Producer(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    def json(self) -> dict[str, JsonValue]:
-        return {
-            "projectKey": self.project_key,
-            "planHash": self.plan_hash,
-            "runId": self.run_id,
-            "nodeId": self.node_id,
-            "attempt": self.attempt,
-        }
+    project_key: ProjectKey = Field(
+        validation_alias=AliasChoices("project_key", "projectKey"), serialization_alias="projectKey"
+    )
+    plan_hash: Sha256Reference = Field(
+        validation_alias=AliasChoices("plan_hash", "planHash"), serialization_alias="planHash"
+    )
+    run_id: SafePathSegment = Field(
+        validation_alias=AliasChoices("run_id", "runId"), serialization_alias="runId"
+    )
+    node_id: SafePathSegment = Field(
+        validation_alias=AliasChoices("node_id", "nodeId"), serialization_alias="nodeId"
+    )
+    attempt: PositiveAttempt
+
+    def identity_json(self) -> dict[str, JsonValue]:
+        return cast(dict[str, JsonValue], self.model_dump(mode="json", by_alias=True))
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +116,7 @@ class ArtifactRuntime:
         self, destination: Destination, producer: Producer, body: bytes
     ) -> PublishedJSON:
         _validate_destination(destination, producer)
-        _validate_canonical_json(self._datastore, destination.schema, body)
+        _validate_canonical_json(self._datastore, destination.schema_ref, body)
         body_hash = sha256_ref(body)
         body_ref = ArtifactRef(
             key=_blob_key(body_hash),
@@ -118,8 +130,8 @@ class ArtifactRuntime:
                 "kind": "DataArtifactManifest",
                 "schemaVersion": 0,
                 "encoding": "canonical-json-v0",
-                "producer": producer.json(),
-                "schema": destination.schema,
+                "producer": producer.identity_json(),
+                "schema": destination.schema_ref,
                 "body": body_ref.json(),
             },
         )
@@ -142,7 +154,7 @@ class ArtifactRuntime:
                 content_type=MANIFEST_CONTENT_TYPE,
             ),
             body=body_ref,
-            schema=destination.schema,
+            schema=destination.schema_ref,
         )
 
     def resolve_json(
@@ -166,10 +178,10 @@ class ArtifactRuntime:
             raise ArtifactIntegrityError("manifest does not satisfy its schema") from error
         if not isinstance(manifest, dict):
             raise ArtifactIntegrityError("manifest must be an object")
-        expected_producer = producer.json()
+        expected_producer = producer.identity_json()
         if (
             manifest.get("producer") != expected_producer
-            or manifest.get("schema") != destination.schema
+            or manifest.get("schema") != destination.schema_ref
         ):
             raise ArtifactIntegrityError("manifest does not match its expected producer and schema")
         body = manifest["body"]
@@ -194,7 +206,7 @@ class ArtifactRuntime:
         ):
             raise ArtifactIntegrityError("manifest body does not match its reference")
         try:
-            _validate_canonical_json(self._datastore, destination.schema, body_object.body)
+            _validate_canonical_json(self._datastore, destination.schema_ref, body_object.body)
         except ArtifactValidationError as error:
             raise ArtifactIntegrityError("manifest body does not satisfy its schema") from error
         return (
@@ -206,7 +218,7 @@ class ArtifactRuntime:
                     content_type=MANIFEST_CONTENT_TYPE,
                 ),
                 body=body_ref,
-                schema=destination.schema,
+                schema=destination.schema_ref,
             ),
             body_object.body,
         )
@@ -221,20 +233,8 @@ def _validate_destination(destination: Destination, producer: Producer) -> None:
         raise ArtifactValidationError(
             f"manifest destination {destination.manifest_key!r} does not match producer slot"
         )
-    if producer.attempt < 1 or not all(
-        (
-            producer.project_key,
-            producer.plan_hash,
-            producer.run_id,
-            producer.node_id,
-            destination.schema,
-        )
-    ):
-        raise ArtifactValidationError("producer and schema identity must be present")
-    if re.fullmatch(r"sha256-[0-9a-f]{64}", producer.project_key) is None:
-        raise ArtifactValidationError("project key must be a normalized SHA-256 identity")
     try:
-        _blob_key(destination.schema)
+        _blob_key(destination.schema_ref)
     except ArtifactValidationError as error:
         raise ArtifactValidationError("schema reference must be a SHA-256 reference") from error
 

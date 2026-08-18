@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from massive import GraphBuilder, StepContext, container, execution, source_package
 from massive.builder import _assert_canonical_json_schema
@@ -24,6 +25,10 @@ class Result(BaseModel):
 
 class DecimalRequest(BaseModel):
     value: float
+
+
+class DecimalResult(BaseModel):
+    value: Decimal
 
 
 class NestedDecimalResult(BaseModel):
@@ -91,6 +96,10 @@ def identity(context: StepContext[None, Request]) -> Result:
 
 def decimal_identity(context: StepContext[None, DecimalRequest]) -> Result:
     return Result(value=int(context.inputs.value))
+
+
+def decimal_result(context: StepContext[None, Request]) -> DecimalResult:
+    return DecimalResult(value=Decimal(context.inputs.value) / Decimal(2))
 
 
 def nested_decimal_result(context: StepContext[None, Request]) -> NestedDecimalResult:
@@ -197,6 +206,82 @@ def test_emit_rejects_schemas_that_admit_non_integer_json_numbers(
                 package_id="python-tests",
             )
         )
+
+
+def test_emit_uses_validation_schemas_for_inputs_and_serialization_schemas_for_outputs() -> None:
+    graph = GraphBuilder(
+        name="decimal-transport",
+        input_type=Request,
+        output_type=DecimalResult,
+        defaults=_defaults(),
+    )
+    node = graph.add(graph.step()(decimal_result))
+    graph.edge_from(graph.start).to(node).to(graph.end)
+
+    specification = _emit(graph)
+    workflow = specification.value["workflow"]
+    schemas = specification.value["schemas"]
+    input_schema = schemas[workflow["inputSchema"]]
+    output_schema = schemas[workflow["outputSchema"]]
+
+    assert input_schema == {
+        "properties": {"value": {"title": "Value", "type": "integer"}},
+        "required": ["value"],
+        "title": "Request",
+        "type": "object",
+    }
+    assert output_schema == {
+        "properties": {
+            "value": {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "title": "Value",
+                "type": "string",
+            }
+        },
+        "required": ["value"],
+        "title": "DecimalResult",
+        "type": "object",
+    }
+
+
+@pytest.mark.parametrize("identifier", ["a/b", ".", "..", "x" * 129])
+def test_graph_rejects_workflow_names_that_cannot_be_used_as_safe_wire_segments(
+    identifier: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        GraphBuilder(
+            name=identifier,
+            input_type=Request,
+            output_type=Result,
+            defaults=_defaults(),
+        )
+
+
+@pytest.mark.parametrize("identifier", ["a/b", ".", "..", "x" * 129])
+def test_graph_rejects_node_ids_that_cannot_be_used_as_safe_wire_segments(identifier: str) -> None:
+    graph = GraphBuilder(
+        name="safe-id-test",
+        input_type=Request,
+        output_type=Result,
+        defaults=_defaults(),
+    )
+
+    with pytest.raises(ValidationError):
+        graph.add(graph.step()(identity), id=identifier)
+
+
+@pytest.mark.parametrize("identifier", ["_step", ".hidden"])
+def test_graph_accepts_safe_wire_segment_identifiers(identifier: str) -> None:
+    graph = GraphBuilder(
+        name=identifier,
+        input_type=Request,
+        output_type=Result,
+        defaults=_defaults(),
+    )
+
+    node = graph.add(graph.step()(identity), id=identifier)
+
+    assert node.node_id == identifier
 
 
 @pytest.mark.parametrize(

@@ -6,6 +6,7 @@ import importlib
 import importlib.resources
 import inspect
 import json
+import re
 import sys
 import tarfile
 from collections.abc import Awaitable, Callable, Generator, Mapping
@@ -17,14 +18,19 @@ from tempfile import TemporaryDirectory
 from typing import Literal, NotRequired, Protocol, TypedDict, cast
 
 from jsonschema import Draft202012Validator
-from jsonschema.exceptions import ValidationError
+from jsonschema.exceptions import SchemaError as JsonSchemaError
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from pydantic import TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
+from pydantic_core import PydanticSerializationError
+from referencing.exceptions import Unresolvable
 
 from .artifact import ArtifactError, ArtifactRuntime, Destination, Producer
 from .builder import StepDefinition
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InvocationContext, StepContext
 from .datastore import Datastore, DatastoreDescriptor, LocalDatastore, S3Datastore
+from .identity import SHA256_REFERENCE
 
 _SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
 _MAX_SOURCE_FILES = 1024
@@ -141,7 +147,7 @@ def _load_descriptor(path: Path) -> StepInvocationDescriptor:
         raise DescriptorError(f"cannot read descriptor {path}: {error}") from error
     try:
         _descriptor_validator().validate(descriptor)
-    except ValidationError as error:
+    except JsonSchemaValidationError as error:
         raise DescriptorError(f"descriptor does not satisfy its JSON Schema: {error}") from error
     return cast(StepInvocationDescriptor, descriptor)
 
@@ -171,7 +177,7 @@ def _execute_source(
     if input_adapter is not None:
         try:
             input_value = input_adapter.validate_python(input_value)
-        except Exception as error:
+        except PydanticValidationError as error:
             raise SchemaError(f"input does not satisfy the step input type: {error}") from error
     context = StepContext[None, object](
         inputs=input_value,
@@ -190,9 +196,13 @@ def _execute_source(
         raise StepError(str(error)) from error
     if output_adapter is not None:
         try:
-            output = output_adapter.dump_python(output_adapter.validate_python(output), mode="json")
-        except Exception as error:
+            validated_output = output_adapter.validate_python(output)
+        except PydanticValidationError as error:
             raise SchemaError(f"output does not satisfy the step output type: {error}") from error
+        try:
+            output = output_adapter.dump_python(validated_output, mode="json")
+        except PydanticSerializationError as error:
+            raise SchemaError(f"output cannot be serialized as JSON: {error}") from error
     try:
         output_text = canonical_json(cast(JsonValue, output))
     except (TypeError, ValueError) as error:
@@ -202,7 +212,7 @@ def _execute_source(
         ArtifactRuntime(datastore).publish_json(
             Destination(
                 manifest_key=output_descriptor["manifestKey"],
-                schema=output_descriptor["schema"],
+                schema_ref=output_descriptor["schema"],
             ),
             Producer(
                 project_key=descriptor["projectKey"],
@@ -213,7 +223,7 @@ def _execute_source(
             ),
             output_text.encode(),
         )
-    except ArtifactError as error:
+    except (ArtifactError, PydanticValidationError) as error:
         raise SchemaError(f"output artifact publication failed: {error}") from error
 
 
@@ -227,31 +237,25 @@ def _read_input(
     input_descriptor = descriptor["input"]
     artifact = input_descriptor["artifact"]
     expected_hash = artifact["hash"]
-    text = _read(datastore, artifact["key"])
-    if sha256_ref(text) != expected_hash:
+    body = _read(datastore, artifact["key"])
+    if sha256_ref(body) != expected_hash:
         raise SchemaError("input artifact hash mismatch")
-    try:
-        value = cast(JsonValue, json.loads(text))
-    except json.JSONDecodeError as error:
-        raise SchemaError(f"input artifact is not JSON: {error}") from error
-    if canonical_json(value) != text:
-        raise SchemaError("input artifact is not canonical JSON")
+    value = _parse_canonical_json(body, "input artifact")
     schema = _schema(datastore, input_descriptor["schema"])
     _validate(schema, value, "input")
     return value, schema
 
 
 def _schema(datastore: Datastore, reference: str) -> dict[str, object]:
-    if not reference.startswith("sha256:"):
-        raise SchemaError("schema reference is not a SHA-256 reference")
-    text = _read(datastore, f"blobs/sha256/{reference.removeprefix('sha256:')}")
     try:
-        schema: object = json.loads(text)
-    except json.JSONDecodeError as error:
-        raise SchemaError(f"schema is not JSON: {error}") from error
+        SHA256_REFERENCE.validate_python(reference)
+    except PydanticValidationError:
+        raise SchemaError("schema reference is not a SHA-256 reference")
+    body = _read(datastore, f"blobs/sha256/{reference.removeprefix('sha256:')}")
+    schema = _parse_canonical_json(body, "schema")
     if not isinstance(schema, dict):
         raise SchemaError("schema must be an object")
-    if sha256_ref(canonical_json(cast(JsonValue, schema))) != reference:
+    if sha256_ref(body) != reference:
         raise SchemaError("schema hash mismatch")
     return cast(dict[str, object], schema)
 
@@ -260,9 +264,24 @@ def _validate(schema: Mapping[str, object], value: object, role: str) -> None:
     try:
         Draft202012Validator.check_schema(schema)
         validator = cast(SchemaValidator, Draft202012Validator(schema))
+    except (JsonSchemaError, re.error, Unresolvable) as error:
+        raise SchemaError(f"{role} JSON Schema cannot be used: {error}") from error
+    try:
         validator.validate(value)
-    except Exception as error:
+    except JsonSchemaValidationError as error:
         raise SchemaError(f"{role} does not satisfy its JSON Schema: {error}") from error
+    except (re.error, Unresolvable) as error:
+        raise SchemaError(f"{role} JSON Schema cannot be used: {error}") from error
+
+
+def _parse_canonical_json(body: bytes, label: str) -> JsonValue:
+    try:
+        value = cast(JsonValue, json.loads(body))
+        if canonical_json(value).encode() != body:
+            raise ValueError("JSON body is not canonical")
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+        raise SchemaError(f"{label} is not canonical JSON: {error}") from error
+    return value
 
 
 @contextmanager
@@ -345,8 +364,8 @@ def _source_import_path(root: Path) -> Generator[None, None, None]:
         sys.path.remove(root_text)
 
 
-def _read(store: Datastore, key: str) -> str:
-    return store.get(key).body.decode()
+def _read(store: Datastore, key: str) -> bytes:
+    return store.get(key).body
 
 
 def _datastore(descriptor: DatastoreDescriptor) -> Datastore:

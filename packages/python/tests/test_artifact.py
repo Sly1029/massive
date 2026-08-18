@@ -10,6 +10,7 @@ from pathlib import Path
 
 import boto3
 import pytest
+from pydantic import ValidationError
 
 from massive.artifact import (
     ArtifactBodyConflictError,
@@ -197,22 +198,48 @@ def test_resolve_reports_a_missing_manifest_separately_from_integrity_failures(t
         runtime.resolve_json(_destination(), _producer())
 
 
-def test_publish_requires_a_normalized_project_key(tmp_path: Path) -> None:
-    runtime, _store = _runtime(tmp_path)
-    destination = Destination(
-        manifest_key="projects/project/runs/run-1/steps/task/1/output-manifest.json",
-        schema=SCHEMA_HASH,
-    )
-    producer = Producer(
-        project_key="project",
-        plan_hash=PLAN_HASH,
-        run_id="run-1",
-        node_id="task",
-        attempt=1,
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"project_key": "project"},
+        {"plan_hash": "sha256-" + "a" * 64},
+        {"run_id": "run/one"},
+        {"node_id": "."},
+        {"attempt": 0},
+        {"attempt": 1.0},
+    ],
+)
+def test_producer_rejects_invalid_identity_before_artifact_runtime_touches_the_store(
+    tmp_path: Path, changes: dict[str, object]
+) -> None:
+    values: dict[str, object] = {
+        "project_key": PROJECT_KEY,
+        "plan_hash": PLAN_HASH,
+        "run_id": "run-1",
+        "node_id": "task",
+        "attempt": 1,
+    }
+    values.update(changes)
+
+    with pytest.raises(ValidationError):
+        Producer(**values)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_producer_consumes_the_cross_runtime_identity_contract() -> None:
+    repository = Path(__file__).resolve().parents[3]
+    fixture = json.loads(
+        (repository / "conformance/fixtures/artifacts/producer-identities.json").read_text()
     )
 
-    with pytest.raises(ArtifactValidationError, match="normalized SHA-256 identity"):
-        runtime.publish_json(destination, producer, BODY)
+    assert fixture["version"] == 1
+    assert fixture["contract"] == "artifact-producer-v1"
+    for case in fixture["valid"]:
+        assert Producer.model_validate(case["producer"])
+    for case in fixture["invalid"]:
+        with pytest.raises(ValidationError):
+            Producer.model_validate(case["producer"])
 
 
 def test_publish_reports_an_invalid_json_schema_as_an_artifact_validation_error(
@@ -229,7 +256,7 @@ def test_publish_reports_an_invalid_json_schema_as_an_artifact_validation_error(
     )
     destination = Destination(
         manifest_key=f"projects/{PROJECT_KEY}/runs/run-1/steps/task/1/output-manifest.json",
-        schema=invalid_schema_hash,
+        schema_ref=invalid_schema_hash,
     )
 
     with pytest.raises(ArtifactValidationError, match="schema .* cannot be used"):
@@ -256,7 +283,7 @@ def test_publish_maps_schema_reference_and_regex_failures_to_artifact_validation
     )
     destination = Destination(
         manifest_key=f"projects/{PROJECT_KEY}/runs/run-1/steps/task/1/output-manifest.json",
-        schema=schema_hash,
+        schema_ref=schema_hash,
     )
 
     with pytest.raises(ArtifactValidationError, match=message):
@@ -406,7 +433,7 @@ def _runtime(tmp_path: Path) -> tuple[ArtifactRuntime, LocalDatastore]:
 def _destination(run_id: str = "run-1") -> Destination:
     return Destination(
         manifest_key=f"projects/{PROJECT_KEY}/runs/{run_id}/steps/task/1/output-manifest.json",
-        schema=SCHEMA_HASH,
+        schema_ref=SCHEMA_HASH,
     )
 
 
@@ -418,6 +445,8 @@ def _producer(run_id: str = "run-1") -> Producer:
         node_id="task",
         attempt=1,
     )
+
+
 
 
 def _write_content_type(store: LocalDatastore, key: str, content_type: str) -> None:
