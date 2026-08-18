@@ -8,7 +8,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from massive import GraphBuilder, StepContext, container, execution, source_package
 from massive.builder import _assert_canonical_json_schema
@@ -46,7 +46,12 @@ class EventKind(Enum):
     CREATED = "created"
 
 
+class NestedIntegerShape(BaseModel):
+    value: int
+
+
 class CanonicalShape(BaseModel):
+    allowed: bool
     integer: int
     optional_integer: int | None
     integers: list[int]
@@ -55,6 +60,7 @@ class CanonicalShape(BaseModel):
     identifier: UUID
     occurred_at: datetime
     kind: EventKind
+    nested: NestedIntegerShape
 
 
 class AnyResult(BaseModel):
@@ -67,6 +73,12 @@ class AnyMappingResult(BaseModel):
 
 class AnyListResult(BaseModel):
     values: list[Any]
+
+
+class ExtraAllowedResult(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    value: int
 
 
 def needs_services(context: StepContext[dict[str, str], Request]) -> Result:
@@ -107,6 +119,10 @@ def any_mapping_result(context: StepContext[None, Request]) -> AnyMappingResult:
 
 def any_list_result(context: StepContext[None, Request]) -> AnyListResult:
     return AnyListResult(values=[context.inputs.value])
+
+
+def extra_allowed_result(context: StepContext[None, Request]) -> ExtraAllowedResult:
+    return ExtraAllowedResult(value=context.inputs.value)
 
 
 def test_graph_without_dependencies_rejects_a_step_that_declares_them() -> None:
@@ -184,40 +200,49 @@ def test_emit_rejects_schemas_that_admit_non_integer_json_numbers(
 
 
 @pytest.mark.parametrize(
-    ("step", "message"),
+    "step",
     [
-        (float_enum_result, "step 'float-enum' output schema.*enum"),
+        float_enum_result,
     ],
 )
 def test_emit_rejects_step_schemas_with_float_constants_or_enums(
-    step: Callable[..., Any], message: str
+    step: Callable[..., Any],
 ) -> None:
-    graph = _integer_graph()
-    identity_node = graph.add(graph.step()(identity))
-    graph.add(graph.step()(step), id=step.__name__.removesuffix("_result").replace("_", "-"))
-    graph.edge_from(graph.start).to(identity_node).to(graph.end)
+    graph = GraphBuilder(
+        name="float-enum",
+        input_type=Request,
+        output_type=FloatEnumResult,
+        defaults=_defaults(),
+    )
+    node = graph.add(graph.step()(step), id=step.__name__.removesuffix("_result").replace("_", "-"))
+    graph.edge_from(graph.start).to(node).to(graph.end)
 
-    with pytest.raises(TypeError, match=message):
+    with pytest.raises(ValueError, match="workflow output schema.*canonical-json-v0"):
         _emit(graph)
 
 
 @pytest.mark.parametrize(
-    ("step", "step_id"),
+    ("step", "step_id", "output_type"),
     [
-        (any_result, "any-result"),
-        (any_mapping_result, "any-mapping-result"),
-        (any_list_result, "any-list-result"),
+        (any_result, "any-result", AnyResult),
+        (any_mapping_result, "any-mapping-result", AnyMappingResult),
+        (any_list_result, "any-list-result", AnyListResult),
+        (extra_allowed_result, "extra-allowed-result", ExtraAllowedResult),
     ],
 )
 def test_emit_rejects_an_unconstrained_pydantic_any_schema(
-    step: Callable[..., Any], step_id: str
+    step: Callable[..., Any], step_id: str, output_type: type[BaseModel]
 ) -> None:
-    graph = _integer_graph()
-    identity_node = graph.add(graph.step()(identity))
-    graph.add(graph.step()(step), id=step_id)
-    graph.edge_from(graph.start).to(identity_node).to(graph.end)
+    graph = GraphBuilder(
+        name=step_id,
+        input_type=Request,
+        output_type=output_type,
+        defaults=_defaults(),
+    )
+    node = graph.add(graph.step()(step), id=step_id)
+    graph.edge_from(graph.start).to(node).to(graph.end)
 
-    with pytest.raises(ValueError, match=f"step '{step_id}' output schema.*unconstrained"):
+    with pytest.raises(ValueError, match="workflow output schema.*unconstrained"):
         _emit(graph)
 
 
@@ -237,23 +262,23 @@ def test_emit_accepts_supported_integer_and_string_json_shapes() -> None:
 
 
 def test_schema_validation_rejects_a_float_constant_with_step_role_diagnostics() -> None:
-    with pytest.raises(TypeError, match="step 'float-constant' output schema.*const"):
+    with pytest.raises(ValueError, match="step 'float-constant' output schema.*canonical-json-v0"):
         _assert_canonical_json_schema(
             {"const": 1.5}, "step 'float-constant' output schema"
         )
 
 
 @pytest.mark.parametrize(
-    ("schema", "message"),
+    "schema",
     [
-        ({"const": 1 << 53}, "safe-integer.*const"),
-        ({"enum": [1, 1 << 53]}, "safe-integer.*enum"),
+        {"const": 1 << 53},
+        {"enum": [1, 1 << 53]},
     ],
 )
 def test_schema_validation_rejects_unsafe_integer_constants_and_enums(
-    schema: dict[str, Any], message: str
+    schema: dict[str, Any],
 ) -> None:
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match="step 'unsafe' output schema.*canonical-json-v0"):
         _assert_canonical_json_schema(schema, "step 'unsafe' output schema")
 
 
@@ -265,13 +290,42 @@ def test_schema_validation_escapes_json_pointer_tokens_in_diagnostics() -> None:
         )
 
 
-def _integer_graph() -> GraphBuilder[None, Request, Result]:
-    return GraphBuilder(
-        name="integer-only",
-        input_type=Request,
-        output_type=Result,
-        defaults=_defaults(),
-    )
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"minimum": 1.5, "type": "integer"},
+        {"description": "integer", "examples": [1 << 53], "type": "integer"},
+    ],
+)
+def test_schema_validation_rejects_noncanonical_metadata_and_bounds(schema: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="step 'metadata' output schema.*canonical-json-v0"):
+        _assert_canonical_json_schema(schema, "step 'metadata' output schema")
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"properties": {"value": True}, "type": "object"},
+        {"items": True, "type": "array"},
+    ],
+)
+def test_schema_validation_rejects_true_boolean_child_schemas(schema: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="step 'any-child' output schema.*unconstrained"):
+        _assert_canonical_json_schema(schema, "step 'any-child' output schema")
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"items": False, "type": "array"},
+        {"if": {"type": "number"}, "type": "object"},
+        {"not": {"type": "number"}, "type": "object"},
+    ],
+)
+def test_schema_validation_keeps_false_and_polarity_sensitive_children_safe(
+    schema: dict[str, Any]
+) -> None:
+    _assert_canonical_json_schema(schema, "step 'safe' output schema")
 
 
 def _defaults():

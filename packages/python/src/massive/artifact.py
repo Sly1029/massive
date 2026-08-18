@@ -253,14 +253,15 @@ def _validate_canonical_json(datastore: Datastore, schema_ref: str, body: bytes)
         raise ArtifactValidationError("schema must be an object")
     try:
         Draft202012Validator.check_schema(schema)
-        cast(SchemaValidator, Draft202012Validator(schema)).validate(document)
-    except (
-        SchemaError,
-        ValidationError,
-        re.error,
-        Unresolvable,
-    ) as error:
+        validator = cast(SchemaValidator, Draft202012Validator(schema))
+    except (SchemaError, re.error, Unresolvable) as error:
+        raise ArtifactValidationError(f"schema {schema_ref} cannot be used") from error
+    try:
+        validator.validate(document)
+    except ValidationError as error:
         raise ArtifactValidationError(f"value does not satisfy schema {schema_ref}") from error
+    except (re.error, Unresolvable) as error:
+        raise ArtifactValidationError(f"schema {schema_ref} cannot be used") from error
 
 
 def _parse_canonical_json(body: bytes, label: str, error_type: type[ArtifactError]) -> JsonValue:

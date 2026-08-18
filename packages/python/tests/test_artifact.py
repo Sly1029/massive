@@ -232,19 +232,19 @@ def test_publish_reports_an_invalid_json_schema_as_an_artifact_validation_error(
         schema=invalid_schema_hash,
     )
 
-    with pytest.raises(ArtifactValidationError, match="does not satisfy schema"):
+    with pytest.raises(ArtifactValidationError, match="schema .* cannot be used"):
         runtime.publish_json(destination, _producer(), BODY)
 
 
 @pytest.mark.parametrize(
-    "schema",
+    ("schema", "message"),
     [
-        b'{"pattern":"[","type":"string"}',
-        b'{"$ref":"#/missing"}',
+        (b'{"pattern":"[","type":"string"}', "schema .* cannot be used"),
+        (b'{"$ref":"#/missing"}', "schema .* cannot be used"),
     ],
 )
 def test_publish_maps_schema_reference_and_regex_failures_to_artifact_validation(
-    tmp_path: Path, schema: bytes
+    tmp_path: Path, schema: bytes, message: str
 ) -> None:
     runtime, store = _runtime(tmp_path)
     schema_hash = sha256_ref(schema)
@@ -259,8 +259,15 @@ def test_publish_maps_schema_reference_and_regex_failures_to_artifact_validation
         schema=schema_hash,
     )
 
-    with pytest.raises(ArtifactValidationError, match="does not satisfy schema"):
+    with pytest.raises(ArtifactValidationError, match=message):
         runtime.publish_json(destination, _producer(), b'"value"')
+
+
+def test_publish_distinguishes_a_value_that_fails_a_valid_schema(tmp_path: Path) -> None:
+    runtime, _store = _runtime(tmp_path)
+
+    with pytest.raises(ArtifactValidationError, match="value does not satisfy schema"):
+        runtime.publish_json(_destination(), _producer(), b'{"value":"not-an-integer"}')
 
 
 def test_immutable_conflict_preserves_an_unrelated_datastore_read_failure(tmp_path: Path) -> None:

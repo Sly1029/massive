@@ -98,3 +98,10 @@ string itself.
 `Any` and unconstrained mappings are also rejected at `emit()` in v0. They can
 admit floats that no runtime can encode consistently. Prefer a concrete model,
 `list[int]`, `dict[str, int]`, or another explicit JSON shape.
+Models configured with Pydantic `extra="allow"` are rejected for the same
+reason; prefer the default behavior or `extra="forbid"` for workflow payloads.
+
+These author-time checks intentionally cover the Pydantic-generated schema
+forms Massive emits; they do not attempt to solve arbitrary JSON Schema
+satisfiability. Runtime canonicalization remains the authoritative final
+boundary before an artifact is published.

@@ -316,29 +316,24 @@ def _symbol_module(function: Callable[..., Any], root: Path) -> str:
 
 
 def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
-    """Reject Pydantic schemas that describe JSON numbers v0 cannot serialize.
+    """Reject Pydantic schemas that cannot describe canonical JSON v0 values.
 
     This follows the schema containers Pydantic emits, including local
-    definitions and references. It deliberately checks the concrete `number`
-    type rather than attempting to prove arbitrary JSON Schema constraints.
+    definitions and references. It is deliberately conservative for Pydantic
+    output rather than a general JSON Schema satisfiability checker.
     """
+
+    try:
+        canonical_json(schema)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{role} contains a schema value canonical-json-v0 cannot encode; "
+            "use safe integers and strings instead of floats or unsafe integers."
+        ) from error
 
     def pointer(path: str, token: str | int) -> str:
         escaped = str(token).replace("~", "~0").replace("/", "~1")
         return f"{path}/{escaped}"
-
-    def rejects_noncanonical_number(value: JsonValue, path: str, keyword: str) -> None:
-        if isinstance(value, float):
-            raise TypeError(
-                f"{role} uses floating-point JSON Schema {keyword} at {path}; "
-                "canonical-json-v0 does not support floats. Use an integer field or "
-                "model fractional values as strings."
-            )
-        if isinstance(value, int) and not isinstance(value, bool) and not -(1 << 53) < value < (1 << 53):
-            raise ValueError(
-                f"{role} uses an integer outside the safe-integer v0 range in JSON Schema "
-                f"{keyword} at {path}; use an integer between -(2^53 - 1) and 2^53 - 1."
-            )
 
     metadata = {
         "$comment",
@@ -355,7 +350,6 @@ def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
         "contains",
         "contentSchema",
         "else",
-        "if",
         "items",
         "propertyNames",
         "then",
@@ -387,25 +381,18 @@ def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
                 "canonical-json-v0 is integer-only. Use an integer field or "
                 "model fractional values as strings."
             )
-        if "const" in value:
-            rejects_noncanonical_number(
-                cast(JsonValue, value["const"]), pointer(path, "const"), "const"
-            )
-        enum = value.get("enum")
-        if isinstance(enum, list):
-            for index, item in enumerate(enum):
-                rejects_noncanonical_number(item, pointer(pointer(path, "enum"), index), "enum")
         for key in mappings:
             child = value.get(key)
             if isinstance(child, dict):
                 for name, definition in child.items():
-                    visit(cast(JsonValue, definition), pointer(pointer(path, key), name))
+                    if isinstance(definition, (bool, dict)):
+                        visit(definition, pointer(pointer(path, key), name))
         for key in single_schemas:
             child = value.get(key)
-            if isinstance(child, dict):
-                visit(cast(JsonValue, child), pointer(path, key))
-        # `not` is polarity-sensitive: a nested number forbids that number rather
-        # than admitting it, so it is deliberately not traversed here.
+            if isinstance(child, (bool, dict)):
+                visit(child, pointer(path, key))
+        # `if` and `not` are polarity-sensitive: a nested number may be
+        # conditionally constrained or forbidden, so neither is traversed here.
         additional_properties = value.get("additionalProperties")
         if additional_properties is True:
             raise ValueError(
