@@ -181,7 +181,8 @@
         "bucket": { "$ref": "#/$defs/id" },
         "prefix": { "$ref": "#/$defs/datastoreKey" },
         "region": { "type": "string", "minLength": 1 },
-        "endpoint": { "type": "string", "minLength": 1 }
+        "endpoint": { "type": "string", "minLength": 1 },
+        "forcePathStyle": { "type": "boolean" }
       }
     }
   }

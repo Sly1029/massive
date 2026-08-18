@@ -126,16 +126,17 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 
 	var argv []string
 	if len(i.CommandTemplate) == 0 {
+		localDatastore, ok := descriptor.Datastore.(LocalDatastoreDescriptor)
+		if !ok {
+			return StepInvocationOutcome{}, fmt.Errorf("build runner command for %s: local process invoker requires a local datastore descriptor, got %T", descriptor.NodeID, descriptor.Datastore)
+		}
 		inputs := DefaultRunnerCommandInputs{
 			WorkingDir:    i.WorkingDir,
 			DescriptorDir: descriptorDir,
-			DatastoreRoot: descriptor.Datastore.Path,
+			DatastoreRoot: localDatastore.Path,
 		}
 		if descriptor.SourcePackage.SourceArchive.ContentType == SourceDirectoryContentType {
-			if descriptor.Datastore.Kind != "local" {
-				return StepInvocationOutcome{}, fmt.Errorf("build runner command for %s: source directory packages require a local datastore", descriptor.NodeID)
-			}
-			store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: descriptor.Datastore.Path})
+			store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: localDatastore.Path})
 			if err != nil {
 				return StepInvocationOutcome{}, fmt.Errorf("open local datastore for source package: %w", err)
 			}
@@ -223,10 +224,11 @@ func substituteDescriptorPath(command []string, descriptorPath string) []string 
 }
 
 func hashLocalOutput(ctx context.Context, descriptor StepInvocationDescriptor) (string, error) {
-	if descriptor.Datastore.Kind != "local" {
-		return "", fmt.Errorf("hash runner output for %s: only local datastores are supported", descriptor.NodeID)
+	localDatastore, ok := descriptor.Datastore.(LocalDatastoreDescriptor)
+	if !ok {
+		return "", fmt.Errorf("hash runner output for %s: local process invoker requires a local datastore descriptor, got %T", descriptor.NodeID, descriptor.Datastore)
 	}
-	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: descriptor.Datastore.Path})
+	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: localDatastore.Path})
 	if err != nil {
 		return "", fmt.Errorf("open local datastore for runner output: %w", err)
 	}

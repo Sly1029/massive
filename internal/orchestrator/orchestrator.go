@@ -569,7 +569,7 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 		},
 		ChannelReads:  []ChannelArtifactRef{},
 		ChannelWrites: []ChannelArtifactDestination{},
-		Datastore: DatastoreDescriptor{
+		Datastore: LocalDatastoreDescriptor{
 			Kind: "local",
 			Path: config.DatastoreRoot,
 		},

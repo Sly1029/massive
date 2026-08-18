@@ -40,6 +40,9 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	if len(invoker.descriptors) != 3 {
 		t.Fatalf("captured descriptors = %d, want 3", len(invoker.descriptors))
 	}
+	assertNoCredentialMaterial(t, mustMarshalCanonical(t, invoker.descriptors[0]))
+	manifest := getObject(t, storeRoot, result.ManifestKey)
+	assertNoCredentialMaterial(t, manifest.Body)
 
 	// Normalization below zeroes every digest, which would hide a regression
 	// where packageHash and sourceArchive.hash collapse to the same value.
@@ -101,6 +104,35 @@ func TestTamperedOutputFailsHashValidation(t *testing.T) {
 	if runErr.Result == nil || runErr.Result.Status != StatusFailed {
 		t.Fatalf("result = %#v, want failed result", runErr.Result)
 	}
+}
+
+func assertNoCredentialMaterial(t *testing.T, data []byte) {
+	t.Helper()
+
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		t.Fatalf("decode JSON credential-material assertion: %v", err)
+	}
+	var visit func(any)
+	visit = func(current any) {
+		switch typed := current.(type) {
+		case map[string]any:
+			for key, nested := range typed {
+				normalized := strings.ToLower(key)
+				for _, forbidden := range []string{"credential", "accesskey", "secret", "sessiontoken"} {
+					if strings.Contains(normalized, forbidden) {
+						t.Fatalf("serialized runner metadata contains credential-shaped field %q", key)
+					}
+				}
+				visit(nested)
+			}
+		case []any:
+			for _, nested := range typed {
+				visit(nested)
+			}
+		}
+	}
+	visit(value)
 }
 
 func TestSourceSnapshotIsDeterministicAcrossRuns(t *testing.T) {

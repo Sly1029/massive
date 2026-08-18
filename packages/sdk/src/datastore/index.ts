@@ -1,4 +1,9 @@
-export { type Datastore, datastore } from "./facade.ts";
+export {
+  type Datastore,
+  datastore,
+  type LocalDatastore,
+  type S3Datastore,
+} from "./facade.ts";
 
 export {
   blobKeyForBytes,
@@ -7,7 +12,11 @@ export {
   validateObjectKey,
 } from "./key.ts";
 export { type LocalConfig, LocalDatastoreClient } from "./local.ts";
-export { type S3Config, S3DatastoreClient } from "./s3.ts";
+export {
+  type S3Config,
+  S3DatastoreClient,
+  type S3EnvironmentCredentials,
+} from "./s3.ts";
 export {
   type DatastoreClient,
   DatastoreConflictError,

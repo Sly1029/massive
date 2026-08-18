@@ -66,7 +66,27 @@ type ChannelArtifactDestination struct {
 	Schema      string              `json:"schema"`
 }
 
-type DatastoreDescriptor struct {
+// DatastoreDescriptor is the portable descriptor union. Local orchestration
+// currently emits LocalDatastoreDescriptor; Argo and other remote targets can
+// emit S3DatastoreDescriptor without inventing a different JSON shape.
+type DatastoreDescriptor interface {
+	datastoreDescriptor()
+}
+
+type LocalDatastoreDescriptor struct {
 	Kind string `json:"kind"`
 	Path string `json:"path"`
 }
+
+func (LocalDatastoreDescriptor) datastoreDescriptor() {}
+
+type S3DatastoreDescriptor struct {
+	Kind           string `json:"kind"`
+	Bucket         string `json:"bucket"`
+	Region         string `json:"region"`
+	Prefix         string `json:"prefix,omitempty"`
+	Endpoint       string `json:"endpoint,omitempty"`
+	ForcePathStyle *bool  `json:"forcePathStyle,omitempty"`
+}
+
+func (S3DatastoreDescriptor) datastoreDescriptor() {}

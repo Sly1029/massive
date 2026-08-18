@@ -19,13 +19,22 @@ import {
 } from "./types.ts";
 
 export interface S3Config {
-  readonly endpoint: string;
+  readonly endpoint?: string;
   readonly bucket: string;
   readonly region?: string;
   readonly prefix?: string;
   readonly forcePathStyle?: boolean;
-  readonly accessKeyEnv?: string;
-  readonly secretAccessKeyEnv?: string;
+  readonly credentials?: S3EnvironmentCredentials;
+}
+
+// The runner descriptor intentionally carries no credential bindings. This
+// explicit configuration is for direct SDK callers such as MinIO fixtures;
+// when omitted, the AWS SDK uses its default provider chain (for example an
+// EKS workload-identity provider).
+export interface S3EnvironmentCredentials {
+  readonly kind: "environment";
+  readonly accessKeyEnv: string;
+  readonly secretAccessKeyEnv: string;
   readonly sessionTokenEnv?: string;
 }
 
@@ -35,32 +44,14 @@ export class S3DatastoreClient implements DatastoreClient {
   private readonly prefix: string;
 
   constructor(config: S3Config) {
-    const accessKeyEnv = config.accessKeyEnv ?? "AWS_ACCESS_KEY_ID";
-    const secretAccessKeyEnv = config.secretAccessKeyEnv ??
-      "AWS_SECRET_ACCESS_KEY";
-    const sessionTokenEnv = config.sessionTokenEnv ?? "AWS_SESSION_TOKEN";
-    const accessKeyId = process.env[accessKeyEnv];
-    const secretAccessKey = process.env[secretAccessKeyEnv];
-
-    if (accessKeyId === undefined || secretAccessKey === undefined) {
-      throw new Error(
-        `S3 datastore credentials require ${accessKeyEnv} and ${secretAccessKeyEnv}`,
-      );
-    }
-
     this.bucket = config.bucket;
     this.prefix = normalizePrefix(config.prefix ?? "");
+    const credentials = credentialsFromEnvironment(config.credentials);
     this.client = new S3Client({
-      endpoint: config.endpoint,
+      ...(config.endpoint === undefined ? {} : { endpoint: config.endpoint }),
       region: config.region ?? "us-east-1",
-      forcePathStyle: config.forcePathStyle ?? true,
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-        ...(process.env[sessionTokenEnv] === undefined
-          ? {}
-          : { sessionToken: process.env[sessionTokenEnv] }),
-      },
+      forcePathStyle: config.forcePathStyle ?? config.endpoint !== undefined,
+      ...(credentials === undefined ? {} : { credentials }),
     });
   }
 
@@ -176,6 +167,40 @@ export class S3DatastoreClient implements DatastoreClient {
   private objectName(key: Key): string {
     return `${this.prefix}${key.toString()}`;
   }
+}
+
+function credentialsFromEnvironment(
+  config: S3EnvironmentCredentials | undefined,
+): {
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
+  readonly sessionToken?: string;
+} | undefined {
+  if (config === undefined) {
+    return undefined;
+  }
+
+  const accessKeyId = process.env[config.accessKeyEnv];
+  const secretAccessKey = process.env[config.secretAccessKeyEnv];
+  if (
+    accessKeyId === undefined || accessKeyId === "" ||
+    secretAccessKey === undefined || secretAccessKey === ""
+  ) {
+    throw new Error(
+      `S3 datastore environment credentials require ${config.accessKeyEnv} and ${config.secretAccessKeyEnv}`,
+    );
+  }
+
+  const sessionToken = config.sessionTokenEnv === undefined
+    ? undefined
+    : process.env[config.sessionTokenEnv];
+  return {
+    accessKeyId,
+    secretAccessKey,
+    ...(sessionToken === undefined || sessionToken === ""
+      ? {}
+      : { sessionToken }),
+  };
 }
 
 function normalizePrefix(prefix: string): string {

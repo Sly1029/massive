@@ -25,7 +25,7 @@ export async function executeStep(
   descriptor: StepInvocationDescriptor,
 ): Promise<StepOutcome> {
   try {
-    const store = datastoreForDescriptor(descriptor);
+    const store = await datastoreForDescriptor(descriptor);
     const inputSchema = await readSchema(store, descriptor.input.schema);
     const outputSchema = await readSchema(store, descriptor.output.schema);
     const input = await readCanonicalJsonArtifact(
@@ -36,7 +36,7 @@ export async function executeStep(
 
     validateJson(inputSchema, input, "input");
 
-    const resolved = await resolveStepSymbol(descriptor);
+    const resolved = await resolveStepSymbol(descriptor, store);
     let output: unknown;
     try {
       output = await resolved.run({
@@ -91,16 +91,31 @@ export async function executeStep(
   }
 }
 
-function datastoreForDescriptor(
+async function datastoreForDescriptor(
   descriptor: StepInvocationDescriptor,
-): Datastore {
-  if (descriptor.datastore.kind !== "local") {
-    throw new SymbolResolutionError(
-      "only local datastores are supported by the v0 TypeScript runner",
-    );
+): Promise<Datastore> {
+  if (descriptor.datastore.kind === "local") {
+    return datastore.local({ path: descriptor.datastore.path });
   }
 
-  return datastore.local({ path: descriptor.datastore.path });
+  try {
+    return await datastore.s3({
+      bucket: descriptor.datastore.bucket,
+      region: descriptor.datastore.region,
+      ...(descriptor.datastore.prefix === undefined
+        ? {}
+        : { prefix: descriptor.datastore.prefix }),
+      ...(descriptor.datastore.endpoint === undefined
+        ? {}
+        : { endpoint: descriptor.datastore.endpoint }),
+      ...(descriptor.datastore.forcePathStyle === undefined
+        ? {}
+        : { forcePathStyle: descriptor.datastore.forcePathStyle }),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new DescriptorError(`create S3 datastore: ${message}`);
+  }
 }
 
 async function readSchema(

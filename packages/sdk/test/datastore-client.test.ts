@@ -51,8 +51,11 @@ Deno.test({
         bucket,
         region: Deno.env.get("MASSIVE_TEST_S3_REGION") ?? "us-east-1",
         prefix: `ts-contract/${crypto.randomUUID()}`,
-        accessKeyEnv: "MASSIVE_TEST_S3_ACCESS_KEY",
-        secretAccessKeyEnv: "MASSIVE_TEST_S3_SECRET_KEY",
+        credentials: {
+          kind: "environment",
+          accessKeyEnv: "MASSIVE_TEST_S3_ACCESS_KEY",
+          secretAccessKeyEnv: "MASSIVE_TEST_S3_SECRET_KEY",
+        },
       })
     );
   },

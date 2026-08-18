@@ -68,6 +68,7 @@ export interface S3DatastoreDescriptor {
   readonly region: string;
   readonly prefix?: string;
   readonly endpoint?: string;
+  readonly forcePathStyle?: boolean;
 }
 
 export type DatastoreDescriptor =
@@ -178,6 +179,9 @@ function decodeDatastore(datastore: DatastoreDescriptor): DatastoreDescriptor {
     ...(datastore.endpoint === undefined
       ? {}
       : { endpoint: datastore.endpoint }),
+    ...(datastore.forcePathStyle === undefined
+      ? {}
+      : { forcePathStyle: datastore.forcePathStyle }),
   };
 }
 

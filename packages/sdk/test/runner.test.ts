@@ -3,9 +3,9 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  type Datastore,
   datastore,
   Key,
+  type LocalDatastore,
   LocalDatastoreClient,
 } from "../src/datastore/index.ts";
 import {
@@ -95,7 +95,9 @@ Deno.test("runner executes a real fixture step end to end against a temp local d
       assertEquals(outputText, expectedOutput);
 
       const client = new LocalDatastoreClient({ path: store.root });
-      const stored = await client.get(Key.parse(descriptor.output.artifact.key));
+      const stored = await client.get(
+        Key.parse(descriptor.output.artifact.key),
+      );
       assertEquals(stored.info.contentType, "application/json");
 
       assertEquals(outcome.output, {
@@ -159,7 +161,7 @@ async function withRunnerFixture(
   test: (fixture: {
     readonly descriptor: StepInvocationDescriptor;
     readonly descriptorPath: string;
-    readonly store: Datastore;
+    readonly store: LocalDatastore;
   }) => Promise<void>,
 ): Promise<void> {
   const root = await Deno.makeTempDir({ prefix: "massive-runner-" });

@@ -1,13 +1,10 @@
 import { Key } from "./key.ts";
 import { LocalDatastoreClient } from "./local.ts";
-import type { PutOptions } from "./types.ts";
+import type { S3Config } from "./s3.ts";
+import type { DatastoreClient, PutOptions } from "./types.ts";
 
-// Local-only string-keyed facade, kept free of the S3 client's module graph so
-// the step runner (spawned with scoped Deno permissions) never loads the AWS
-// SDK, which reads environment variables at module initialization.
 export interface Datastore {
-  readonly kind: "local";
-  readonly root: string;
+  readonly kind: "local" | "s3";
   put(
     key: string,
     value: string | Uint8Array,
@@ -17,13 +14,31 @@ export interface Datastore {
   exists(key: string): Promise<boolean>;
 }
 
+export interface LocalDatastore extends Datastore {
+  readonly kind: "local";
+  readonly root: string;
+}
+
+export interface S3Datastore extends Datastore {
+  readonly kind: "s3";
+}
+
 export const datastore = {
-  local(config: { readonly path: string }): Datastore {
-    return new LocalDatastore(config);
+  local(config: { readonly path: string }): LocalDatastore {
+    return new LocalDatastoreFacade(config);
+  },
+
+  async s3(config: S3Config): Promise<S3Datastore> {
+    // Keep the AWS SDK out of the local runner's module graph. Besides making
+    // local startup smaller, this preserves its intentionally scoped Deno
+    // environment permissions; the SDK probes environment configuration while
+    // initializing its default credential provider chain.
+    const { S3DatastoreClient } = await import("./s3.ts");
+    return new RemoteDatastore(new S3DatastoreClient(config));
   },
 };
 
-class LocalDatastore implements Datastore {
+class LocalDatastoreFacade implements LocalDatastore {
   readonly kind = "local" as const;
   readonly client: LocalDatastoreClient;
 
@@ -34,6 +49,28 @@ class LocalDatastore implements Datastore {
   get root(): string {
     return this.client.root;
   }
+
+  async put(
+    key: string,
+    value: string | Uint8Array,
+    options?: PutOptions,
+  ): Promise<void> {
+    await this.client.put(Key.parse(key), value, options);
+  }
+
+  async get(key: string): Promise<Uint8Array> {
+    return (await this.client.get(Key.parse(key))).body;
+  }
+
+  async exists(key: string): Promise<boolean> {
+    return await this.client.exists(Key.parse(key));
+  }
+}
+
+class RemoteDatastore implements S3Datastore {
+  readonly kind = "s3" as const;
+
+  constructor(private readonly client: DatastoreClient) {}
 
   async put(
     key: string,

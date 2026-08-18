@@ -1,7 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { datastore } from "../datastore/facade.ts";
+import type { Datastore } from "../datastore/facade.ts";
 import { sha256RefBytes } from "../stable.ts";
 import type { StepRun } from "../workflow.ts";
 import type { StepInvocationDescriptor } from "./descriptor.ts";
@@ -24,6 +24,7 @@ const SOURCE_FETCH_CONTENT_TYPE =
 
 export async function resolveStepSymbol(
   descriptor: StepInvocationDescriptor,
+  store: Datastore,
 ): Promise<ResolvedStepSymbol> {
   if (descriptor.symbol.language !== "typescript") {
     throw new SymbolResolutionError(
@@ -45,7 +46,7 @@ export async function resolveStepSymbol(
   // against the fetched bytes in fetchSourcePackage. It is intentionally
   // distinct from packageHash (the plan's content-addressed package hash),
   // so the two are not required to be equal here.
-  const packageRoot = await fetchSourcePackage(descriptor);
+  const packageRoot = await fetchSourcePackage(descriptor, store);
   const modulePath = resolveModulePath(packageRoot, descriptor.symbol.module);
   const module = (await import(
     `${pathToFileURL(modulePath).href}?packageHash=${
@@ -67,14 +68,8 @@ export async function resolveStepSymbol(
 
 async function fetchSourcePackage(
   descriptor: StepInvocationDescriptor,
+  store: Datastore,
 ): Promise<string> {
-  if (descriptor.datastore.kind !== "local") {
-    throw new SymbolResolutionError(
-      "only local datastores are supported by the v0 TypeScript runner",
-    );
-  }
-
-  const store = datastore.local({ path: descriptor.datastore.path });
   let bytes: Uint8Array;
   try {
     bytes = await store.get(descriptor.sourcePackage.sourceArchive.key);
