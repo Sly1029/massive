@@ -17,7 +17,12 @@ graph: GraphBuilder[None, Request, Result] = GraphBuilder(
     name="typed-authoring",
     input_type=Request,
     output_type=Result,
-    defaults=execution(environment=container("example.invalid/typed:latest")),
+    defaults=execution(
+        environment=container(
+            "example.invalid/typed@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            platform="linux/amd64",
+        )
+    ),
 )
 
 

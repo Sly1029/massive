@@ -17,7 +17,15 @@ graph = GraphBuilder(
     name="python-emission",
     input_type=Request,
     output_type=Result,
-    defaults=execution(environment=container("example.invalid/python:latest")),
+    defaults=execution(
+        environment=container(
+            "example.invalid/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            platform="linux/amd64",
+            runtime=("python", "3.12.3"),
+            packages={"pydantic": "2.10.6"},
+            build_args={"UV_COMPILE_BYTECODE": "1"},
+        )
+    ),
 )
 
 

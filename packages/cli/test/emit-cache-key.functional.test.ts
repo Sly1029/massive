@@ -128,7 +128,7 @@ Deno.test("a massive.config.ts edit invalidates the cached spec", async () => {
   // in the key this would be a false hit reusing the stale spec.
   const edited = (await Deno.readTextFile(configPath)).replace(
     'entrypoint: "./workflow.ts",',
-    'entrypoint: "./workflow.ts",\n  environment: { kind: "container", image: "docker.io/library/node:20" },',
+    'entrypoint: "./workflow.ts",\n  environment: { kind: "container", image: "docker.io/library/node@sha256:1111111111111111111111111111111111111111111111111111111111111111", platform: "linux/amd64" },',
   );
   await Deno.writeTextFile(configPath, edited);
 
@@ -228,8 +228,8 @@ Deno.test("editing an imported settings module invalidates the cached spec", asy
   // Edit settings.ts only. massive.config.ts's bytes are unchanged, but the
   // evaluated config (environment.image) differs, so it must be a cache miss.
   const edited = (await Deno.readTextFile(settingsPath)).replace(
-    "node:20",
-    "node:22",
+    "node@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "node@sha256:1111111111111111111111111111111111111111111111111111111111111111",
   );
   await Deno.writeTextFile(settingsPath, edited);
 

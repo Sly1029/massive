@@ -746,6 +746,10 @@ type ContainerRuntime struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Image         *string                `protobuf:"bytes,1,opt,name=image,proto3,oneof" json:"image,omitempty"`
 	SourceFetch   *ArtifactRef           `protobuf:"bytes,2,opt,name=source_fetch,json=sourceFetch,proto3,oneof" json:"source_fetch,omitempty"`
+	Platform      *string                `protobuf:"bytes,3,opt,name=platform,proto3,oneof" json:"platform,omitempty"`
+	Runtime       *RuntimeInput          `protobuf:"bytes,4,opt,name=runtime,proto3,oneof" json:"runtime,omitempty"`
+	Packages      []*PackageInput        `protobuf:"bytes,5,rep,name=packages,proto3" json:"packages,omitempty"`
+	BuildArgs     []*BuildArgument       `protobuf:"bytes,6,rep,name=build_args,json=buildArgs,proto3" json:"build_args,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -794,6 +798,190 @@ func (x *ContainerRuntime) GetSourceFetch() *ArtifactRef {
 	return nil
 }
 
+func (x *ContainerRuntime) GetPlatform() string {
+	if x != nil && x.Platform != nil {
+		return *x.Platform
+	}
+	return ""
+}
+
+func (x *ContainerRuntime) GetRuntime() *RuntimeInput {
+	if x != nil {
+		return x.Runtime
+	}
+	return nil
+}
+
+func (x *ContainerRuntime) GetPackages() []*PackageInput {
+	if x != nil {
+		return x.Packages
+	}
+	return nil
+}
+
+func (x *ContainerRuntime) GetBuildArgs() []*BuildArgument {
+	if x != nil {
+		return x.BuildArgs
+	}
+	return nil
+}
+
+type RuntimeInput struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          *string                `protobuf:"bytes,1,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
+	Version       *string                `protobuf:"bytes,2,opt,name=version,proto3,oneof" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RuntimeInput) Reset() {
+	*x = RuntimeInput{}
+	mi := &file_workflow_plan_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RuntimeInput) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RuntimeInput) ProtoMessage() {}
+
+func (x *RuntimeInput) ProtoReflect() protoreflect.Message {
+	mi := &file_workflow_plan_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RuntimeInput.ProtoReflect.Descriptor instead.
+func (*RuntimeInput) Descriptor() ([]byte, []int) {
+	return file_workflow_plan_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RuntimeInput) GetKind() string {
+	if x != nil && x.Kind != nil {
+		return *x.Kind
+	}
+	return ""
+}
+
+func (x *RuntimeInput) GetVersion() string {
+	if x != nil && x.Version != nil {
+		return *x.Version
+	}
+	return ""
+}
+
+type PackageInput struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	Version       *string                `protobuf:"bytes,2,opt,name=version,proto3,oneof" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PackageInput) Reset() {
+	*x = PackageInput{}
+	mi := &file_workflow_plan_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PackageInput) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PackageInput) ProtoMessage() {}
+
+func (x *PackageInput) ProtoReflect() protoreflect.Message {
+	mi := &file_workflow_plan_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PackageInput.ProtoReflect.Descriptor instead.
+func (*PackageInput) Descriptor() ([]byte, []int) {
+	return file_workflow_plan_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *PackageInput) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *PackageInput) GetVersion() string {
+	if x != nil && x.Version != nil {
+		return *x.Version
+	}
+	return ""
+}
+
+type BuildArgument struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	Value         *string                `protobuf:"bytes,2,opt,name=value,proto3,oneof" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BuildArgument) Reset() {
+	*x = BuildArgument{}
+	mi := &file_workflow_plan_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BuildArgument) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BuildArgument) ProtoMessage() {}
+
+func (x *BuildArgument) ProtoReflect() protoreflect.Message {
+	mi := &file_workflow_plan_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BuildArgument.ProtoReflect.Descriptor instead.
+func (*BuildArgument) Descriptor() ([]byte, []int) {
+	return file_workflow_plan_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *BuildArgument) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *BuildArgument) GetValue() string {
+	if x != nil && x.Value != nil {
+		return *x.Value
+	}
+	return ""
+}
+
 type ExecutionContract struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	ContractRef    *string                `protobuf:"bytes,1,opt,name=contract_ref,json=contractRef,proto3,oneof" json:"contract_ref,omitempty"`
@@ -807,7 +995,7 @@ type ExecutionContract struct {
 
 func (x *ExecutionContract) Reset() {
 	*x = ExecutionContract{}
-	mi := &file_workflow_plan_proto_msgTypes[10]
+	mi := &file_workflow_plan_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -819,7 +1007,7 @@ func (x *ExecutionContract) String() string {
 func (*ExecutionContract) ProtoMessage() {}
 
 func (x *ExecutionContract) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[10]
+	mi := &file_workflow_plan_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -832,7 +1020,7 @@ func (x *ExecutionContract) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionContract.ProtoReflect.Descriptor instead.
 func (*ExecutionContract) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{10}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ExecutionContract) GetContractRef() string {
@@ -880,7 +1068,7 @@ type ResourceRequirements struct {
 
 func (x *ResourceRequirements) Reset() {
 	*x = ResourceRequirements{}
-	mi := &file_workflow_plan_proto_msgTypes[11]
+	mi := &file_workflow_plan_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -892,7 +1080,7 @@ func (x *ResourceRequirements) String() string {
 func (*ResourceRequirements) ProtoMessage() {}
 
 func (x *ResourceRequirements) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[11]
+	mi := &file_workflow_plan_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -905,7 +1093,7 @@ func (x *ResourceRequirements) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceRequirements.ProtoReflect.Descriptor instead.
 func (*ResourceRequirements) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{11}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ResourceRequirements) GetCpu() string {
@@ -932,7 +1120,7 @@ type SecretRef struct {
 
 func (x *SecretRef) Reset() {
 	*x = SecretRef{}
-	mi := &file_workflow_plan_proto_msgTypes[12]
+	mi := &file_workflow_plan_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -944,7 +1132,7 @@ func (x *SecretRef) String() string {
 func (*SecretRef) ProtoMessage() {}
 
 func (x *SecretRef) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[12]
+	mi := &file_workflow_plan_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -957,7 +1145,7 @@ func (x *SecretRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SecretRef.ProtoReflect.Descriptor instead.
 func (*SecretRef) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{12}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SecretRef) GetName() string {
@@ -986,7 +1174,7 @@ type NetworkPolicy struct {
 
 func (x *NetworkPolicy) Reset() {
 	*x = NetworkPolicy{}
-	mi := &file_workflow_plan_proto_msgTypes[13]
+	mi := &file_workflow_plan_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -998,7 +1186,7 @@ func (x *NetworkPolicy) String() string {
 func (*NetworkPolicy) ProtoMessage() {}
 
 func (x *NetworkPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[13]
+	mi := &file_workflow_plan_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1011,7 +1199,7 @@ func (x *NetworkPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkPolicy.ProtoReflect.Descriptor instead.
 func (*NetworkPolicy) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{13}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *NetworkPolicy) GetEgress() string {
@@ -1039,7 +1227,7 @@ type TargetPlan struct {
 
 func (x *TargetPlan) Reset() {
 	*x = TargetPlan{}
-	mi := &file_workflow_plan_proto_msgTypes[14]
+	mi := &file_workflow_plan_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1051,7 +1239,7 @@ func (x *TargetPlan) String() string {
 func (*TargetPlan) ProtoMessage() {}
 
 func (x *TargetPlan) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[14]
+	mi := &file_workflow_plan_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1064,7 +1252,7 @@ func (x *TargetPlan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TargetPlan.ProtoReflect.Descriptor instead.
 func (*TargetPlan) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{14}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *TargetPlan) GetKind() string {
@@ -1099,7 +1287,7 @@ type CompilerProvenance struct {
 
 func (x *CompilerProvenance) Reset() {
 	*x = CompilerProvenance{}
-	mi := &file_workflow_plan_proto_msgTypes[15]
+	mi := &file_workflow_plan_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1111,7 +1299,7 @@ func (x *CompilerProvenance) String() string {
 func (*CompilerProvenance) ProtoMessage() {}
 
 func (x *CompilerProvenance) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[15]
+	mi := &file_workflow_plan_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1124,7 +1312,7 @@ func (x *CompilerProvenance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompilerProvenance.ProtoReflect.Descriptor instead.
 func (*CompilerProvenance) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{15}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *CompilerProvenance) GetCompilerName() string {
@@ -1263,12 +1451,37 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\x05_kindB\b\n" +
 	"\x06_localB\f\n" +
 	"\n" +
-	"_container\"\x8e\x01\n" +
+	"_container\"\x80\x03\n" +
 	"\x10ContainerRuntime\x12\x19\n" +
 	"\x05image\x18\x01 \x01(\tH\x00R\x05image\x88\x01\x01\x12D\n" +
-	"\fsource_fetch\x18\x02 \x01(\v2\x1c.massive.plan.v0.ArtifactRefH\x01R\vsourceFetch\x88\x01\x01B\b\n" +
+	"\fsource_fetch\x18\x02 \x01(\v2\x1c.massive.plan.v0.ArtifactRefH\x01R\vsourceFetch\x88\x01\x01\x12\x1f\n" +
+	"\bplatform\x18\x03 \x01(\tH\x02R\bplatform\x88\x01\x01\x12<\n" +
+	"\aruntime\x18\x04 \x01(\v2\x1d.massive.plan.v0.RuntimeInputH\x03R\aruntime\x88\x01\x01\x129\n" +
+	"\bpackages\x18\x05 \x03(\v2\x1d.massive.plan.v0.PackageInputR\bpackages\x12=\n" +
+	"\n" +
+	"build_args\x18\x06 \x03(\v2\x1e.massive.plan.v0.BuildArgumentR\tbuildArgsB\b\n" +
 	"\x06_imageB\x0f\n" +
-	"\r_source_fetch\"\xe7\x02\n" +
+	"\r_source_fetchB\v\n" +
+	"\t_platformB\n" +
+	"\n" +
+	"\b_runtime\"[\n" +
+	"\fRuntimeInput\x12\x17\n" +
+	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12\x1d\n" +
+	"\aversion\x18\x02 \x01(\tH\x01R\aversion\x88\x01\x01B\a\n" +
+	"\x05_kindB\n" +
+	"\n" +
+	"\b_version\"[\n" +
+	"\fPackageInput\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x1d\n" +
+	"\aversion\x18\x02 \x01(\tH\x01R\aversion\x88\x01\x01B\a\n" +
+	"\x05_nameB\n" +
+	"\n" +
+	"\b_version\"V\n" +
+	"\rBuildArgument\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x19\n" +
+	"\x05value\x18\x02 \x01(\tH\x01R\x05value\x88\x01\x01B\a\n" +
+	"\x05_nameB\b\n" +
+	"\x06_value\"\xe7\x02\n" +
 	"\x11ExecutionContract\x12&\n" +
 	"\fcontract_ref\x18\x01 \x01(\tH\x00R\vcontractRef\x88\x01\x01\x12,\n" +
 	"\x0fenvironment_ref\x18\x02 \x01(\tH\x01R\x0eenvironmentRef\x88\x01\x01\x12H\n" +
@@ -1324,7 +1537,7 @@ func file_workflow_plan_proto_rawDescGZIP() []byte {
 	return file_workflow_plan_proto_rawDescData
 }
 
-var file_workflow_plan_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_workflow_plan_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_workflow_plan_proto_goTypes = []any{
 	(*ArtifactRef)(nil),             // 0: massive.plan.v0.ArtifactRef
 	(*WorkflowPlan)(nil),            // 1: massive.plan.v0.WorkflowPlan
@@ -1336,12 +1549,15 @@ var file_workflow_plan_proto_goTypes = []any{
 	(*SourcePackageRef)(nil),        // 7: massive.plan.v0.SourcePackageRef
 	(*MaterializedEnvironment)(nil), // 8: massive.plan.v0.MaterializedEnvironment
 	(*ContainerRuntime)(nil),        // 9: massive.plan.v0.ContainerRuntime
-	(*ExecutionContract)(nil),       // 10: massive.plan.v0.ExecutionContract
-	(*ResourceRequirements)(nil),    // 11: massive.plan.v0.ResourceRequirements
-	(*SecretRef)(nil),               // 12: massive.plan.v0.SecretRef
-	(*NetworkPolicy)(nil),           // 13: massive.plan.v0.NetworkPolicy
-	(*TargetPlan)(nil),              // 14: massive.plan.v0.TargetPlan
-	(*CompilerProvenance)(nil),      // 15: massive.plan.v0.CompilerProvenance
+	(*RuntimeInput)(nil),            // 10: massive.plan.v0.RuntimeInput
+	(*PackageInput)(nil),            // 11: massive.plan.v0.PackageInput
+	(*BuildArgument)(nil),           // 12: massive.plan.v0.BuildArgument
+	(*ExecutionContract)(nil),       // 13: massive.plan.v0.ExecutionContract
+	(*ResourceRequirements)(nil),    // 14: massive.plan.v0.ResourceRequirements
+	(*SecretRef)(nil),               // 15: massive.plan.v0.SecretRef
+	(*NetworkPolicy)(nil),           // 16: massive.plan.v0.NetworkPolicy
+	(*TargetPlan)(nil),              // 17: massive.plan.v0.TargetPlan
+	(*CompilerProvenance)(nil),      // 18: massive.plan.v0.CompilerProvenance
 }
 var file_workflow_plan_proto_depIdxs = []int32{
 	2,  // 0: massive.plan.v0.WorkflowPlan.graph:type_name -> massive.plan.v0.GraphIR
@@ -1349,10 +1565,10 @@ var file_workflow_plan_proto_depIdxs = []int32{
 	6,  // 2: massive.plan.v0.WorkflowPlan.symbols:type_name -> massive.plan.v0.SymbolEntry
 	7,  // 3: massive.plan.v0.WorkflowPlan.source_packages:type_name -> massive.plan.v0.SourcePackageRef
 	8,  // 4: massive.plan.v0.WorkflowPlan.environments:type_name -> massive.plan.v0.MaterializedEnvironment
-	10, // 5: massive.plan.v0.WorkflowPlan.contracts:type_name -> massive.plan.v0.ExecutionContract
-	14, // 6: massive.plan.v0.WorkflowPlan.targets:type_name -> massive.plan.v0.TargetPlan
+	13, // 5: massive.plan.v0.WorkflowPlan.contracts:type_name -> massive.plan.v0.ExecutionContract
+	17, // 6: massive.plan.v0.WorkflowPlan.targets:type_name -> massive.plan.v0.TargetPlan
 	0,  // 7: massive.plan.v0.WorkflowPlan.datastore_manifests:type_name -> massive.plan.v0.ArtifactRef
-	15, // 8: massive.plan.v0.WorkflowPlan.provenance:type_name -> massive.plan.v0.CompilerProvenance
+	18, // 8: massive.plan.v0.WorkflowPlan.provenance:type_name -> massive.plan.v0.CompilerProvenance
 	3,  // 9: massive.plan.v0.GraphIR.nodes:type_name -> massive.plan.v0.GraphNode
 	4,  // 10: massive.plan.v0.GraphIR.edges:type_name -> massive.plan.v0.GraphEdge
 	0,  // 11: massive.plan.v0.SourcePackageRef.manifest:type_name -> massive.plan.v0.ArtifactRef
@@ -1360,15 +1576,18 @@ var file_workflow_plan_proto_depIdxs = []int32{
 	0,  // 13: massive.plan.v0.MaterializedEnvironment.local:type_name -> massive.plan.v0.ArtifactRef
 	9,  // 14: massive.plan.v0.MaterializedEnvironment.container:type_name -> massive.plan.v0.ContainerRuntime
 	0,  // 15: massive.plan.v0.ContainerRuntime.source_fetch:type_name -> massive.plan.v0.ArtifactRef
-	11, // 16: massive.plan.v0.ExecutionContract.resources:type_name -> massive.plan.v0.ResourceRequirements
-	12, // 17: massive.plan.v0.ExecutionContract.secrets:type_name -> massive.plan.v0.SecretRef
-	13, // 18: massive.plan.v0.ExecutionContract.network:type_name -> massive.plan.v0.NetworkPolicy
-	0,  // 19: massive.plan.v0.TargetPlan.bundle_manifest:type_name -> massive.plan.v0.ArtifactRef
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	10, // 16: massive.plan.v0.ContainerRuntime.runtime:type_name -> massive.plan.v0.RuntimeInput
+	11, // 17: massive.plan.v0.ContainerRuntime.packages:type_name -> massive.plan.v0.PackageInput
+	12, // 18: massive.plan.v0.ContainerRuntime.build_args:type_name -> massive.plan.v0.BuildArgument
+	14, // 19: massive.plan.v0.ExecutionContract.resources:type_name -> massive.plan.v0.ResourceRequirements
+	15, // 20: massive.plan.v0.ExecutionContract.secrets:type_name -> massive.plan.v0.SecretRef
+	16, // 21: massive.plan.v0.ExecutionContract.network:type_name -> massive.plan.v0.NetworkPolicy
+	0,  // 22: massive.plan.v0.TargetPlan.bundle_manifest:type_name -> massive.plan.v0.ArtifactRef
+	23, // [23:23] is the sub-list for method output_type
+	23, // [23:23] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_workflow_plan_proto_init() }
@@ -1392,13 +1611,16 @@ func file_workflow_plan_proto_init() {
 	file_workflow_plan_proto_msgTypes[13].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[14].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[15].OneofWrappers = []any{}
+	file_workflow_plan_proto_msgTypes[16].OneofWrappers = []any{}
+	file_workflow_plan_proto_msgTypes[17].OneofWrappers = []any{}
+	file_workflow_plan_proto_msgTypes[18].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workflow_plan_proto_rawDesc), len(file_workflow_plan_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -24,7 +24,12 @@ graph = GraphBuilder(
     name="runner-fixture",
     input_type=Request,
     output_type=Result,
-    defaults=execution(environment=container("example.invalid/runner:latest")),
+    defaults=execution(
+        environment=container(
+            "example.invalid/runner@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            platform="linux/amd64",
+        )
+    ),
 )
 
 

@@ -27,7 +27,12 @@ def test_graph_without_dependencies_rejects_a_step_that_declares_them() -> None:
         name="no-deps",
         input_type=Request,
         output_type=Result,
-        defaults=execution(environment=container("example.invalid/no-deps:latest")),
+        defaults=execution(
+            environment=container(
+                "example.invalid/no-deps@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                platform="linux/amd64",
+            )
+        ),
     )
 
     with pytest.raises(TypeError, match="does not permit dependencies"):
@@ -39,7 +44,12 @@ def test_end_is_terminal() -> None:
         name="terminal-end",
         input_type=Request,
         output_type=Result,
-        defaults=execution(environment=container("example.invalid/terminal:latest")),
+        defaults=execution(
+            environment=container(
+                "example.invalid/terminal@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                platform="linux/amd64",
+            )
+        ),
     )
 
     node = graph.add(graph.step()(identity))

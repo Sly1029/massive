@@ -19,6 +19,7 @@ env.node({
 
 env.container({
   image: "ghcr.io/acme/workflow@sha256:...",
+  platform: "linux/amd64",
 });
 ```
 
@@ -125,7 +126,15 @@ Containers are necessary for Argo and some advanced tools, but they should not b
 
 `env.container(...)` means the author accepts backend portability limits. Other backends may reject the plan or require a backend-specific adapter.
 
-Container environments still emit environment manifests. The manifest records the image reference, environment key, materialization mode, and runtime contract. It may explicitly state that dependency materialization was skipped because the container image is the runtime.
+Container recipes first compile to canonical, unbuilt environment plans. The plan
+records the immutable image reference, platform, runtime/package inputs, and
+declared non-secret build arguments. Resource limits, runtime secrets, network,
+and scheduling remain execution-contract policy and never enter this identity.
+
+An environment artifact exists only when a materializer has committed real bytes
+or an OCI digest. The compiler must not emit an artifact reference for an
+unbuilt plan. A later materializer records the image reference, environment key,
+materialization mode, and runtime contract in an immutable manifest.
 
 Example:
 

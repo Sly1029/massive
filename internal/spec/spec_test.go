@@ -207,6 +207,26 @@ func TestParseRejectsSourcePackageMapKeyMismatch(t *testing.T) {
 	}
 }
 
+func TestParseRejectsMutableContainerRecipeImage(t *testing.T) {
+	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+		environments := root["environments"].(map[string]any)
+		for _, rawEnvironment := range environments {
+			environment := rawEnvironment.(map[string]any)
+			environment["image"] = "registry.example/python:3.12"
+		}
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid spec")
+	}
+
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.environments.sha256:7777777777777777777777777777777777777777777777777777777777777777.image" || !strings.Contains(diagnostics[0].Message, "immutable image digest") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
 func fixturePath(name string) string {
 	return filepath.Join("..", "..", "conformance", "fixtures", "specs", name, "workflow-spec.json")
 }

@@ -44,7 +44,8 @@
   "environments": {
     "sha256:7777777777777777777777777777777777777777777777777777777777777777": {
       "kind": "container",
-      "image": "ghcr.io/massive-dev/typescript-runner:v0"
+      "image": "ghcr.io/massive-dev/typescript-runner@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "platform": "linux/amd64"
     }
   },
   "contracts": {

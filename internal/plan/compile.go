@@ -197,7 +197,15 @@ func compileSchemas(workflowSpec *spec.WorkflowSpec) (map[string]string, []*plan
 func compileEnvironments(workflowSpec *spec.WorkflowSpec) (map[string]string, []*planpb.MaterializedEnvironment, error) {
 	oldToNew := make(map[string]string, len(workflowSpec.Environments))
 	for oldRef, environment := range workflowSpec.Environments {
-		hash, err := hashJSONValue(environment)
+		if environment.Kind != "container" {
+			hash, err := hashJSONValue(environment)
+			if err != nil {
+				return nil, nil, fmt.Errorf("hash environment %s: %w", oldRef, err)
+			}
+			oldToNew[oldRef] = hash
+			continue
+		}
+		hash, err := hashPlanMessage(containerPlan(environment))
 		if err != nil {
 			return nil, nil, fmt.Errorf("hash environment %s: %w", oldRef, err)
 		}
@@ -208,6 +216,16 @@ func compileEnvironments(workflowSpec *spec.WorkflowSpec) (map[string]string, []
 	entries := make([]*planpb.MaterializedEnvironment, 0, len(oldRefs))
 	for _, oldRef := range oldRefs {
 		newRef := oldToNew[oldRef]
+		environment := workflowSpec.Environments[oldRef]
+		if environment.Kind == "container" {
+			entries = append(entries, &planpb.MaterializedEnvironment{
+				EnvRef:    stringPtr(newRef),
+				SpecHash:  stringPtr(newRef),
+				Kind:      stringPtr("container"),
+				Container: containerPlan(environment),
+			})
+			continue
+		}
 		entries = append(entries, &planpb.MaterializedEnvironment{
 			EnvRef:   stringPtr(newRef),
 			SpecHash: stringPtr(newRef),
@@ -217,6 +235,36 @@ func compileEnvironments(workflowSpec *spec.WorkflowSpec) (map[string]string, []
 
 	sort.Slice(entries, func(i, j int) bool { return canonical.LessUTF16(entries[i].GetEnvRef(), entries[j].GetEnvRef()) })
 	return oldToNew, entries, nil
+}
+
+func containerPlan(environment spec.Environment) *planpb.ContainerRuntime {
+	compiled := &planpb.ContainerRuntime{Image: stringPtr(environment.Image)}
+	if environment.Platform != "" {
+		compiled.Platform = stringPtr(environment.Platform)
+	}
+	if environment.Runtime != nil {
+		compiled.Runtime = &planpb.RuntimeInput{
+			Kind:    stringPtr(environment.Runtime.Kind),
+			Version: stringPtr(environment.Runtime.Version),
+		}
+	}
+	packages := append([]spec.PackageInput(nil), environment.Packages...)
+	sort.Slice(packages, func(i, j int) bool { return canonical.LessUTF16(packages[i].Name, packages[j].Name) })
+	for _, input := range packages {
+		compiled.Packages = append(compiled.Packages, &planpb.PackageInput{
+			Name:    stringPtr(input.Name),
+			Version: stringPtr(input.Version),
+		})
+	}
+	buildArgs := append([]spec.BuildArgument(nil), environment.BuildArgs...)
+	sort.Slice(buildArgs, func(i, j int) bool { return canonical.LessUTF16(buildArgs[i].Name, buildArgs[j].Name) })
+	for _, input := range buildArgs {
+		compiled.BuildArgs = append(compiled.BuildArgs, &planpb.BuildArgument{
+			Name:  stringPtr(input.Name),
+			Value: stringPtr(input.Value),
+		})
+	}
+	return compiled
 }
 
 func compileContracts(workflowSpec *spec.WorkflowSpec, environmentHashes map[string]string) (map[string]string, []*planpb.ExecutionContract, error) {

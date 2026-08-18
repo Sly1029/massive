@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/Sly1029/massive/internal/irversion"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
+
+var immutableContainerImage = regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`)
 
 const (
 	NodeKindStart = "start"
@@ -87,13 +90,32 @@ type SourcePackageFile struct {
 }
 
 type Environment struct {
-	Kind             string   `json:"kind"`
-	Image            string   `json:"image,omitempty"`
-	Command          []string `json:"command,omitempty"`
-	WorkingDirectory string   `json:"workingDirectory,omitempty"`
-	Version          string   `json:"version,omitempty"`
-	PackageManager   string   `json:"packageManager,omitempty"`
-	Lockfile         string   `json:"lockfile,omitempty"`
+	Kind             string          `json:"kind"`
+	Image            string          `json:"image,omitempty"`
+	Platform         string          `json:"platform,omitempty"`
+	Runtime          *RuntimeInput   `json:"runtime,omitempty"`
+	Packages         []PackageInput  `json:"packages,omitempty"`
+	BuildArgs        []BuildArgument `json:"buildArgs,omitempty"`
+	Command          []string        `json:"command,omitempty"`
+	WorkingDirectory string          `json:"workingDirectory,omitempty"`
+	Version          string          `json:"version,omitempty"`
+	PackageManager   string          `json:"packageManager,omitempty"`
+	Lockfile         string          `json:"lockfile,omitempty"`
+}
+
+type RuntimeInput struct {
+	Kind    string `json:"kind"`
+	Version string `json:"version"`
+}
+
+type PackageInput struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+type BuildArgument struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type ExecutionContract struct {
@@ -445,6 +467,9 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 			diagnostics = append(diagnostics, Diagnostic{Path: "$.contracts." + contractRef + ".environmentRef", Ref: contract.EnvironmentRef, Message: "contract environment reference does not exist"})
 		}
 	}
+	for environmentRef, environment := range parsed.Environments {
+		diagnostics = append(diagnostics, validateContainerRecipe(environmentRef, environment)...)
+	}
 	packageRefs := make([]string, 0, len(parsed.SourcePackages))
 	for packageRef := range parsed.SourcePackages {
 		packageRefs = append(packageRefs, packageRef)
@@ -462,6 +487,41 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		}
 	}
 
+	return diagnostics
+}
+
+func validateContainerRecipe(environmentRef string, environment Environment) []Diagnostic {
+	if environment.Kind != "container" {
+		return nil
+	}
+	usesRecipeFields := environment.Platform != "" || environment.Runtime != nil || len(environment.Packages) > 0 || len(environment.BuildArgs) > 0
+	if !usesRecipeFields {
+		return nil
+	}
+
+	path := "$.environments." + environmentRef
+	var diagnostics []Diagnostic
+	if environment.Platform == "" {
+		diagnostics = append(diagnostics, Diagnostic{Path: path + ".platform", Message: "container recipe requires platform"})
+	}
+	if !immutableContainerImage.MatchString(environment.Image) {
+		diagnostics = append(diagnostics, Diagnostic{Path: path + ".image", Ref: environment.Image, Message: "container recipe requires an immutable image digest reference"})
+	}
+	diagnostics = append(diagnostics, duplicateRecipeInputDiagnostics(path+".packages", environment.Packages, func(input PackageInput) string { return input.Name })...)
+	diagnostics = append(diagnostics, duplicateRecipeInputDiagnostics(path+".buildArgs", environment.BuildArgs, func(input BuildArgument) string { return input.Name })...)
+	return diagnostics
+}
+
+func duplicateRecipeInputDiagnostics[T any](path string, values []T, name func(T) string) []Diagnostic {
+	seen := make(map[string]bool, len(values))
+	var diagnostics []Diagnostic
+	for index, value := range values {
+		inputName := name(value)
+		if seen[inputName] {
+			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("%s[%d].name", path, index), Ref: inputName, Message: "container recipe input names must be unique"})
+		}
+		seen[inputName] = true
+	}
 	return diagnostics
 }
 

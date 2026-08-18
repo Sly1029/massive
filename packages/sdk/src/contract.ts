@@ -7,6 +7,7 @@ export type EnvironmentSpec = ContainerEnvironmentSpec | NodeEnvironmentSpec;
 export interface ContainerEnvironmentSpec {
   readonly kind: "container";
   readonly image: string;
+  readonly platform?: string;
   readonly command?: readonly string[];
   readonly workingDirectory?: string;
 }
@@ -57,6 +58,7 @@ export const env = {
     return {
       kind: "container",
       image: spec.image,
+      platform: spec.platform ?? "linux/amd64",
       ...(spec.command === undefined ? {} : { command: [...spec.command] }),
       ...(spec.workingDirectory === undefined
         ? {}

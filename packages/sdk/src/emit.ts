@@ -107,7 +107,9 @@ export interface WorkflowSpecExecutionContract {
 }
 
 const DEFAULT_CONTRACT = contract({
-  env: env.container({ image: "ghcr.io/massive-dev/typescript-runner:v0" }),
+  env: env.container({
+    image: "ghcr.io/massive-dev/typescript-runner@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  }),
   network: net.denyAll(),
 });
 
@@ -345,6 +347,7 @@ function lowerEnvironment(
     return {
       kind: "container",
       image: environment.image,
+      platform: environment.platform ?? "linux/amd64",
       ...(environment.command === undefined
         ? {}
         : { command: [...environment.command] }),

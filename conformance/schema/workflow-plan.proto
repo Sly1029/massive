@@ -103,6 +103,25 @@ message MaterializedEnvironment {
 message ContainerRuntime {
   optional string image = 1;
   optional ArtifactRef source_fetch = 2;
+  optional string platform = 3;
+  optional RuntimeInput runtime = 4;
+  repeated PackageInput packages = 5;
+  repeated BuildArgument build_args = 6;
+}
+
+message RuntimeInput {
+  optional string kind = 1;
+  optional string version = 2;
+}
+
+message PackageInput {
+  optional string name = 1;
+  optional string version = 2;
+}
+
+message BuildArgument {
+  optional string name = 1;
+  optional string value = 2;
 }
 
 message ExecutionContract {

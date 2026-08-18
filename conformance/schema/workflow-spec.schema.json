@@ -197,7 +197,7 @@
     "containerEnvironment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "image"],
+      "required": ["kind", "image", "platform"],
       "properties": {
         "kind": { "const": "container" },
         "image": { "type": "string", "minLength": 1 },
@@ -205,7 +205,44 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "workingDirectory": { "$ref": "#/$defs/relativePath" }
+        "workingDirectory": { "$ref": "#/$defs/relativePath" },
+        "platform": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$"
+        },
+        "runtime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "version"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 }
+          }
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "version": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "buildArgs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "value": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     },
     "nodeEnvironment": {
