@@ -1,9 +1,12 @@
+export { defineWorkflowPackage, type WorkflowPackageConfig } from "./config.ts";
 export {
-  defineWorkflowPackage,
-  target,
-  type WorkflowPackageConfig,
-  type WorkflowSpecTarget,
-} from "./config.ts";
+  computeDeploymentHash,
+  deployment,
+  type DeploymentProfile,
+  type DeploymentSpec,
+  type DeploymentTarget,
+  emitDeploymentSpec,
+} from "./deployment.ts";
 export {
   contract,
   type ContractSpec,

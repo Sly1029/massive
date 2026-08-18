@@ -50,7 +50,7 @@ export function renderOutcome(
           "✗ cannot resolve workflow entrypoint",
           [outcome.message],
           [
-            "next  name the export (massive run workflow.ts#name) or add target.local() to massive.config.ts",
+            "next  name the export (massive run workflow.ts#name) or add massive.config.ts",
           ],
         ),
       };
@@ -58,7 +58,7 @@ export function renderOutcome(
       return {
         stdout: "",
         stderr: block("✗ configuration error", [outcome.message], [
-          "next  run with --target local, or add the target to massive.config.ts",
+          "next  run with --target local, or configure a deployment profile in massive.config.ts",
         ]),
       };
     case "toolchain-missing":

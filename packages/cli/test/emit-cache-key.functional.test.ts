@@ -57,7 +57,7 @@ Deno.test("emit cache keys on entrypoint identity: a second workflow in the same
     "alpha doubles 20 -> 40",
   );
 
-  // Run B (beta): same source hash + config + targets, different export. It must
+  // Run B (beta): same source hash + config, different export. It must
   // still MISS and execute beta's distinct graph (triple 20 -> 60), not reuse
   // alpha's cached spec.
   await Deno.remove(sentinel);
@@ -127,8 +127,8 @@ Deno.test("a massive.config.ts edit invalidates the cached spec", async () => {
   // so the source-package hash is unchanged; only configHash differs. Without it
   // in the key this would be a false hit reusing the stale spec.
   const edited = (await Deno.readTextFile(configPath)).replace(
-    "targets: [target.local()],",
-    'environment: { kind: "container", image: "docker.io/library/node:20" },\n  targets: [target.local()],',
+    'entrypoint: "./workflow.ts",',
+    'entrypoint: "./workflow.ts",\n  environment: { kind: "container", image: "docker.io/library/node:20" },',
   );
   await Deno.writeTextFile(configPath, edited);
 

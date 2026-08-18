@@ -12,3 +12,9 @@ import _ "embed"
 //
 //go:embed workflow-spec.schema.json
 var WorkflowSpecSchemaJSON []byte
+
+// DeploymentSpecSchemaJSON is the frozen DeploymentSpec JSON Schema
+// (draft 2020-12) for target-specific profile bindings.
+//
+//go:embed deployment-spec.schema.json
+var DeploymentSpecSchemaJSON []byte

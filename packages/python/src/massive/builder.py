@@ -30,9 +30,8 @@ WorkflowOutputT = TypeVar("WorkflowOutputT")
 
 _START = "__start"
 _END = "__end"
-# The outer WorkflowSpec v0 schema does not yet admit this field. Keep the
-# unstable graph version in one place so adding graph.version is a local
-# emission change when the shared schema lands.
+# Graph IR versioning is independent from the outer WorkflowSpec transport
+# schema so graph evolution remains an explicit compiler contract.
 GRAPH_IR_VERSION = "0.1"
 
 
@@ -293,7 +292,6 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                 },
                 "environments": environments,
                 "contracts": contracts,
-                "targets": [{"kind": "local"}],
             },
         )
         spec_hash = sha256_ref(canonical_json(value))

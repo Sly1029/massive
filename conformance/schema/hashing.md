@@ -1,7 +1,7 @@
 # Canonical Hashing
 
 This document defines the v0 canonical hashing rules for `specHash`,
-`planHash`, `sourcePackageHash`, environment keys, and runtime-artifact hashes.
+`planHash`, `deploymentHash`, `sourcePackageHash`, environment keys, and runtime-artifact hashes.
 The normative implementation baseline is `stableStringify` plus SHA-256 in
 `packages/sdk/src/stable.ts`.
 
@@ -68,7 +68,7 @@ hashed artifact.
 
 Self-exclusion rule: when an artifact records its own digest as a member of
 its field tree (`specHash` in a `WorkflowSpec`, `planHash` in a
-`WorkflowPlan`), that member is excluded from its own coverage. Compute the
+`WorkflowPlan`, `deploymentHash` in a `DeploymentSpec`), that member is excluded from its own coverage. Compute the
 digest over the field tree with the self-referencing member absent, then
 record the result in that member. All other digest members (for example
 `specHash` inside a plan) are covered normally.
@@ -86,7 +86,6 @@ record the result in that member. All other digest members (for example
 - environment table;
 - effective execution-contract table;
 - per-node execution-contract references;
-- target requests and target-specific authoring inputs present in the spec.
 
 `specHash` does not cover source JSON whitespace, storage path names, datastore
 write time, compile time, run IDs, or any other wall-clock timestamp.
@@ -99,12 +98,23 @@ write time, compile time, run IDs, or any other wall-clock timestamp.
 - GraphIR;
 - ExecutionContract entries;
 - symbol table;
-- target config;
 - patches;
 - compiler identity and version;
 - environment materialization references;
 - datastore manifest references;
 - mediation provider identity.
+
+### `deploymentHash`
+
+`deploymentHash` covers the `DeploymentSpec` field tree except itself:
+
+- the referenced `planHash`;
+- the profile name and opaque artifact-store binding;
+- target kind and its target-specific settings.
+
+It must not cover raw credentials, secret values, connection URLs, wall-clock
+timestamps, or mutable deployment state. Changing a deployment profile changes
+`deploymentHash` but never `specHash` or `planHash`.
 
 The hash is computed from the canonical field tree used for the plan's JSON
 artifact, not from binary wire bytes. Generated deploy artifacts must
@@ -122,7 +132,7 @@ package manifest:
 
 Broad implicit packaging is out of scope for v0. A changed included file changes
 the package hash. A changed excluded file does not. Package IDs, local absolute
-root paths, symbols, target requests, and datastore write locations are outside
+root paths, symbols, and datastore write locations are outside
 the source package content hash.
 
 ### Environment Key

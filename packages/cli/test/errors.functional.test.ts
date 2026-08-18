@@ -140,8 +140,7 @@ const cases: readonly ErrorCase[] = [
       // Overwrite massive.config.ts with a shape missing the required `include`.
       await Deno.writeTextFile(
         `${fixture}/massive.config.ts`,
-        `import { target } from "@massive/sdk";\n` +
-          `export default { entrypoint: "./workflow.ts", targets: [target.local()] };\n`,
+        `export default { entrypoint: "./workflow.ts" };\n`,
       );
       return {
         args: [

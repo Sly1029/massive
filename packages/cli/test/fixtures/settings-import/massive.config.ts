@@ -1,4 +1,4 @@
-import { defineWorkflowPackage, target } from "@massive/sdk";
+import { defineWorkflowPackage } from "@massive/sdk";
 import { containerImage } from "./settings.ts";
 
 // include covers only workflow.ts, so settings.ts is NOT part of the source
@@ -8,5 +8,4 @@ export default defineWorkflowPackage({
   include: ["workflow.ts"],
   entrypoint: "./workflow.ts",
   environment: { kind: "container", image: containerImage },
-  targets: [target.local()],
 });

@@ -128,13 +128,5 @@
         "egress": "none"
       }
     }
-  },
-  "targets": [
-    { "kind": "local" },
-    {
-      "kind": "argo",
-      "namespace": "argo",
-      "serviceAccountName": "argo"
-    }
-  ]
+  }
 }

@@ -192,8 +192,5 @@
         "egress": "none"
       }
     }
-  },
-  "targets": [
-    { "kind": "local" }
-  ]
+  }
 }

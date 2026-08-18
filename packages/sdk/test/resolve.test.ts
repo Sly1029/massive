@@ -1,37 +1,41 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert";
 import { join } from "node:path";
-import {
-  MassiveError,
-  resolveWorkflowEntrypoint,
-} from "../src/index.ts";
+import { MassiveError, resolveWorkflowEntrypoint } from "../src/index.ts";
 
 const sdkUrl = new URL("../src/index.ts", import.meta.url).href;
-const zodUrl = new URL("../../../node_modules/zod/index.js", import.meta.url).href;
+const zodUrl =
+  new URL("../../../node_modules/zod/index.js", import.meta.url).href;
 
 Deno.test("resolver selects default export for workflow.ts", async () => {
   await withTempDir(async (root) => {
     const file = join(root, "workflow.ts");
-    await Deno.writeTextFile(file, workflowModule({
-      defaultName: "defaulted",
-      named: ["other"],
-    }));
+    await Deno.writeTextFile(
+      file,
+      workflowModule({
+        defaultName: "defaulted",
+        named: ["other"],
+      }),
+    );
 
     const resolved = await resolveWorkflowEntrypoint(file);
 
     assertEquals(resolved.workflow.name, "defaulted");
     assertEquals(resolved.selectedExport, "default");
     assertEquals(resolved.explicitConfig, false);
-    assertEquals(resolved.package.targets, [{ kind: "local" }]);
+    assertEquals(resolved.package.deploymentProfiles, undefined);
   });
 });
 
 Deno.test("resolver selects named export for workflow.ts#name", async () => {
   await withTempDir(async (root) => {
     const file = join(root, "workflow.ts");
-    await Deno.writeTextFile(file, workflowModule({
-      defaultName: "defaulted",
-      named: ["chosen"],
-    }));
+    await Deno.writeTextFile(
+      file,
+      workflowModule({
+        defaultName: "defaulted",
+        named: ["chosen"],
+      }),
+    );
 
     const resolved = await resolveWorkflowEntrypoint(`${file}#chosen`);
 
@@ -44,9 +48,12 @@ Deno.test("resolver selects named export for workflow.ts#name", async () => {
 Deno.test("resolver reports ambiguity with exported workflow candidates", async () => {
   await withTempDir(async (root) => {
     const file = join(root, "workflow.ts");
-    await Deno.writeTextFile(file, workflowModule({
-      named: ["alpha", "beta"],
-    }));
+    await Deno.writeTextFile(
+      file,
+      workflowModule({
+        named: ["alpha", "beta"],
+      }),
+    );
 
     await assertRejects(
       () => resolveWorkflowEntrypoint(file),
@@ -66,11 +73,11 @@ Deno.test("resolver loads directory entrypoint through massive.config.ts", async
     await Deno.writeTextFile(
       join(root, "massive.config.ts"),
       [
-        `import { defineWorkflowPackage, target } from "${sdkUrl}";`,
+        `import { defineWorkflowPackage, deployment } from "${sdkUrl}";`,
         "export default defineWorkflowPackage({",
         "  include: ['flows/workflow.ts', 'package.json'],",
         "  entrypoint: './flows/workflow.ts#chosen',",
-        "  targets: [target.local(), target.argo({ namespace: 'workflows', serviceAccountName: 'runner' })],",
+        "  deploymentProfiles: [deployment.local({ name: 'local', artifactStoreBinding: 'local-artifacts' }), deployment.argo({ name: 'argo', artifactStoreBinding: 'argo-artifacts', namespace: 'workflows', serviceAccountName: 'runner' })],",
         "});",
         "",
       ].join("\n"),
@@ -88,12 +95,20 @@ Deno.test("resolver loads directory entrypoint through massive.config.ts", async
       include: ["flows/workflow.ts", "package.json"],
       module: "./flows/workflow.ts",
     });
-    assertEquals(resolved.package.targets, [
-      { kind: "local" },
+    assertEquals(resolved.package.deploymentProfiles, [
       {
-        kind: "argo",
-        namespace: "workflows",
-        serviceAccountName: "runner",
+        name: "local",
+        artifactStoreBinding: "local-artifacts",
+        target: { kind: "local" },
+      },
+      {
+        name: "argo",
+        artifactStoreBinding: "argo-artifacts",
+        target: {
+          kind: "argo",
+          namespace: "workflows",
+          serviceAccountName: "runner",
+        },
       },
     ]);
   });
@@ -102,11 +117,17 @@ Deno.test("resolver loads directory entrypoint through massive.config.ts", async
 Deno.test("zero-config includes nearby package files and refuses Argo", async () => {
   await withTempDir(async (root) => {
     const file = join(root, "workflow.ts");
-    await Deno.writeTextFile(file, workflowModule({
-      defaultName: "single",
-    }));
+    await Deno.writeTextFile(
+      file,
+      workflowModule({
+        defaultName: "single",
+      }),
+    );
     await Deno.writeTextFile(join(root, "package.json"), "{}\n");
-    await Deno.writeTextFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+    await Deno.writeTextFile(
+      join(root, "pnpm-lock.yaml"),
+      "lockfileVersion: '9.0'\n",
+    );
 
     const resolved = await resolveWorkflowEntrypoint(file, { target: "local" });
 
@@ -116,11 +137,26 @@ Deno.test("zero-config includes nearby package files and refuses Argo", async ()
       "package.json",
       "pnpm-lock.yaml",
     ]);
-    assertEquals(resolved.package.targets, [{ kind: "local" }]);
+    assertEquals(resolved.package.deploymentProfiles, undefined);
     await assertRejects(
       () => resolveWorkflowEntrypoint(file, { target: "argo" }),
       MassiveError,
       "requires massive.config.ts",
+    );
+  });
+});
+
+Deno.test("resolver rejects retired WorkflowSpec targets", async () => {
+  await withTempDir(async (root) => {
+    const configPath = join(root, "massive.config.ts");
+    await Deno.writeTextFile(
+      configPath,
+      "export default { include: ['workflow.ts'], entrypoint: './workflow.ts', targets: [{ kind: 'local' }] };\n",
+    );
+    await assertRejects(
+      () => resolveWorkflowEntrypoint(root),
+      MassiveError,
+      "targets",
     );
   });
 });
@@ -150,7 +186,9 @@ function workflowModule(config: {
   return `${lines.join("\n")}\n`;
 }
 
-async function withTempDir(callback: (root: string) => Promise<void>): Promise<void> {
+async function withTempDir(
+  callback: (root: string) => Promise<void>,
+): Promise<void> {
   const root = await Deno.makeTempDir({ prefix: "massive-resolve-" });
   try {
     await callback(root);

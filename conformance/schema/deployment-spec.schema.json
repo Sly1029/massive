@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://massive.dev/conformance/schema/deployment-spec.schema.json",
+  "title": "Massive DeploymentSpec",
+  "description": "V0 DeploymentSpec binds a target profile to one immutable WorkflowPlan. It deliberately contains opaque artifact-store binding names rather than credentials or connection details.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schemaVersion", "encoding", "deploymentHash", "planHash", "profile"],
+  "properties": {
+    "kind": { "const": "DeploymentSpec" },
+    "schemaVersion": { "const": 0 },
+    "encoding": { "const": "json-v0" },
+    "deploymentHash": { "$ref": "#/$defs/hashRef" },
+    "planHash": { "$ref": "#/$defs/hashRef" },
+    "profile": { "$ref": "#/$defs/profile" }
+  },
+  "$defs": {
+    "hashRef": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.@/:#-]+$"
+    },
+    "bindingId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "artifactStoreBinding", "target"],
+      "properties": {
+        "name": { "$ref": "#/$defs/id" },
+        "artifactStoreBinding": { "$ref": "#/$defs/bindingId" },
+        "target": { "$ref": "#/$defs/target" }
+      }
+    },
+    "target": {
+      "oneOf": [
+        { "$ref": "#/$defs/localTarget" },
+        { "$ref": "#/$defs/argoTarget" }
+      ]
+    },
+    "localTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "local" }
+      }
+    },
+    "argoTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "namespace", "serviceAccountName"],
+      "properties": {
+        "kind": { "const": "argo" },
+        "namespace": { "$ref": "#/$defs/id" },
+        "serviceAccountName": { "$ref": "#/$defs/id" },
+        "workflowTemplateName": { "$ref": "#/$defs/id" }
+      }
+    }
+  }
+}

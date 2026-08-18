@@ -10,7 +10,7 @@ import {
   type ResourceSpec,
   type SecretRef,
 } from "./contract.ts";
-import type { WorkflowPackageConfig, WorkflowSpecTarget } from "./config.ts";
+import type { WorkflowPackageConfig } from "./config.ts";
 import { GraphValidationError } from "./errors.ts";
 import { validateGraphShape } from "./graph-validate.ts";
 import { lowerPortableSchema } from "./schema.ts";
@@ -37,7 +37,6 @@ export interface EmitWorkflowSpecOptions {
   readonly source?: EmitSourceSpec;
   readonly package?: WorkflowPackageConfig;
   readonly packageRoot?: string;
-  readonly targets?: readonly WorkflowSpecTarget[];
 }
 
 export interface WorkflowSpec {
@@ -62,7 +61,6 @@ export interface WorkflowSpec {
   readonly sourcePackages: Readonly<Record<string, WorkflowSpecSourcePackage>>;
   readonly environments: Readonly<Record<string, WorkflowSpecEnvironment>>;
   readonly contracts: Readonly<Record<string, WorkflowSpecExecutionContract>>;
-  readonly targets: readonly WorkflowSpecTarget[];
 }
 
 export type WorkflowSpecNode =
@@ -229,11 +227,6 @@ export async function emitWorkflowSpec<Input, Output>(
     },
     environments: sortedRecord(environments),
     contracts: sortedRecord(contracts),
-    targets: [
-      ...(options.targets ?? options.package?.targets ?? [{
-        kind: "local" as const,
-      }]),
-    ],
   };
 
   return {

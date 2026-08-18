@@ -34,7 +34,6 @@ type WorkflowSpec struct {
 	SourcePackages map[string]SourcePackage     `json:"sourcePackages"`
 	Environments   map[string]Environment       `json:"environments"`
 	Contracts      map[string]ExecutionContract `json:"contracts"`
-	Targets        []Target                     `json:"targets"`
 }
 
 type Workflow struct {
@@ -118,13 +117,6 @@ type SecretRef struct {
 type NetworkPolicy struct {
 	Egress string   `json:"egress"`
 	Hosts  []string `json:"hosts,omitempty"`
-}
-
-type Target struct {
-	Kind                 string `json:"kind"`
-	Namespace            string `json:"namespace,omitempty"`
-	ServiceAccountName   string `json:"serviceAccountName,omitempty"`
-	WorkflowTemplateName string `json:"workflowTemplateName,omitempty"`
 }
 
 type Diagnostic struct {

@@ -80,22 +80,13 @@ Potential future:
 
 - frontend SDKs may emit additional typed artifacts once compiler boundaries and schema ownership are proven.
 
-### Target Requests In Specs
+### Deployment Profiles
 
-Target requests live inside `WorkflowSpec`.
-
-Why this is the current choice:
-
-- deployment intent is portable across machines and frontend SDKs,
-- target configuration participates in `specHash`,
-- Go can compile a selected requested target without accepting hidden semantic mutations from CLI flags,
-- target compatibility checks stay centralized in the Go compiler.
-
-Rules:
-
-- CLI flags may select requested targets and output locations,
-- CLI flags should not mutate target semantics,
-- unsupported target features are compile-time diagnostics unless an explicit degraded mode is requested in the spec.
+Deployment profiles live outside `WorkflowSpec` in a separately hashed
+`DeploymentSpec` that references a `planHash`. This preserves one portable
+workflow/plan identity across local and cloud profiles. Profile artifacts may
+contain target settings and opaque binding names, but never raw credentials or
+secret values. Target compilers own compatibility diagnostics.
 
 ### Source Package Boundary
 
@@ -121,11 +112,11 @@ Current TypeScript behavior:
 - if a file has multiple exported workflows and no selector, the CLI reports an ambiguity,
 - `massive run workflow/` resolves through package configuration in that directory.
 
-Package roots are explicit and define included source files, local utilities, package manifests, lockfiles, environment defaults, and target requests. V0 packaging is driven by include patterns and required manifests rather than broad implicit source scanning.
+Package roots are explicit and define included source files, local utilities, package manifests, lockfiles, environment defaults, and optional deployment profiles. V0 packaging is driven by include patterns and required manifests rather than broad implicit source scanning.
 
 For TypeScript v0, package roots use `massive.config.ts`. Future language SDKs may use native configuration surfaces, such as `pyproject.toml` for Python, provided they emit the same portable `WorkflowSpec`.
 
-Zero-config single-file TypeScript workflows are allowed only for local development. They synthesize an ephemeral package config with the selected workflow file, nearby package manifests and lockfiles when present, and the `local` target only. Deployable targets require explicit package configuration.
+Zero-config single-file TypeScript workflows are allowed only for local development. They synthesize an ephemeral package config with the selected workflow file and nearby package manifests and lockfiles when present. Deployable profiles require explicit package configuration.
 
 ### Execution Contract Merging
 

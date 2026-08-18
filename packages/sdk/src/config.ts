@@ -1,20 +1,14 @@
 import type { EnvironmentSpec } from "./contract.ts";
-
-export type WorkflowSpecTarget =
-  | { readonly kind: "local" }
-  | {
-    readonly kind: "argo";
-    readonly namespace: string;
-    readonly serviceAccountName: string;
-    readonly workflowTemplateName?: string;
-  };
+import type { DeploymentProfile } from "./deployment.ts";
 
 export interface WorkflowPackageConfig {
   readonly projectId?: string;
   readonly include: readonly string[];
   readonly entrypoint: string;
   readonly environment?: EnvironmentSpec;
-  readonly targets?: readonly WorkflowSpecTarget[];
+  // Deployment profiles are authored with a package for convenience, but are
+  // intentionally lowered as DeploymentSpec artifacts after plan compilation.
+  readonly deploymentProfiles?: readonly DeploymentProfile[];
 }
 
 export function defineWorkflowPackage(
@@ -27,25 +21,8 @@ export function defineWorkflowPackage(
     ...(config.environment === undefined
       ? {}
       : { environment: config.environment }),
-    ...(config.targets === undefined ? {} : { targets: [...config.targets] }),
+    ...(config.deploymentProfiles === undefined
+      ? {}
+      : { deploymentProfiles: [...config.deploymentProfiles] }),
   };
 }
-
-export const target = {
-  local(): WorkflowSpecTarget {
-    return { kind: "local" };
-  },
-
-  argo(
-    spec: Omit<Extract<WorkflowSpecTarget, { readonly kind: "argo" }>, "kind">,
-  ): WorkflowSpecTarget {
-    return {
-      kind: "argo",
-      namespace: spec.namespace,
-      serviceAccountName: spec.serviceAccountName,
-      ...(spec.workflowTemplateName === undefined
-        ? {}
-        : { workflowTemplateName: spec.workflowTemplateName }),
-    };
-  },
-};

@@ -41,7 +41,7 @@ massive run workflow/
 
 Workflow entrypoints are explicit exports. For TypeScript v0, a file entrypoint may use a default export or a selected named export such as `workflow.ts#mathWorkflow`. A directory entrypoint should resolve through package configuration rather than recursive inference.
 
-Single-file workflows may run locally without `massive.config.ts`. That zero-config mode creates an ephemeral package config with strict defaults and `local` as the only target. Deployable targets require explicit package configuration.
+Single-file workflows may run locally without `massive.config.ts`. That zero-config mode creates an ephemeral package config with strict defaults. Deployable profiles require explicit package configuration.
 
 Internally, that command still executes the full modular path:
 
@@ -84,14 +84,15 @@ For v0, `.proto` schemas define the typed compiled-plan and manifest contracts, 
 
 Massive has two separate compiler boundary artifacts:
 
-- `WorkflowSpec`: the frontend-emitted, pre-materialization workflow specification. It contains `GraphIR`, schema tables, symbol tables, source package manifests, normalized execution contracts, normalized environment specs, and target requests.
-- `WorkflowPlan`: the backend-compiled unit. It joins the spec with materialized artifact references, datastore paths, backend target metadata, compiler version, validation results, and provenance.
+- `WorkflowSpec`: the frontend-emitted, pre-materialization workflow specification. It contains `GraphIR`, schema tables, symbol tables, source package manifests, normalized execution contracts, and normalized environment specs.
+- `WorkflowPlan`: the backend-compiled unit. It joins the spec with materialized artifact references, datastore paths, compiler version, validation results, and provenance.
+- `DeploymentSpec`: a separately hashed binding from one plan to a target profile. It carries target settings and opaque credential/secret or artifact-store bindings, never raw credentials.
 
 The compiled plan still contains three joined surfaces:
 
 - `GraphIR`: computation topology. For the first v0 wedge this means DAG step nodes, start/end nodes, directed edges, `mergeInputs` fan-in, step symbols, input/output schemas, retry metadata, and artifact edges. Branches, foreach/map, channel declarations, and reducer-backed joins are post-M2 portable-schema work.
 - `ExecutionContract`: how the computation is allowed to run. Contracts reference environment specs by content hash and include resources, secrets, network intents, storage requirements, observability, and runtime mediation mode.
-- `WorkflowPlan`: the compiled unit that joins `GraphIR`, `ExecutionContract`, symbol tables, materialized artifact references, backend target metadata, and provenance.
+- `WorkflowPlan`: the compiled unit that joins `GraphIR`, `ExecutionContract`, symbol tables, materialized artifact references, and provenance.
 
 Backends consume `WorkflowPlan`. They should not need to inspect TypeScript source.
 

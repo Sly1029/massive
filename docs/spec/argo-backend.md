@@ -29,10 +29,12 @@ Argo customization uses typed target config, compiler plugins, and ordered raw p
 
 Typed config is not a separate privileged path. It lowers into the same internal patch representation as user patches.
 
-Argo target config is declared inside `WorkflowSpec` as a target request. The Go compiler may be asked to compile only the Argo request from a multi-target spec, but Argo semantics come from the spec, not ad hoc CLI flags. The compiler is responsible for rejecting workflow features that Argo cannot represent or that the selected Argo target configuration does not enable.
+Argo configuration is declared in a separately hashed `DeploymentSpec` that references one `WorkflowPlan`. It carries profile settings such as namespace, service account, template name, and opaque artifact-store binding; it never carries raw credentials. The target compiler is responsible for rejecting plan features that Argo cannot represent or that the selected profile does not enable.
 
 ```ts
-argoTarget({
+deployment.argo({
+  name: "argo-staging",
+  artifactStoreBinding: "staging-artifacts",
   namespace: "workflows",
   serviceAccountName: "massive-runner",
 

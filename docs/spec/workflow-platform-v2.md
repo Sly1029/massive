@@ -97,7 +97,7 @@ The important seams are:
   separately from where a task process runs. A Cloudflare Worker may coordinate
   a native process running in a Cloudflare Container.
 - **Workflow versus deployment:** `WorkflowSpec` describes semantic behavior.
-  `DeploymentSpec` selects profiles, credentials, namespaces, and targets
+  `DeploymentSpec` selects profiles, credential/secret bindings, namespaces, and targets
   without mutating that behavior.
 - **Runner versus artifact storage:** the runner consumes artifact handles. A
   deep Artifact Runtime hides whether bytes live on a filesystem, S3, or R2.
@@ -119,7 +119,7 @@ surface.
 | Graph IR | Versioned, language-neutral semantic graph emitted by a frontend. |
 | WorkflowSpec | Canonical serialized graph plus schemas and semantic contracts. |
 | WorkflowPlan | Target-independent executable plan produced from a validated spec. |
-| DeploymentSpec | Target/profile bindings such as namespace, credentials, and capacity. |
+| DeploymentSpec | Target/profile bindings such as namespace, credential/secret bindings, and capacity. Raw credentials never serialize. |
 | Execution contract | Reusable environment, resources, secrets, network, storage, and capability requirements for a task. |
 | Invocation descriptor | Exact runner input: symbols, artifact references, schemas, destinations, and attempt identity. |
 | Artifact manifest | Typed description of crystallized outputs whose bodies have already been committed. |

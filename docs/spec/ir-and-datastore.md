@@ -16,7 +16,7 @@ For v0, frontend SDKs emit deterministic `WorkflowSpec` JSON that conforms to th
 
 `WorkflowSpec` is the frontend-emitted, pre-materialization artifact. It is not a runnable plan and should not be accepted directly by backend runners.
 
-The v0 machine contract is the draft 2020-12 JSON Schema at [`../../conformance/schema/workflow-spec.schema.json`](../../conformance/schema/workflow-spec.schema.json). Conformance fixtures live under [`../../conformance/fixtures/specs`](../../conformance/fixtures/specs). The schema validates portable artifact shape; the Go compiler still owns cross-reference validation, DAG validation, target compatibility, and strict type/contract checks.
+The v0 machine contract is the draft 2020-12 JSON Schema at [`../../conformance/schema/workflow-spec.schema.json`](../../conformance/schema/workflow-spec.schema.json). Conformance fixtures live under [`../../conformance/fixtures/specs`](../../conformance/fixtures/specs). The schema validates portable artifact shape; the Go compiler still owns cross-reference validation, DAG validation, and strict type/contract checks.
 
 It includes:
 
@@ -26,19 +26,18 @@ It includes:
 - source package table: one or more source package manifests keyed by source package ID and content hash.
 - environment table: environment specs keyed by environment spec hash.
 - execution contract table: effective workflow and step contracts keyed by content hash.
-- target requests: local, Argo, and future backend planning inputs.
 
 Execution contracts reference environment specs by hash. Environment specs must not be duplicated inside each contract. This keeps environment materialization deduped by the effective dependency environment rather than by resource, secret, or network settings.
 
 The SDK resolves workflow defaults and step overrides before emitting the spec. Graph nodes reference effective execution contracts by content hash. The spec may retain workflow-level defaults and override provenance for explainability, but Go target compilers consume the effective `contractRef` on each node rather than re-running frontend merge semantics.
 
-Target requests are part of the `WorkflowSpec` rather than only CLI arguments. This makes deployment intent portable and content-addressed with the workflow. The Go compiler may compile one requested target, a subset of requested targets, or all requested targets, but it must not silently invent target configuration outside the spec. CLI flags may select requested targets and output locations; they should not mutate target semantics.
+`WorkflowSpec` has no deployment target or credentials. A separately content-addressed `DeploymentSpec` references one `planHash` and carries a named target profile, an opaque artifact-store binding, and target-specific settings. This lets the same workflow and plan deploy under multiple profiles without changing their identities. Raw credentials and connection details never appear in either artifact.
 
-Targets are allowed to support different feature subsets. The Go compiler owns target compatibility checks and should produce explicit diagnostics when a target cannot represent a requested graph shape, execution contract, environment, secret mode, network intent, or storage requirement. Unsupported target features are compile-time errors unless the target has a documented degraded mode and the spec explicitly allows that degradation.
+Targets may support different feature subsets. Target compilers own compatibility checks and produce explicit diagnostics when a target cannot represent a plan shape, execution contract, environment, secret-binding mode, network intent, or storage requirement. Unsupported features are compile-time errors unless the target has a documented degraded mode.
 
 `WorkflowSpec` is content-addressed by a `specHash` over its canonical field tree. The hash is not computed over JSON whitespace or any binary wire encoding.
 
-The emitting SDK is responsible for language-specific validation before it writes a `WorkflowSpec`. For TypeScript, that includes resolving module/export symbols against the source package and checking that the authoring-time step declarations can be lowered into portable schemas and contracts. Any future authoring SDK must perform the equivalent language-specific checks before emitting the same portable spec shape. The Go compiler validates the emitted spec as a portable artifact: schema conformance, graph integrity, contract references, target requests, datastore references, and backend-specific invariants. It should not need to understand each frontend language's import or reflection rules.
+The emitting SDK is responsible for language-specific validation before it writes a `WorkflowSpec`. For TypeScript, that includes resolving module/export symbols against the source package and checking that the authoring-time step declarations can be lowered into portable schemas and contracts. Any future authoring SDK must perform the equivalent language-specific checks before emitting the same portable spec shape. The Go compiler validates the emitted spec as a portable artifact: schema conformance, graph integrity, contract references, datastore references, and backend-specific invariants. It should not need to understand each frontend language's import or reflection rules.
 
 ## Source Packages
 
@@ -71,7 +70,7 @@ Package roots are explicit. A file entrypoint such as `massive run workflow.ts` 
 - local utility modules,
 - package manager manifests and lockfiles,
 - environment defaults,
-- target requests.
+- optional deployment profiles, lowered separately from `WorkflowSpec`.
 
 The compiler should avoid broad implicit packaging. For v0, packaging should be driven by explicit include patterns plus required manifests and lockfiles. Future SDKs may add dependency-graph-assisted suggestions, but the emitted source package manifest must list exact files and content hashes.
 
@@ -80,7 +79,7 @@ For TypeScript v0, the package config file is `massive.config.ts`.
 Example:
 
 ```ts
-import { defineWorkflowPackage, env, target } from "@massive/sdk";
+import { defineWorkflowPackage, deployment, env } from "@massive/sdk";
 
 export default defineWorkflowPackage({
   projectId: "acme/security-workflows",
@@ -91,9 +90,14 @@ export default defineWorkflowPackage({
     packageManager: "pnpm",
     lockfile: "pnpm-lock.yaml",
   }),
-  targets: [
-    target.local({}),
-    target.argo({ namespace: "workflows", serviceAccountName: "massive-runner" }),
+  deploymentProfiles: [
+    deployment.local(),
+    deployment.argo({
+      name: "argo-staging",
+      artifactStoreBinding: "staging-artifacts",
+      namespace: "workflows",
+      serviceAccountName: "massive-runner",
+    }),
   ],
 });
 ```
@@ -109,11 +113,9 @@ include:
   - <workflow-file>
   - package.json if present
   - recognized lockfile if present
-targets:
-  - local
 ```
 
-If the file has multiple exported workflows, the CLI requires an explicit selector such as `workflow.ts#name`. Zero-config specs must not request deployable targets such as Argo.
+If the file has multiple exported workflows, the CLI requires an explicit selector such as `workflow.ts#name`. Zero-config execution is local-only; deployable profiles require explicit package configuration.
 
 ## WorkflowPlan
 
@@ -121,13 +123,13 @@ The compiled plan joins three surfaces:
 
 - `GraphIR`: portable graph topology and typed dataflow.
 - `ExecutionContract`: portable execution requirements.
-- backend/materialization references: code packages, environment artifacts, datastore paths, target metadata, provenance, and compiler version.
+- backend/materialization references: code packages, environment artifacts, datastore paths, provenance, and compiler version.
 
-The Go compiler consumes a `WorkflowSpec`, validates it, resolves target inputs, materializes or records environments, writes package and datastore references, and emits a canonical JSON `WorkflowPlan`.
+The Go compiler consumes a `WorkflowSpec`, validates it, materializes or records environments, writes package and datastore references, and emits a canonical JSON `WorkflowPlan`. Target lowering consumes that plan through a separate `DeploymentSpec`.
 
 The plan should be content-addressed and hashable. Same source inputs, compiler version, target config, patches, environment inputs, and materializer settings should produce the same canonical plan hash. Hashes are computed over canonical field trees, not raw JSON whitespace or binary wire encodings.
 
-Plan fixtures and persisted plans use the deterministic canonical JSON encoding documented in [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md). Runners consume the persisted proto-typed JSON plan and target manifests.
+Plan fixtures and persisted plans use the deterministic canonical JSON encoding documented in [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md). Runners consume the persisted proto-typed JSON plan; target bundles are produced later from a `DeploymentSpec`.
 
 Canonical plans and target bundle manifests must not include wall-clock timestamps. Compiler identity, compiler version, source/spec hashes, materialized artifact refs, and validation results belong in canonical provenance; compile time and bundle emission time are side metadata if they are needed later.
 

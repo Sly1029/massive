@@ -8,14 +8,15 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
-import type { WorkflowPackageConfig, WorkflowSpecTarget } from "./config.ts";
+import type { WorkflowPackageConfig } from "./config.ts";
+import type { DeploymentTarget } from "./deployment.ts";
 import { defineWorkflowPackage } from "./config.ts";
 import { MassiveError } from "./errors.ts";
 import type { EmitSourceSpec } from "./emit.ts";
 import { WorkflowBuilder } from "./workflow.ts";
 
 export interface ResolveWorkflowEntrypointOptions {
-  readonly target?: WorkflowSpecTarget["kind"];
+  readonly target?: DeploymentTarget["kind"];
 }
 
 export interface ResolvedWorkflowEntrypoint {
@@ -71,9 +72,9 @@ export async function resolveWorkflowEntrypoint(
       packageRoot,
       package: {
         ...workflowPackage,
-        entrypoint: `${relativeModulePath(packageRoot, path)}#${
-          selected.exportName
-        }`,
+        entrypoint: `${
+          relativeModulePath(packageRoot, path)
+        }#${selected.exportName}`,
       },
       source: {
         root: packageRoot,
@@ -96,7 +97,6 @@ export async function resolveWorkflowEntrypoint(
   const workflowPackage = defineWorkflowPackage({
     entrypoint: `./${basename(path)}#${selected.exportName}`,
     include,
-    targets: [{ kind: "local" }],
   });
 
   return {
@@ -121,13 +121,22 @@ const WorkflowPackageConfigSchema = z.object({
     z.object({ kind: z.literal("container") }).loose(),
     z.object({ kind: z.literal("node") }).loose(),
   ]).optional(),
-  targets: z.array(
-    z.union([
-      z.object({ kind: z.literal("local") }),
-      z.object({ kind: z.literal("argo") }).loose(),
-    ]),
+  deploymentProfiles: z.array(
+    z.object({
+      name: z.string().min(1),
+      artifactStoreBinding: z.string().min(1),
+      target: z.union([
+        z.object({ kind: z.literal("local") }).strict(),
+        z.object({
+          kind: z.literal("argo"),
+          namespace: z.string().min(1),
+          serviceAccountName: z.string().min(1),
+          workflowTemplateName: z.string().min(1).optional(),
+        }).strict(),
+      ]),
+    }).strict(),
   ).optional(),
-});
+}).strict();
 
 async function loadWorkflowPackageConfig(
   configPath: string,
@@ -147,10 +156,12 @@ export function parseWorkflowPackageConfig(
   const parsed = WorkflowPackageConfigSchema.safeParse(value);
   if (!parsed.success) {
     throw new MassiveError(
-      `Invalid massive.config.ts at ${configPath}: ${z.prettifyError(parsed.error)}`,
+      `Invalid massive.config.ts at ${configPath}: ${
+        z.prettifyError(parsed.error)
+      }`,
     );
   }
-  return value as WorkflowPackageConfig;
+  return parsed.data as WorkflowPackageConfig;
 }
 
 async function selectWorkflowExport(
@@ -193,7 +204,9 @@ async function selectWorkflowExport(
     );
   }
 
-  throw new MassiveError(`Workflow entrypoint "${filePath}" exports no workflows`);
+  throw new MassiveError(
+    `Workflow entrypoint "${filePath}" exports no workflows`,
+  );
 }
 
 function parseEntrypoint(specifier: string): {
@@ -227,7 +240,12 @@ async function findNearestConfig(start: string): Promise<string | undefined> {
 }
 
 async function nearbyPackageFiles(root: string): Promise<string[]> {
-  const files = ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"];
+  const files = [
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+  ];
   const present: string[] = [];
   for (const file of files) {
     if (await exists(resolve(root, file))) {

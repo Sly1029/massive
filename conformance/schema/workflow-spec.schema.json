@@ -16,8 +16,7 @@
     "symbols",
     "sourcePackages",
     "environments",
-    "contracts",
-    "targets"
+    "contracts"
   ],
   "properties": {
     "kind": { "const": "WorkflowSpec" },
@@ -59,11 +58,6 @@
       "type": "object",
       "propertyNames": { "$ref": "#/$defs/hashRef" },
       "additionalProperties": { "$ref": "#/$defs/executionContract" }
-    },
-    "targets": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/target" }
     }
   },
   "$defs": {
@@ -277,31 +271,6 @@
             }
           ]
         }
-      }
-    },
-    "target": {
-      "oneOf": [
-        { "$ref": "#/$defs/localTarget" },
-        { "$ref": "#/$defs/argoTarget" }
-      ]
-    },
-    "localTarget": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind"],
-      "properties": {
-        "kind": { "const": "local" }
-      }
-    },
-    "argoTarget": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "namespace", "serviceAccountName"],
-      "properties": {
-        "kind": { "const": "argo" },
-        "namespace": { "$ref": "#/$defs/id" },
-        "serviceAccountName": { "$ref": "#/$defs/id" },
-        "workflowTemplateName": { "$ref": "#/$defs/id" }
       }
     }
   }

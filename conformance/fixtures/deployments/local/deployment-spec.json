@@ -1,0 +1,14 @@
+{
+  "kind": "DeploymentSpec",
+  "schemaVersion": 0,
+  "encoding": "json-v0",
+  "planHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "profile": {
+    "name": "local",
+    "artifactStoreBinding": "local-artifacts",
+    "target": {
+      "kind": "local"
+    }
+  },
+  "deploymentHash": "sha256:588e712d119b14c4b3b920d30f3d720026864c1e80795e21abad48e5bd277388"
+}

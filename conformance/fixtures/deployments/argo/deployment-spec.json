@@ -1,0 +1,17 @@
+{
+  "kind": "DeploymentSpec",
+  "schemaVersion": 0,
+  "encoding": "json-v0",
+  "planHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "profile": {
+    "name": "argo-staging",
+    "artifactStoreBinding": "staging-artifacts",
+    "target": {
+      "kind": "argo",
+      "namespace": "staging",
+      "serviceAccountName": "massive-runner",
+      "workflowTemplateName": "example-workflow"
+    }
+  },
+  "deploymentHash": "sha256:1f9cbb8ecef62227ea093de2a3b7c28a7383e7e437a5b62bf35763882095a55b"
+}

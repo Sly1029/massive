@@ -5,13 +5,13 @@ import {
   computeSpecHash,
   type Datastore,
   datastore,
+  type DeploymentTarget,
   emitWorkflowSpec,
   MassiveError,
   parseWorkflowPackageConfig,
   resolveWorkflowEntrypoint,
   type WorkflowPackageConfig,
   type WorkflowSpec,
-  type WorkflowSpecTarget,
 } from "@massive/sdk";
 import { hashSourcePackage } from "../../sdk/src/source-package.ts";
 import { sha256Text, stableStringify } from "../../sdk/src/stable.ts";
@@ -51,13 +51,13 @@ export type RunnerExit = Exclude<
   (typeof RUNNER_EXIT_CODES)[keyof typeof RUNNER_EXIT_CODES],
   0
 >;
-export type TargetId = WorkflowSpecTarget["kind"];
+export type TargetId = DeploymentTarget["kind"];
 
 // Project identity is never a bare string downstream: the CLI resolves it and
 // always passes --project to the orchestrator so failures surface here with an
 // actionable message. "derived" is the zero-config ephemeral id used outside a
 // git repo (`local/` + first 12 hex of sha256(absolute packageRoot)); a
-// deployable target request is refused before that id is ever used.
+// deployable target is refused before that id is ever used.
 export type ProjectIdentity =
   | { readonly kind: "configured"; readonly projectId: string }
   | { readonly kind: "git-origin"; readonly ownerRepo: string }
@@ -231,7 +231,7 @@ async function prepare(req: RunRequest, store: Datastore): Promise<Emitted> {
   if (cfg !== undefined) {
     const source = await hashSourcePackage(cfg.source);
     // The identity hash keys the emit cache on everything that determines the
-    // emitted spec: source content, targets, the RESOLVED entrypoint identity
+    // emitted spec: source content, the RESOLVED entrypoint identity
     // (module + export, so two workflows in one package do not collide), and the
     // EVALUATED config (so an edit to an imported settings module is a miss even
     // though the config file bytes are unchanged). Derived statically — the
@@ -239,7 +239,6 @@ async function prepare(req: RunRequest, store: Datastore): Promise<Emitted> {
     const entry = staticEntryIdentity(req.entry, cfg.packageRoot);
     identityHash = emitIdentityHash(
       source.sourcePackageHash,
-      cfg.targets,
       entry,
       cfg.configHash,
     );
@@ -548,17 +547,16 @@ interface SourceConfig {
     readonly root: string;
     readonly include: readonly string[];
   };
-  readonly targets: readonly WorkflowSpecTarget[];
   readonly projectId?: string;
   // sha256 (hex) of the EVALUATED, spec-relevant config fields (entrypoint,
-  // include, environment, targets), folded into the emit cache key so a config
+  // include, environment), folded into the emit cache key so a config
   // change invalidates a cached spec even when the config file is not covered by
   // the source `include` globs — including edits that flow in via an imported
   // settings module without changing the config file bytes.
   readonly configHash: string;
 }
 
-// Loads massive.config.ts to derive the source spec + targets WITHOUT importing
+// Loads massive.config.ts to derive the source spec WITHOUT importing
 // the workflow module, so a cache hit can be decided before paying the import
 // cost. Returns undefined for zero-config packages (no cache fast path); the
 // authoritative resolveWorkflowEntrypoint still runs on every cache miss, so
@@ -591,12 +589,10 @@ async function resolveSourceConfig(
     entrypoint: config.entrypoint,
     include: config.include,
     environment: config.environment,
-    targets: config.targets,
   }));
   return {
     packageRoot,
     source: { root: packageRoot, include: config.include },
-    targets: config.targets ?? [{ kind: "local" }],
     projectId: config.projectId,
     configHash,
   };
@@ -758,12 +754,11 @@ function splitDiagnostics(stderr: string): string[] {
 // this hash so a read can confirm the pointer is bound to the current run.
 function emitIdentityHash(
   sourcePackageHash: string,
-  targets: readonly WorkflowSpecTarget[],
   entry: { readonly module: string; readonly export: string },
   configHash: string,
 ): string {
   return sha256Text(
-    stableStringify({ sourcePackageHash, targets, entry, configHash }),
+    stableStringify({ sourcePackageHash, entry, configHash }),
   );
 }
 
