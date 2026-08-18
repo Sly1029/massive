@@ -36,13 +36,11 @@ def _encode(value: JsonValue) -> str:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     if isinstance(value, list):
         return "[" + ",".join(_encode(item) for item in value) + "]"
-    if isinstance(value, dict):
-        encoded = []
-        for key in sorted(value, key=lambda item: item.encode("utf-16-be")):
-            _assert_well_formed_unicode(key)
-            encoded.append(f"{_encode(key)}:{_encode(value[key])}")
-        return "{" + ",".join(encoded) + "}"
-    raise TypeError(f"unsupported canonical JSON value: {type(value).__name__}")
+    encoded: list[str] = []
+    for key in sorted(value, key=lambda item: item.encode("utf-16-be")):
+        _assert_well_formed_unicode(key)
+        encoded.append(f"{_encode(key)}:{_encode(value[key])}")
+    return "{" + ",".join(encoded) + "}"
 
 
 def _assert_well_formed_unicode(value: str) -> None:

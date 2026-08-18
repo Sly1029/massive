@@ -6,10 +6,10 @@ import importlib
 import inspect
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import Protocol, cast
 
 from jsonschema import Draft202012Validator
 from pydantic import TypeAdapter
@@ -22,6 +22,13 @@ _SOURCE_DIRECTORY_CONTENT_TYPE = "application/vnd.massive.source-directory+json"
 _DESCRIPTOR_EXIT = 64
 _SCHEMA_EXIT = 65
 _STEP_EXIT = 66
+
+type Descriptor = dict[str, object]
+type StepFunction = Callable[[StepContext[None, object]], object | Awaitable[object]]
+
+
+class SchemaValidator(Protocol):
+    def validate(self, value: object) -> None: ...
 
 
 class DescriptorError(Exception):
@@ -52,35 +59,36 @@ def run_descriptor_path(path: Path) -> int:
         return _STEP_EXIT
 
 
-def _load_descriptor(path: Path) -> dict[str, Any]:
+def _load_descriptor(path: Path) -> Descriptor:
     try:
-        descriptor = json.loads(path.read_text())
+        descriptor: object = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as error:
         raise DescriptorError(f"cannot read descriptor {path}: {error}") from error
     if not isinstance(descriptor, dict):
         raise DescriptorError("descriptor must be a JSON object")
-    _require(descriptor, "kind", "StepInvocationDescriptor")
-    _require(descriptor, "schemaVersion", 0)
-    _require(descriptor, "encoding", "json-v0")
-    _require_mapping(descriptor, "symbol")
-    _require_mapping(descriptor, "sourcePackage")
-    _require_mapping(descriptor, "input")
-    _require_mapping(descriptor, "output")
-    datastore = _require_mapping(descriptor, "datastore")
+    typed_descriptor = cast(Descriptor, descriptor)
+    _require(typed_descriptor, "kind", "StepInvocationDescriptor")
+    _require(typed_descriptor, "schemaVersion", 0)
+    _require(typed_descriptor, "encoding", "json-v0")
+    _require_mapping(typed_descriptor, "symbol")
+    _require_mapping(typed_descriptor, "sourcePackage")
+    _require_mapping(typed_descriptor, "input")
+    _require_mapping(typed_descriptor, "output")
+    datastore = _require_mapping(typed_descriptor, "datastore")
     _require(datastore, "kind", "local")
     if not isinstance(datastore.get("path"), str) or not datastore["path"]:
         raise DescriptorError("local datastore requires a path")
-    return descriptor
+    return typed_descriptor
 
 
-def _execute(descriptor: dict[str, Any]) -> None:
+def _execute(descriptor: Descriptor) -> None:
     symbol = _require_mapping(descriptor, "symbol")
     source_package = _require_mapping(descriptor, "sourcePackage")
     if symbol.get("language") != "python" or source_package.get("language") != "python":
         raise DescriptorError("Python runner requires Python symbol and source package")
     if symbol.get("packageId") != source_package.get("packageId"):
         raise DescriptorError("symbol package does not match source package")
-    datastore = Path(cast(str, _require_mapping(descriptor, "datastore")["path"])).resolve()
+    datastore = Path(_string(_require_mapping(descriptor, "datastore"), "path")).resolve()
     input_value, _input_schema = _read_input(descriptor, datastore)
     source_root = _source_root(source_package, datastore)
     function, input_adapter, output_adapter = _resolve_step(symbol, source_root)
@@ -89,7 +97,7 @@ def _execute(descriptor: dict[str, Any]) -> None:
             input_value = input_adapter.validate_python(input_value)
         except Exception as error:
             raise SchemaError(f"input does not satisfy the step input type: {error}") from error
-    context = StepContext(
+    context = StepContext[None, object](
         inputs=input_value,
         deps=None,
         invocation=InvocationContext(
@@ -101,7 +109,7 @@ def _execute(descriptor: dict[str, Any]) -> None:
     try:
         output = function(context)
         if inspect.isawaitable(output):
-            output = asyncio.run(output)
+            output = asyncio.run(_await_output(output))
     except Exception as error:
         raise StepError(str(error)) from error
     if output_adapter is not None:
@@ -120,7 +128,11 @@ def _execute(descriptor: dict[str, Any]) -> None:
     _write(datastore, _string(output_artifact, "key"), output_text)
 
 
-def _read_input(descriptor: dict[str, Any], datastore: Path) -> tuple[JsonValue, dict[str, Any]]:
+async def _await_output(value: Awaitable[object]) -> object:
+    return await value
+
+
+def _read_input(descriptor: Descriptor, datastore: Path) -> tuple[JsonValue, dict[str, object]]:
     input_descriptor = _require_mapping(descriptor, "input")
     artifact = _require_mapping(input_descriptor, "artifact")
     expected_hash = _string(artifact, "hash")
@@ -138,30 +150,31 @@ def _read_input(descriptor: dict[str, Any], datastore: Path) -> tuple[JsonValue,
     return value, schema
 
 
-def _schema(datastore: Path, reference: str) -> dict[str, Any]:
+def _schema(datastore: Path, reference: str) -> dict[str, object]:
     if not reference.startswith("sha256:"):
         raise SchemaError("schema reference is not a SHA-256 reference")
     text = _read(datastore, f"blobs/sha256/{reference.removeprefix('sha256:')}")
     try:
-        schema = json.loads(text)
+        schema: object = json.loads(text)
     except json.JSONDecodeError as error:
         raise SchemaError(f"schema is not JSON: {error}") from error
     if not isinstance(schema, dict):
         raise SchemaError("schema must be an object")
     if sha256_ref(canonical_json(cast(JsonValue, schema))) != reference:
         raise SchemaError("schema hash mismatch")
-    return schema
+    return cast(dict[str, object], schema)
 
 
-def _validate(schema: dict[str, Any], value: Any, role: str) -> None:
+def _validate(schema: Mapping[str, object], value: object, role: str) -> None:
     try:
         Draft202012Validator.check_schema(schema)
-        Draft202012Validator(schema).validate(value)
+        validator = cast(SchemaValidator, Draft202012Validator(schema))
+        validator.validate(value)
     except Exception as error:
         raise SchemaError(f"{role} does not satisfy its JSON Schema: {error}") from error
 
 
-def _source_root(source_package: dict[str, Any], datastore: Path) -> Path:
+def _source_root(source_package: Descriptor, datastore: Path) -> Path:
     archive = _require_mapping(source_package, "sourceArchive")
     if archive.get("contentType") != _SOURCE_DIRECTORY_CONTENT_TYPE:
         raise DescriptorError("Python runner currently requires a local source-directory package")
@@ -169,20 +182,20 @@ def _source_root(source_package: dict[str, Any], datastore: Path) -> Path:
     if sha256_ref(text) != _string(archive, "hash"):
         raise DescriptorError("source archive hash mismatch")
     try:
-        pointer = json.loads(text)
+        pointer: object = json.loads(text)
     except json.JSONDecodeError as error:
         raise DescriptorError(f"source pointer is not JSON: {error}") from error
-    if not isinstance(pointer, dict) or not isinstance(pointer.get("sourceFetch"), str):
+    if not isinstance(pointer, dict):
         raise DescriptorError("source pointer must contain a sourceFetch path")
-    root = Path(pointer["sourceFetch"]).resolve()
+    root = Path(_string(cast(Descriptor, pointer), "sourceFetch")).resolve()
     if not root.is_dir():
         raise DescriptorError("source package root does not exist")
     return root
 
 
 def _resolve_step(
-    symbol: dict[str, Any], source_root: Path
-) -> tuple[Any, TypeAdapter[Any] | None, TypeAdapter[Any] | None]:
+    symbol: Descriptor, source_root: Path
+) -> tuple[StepFunction, TypeAdapter[object] | None, TypeAdapter[object] | None]:
     module_name = _string(symbol, "module")
     if not module_name or any(not part.isidentifier() for part in module_name.split(".")):
         raise DescriptorError("Python module must be a dotted identifier")
@@ -196,18 +209,19 @@ def _resolve_step(
             raise DescriptorError(f"cannot import {module_name}: {error}") from error
     exported = getattr(module, export, None)
     if isinstance(exported, StepDefinition):
+        step = cast(StepDefinition[object, object, object], exported)
         return (
-            exported.function,
-            TypeAdapter(exported.input_type),
-            TypeAdapter(exported.output_type),
+            cast(StepFunction, step.function),
+            TypeAdapter[object](step.input_type),
+            TypeAdapter[object](step.output_type),
         )
     if callable(exported):
-        return exported, None, None
+        return cast(StepFunction, exported), None, None
     raise DescriptorError(f"export {export!r} is not a step function")
 
 
 @contextmanager
-def _source_import_path(root: Path) -> Iterator[None]:
+def _source_import_path(root: Path) -> Generator[None, None, None]:
     root_text = str(root)
     sys.path.insert(0, root_text)
     try:
@@ -240,19 +254,19 @@ def _path(root: Path, key: str) -> Path:
     return candidate
 
 
-def _require(value: dict[str, Any], key: str, expected: Any) -> None:
+def _require(value: Mapping[str, object], key: str, expected: object) -> None:
     if value.get(key) != expected:
         raise DescriptorError(f"descriptor field {key!r} must equal {expected!r}")
 
 
-def _require_mapping(value: dict[str, Any], key: str) -> dict[str, Any]:
+def _require_mapping(value: Mapping[str, object], key: str) -> Descriptor:
     child = value.get(key)
     if not isinstance(child, dict):
         raise DescriptorError(f"descriptor field {key!r} must be an object")
-    return cast(dict[str, Any], child)
+    return cast(Descriptor, child)
 
 
-def _string(value: dict[str, Any], key: str) -> str:
+def _string(value: Mapping[str, object], key: str) -> str:
     child = value.get(key)
     if not isinstance(child, str) or not child:
         raise DescriptorError(f"descriptor field {key!r} must be a non-empty string")

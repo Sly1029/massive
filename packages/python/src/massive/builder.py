@@ -63,8 +63,8 @@ class _EndHandle(Generic[WorkflowOutputT]):
 
 
 class EdgePath(Generic[OutputT]):
-    def __init__(self, graph: GraphBuilder[Any, Any, Any], source: str, output_type: Any) -> None:
-        self._graph = graph
+    def __init__(self, add_edge: Callable[[str, str], None], source: str, output_type: Any) -> None:
+        self._add_edge = add_edge
         self._source = source
         self._output_type = output_type
 
@@ -79,9 +79,9 @@ class EdgePath(Generic[OutputT]):
         if self._output_type != expected:
             raise TypeError(f"edge from {self._source!r} has incompatible input type")
         target_id = target.node_id if isinstance(target, NodeHandle) else _END
-        self._graph._add_edge(self._source, target_id)
+        self._add_edge(self._source, target_id)
         if isinstance(target, NodeHandle):
-            return EdgePath(self._graph, target_id, target.output_type)
+            return EdgePath(self._add_edge, target_id, target.output_type)
         return None
 
 
@@ -190,7 +190,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         node_id = _START if isinstance(source, _StartHandle) else source.node_id
         if node_id != _START and node_id not in self._nodes:
             raise ValueError("edge source belongs to a different graph")
-        return EdgePath(self, node_id, source.output_type)
+        return EdgePath(self._add_edge, node_id, source.output_type)
 
     def _add_edge(self, source: str, target: str) -> None:
         if source not in {_START, *self._nodes}:
