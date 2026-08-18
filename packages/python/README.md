@@ -94,6 +94,12 @@ matches the runtime boundary: inputs are parsed into Python values with
 `TypeAdapter.validate_python`, while outputs are validated and then converted
 with `dump_python(mode="json")` before publication.
 
+`emit()` still checks the serialization shape for both directions before it
+accepts an input validation schema. That prevents a bare `float` input from
+appearing portable merely because Pydantic can validate it: its serialized
+shape is JSON `number`, which v0 cannot carry. Decimal passes this check because
+its serialized shape is a string.
+
 That distinction makes `Decimal` useful without inventing a second wire
 format. Pydantic accepts a Decimal input in its validation schema and serializes
 the output as a JSON string, so an output such as `Decimal("10.5")` is stored as

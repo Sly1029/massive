@@ -17,6 +17,9 @@ leaving one. Runtimes validate inputs with `TypeAdapter`, serialize outputs with
 This lets Pydantic `Decimal` cross the wire as its serialized string form while
 keeping v0's prohibition on floating-point JSON numbers. TypeScript remains a
 supported frontend and consumes the same versioned graph and artifact contracts.
+The Python emitter emits validation schemas for inputs, but checks each input
+type's serialization schema before emission; this rejects a bare `float` input
+while retaining Decimal's canonical string transport.
 
 Two audiences anchor the design. Workflow authors get a typed Python SDK and a one-command local loop, with TypeScript also supported. Platform teams get the differentiating layer: compiled, deterministic, provenance-carrying deploy bundles whose execution contracts (environment, resources, secrets, network) are verifiable artifacts rather than runtime configuration. When scope decisions are close, the compile/verify/provenance layer wins.
 
