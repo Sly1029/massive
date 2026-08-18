@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,11 @@ var (
 	ErrIntegrity        = errors.New("artifact integrity check failed")
 	ErrBodyConflict     = errors.New("artifact body conflict")
 	ErrManifestConflict = errors.New("artifact manifest conflict")
+)
+
+var (
+	safePathSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9_.@:#-]+$`)
+	safeProjectKeyPattern  = regexp.MustCompile(`^[A-Za-z0-9_.@:#-]+(/[A-Za-z0-9_.@:#-]+)*$`)
 )
 
 type Destination struct {
@@ -166,6 +172,9 @@ func ResolveJSON(ctx context.Context, store datastore.Datastore, destination Des
 }
 
 func validateDestination(destination Destination, producer Producer) error {
+	if err := validateProducerIdentity(producer); err != nil {
+		return err
+	}
 	want, err := datastore.ParseKey("projects/" + producer.ProjectKey + "/runs/" + producer.RunID + "/steps/" + producer.NodeID + "/" + strconv.Itoa(producer.Attempt) + "/output-manifest.json")
 	if err != nil {
 		return fmt.Errorf("%w: invalid producer identity: %v", ErrValidation, err)
@@ -174,6 +183,38 @@ func validateDestination(destination Destination, producer Producer) error {
 		return fmt.Errorf("%w: manifest destination %s does not match producer slot %s", ErrValidation, destination.ManifestKey, want)
 	}
 	return nil
+}
+
+func validateProducerIdentity(producer Producer) error {
+	if !isSafeProjectKey(producer.ProjectKey) {
+		return fmt.Errorf("%w: project key %q is not a safe relative path", ErrValidation, producer.ProjectKey)
+	}
+	if !isSafePathSegment(producer.RunID) {
+		return fmt.Errorf("%w: run ID %q is not a safe path segment", ErrValidation, producer.RunID)
+	}
+	if !isSafePathSegment(producer.NodeID) {
+		return fmt.Errorf("%w: node ID %q is not a safe path segment", ErrValidation, producer.NodeID)
+	}
+	if producer.Attempt < 1 {
+		return fmt.Errorf("%w: attempt must be at least one", ErrValidation)
+	}
+	return nil
+}
+
+func isSafePathSegment(value string) bool {
+	return safePathSegmentPattern.MatchString(value) && value != "." && value != ".."
+}
+
+func isSafeProjectKey(value string) bool {
+	if !safeProjectKeyPattern.MatchString(value) {
+		return false
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if !isSafePathSegment(segment) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateCanonicalJSON(ctx context.Context, store datastore.Datastore, schemaRef string, body []byte) error {

@@ -15,10 +15,17 @@
     "body": { "$ref": "#/$defs/body" }
   },
   "$defs": {
-    "id": {
+    "pathSegment": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^[A-Za-z0-9_.@/:#-]+$"
+      "pattern": "^[A-Za-z0-9_.@:#-]+$",
+      "not": { "enum": [".", ".."] }
+    },
+    "projectKey": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.@:#-]+(/[A-Za-z0-9_.@:#-]+)*$",
+      "not": { "pattern": "(^|/)(\\.|\\.\\.)(/|$)" }
     },
     "hashRef": {
       "type": "string",
@@ -29,10 +36,10 @@
       "additionalProperties": false,
       "required": ["projectKey", "planHash", "runId", "nodeId", "attempt"],
       "properties": {
-        "projectKey": { "$ref": "#/$defs/id" },
+        "projectKey": { "$ref": "#/$defs/projectKey" },
         "planHash": { "$ref": "#/$defs/hashRef" },
-        "runId": { "$ref": "#/$defs/id" },
-        "nodeId": { "$ref": "#/$defs/id" },
+        "runId": { "$ref": "#/$defs/pathSegment" },
+        "nodeId": { "$ref": "#/$defs/pathSegment" },
         "attempt": { "type": "integer", "minimum": 1 }
       }
     },

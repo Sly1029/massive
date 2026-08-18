@@ -77,6 +77,16 @@ Conditional-create conflict is followed only by a stable read and comparison.
 The runtime never performs `Exists` followed by an unconditional write and
 never rewrites a conflicting key.
 
+Artifact immutability is enforced at this module boundary: publication uses
+`Datastore.Put(..., IfAbsent: true)` for every body and output manifest, then
+requires the existing object to match exactly. `Datastore` itself deliberately
+also supports ordinary replacement writes for mutable control records such as
+run journals; it is not an immutable-store abstraction. The local adapter
+publishes an `IfAbsent` object's complete content-type sidecar before making
+its body visible. A crash can therefore leave metadata without a body, which a
+matching retry completes; it cannot expose a body with a default or competing
+content type.
+
 Content bodies are shared within one configured security realm. Retention must
 eventually mark reachable bodies from immutable manifests, apply a grace period
 for interrupted publications, and then sweep unreachable bodies. Deleting from
