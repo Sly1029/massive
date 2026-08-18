@@ -26,7 +26,7 @@
     "schemaVersion": { "const": 1 },
     "encoding": { "const": "json-v1" },
     "planHash": { "$ref": "#/$defs/hashRef" },
-    "projectKey": { "$ref": "#/$defs/id" },
+    "projectKey": { "$ref": "#/$defs/projectKey" },
     "runId": { "$ref": "#/$defs/id" },
     "nodeId": { "$ref": "#/$defs/id" },
     "attempt": {
@@ -53,6 +53,10 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^[A-Za-z0-9_.@/:#-]+$"
+    },
+    "projectKey": {
+      "type": "string",
+      "pattern": "^sha256-[0-9a-f]{64}$"
     },
     "relativePath": {
       "type": "string",

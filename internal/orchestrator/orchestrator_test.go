@@ -42,7 +42,10 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	if len(invoker.descriptors) != 3 {
 		t.Fatalf("captured descriptors = %d, want 3", len(invoker.descriptors))
 	}
-	assertNoCredentialMaterial(t, mustMarshalCanonical(t, invoker.descriptors[0]))
+	for _, descriptor := range invoker.descriptors {
+		assertNoCredentialMaterial(t, mustMarshalCanonical(t, descriptor))
+		assertLiveDescriptorValidAgainstFrozenSchema(t, descriptor)
+	}
 	manifest := getObject(t, storeRoot, result.ManifestKey)
 	assertNoCredentialMaterial(t, manifest.Body)
 
@@ -51,7 +54,6 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	// Assert their distinct provenance on the un-normalized descriptor.
 	planPackageHash := compiled.Plan.GetSourcePackages()[0].GetPackageHash()
 	descriptor := invoker.descriptors[0]
-	assertLiveDescriptorValidAgainstFrozenSchema(t, descriptor)
 	if descriptor.SchemaVersion != 1 || descriptor.Encoding != "json-v1" {
 		t.Fatalf("descriptor protocol = (%d, %q), want v1/json-v1", descriptor.SchemaVersion, descriptor.Encoding)
 	}
@@ -62,15 +64,35 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 		t.Fatalf("descriptor output manifest key = %q", descriptor.Output.ManifestKey)
 	}
 	runManifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
-	output := runManifest.Steps[0].Attempts[0].Output
-	if output == nil {
-		t.Fatal("first successful attempt has no published output")
+	outputsByNode := make(map[string]manifestPublishedArtifact, len(runManifest.Steps))
+	for _, step := range runManifest.Steps {
+		if len(step.Attempts) != 1 || step.Attempts[0].Output == nil {
+			t.Fatalf("journal step %q attempts = %#v, want one published output", step.NodeID, step.Attempts)
+		}
+		outputsByNode[step.NodeID] = *step.Attempts[0].Output
 	}
-	if output.Manifest.Key != descriptor.Output.ManifestKey || output.Manifest.ContentType != artifact.ManifestContentType {
-		t.Fatalf("journal manifest ref = %#v, want immutable published manifest", output.Manifest)
-	}
-	if !strings.HasPrefix(output.Body.Key, "blobs/sha256/") || output.Body.ContentType != artifact.JSONContentType {
-		t.Fatalf("journal body ref = %#v, want content-addressed canonical JSON", output.Body)
+	for _, live := range invoker.descriptors {
+		output, ok := outputsByNode[live.NodeID]
+		if !ok {
+			t.Fatalf("journal omitted output for descriptor node %q", live.NodeID)
+		}
+		if output.Manifest.Key != live.Output.ManifestKey || output.Manifest.ContentType != artifact.ManifestContentType {
+			t.Fatalf("journal manifest ref for %q = %#v, want immutable published manifest", live.NodeID, output.Manifest)
+		}
+		if !strings.HasPrefix(output.Body.Key, "blobs/sha256/") || output.Body.ContentType != artifact.JSONContentType {
+			t.Fatalf("journal body ref for %q = %#v, want content-addressed canonical JSON", live.NodeID, output.Body)
+		}
+		if output.Schema != live.Output.Schema {
+			t.Fatalf("journal schema for %q = %q, descriptor output schema = %q", live.NodeID, output.Schema, live.Output.Schema)
+		}
+		manifestObject := getObject(t, storeRoot, output.Manifest.Key)
+		if output.Manifest.Size != len(manifestObject.Body) {
+			t.Fatalf("journal manifest size for %q = %d, stored size = %d", live.NodeID, output.Manifest.Size, len(manifestObject.Body))
+		}
+		bodyObject := getObject(t, storeRoot, output.Body.Key)
+		if output.Body.Size != len(bodyObject.Body) {
+			t.Fatalf("journal body size for %q = %d, stored size = %d", live.NodeID, output.Body.Size, len(bodyObject.Body))
+		}
 	}
 	if descriptor.SourcePackage.PackageHash != planPackageHash {
 		t.Fatalf("descriptor packageHash = %s, want plan packageHash %s", descriptor.SourcePackage.PackageHash, planPackageHash)
@@ -118,6 +140,35 @@ func assertLiveDescriptorValidAgainstFrozenSchema(t *testing.T, descriptor StepI
 	cmd.Dir = root
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("live Go descriptor violates frozen schema: %v\n%s", err, output)
+	}
+}
+
+func TestFrozenDescriptorSchemaRejectsRawProjectID(t *testing.T) {
+	document := readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json")
+	document = bytes.Replace(
+		document,
+		[]byte(`"projectKey": "sha256-9999999999999999999999999999999999999999999999999999999999999999"`),
+		[]byte(`"projectKey": "acme/security-workflows"`),
+		1,
+	)
+	descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
+	if err := os.WriteFile(descriptorPath, document, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := repoRootForTest(t)
+	parserURL := "file://" + filepath.ToSlash(filepath.Join(root, "packages", "sdk", "src", "runner", "descriptor.ts"))
+	cmd := exec.Command(
+		"deno", "eval", "--config", filepath.Join(root, "deno.json"),
+		`const module = await import(Deno.args[0]); await module.parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[1]));`,
+		parserURL, descriptorPath,
+	)
+	cmd.Dir = root
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("frozen descriptor schema accepted raw project id")
+	}
+	if !strings.Contains(string(output), "projectKey") {
+		t.Fatalf("descriptor validation error = %q, want projectKey", output)
 	}
 }
 

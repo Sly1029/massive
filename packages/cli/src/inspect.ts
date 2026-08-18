@@ -1,5 +1,5 @@
 import type { Datastore } from "@massive/sdk";
-import { findRunManifestKeys } from "./run.ts";
+import { findRunManifestKeys, readRunManifestAt } from "./run.ts";
 
 export interface InspectRequest {
   readonly runId: string;
@@ -21,27 +21,8 @@ export type InspectResult =
     readonly kind: "ambiguous";
     readonly runId: string;
     readonly candidates: readonly string[];
-  };
-
-interface RunManifest {
-  readonly planHash: string;
-  readonly status: string;
-  readonly steps: readonly {
-    readonly nodeId: string;
-    readonly status: string;
-    readonly attempts?: readonly {
-      readonly output?: {
-        readonly manifest: { readonly key: string; readonly hash: string };
-        readonly body: { readonly key: string; readonly hash: string };
-      };
-      readonly input?: { readonly key: string; readonly hash: string };
-      readonly diagnostic?: string;
-    }[];
-  }[];
-  readonly result?: { readonly key: string; readonly hash: string };
-}
-
-const decoder = new TextDecoder();
+  }
+  | { readonly kind: "invalid-manifest"; readonly message: string };
 
 // Reads the run manifest + result for a past run and reports keys/hashes WITHOUT
 // re-executing anything — it never spawns a step or writes new run artifacts.
@@ -58,9 +39,15 @@ export async function inspectRun(
   }
   const key = keys[0]!;
 
-  const manifest = JSON.parse(
-    decoder.decode(await store.get(key)),
-  ) as RunManifest;
+  let manifest;
+  try {
+    manifest = await readRunManifestAt(store, key);
+  } catch (error) {
+    return {
+      kind: "invalid-manifest",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
   if (req.json) {
     return { kind: "ok", text: JSON.stringify(manifest) + "\n" };
   }

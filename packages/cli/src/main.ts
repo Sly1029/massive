@@ -126,6 +126,13 @@ async function inspectCommand(parsed: Parsed): Promise<number> {
     );
     return EXIT.config;
   }
+  if (result.kind === "invalid-manifest") {
+    await write(
+      Deno.stderr,
+      `✗ cannot inspect run "${runId}": ${result.message}\n\n  next  upgrade the CLI for this run-manifest protocol or inspect it with a compatible Massive version\n`,
+    );
+    return EXIT.config;
+  }
   await write(Deno.stdout, result.text);
   return EXIT.ok;
 }

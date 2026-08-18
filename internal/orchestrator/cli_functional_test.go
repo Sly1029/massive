@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/plan"
@@ -164,7 +165,7 @@ func TestOrchestratorCLILinearChainRealRunner(t *testing.T) {
 	compiled, _ := compileConsistentFixture(t, "linear-chain", workspace)
 	assertResultArtifact(t, storeRoot, projectKey, runID, `"value:41"`)
 	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
-	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, []string{"double", "increment", "label"})
+	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, compiled)
 }
 
 func TestOrchestratorCLIDiamondFanInRealRunner(t *testing.T) {
@@ -187,7 +188,7 @@ func TestOrchestratorCLIDiamondFanInRealRunner(t *testing.T) {
 	compiled, _ := compileConsistentFixture(t, "diamond", workspace)
 	assertResultArtifact(t, storeRoot, projectKey, runID, `81`)
 	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
-	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, []string{"split", "left", "right", "merge"})
+	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, compiled)
 	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge").String(), `[21,60]`)
 }
 
@@ -215,7 +216,7 @@ func TestOrchestratorCLIMultiStageFanInRealRunner(t *testing.T) {
 	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-b").String(), `[23,24]`)
 	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-final").String(), `[43,47]`)
 	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
-	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, stepIDs(compiled))
+	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, compiled)
 }
 
 func TestOrchestratorCLIUnevenFanInRealRunner(t *testing.T) {
@@ -240,7 +241,7 @@ func TestOrchestratorCLIUnevenFanInRealRunner(t *testing.T) {
 	assertResultArtifact(t, storeRoot, projectKey, runID, `161`)
 	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge").String(), `[21,140]`)
 	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
-	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, stepIDs(compiled))
+	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, compiled)
 }
 
 func TestOrchestratorCLIExternalSpecRoot(t *testing.T) {
@@ -646,7 +647,7 @@ func assertStepOutputs(t *testing.T, storeRoot string, projectKey string, runID 
 	}
 }
 
-func assertRunManifestSucceeded(t *testing.T, storeRoot string, projectKey string, runID string, steps []string) {
+func assertRunManifestSucceeded(t *testing.T, storeRoot string, projectKey string, runID string, compiled *plan.CompileResult) {
 	t.Helper()
 
 	manifest := readRunManifest(t, storeRoot, projectKey, runID)
@@ -656,8 +657,13 @@ func assertRunManifestSucceeded(t *testing.T, storeRoot string, projectKey strin
 	if manifest.Status != StatusSucceeded {
 		t.Fatalf("manifest status = %s, want succeeded", manifest.Status)
 	}
+	steps := stepIDs(compiled)
 	if len(manifest.Steps) != len(steps) {
 		t.Fatalf("manifest steps = %d, want %d", len(manifest.Steps), len(steps))
+	}
+	nodesByID := make(map[string]*planpb.GraphNode, len(compiled.Plan.GetGraph().GetNodes()))
+	for _, node := range compiled.Plan.GetGraph().GetNodes() {
+		nodesByID[node.GetId()] = node
 	}
 	for index, stepID := range steps {
 		step := manifest.Steps[index]
@@ -672,9 +678,19 @@ func assertRunManifestSucceeded(t *testing.T, storeRoot string, projectKey strin
 		if canonical.DigestBytes(manifestObject.Body) != output.Manifest.Hash {
 			t.Fatalf("%s hash = %s, manifest records %s", output.Manifest.Key, canonical.DigestBytes(manifestObject.Body), output.Manifest.Hash)
 		}
+		if len(manifestObject.Body) != output.Manifest.Size {
+			t.Fatalf("%s size = %d, manifest records %d", output.Manifest.Key, len(manifestObject.Body), output.Manifest.Size)
+		}
 		bodyObject := getObject(t, storeRoot, output.Body.Key)
 		if canonical.DigestBytes(bodyObject.Body) != output.Body.Hash {
 			t.Fatalf("%s hash = %s, manifest records %s", output.Body.Key, canonical.DigestBytes(bodyObject.Body), output.Body.Hash)
+		}
+		if len(bodyObject.Body) != output.Body.Size {
+			t.Fatalf("%s size = %d, manifest records %d", output.Body.Key, len(bodyObject.Body), output.Body.Size)
+		}
+		node := nodesByID[step.NodeID]
+		if node == nil || output.Schema != node.GetOutputSchema() {
+			t.Fatalf("journal schema for %q = %q, want plan output schema %q", step.NodeID, output.Schema, node.GetOutputSchema())
 		}
 	}
 }

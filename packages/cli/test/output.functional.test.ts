@@ -1,7 +1,18 @@
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "jsr:@std/assert";
+import { dirname } from "node:path";
+import { datastore } from "@massive/sdk";
+import {
+  readRunManifestAt,
+  UnsupportedRunManifestProtocolError,
+} from "../src/run.ts";
 import {
   copyFixture,
   fixtureEntry,
+  join,
   listStoreKeys,
   makeStore,
   runCli,
@@ -108,6 +119,98 @@ Deno.test("massive inspect reports a past run without re-executing", async () =>
   // ...and writes no new run artifacts (no new run dir, no step spawned).
   const after = await listStoreKeys(store);
   assertEquals(after, before, "inspect must not create datastore artifacts");
+});
+
+Deno.test("run-manifest reader refuses v0 and future transports before nested fields", async (t) => {
+  for (
+    const protocol of [
+      { schemaVersion: 0, encoding: "json-v0" },
+      { schemaVersion: 2, encoding: "json-v2" },
+    ]
+  ) {
+    await t.step(`${protocol.encoding}`, async () => {
+      const store = await makeStore();
+      const key =
+        "projects/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/runs/protocol-reader/run-manifest.json";
+      const path = join(store, key);
+      await Deno.mkdir(dirname(path), { recursive: true });
+      // The deliberately misleading nested data verifies that the shared
+      // reader rejects the envelope before exposing run output to `run` or
+      // `inspect`.
+      await Deno.writeTextFile(
+        path,
+        JSON.stringify({
+          schemaVersion: protocol.schemaVersion,
+          encoding: protocol.encoding,
+          planHash: "not-read",
+          status: "succeeded",
+          steps: [{ nodeId: "not-read", status: "succeeded" }],
+          result: { key: "not-read", hash: "not-read" },
+        }),
+      );
+
+      const error = await assertRejects(
+        () => readRunManifestAt(datastore.local({ path: store }), key),
+        UnsupportedRunManifestProtocolError,
+      );
+      assertStringIncludes(
+        error.message,
+        `schemaVersion ${protocol.schemaVersion}`,
+      );
+      assertStringIncludes(error.message, `encoding \"${protocol.encoding}\"`);
+    });
+  }
+});
+
+Deno.test("massive inspect reports an actionable error for v0 and future manifests", async (t) => {
+  for (
+    const protocol of [
+      { schemaVersion: 0, encoding: "json-v0" },
+      { schemaVersion: 2, encoding: "json-v2" },
+    ]
+  ) {
+    await t.step(`${protocol.encoding}`, async () => {
+      const store = await makeStore();
+      const runId = `run-inspect-${protocol.schemaVersion}`;
+      const key =
+        `projects/sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/runs/${runId}/run-manifest.json`;
+      const manifestPath = join(store, key);
+      await Deno.mkdir(dirname(manifestPath), { recursive: true });
+      // A physical on-disk run artifact, consumed through the public CLI
+      // subprocess—not an in-memory substitute.
+      await Deno.writeTextFile(
+        manifestPath,
+        JSON.stringify({
+          kind: "RunManifest",
+          schemaVersion: protocol.schemaVersion,
+          encoding: protocol.encoding,
+          planHash:
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          projectKey:
+            "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          runId,
+          status: "succeeded",
+          steps: [],
+        }),
+      );
+
+      const inspect = await runCli([
+        "inspect",
+        runId,
+        "--store",
+        store,
+        "--project",
+        "acme/wf",
+      ]);
+      assertEquals(inspect.code, 4, inspect.stderr);
+      assertStringIncludes(inspect.stderr, "unsupported run manifest protocol");
+      assertStringIncludes(
+        inspect.stderr,
+        `schemaVersion ${protocol.schemaVersion}`,
+      );
+      assertStringIncludes(inspect.stderr, `encoding \"${protocol.encoding}\"`);
+    });
+  }
 });
 
 Deno.test("massive inspect rejects an unsafe run id before touching the filesystem", async () => {

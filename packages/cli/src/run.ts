@@ -617,6 +617,8 @@ function stripExport(specifier: string): string {
 // --- Run manifest read (authoritative) -------------------------------------
 
 interface ManifestView {
+  readonly schemaVersion: number;
+  readonly encoding: string;
   readonly planHash: string;
   readonly status: string;
   readonly steps: readonly {
@@ -627,21 +629,75 @@ interface ManifestView {
         readonly manifest: { readonly key: string; readonly hash: string };
         readonly body: { readonly key: string; readonly hash: string };
       };
+      readonly input?: { readonly key: string; readonly hash: string };
       readonly diagnostic?: string;
     }[];
   }[];
   readonly result?: { readonly key: string; readonly hash: string };
 }
 
-// Reads a manifest at a known key; undefined on any failure (best-effort — the
-// caller degrades to the run JSON for step statuses).
+const RUN_MANIFEST_SCHEMA_VERSION = 1;
+const RUN_MANIFEST_ENCODING = "json-v1";
+
+// Run and inspect must never read nested fields from a transport version they
+// do not understand. Keep this error distinct so `run` can retain its
+// best-effort behavior for a missing/malformed manifest while refusing a
+// successfully read, explicitly incompatible protocol.
+export class UnsupportedRunManifestProtocolError extends Error {
+  constructor(
+    key: string,
+    schemaVersion: unknown,
+    encoding: unknown,
+  ) {
+    super(
+      `unsupported run manifest protocol at ${key}: expected schemaVersion ${RUN_MANIFEST_SCHEMA_VERSION} and encoding ${
+        JSON.stringify(RUN_MANIFEST_ENCODING)
+      }, got schemaVersion ${JSON.stringify(schemaVersion)} and encoding ${
+        JSON.stringify(encoding)
+      }`,
+    );
+    this.name = "UnsupportedRunManifestProtocolError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Reads and validates the independently-versioned run-manifest envelope before
+// exposing any nested result or attempt data to callers.
+export async function readRunManifestAt(
+  store: Datastore,
+  key: string,
+): Promise<ManifestView> {
+  const value: unknown = JSON.parse(decoder.decode(await store.get(key)));
+  if (!isRecord(value)) {
+    throw new Error(`invalid run manifest at ${key}: expected a JSON object`);
+  }
+  if (
+    value.schemaVersion !== RUN_MANIFEST_SCHEMA_VERSION ||
+    value.encoding !== RUN_MANIFEST_ENCODING
+  ) {
+    throw new UnsupportedRunManifestProtocolError(
+      key,
+      value.schemaVersion,
+      value.encoding,
+    );
+  }
+  return value as unknown as ManifestView;
+}
+
+// Reads a manifest at a known key; undefined for ordinary best-effort read
+// failures so the caller can degrade to the Go run JSON. An explicitly
+// unsupported protocol is never silently ignored.
 async function readManifestAt(
   store: Datastore,
   key: string,
 ): Promise<ManifestView | undefined> {
   try {
-    return JSON.parse(decoder.decode(await store.get(key))) as ManifestView;
-  } catch {
+    return await readRunManifestAt(store, key);
+  } catch (error) {
+    if (error instanceof UnsupportedRunManifestProtocolError) throw error;
     return undefined;
   }
 }
