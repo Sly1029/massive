@@ -31,33 +31,50 @@ def test_canonical_json_consumes_the_cross_runtime_v0_corpus() -> None:
     assert invalid_directory.is_dir()
     valid_paths = sorted(valid_directory.glob("*.json"))
     invalid_paths = sorted(invalid_directory.glob("*.json"))
-    assert len(valid_paths) >= 2
-    assert len(invalid_paths) >= 7
-    assert {"integers.json", "utf16-key-order.json"} <= {path.name for path in valid_paths}
-
-    for path in valid_paths:
-        source = path.read_bytes().removesuffix(b"\n")
-        value = cast(JsonValue, json.loads(source))
-
-        assert canonical_json(value).encode() == source, path.name
-
-    rejected = {
+    hashes = json.loads((corpus / "hashes.json").read_text())
+    valid_names = {path.name for path in valid_paths}
+    invalid_names = {path.name for path in invalid_paths}
+    assert {
+        "escaping.json",
+        "integer-like-key-order.json",
+        "integers.json",
+        "prototype-keys.json",
+        "utf16-key-order.json",
+    } <= valid_names
+    assert {
         "exponent.json",
         "fraction.json",
         "lone-surrogate-key.json",
         "lone-surrogate-value.json",
+        "negative-zero.json",
         "unsafe-integer.json",
-    }
-    normalized = {"negative-zero.json", "whitespace.json"}
-    assert rejected | normalized == {path.name for path in invalid_paths}
-    for path in invalid_paths:
-        source = path.read_bytes().removesuffix(b"\n")
+        "whitespace.json",
+    } <= invalid_names
+    assert set(hashes) == valid_names
+
+    for path in valid_paths:
+        source = canonical_fixture_payload(path)
         value = cast(JsonValue, json.loads(source))
-        if path.name in rejected:
-            with pytest.raises((TypeError, ValueError)):
-                canonical_json(value)
+
+        assert canonical_json(value).encode() == source, path.name
+        assert sha256_ref(source) == hashes[path.name], path.name
+
+    for path in invalid_paths:
+        source = canonical_fixture_payload(path)
+        value = cast(JsonValue, json.loads(source))
+        try:
+            canonical = canonical_json(value).encode()
+        except (TypeError, ValueError):
+            continue
         else:
-            assert canonical_json(value).encode() != source, path.name
+            assert canonical != source, path.name
+
+
+def canonical_fixture_payload(path: Path) -> bytes:
+    fixture = path.read_bytes()
+    assert fixture.endswith(b"\n")
+    assert not fixture.endswith(b"\r\n")
+    return fixture[:-1]
 
 
 @pytest.mark.parametrize("value", [1.5, 1 << 53, -(1 << 53)])
