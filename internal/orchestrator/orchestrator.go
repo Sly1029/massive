@@ -28,10 +28,21 @@ const jsonContentType = "application/json"
 // sha256RefPattern is the exact canonical digest-ref form. Package hashes are
 // interpolated into filesystem paths and datastore keys, so they are validated
 // against this before any path is derived from them.
-var sha256RefPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var (
+	sha256RefPattern       = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	safePathSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9_.@:#-]+$`)
+)
 
 func validSHA256Ref(ref string) bool {
 	return sha256RefPattern.MatchString(ref)
+}
+
+func validSafePathSegment(value string) bool {
+	if value == "." || value == ".." || !safePathSegmentPattern.MatchString(value) {
+		return false
+	}
+	_, err := datastore.ParseKey(value)
+	return err == nil
 }
 
 type executionIndex struct {
@@ -94,7 +105,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	// paths). Reject a traversal or otherwise unsafe id up front, using the same
 	// segment rules the datastore key parser enforces, before any run artifact
 	// is written. A run id must be a single normalized path segment.
-	if _, err := datastore.ParseKey(runID); err != nil || strings.Contains(runID, "/") {
+	if !validSafePathSegment(runID) {
 		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "must be a single safe path segment (datastore key segment rules)"}
 	}
 	// Every source-package hash is interpolated into a snapshot directory name
@@ -104,6 +115,11 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	for _, sourcePackage := range config.Plan.GetSourcePackages() {
 		if !validSHA256Ref(sourcePackage.GetPackageHash()) {
 			return nil, &InvalidRunInputError{Field: "source package hash", Value: sourcePackage.GetPackageHash(), Message: "must be a canonical sha256:<64 lowercase hex> digest"}
+		}
+	}
+	for _, node := range config.Plan.GetGraph().GetNodes() {
+		if !validSafePathSegment(node.GetId()) {
+			return nil, &InvalidRunInputError{Field: "plan graph node id", Value: node.GetId(), Message: "must be a single safe path segment (descriptor and datastore key rules)"}
 		}
 	}
 

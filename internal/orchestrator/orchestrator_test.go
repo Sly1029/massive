@@ -172,6 +172,64 @@ func TestFrozenDescriptorSchemaRejectsRawProjectID(t *testing.T) {
 	}
 }
 
+func TestFrozenDescriptorSchemaConstrainsArtifactIdentitySegments(t *testing.T) {
+	fixture := readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json")
+	root := repoRootForTest(t)
+	parserURL := "file://" + filepath.ToSlash(filepath.Join(root, "packages", "sdk", "src", "runner", "descriptor.ts"))
+
+	for field, original := range map[string]string{
+		"runId":  "run-linear-chain-0001",
+		"nodeId": "double",
+	} {
+		for _, value := range []string{"nested/value", ".", ".."} {
+			t.Run(field+" rejects "+value, func(t *testing.T) {
+				document := bytes.Replace(fixture, []byte(`"`+field+`": "`+original+`"`), []byte(`"`+field+`": "`+value+`"`), 1)
+				descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
+				if err := os.WriteFile(descriptorPath, document, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command(
+					"deno", "eval", "--config", filepath.Join(root, "deno.json"),
+					`const module = await import(Deno.args[0]); await module.parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[1]));`,
+					parserURL, descriptorPath,
+				)
+				cmd.Dir = root
+				output, err := cmd.CombinedOutput()
+				if err == nil {
+					t.Fatalf("frozen descriptor schema accepted unsafe %s %q", field, value)
+				}
+				if !strings.Contains(string(output), field) {
+					t.Fatalf("descriptor validation error = %q, want %s", output, field)
+				}
+			})
+		}
+	}
+
+	for field, original := range map[string]string{
+		"runId":  "run-linear-chain-0001",
+		"nodeId": "double",
+	} {
+		for _, value := range []string{"_step", ".hidden"} {
+			t.Run(field+" accepts "+value, func(t *testing.T) {
+				document := bytes.Replace(fixture, []byte(`"`+field+`": "`+original+`"`), []byte(`"`+field+`": "`+value+`"`), 1)
+				descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
+				if err := os.WriteFile(descriptorPath, document, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command(
+					"deno", "eval", "--config", filepath.Join(root, "deno.json"),
+					`const module = await import(Deno.args[0]); await module.parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[1]));`,
+					parserURL, descriptorPath,
+				)
+				cmd.Dir = root
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("frozen descriptor schema rejected safe %s %q: %v\\n%s", field, value, err, output)
+				}
+			})
+		}
+	}
+}
+
 func TestRunOutputManifestKeyIncludesAttempt(t *testing.T) {
 	projectKey := NormalizeProjectKey("acme/security-workflows")
 	first := runOutputManifestKey(projectKey, "run-key-attempt", "double", 1)
@@ -345,6 +403,45 @@ func TestHostileRunIDRejectedBeforeSideEffects(t *testing.T) {
 			assertNoRunSideEffects(t, storeRoot)
 		})
 	}
+}
+
+func TestUnsafePlanNodeIDRejectedBeforeArtifactWrites(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+
+	for _, node := range compiled.Plan.GetGraph().GetNodes() {
+		if node.GetId() == "double" {
+			hostile := "nested/double"
+			node.Id = &hostile
+			break
+		}
+	}
+	invoker := &functionalStepInvoker{storeRoot: storeRoot}
+
+	_, err := Run(context.Background(), RunConfig{
+		Plan:              compiled.Plan,
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "acme/security-workflows",
+		RunID:             "run-hostile-node-id",
+		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
+		StepInvoker:       invoker,
+	}, []byte("20"))
+	if err == nil {
+		t.Fatal("Run accepted a plan graph node id with a path separator")
+	}
+	var invalid *InvalidRunInputError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("error = %T (%v), want *InvalidRunInputError", err, err)
+	}
+	if invalid.Field != "plan graph node id" {
+		t.Fatalf("error field = %q, want plan graph node id", invalid.Field)
+	}
+	if len(invoker.descriptors) != 0 {
+		t.Fatalf("runner received %d descriptors after identifier rejection", len(invoker.descriptors))
+	}
+	assertNoRunSideEffects(t, storeRoot)
 }
 
 func TestHostilePackageHashRejectedBeforeSideEffects(t *testing.T) {

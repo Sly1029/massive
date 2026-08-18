@@ -27,8 +27,8 @@
     "encoding": { "const": "json-v1" },
     "planHash": { "$ref": "#/$defs/hashRef" },
     "projectKey": { "$ref": "#/$defs/projectKey" },
-    "runId": { "$ref": "#/$defs/id" },
-    "nodeId": { "$ref": "#/$defs/id" },
+    "runId": { "$ref": "#/$defs/safePathSegment" },
+    "nodeId": { "$ref": "#/$defs/safePathSegment" },
     "attempt": {
       "type": "integer",
       "minimum": 1
@@ -53,6 +53,12 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^[A-Za-z0-9_.@/:#-]+$"
+    },
+    "safePathSegment": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.@:#-]+$",
+      "not": { "enum": [".", ".."] }
     },
     "projectKey": {
       "type": "string",
