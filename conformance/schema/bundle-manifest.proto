@@ -18,6 +18,8 @@ message TargetBundleManifest {
   repeated EmittedFile files = 5;
   repeated ValidationResult validations = 6;
   optional BundleProvenance provenance = 7;
+  // Identity of the separate target/profile binding used for this bundle.
+  optional string deployment_hash = 8;
 }
 
 message EmittedFile {

@@ -29,7 +29,20 @@ dist/argo/<workflow-name>/
   values.schema.json
 ```
 
-The exact files vary by target config. The bundle manifest is canonical and records all emitted artifacts.
+The exact files vary by target config. The bundle manifest is canonical and
+records the plan, deployment, bundle, and emitted-file body hashes. The current
+command is:
+
+```sh
+massive-compiler bundle-argo \
+  --plan workflow-plan.json \
+  --deployment deployment-spec.json \
+  --out dist/argo
+```
+
+`workflow-plan.json` must be the compiler's exact canonical bytes. The compiler
+does not accept prettified or newline-modified plan artifacts at this trust
+boundary.
 
 ## Target Config
 

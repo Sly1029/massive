@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/plan"
@@ -49,19 +50,23 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 		t.Fatalf("merge readiness dependencies=%v", deps)
 	}
 	stepTemplate := templateByName(t, specValue["templates"].([]any), "step-merge")
+	nodeSelector := stepTemplate["nodeSelector"].(map[string]any)
+	if nodeSelector["kubernetes.io/os"] != "linux" || nodeSelector["kubernetes.io/arch"] != "amd64" {
+		t.Fatalf("container platform was not lowered to node selector: %v", nodeSelector)
+	}
 	args := stepTemplate["container"].(map[string]any)["args"].([]any)
 	if !containsArgs(args, "--merge-inputs", "left,right") {
 		t.Fatalf("ordered merge inputs not preserved: %v", args)
 	}
-	if first.Manifest.GetBundleHash() == "" || first.Manifest.GetPlanHash() == "" {
+	if first.Manifest.GetBundleHash() == "" || first.Manifest.GetPlanHash() == "" || first.Manifest.GetDeploymentHash() == "" {
 		t.Fatal("manifest lacks identity hashes")
 	}
 }
 
 func TestStaticDAGAcceptsBothPythonAndTypeScriptSymbols(t *testing.T) {
 	goldens := map[string]string{
-		"typescript": "sha256:710b69b37b13b79123bed4c50947da6aa99de92b33749ed67d06413bde03ef99",
-		"python":     "sha256:1abc054c640ca7fc0f50365d63b3c1a774230fd635ef04510e3f4291d1cb7841",
+		"typescript": "sha256:486921c7c81ff9cff2bededf29954e94e44a60a7743c85cf34140d92b1a0057f",
+		"python":     "sha256:c9dd3ed6c8bd2476da0ba763f610f216edbc2bbac7577488263efa105a71edd0",
 	}
 	for _, language := range []string{"typescript", "python"} {
 		t.Run(language, func(t *testing.T) {
@@ -72,20 +77,7 @@ func TestStaticDAGAcceptsBothPythonAndTypeScriptSymbols(t *testing.T) {
 			for _, pkg := range r.Plan.SourcePackages {
 				pkg.Language = pointer(language)
 			}
-			r.Plan.PlanHash = nil
-			unhashed, err := plan.MarshalCanonical(r.Plan)
-			if err != nil {
-				t.Fatal(err)
-			}
-			hash, err := canonical.DigestJSON(unhashed)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r.Plan.PlanHash = pointer(hash)
-			canonicalPlan, err := plan.MarshalCanonical(r.Plan)
-			if err != nil {
-				t.Fatal(err)
-			}
+			canonicalPlan, hash := rehashPlan(t, r.Plan)
 			b, err := Compile(canonicalPlan, deploymentForPlan(t, hash))
 			if err != nil {
 				t.Fatal(err)
@@ -109,6 +101,33 @@ func TestStaticDAGRejectsUnverifiedOrUnsupportedPlan(t *testing.T) {
 	if _, err := Compile(bad, d); err == nil || !strings.Contains(err.Error(), "canonical") {
 		t.Fatalf("error=%v, want canonical verification", err)
 	}
+
+	result = fixturePlan(t, "linear-chain")
+	duplicate := result.Plan.GetGraph().GetEdges()[0]
+	result.Plan.Graph.Edges = append(result.Plan.Graph.Edges, duplicate)
+	canonicalPlan, hash := rehashPlan(t, result.Plan)
+	if _, err := Compile(canonicalPlan, deploymentForPlan(t, hash)); err == nil || !strings.Contains(err.Error(), "duplicate edge") {
+		t.Fatalf("error=%v, want static graph diagnostic", err)
+	}
+}
+
+func rehashPlan(t *testing.T, value *planpb.WorkflowPlan) ([]byte, string) {
+	t.Helper()
+	value.PlanHash = nil
+	unhashed, err := plan.MarshalCanonical(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := canonical.DigestJSON(unhashed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value.PlanHash = pointer(hash)
+	canonicalPlan, err := plan.MarshalCanonical(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonicalPlan, hash
 }
 
 func compileFixture(t *testing.T, name string) *Bundle {

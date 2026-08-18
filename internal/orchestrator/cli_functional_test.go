@@ -41,7 +41,7 @@ func TestCompilerCLIFunctional(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected := append(append([]byte{}, compiled.CanonicalJSON...), '\n')
+			expected := compiled.CanonicalJSON
 			if !bytes.Equal(actual, expected) {
 				t.Fatalf("workflow-plan.json does not match compiler output\nactual:   %s\nexpected: %s", actual, expected)
 			}
@@ -68,6 +68,77 @@ func TestCompilerCLIFunctional(t *testing.T) {
 			t.Fatalf("stderr = %q, want requires --spec", result.stderr)
 		}
 	})
+}
+
+func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
+	compileDir := t.TempDir()
+	specPath := filepath.Join(repoRootForTest(t), "conformance", "fixtures", "specs", "diamond", "workflow-spec.json")
+	compiled := runCommand(t, "go", "run", "./cmd/massive-compiler", "compile", "--spec", specPath, "--out", compileDir)
+	if compiled.err != nil {
+		t.Fatalf("compiler failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", compiled.stdout, compiled.stderr, compiled.err)
+	}
+	planPath := filepath.Join(compileDir, "workflow-plan.json")
+	planJSON, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsedPlan, err := plan.ParseCanonicalJSON(planJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentValue := map[string]any{
+		"kind": "DeploymentSpec", "schemaVersion": 0, "encoding": "json-v0",
+		"planHash": parsedPlan.GetPlanHash(),
+		"profile": map[string]any{
+			"name": "argo-test", "artifactStoreBinding": "test-artifacts",
+			"target": map[string]any{"kind": "argo", "namespace": "workflows", "serviceAccountName": "massive-runner", "workflowTemplateName": "diamond-test"},
+		},
+	}
+	unhashedDeployment, err := json.Marshal(deploymentValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentHash, err := canonical.DigestJSON(unhashedDeployment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentValue["deploymentHash"] = deploymentHash
+	deploymentJSON, err := json.Marshal(deploymentValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploymentPath := filepath.Join(t.TempDir(), "deployment-spec.json")
+	if err := os.WriteFile(deploymentPath, deploymentJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bundleDir := t.TempDir()
+	bundled := runCommand(t, "go", "run", "./cmd/massive-compiler", "bundle-argo", "--plan", planPath, "--deployment", deploymentPath, "--out", bundleDir)
+	if bundled.err != nil {
+		t.Fatalf("bundle compiler failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", bundled.stdout, bundled.stderr, bundled.err)
+	}
+	template, err := os.ReadFile(filepath.Join(bundleDir, "workflow-template.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(template, []byte("massive.dev/execution-status: structural-only")) || !bytes.Contains(template, []byte("serviceAccountName: massive-runner")) {
+		t.Fatalf("generated WorkflowTemplate lacks structural status or workload identity:\n%s", template)
+	}
+	manifestJSON, err := os.ReadFile(filepath.Join(bundleDir, "bundle-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalManifest, err := canonical.CanonicalizeJSON(manifestJSON)
+	if err != nil || !bytes.Equal(manifestJSON, canonicalManifest) {
+		t.Fatalf("bundle manifest is not canonical: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest["deploymentHash"] != deploymentHash || manifest["planHash"] != parsedPlan.GetPlanHash() {
+		t.Fatalf("bundle manifest identities = %#v", manifest)
+	}
 }
 
 func TestOrchestratorCLILinearChainRealRunner(t *testing.T) {

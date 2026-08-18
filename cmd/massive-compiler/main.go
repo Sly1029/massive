@@ -69,7 +69,7 @@ func run(args []string) error {
 		return fmt.Errorf("create output directory %q: %w", *outDir, err)
 	}
 	outputPath := filepath.Join(*outDir, "workflow-plan.json")
-	if err := os.WriteFile(outputPath, append(result.CanonicalJSON, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(outputPath, result.CanonicalJSON, 0o644); err != nil {
 		return fmt.Errorf("write workflow plan %q: %w", outputPath, err)
 	}
 
@@ -109,7 +109,7 @@ func bundleArgo(args []string) error {
 			return fmt.Errorf("write bundle file %s: %w", f.Path, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(*outDir, "bundle-manifest.json"), append(b.ManifestJSON, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(*outDir, "bundle-manifest.json"), b.ManifestJSON, 0o644); err != nil {
 		return err
 	}
 	fmt.Printf("bundled argo plan %s -> %s\n", d.PlanHash, *outDir)

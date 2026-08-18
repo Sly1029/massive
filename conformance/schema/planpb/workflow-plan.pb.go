@@ -591,12 +591,15 @@ func (x *SymbolEntry) GetExport() string {
 }
 
 type SourcePackageRef struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PackageId     *string                `protobuf:"bytes,1,opt,name=package_id,json=packageId,proto3,oneof" json:"package_id,omitempty"`
-	Language      *string                `protobuf:"bytes,2,opt,name=language,proto3,oneof" json:"language,omitempty"`
-	PackageHash   *string                `protobuf:"bytes,3,opt,name=package_hash,json=packageHash,proto3,oneof" json:"package_hash,omitempty"`
-	Manifest      *ArtifactRef           `protobuf:"bytes,4,opt,name=manifest,proto3,oneof" json:"manifest,omitempty"`
-	SourceArchive *ArtifactRef           `protobuf:"bytes,5,opt,name=source_archive,json=sourceArchive,proto3,oneof" json:"source_archive,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	PackageId   *string                `protobuf:"bytes,1,opt,name=package_id,json=packageId,proto3,oneof" json:"package_id,omitempty"`
+	Language    *string                `protobuf:"bytes,2,opt,name=language,proto3,oneof" json:"language,omitempty"`
+	PackageHash *string                `protobuf:"bytes,3,opt,name=package_hash,json=packageHash,proto3,oneof" json:"package_hash,omitempty"`
+	// Populated only after real bytes have been committed. The pure WorkflowSpec
+	// compiler leaves these absent; a materialization manifest supplies them to
+	// remote target lowering.
+	Manifest      *ArtifactRef `protobuf:"bytes,4,opt,name=manifest,proto3,oneof" json:"manifest,omitempty"`
+	SourceArchive *ArtifactRef `protobuf:"bytes,5,opt,name=source_archive,json=sourceArchive,proto3,oneof" json:"source_archive,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

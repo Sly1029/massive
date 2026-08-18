@@ -30,8 +30,10 @@ type TargetBundleManifest struct {
 	Files         []*EmittedFile         `protobuf:"bytes,5,rep,name=files,proto3" json:"files,omitempty"`
 	Validations   []*ValidationResult    `protobuf:"bytes,6,rep,name=validations,proto3" json:"validations,omitempty"`
 	Provenance    *BundleProvenance      `protobuf:"bytes,7,opt,name=provenance,proto3,oneof" json:"provenance,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Identity of the separate target/profile binding used for this bundle.
+	DeploymentHash *string `protobuf:"bytes,8,opt,name=deployment_hash,json=deploymentHash,proto3,oneof" json:"deployment_hash,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *TargetBundleManifest) Reset() {
@@ -111,6 +113,13 @@ func (x *TargetBundleManifest) GetProvenance() *BundleProvenance {
 		return x.Provenance
 	}
 	return nil
+}
+
+func (x *TargetBundleManifest) GetDeploymentHash() string {
+	if x != nil && x.DeploymentHash != nil {
+		return *x.DeploymentHash
+	}
+	return ""
 }
 
 type EmittedFile struct {
@@ -289,7 +298,7 @@ var File_bundle_manifest_proto protoreflect.FileDescriptor
 
 const file_bundle_manifest_proto_rawDesc = "" +
 	"\n" +
-	"\x15bundle-manifest.proto\x12\x0fmassive.plan.v0\x1a\x13workflow-plan.proto\"\xb3\x03\n" +
+	"\x15bundle-manifest.proto\x12\x0fmassive.plan.v0\x1a\x13workflow-plan.proto\"\xf5\x03\n" +
 	"\x14TargetBundleManifest\x12*\n" +
 	"\x0eschema_version\x18\x01 \x01(\rH\x00R\rschemaVersion\x88\x01\x01\x12\x1b\n" +
 	"\x06target\x18\x02 \x01(\tH\x01R\x06target\x88\x01\x01\x12 \n" +
@@ -300,13 +309,15 @@ const file_bundle_manifest_proto_rawDesc = "" +
 	"\vvalidations\x18\x06 \x03(\v2!.massive.plan.v0.ValidationResultR\vvalidations\x12F\n" +
 	"\n" +
 	"provenance\x18\a \x01(\v2!.massive.plan.v0.BundleProvenanceH\x04R\n" +
-	"provenance\x88\x01\x01B\x11\n" +
+	"provenance\x88\x01\x01\x12,\n" +
+	"\x0fdeployment_hash\x18\b \x01(\tH\x05R\x0edeploymentHash\x88\x01\x01B\x11\n" +
 	"\x0f_schema_versionB\t\n" +
 	"\a_targetB\f\n" +
 	"\n" +
 	"_plan_hashB\x0e\n" +
 	"\f_bundle_hashB\r\n" +
-	"\v_provenance\"\x9d\x01\n" +
+	"\v_provenanceB\x12\n" +
+	"\x10_deployment_hash\"\x9d\x01\n" +
 	"\vEmittedFile\x12\x17\n" +
 	"\x04path\x18\x01 \x01(\tH\x00R\x04path\x88\x01\x01\x12=\n" +
 	"\bartifact\x18\x02 \x01(\v2\x1c.massive.plan.v0.ArtifactRefH\x01R\bartifact\x88\x01\x01\x12\x17\n" +

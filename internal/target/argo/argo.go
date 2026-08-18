@@ -90,6 +90,12 @@ func validateStaticGraph(p *planpb.WorkflowPlan) error {
 	}
 	nodes := map[string]*planpb.GraphNode{}
 	for _, n := range g.GetNodes() {
+		if n.GetId() == "" {
+			return errors.New("argo target: graph contains a node without an id")
+		}
+		if nodes[n.GetId()] != nil {
+			return fmt.Errorf("argo target: graph contains duplicate node id %q", n.GetId())
+		}
 		nodes[n.GetId()] = n
 	}
 	if nodes[g.GetStartNode()] == nil || nodes[g.GetStartNode()].GetKind() != "start" || nodes[g.GetEndNode()] == nil || nodes[g.GetEndNode()].GetKind() != "end" {
@@ -102,6 +108,99 @@ func validateStaticGraph(p *planpb.WorkflowPlan) error {
 		if n.GetKind() == "step" && (n.GetSymbolRef() == "" || n.GetContractRef() == "") {
 			return fmt.Errorf("argo target: step %q lacks symbol or contract", n.GetId())
 		}
+	}
+	inbound := make(map[string][]string, len(nodes))
+	outbound := make(map[string][]string, len(nodes))
+	edges := make(map[string]bool, len(g.GetEdges()))
+	for _, edge := range g.GetEdges() {
+		if nodes[edge.GetFrom()] == nil || nodes[edge.GetTo()] == nil {
+			return fmt.Errorf("argo target: edge %q -> %q references an unknown node", edge.GetFrom(), edge.GetTo())
+		}
+		key := edge.GetFrom() + "\x00" + edge.GetTo()
+		if edges[key] {
+			return fmt.Errorf("argo target: duplicate edge %q -> %q", edge.GetFrom(), edge.GetTo())
+		}
+		edges[key] = true
+		outbound[edge.GetFrom()] = append(outbound[edge.GetFrom()], edge.GetTo())
+		inbound[edge.GetTo()] = append(inbound[edge.GetTo()], edge.GetFrom())
+	}
+	if len(inbound[g.GetStartNode()]) != 0 || len(outbound[g.GetStartNode()]) != 1 {
+		return errors.New("argo target: start node must have no inbound edge and exactly one outbound edge")
+	}
+	if len(outbound[g.GetEndNode()]) != 0 || len(inbound[g.GetEndNode()]) != 1 {
+		return errors.New("argo target: end node must have exactly one inbound edge and no outbound edge")
+	}
+	for _, node := range g.GetNodes() {
+		if node.GetKind() != "step" || (len(inbound[node.GetId()]) <= 1 && len(node.GetMergeInputs()) == 0) {
+			continue
+		}
+		declared := make(map[string]bool, len(node.GetMergeInputs()))
+		for _, source := range node.GetMergeInputs() {
+			declared[source] = true
+		}
+		if len(declared) != len(inbound[node.GetId()]) {
+			return fmt.Errorf("argo target: step %q mergeInputs do not exactly match inbound edges", node.GetId())
+		}
+		for _, source := range inbound[node.GetId()] {
+			if !declared[source] {
+				return fmt.Errorf("argo target: step %q mergeInputs do not exactly match inbound edges", node.GetId())
+			}
+		}
+	}
+	seen := map[string]bool{g.GetStartNode(): true}
+	queue := []string{g.GetStartNode()}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, next := range outbound[current] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	if len(seen) != len(nodes) || !seen[g.GetEndNode()] {
+		return errors.New("argo target: every node must be reachable from start and reach end")
+	}
+	canReachEnd := map[string]bool{g.GetEndNode(): true}
+	queue = []string{g.GetEndNode()}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, previous := range inbound[current] {
+			if !canReachEnd[previous] {
+				canReachEnd[previous] = true
+				queue = append(queue, previous)
+			}
+		}
+	}
+	if len(canReachEnd) != len(nodes) {
+		return errors.New("argo target: every node must be reachable from start and reach end")
+	}
+	remaining := make(map[string]int, len(nodes))
+	for id := range nodes {
+		remaining[id] = len(inbound[id])
+	}
+	queue = queue[:0]
+	for id, degree := range remaining {
+		if degree == 0 {
+			queue = append(queue, id)
+		}
+	}
+	visited := 0
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		visited++
+		for _, next := range outbound[current] {
+			remaining[next]--
+			if remaining[next] == 0 {
+				queue = append(queue, next)
+			}
+		}
+	}
+	if visited != len(nodes) {
+		return errors.New("argo target: graph contains a cycle")
 	}
 	return nil
 }
@@ -165,7 +264,15 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 		if len(step.GetMergeInputs()) > 0 {
 			args = append(args, "--merge-inputs", strings.Join(step.GetMergeInputs(), ","))
 		}
-		container := map[string]any{"image": env.GetContainer().GetImage(), "command": []string{"massive-runner", "step"}, "args": args, "env": envVars}
+		runtime := env.GetContainer()
+		command := runtime.GetCommand()
+		if len(command) == 0 {
+			command = []string{"massive-runner", "step"}
+		}
+		container := map[string]any{"image": runtime.GetImage(), "command": command, "args": args, "env": envVars}
+		if runtime.GetWorkingDirectory() != "" {
+			container["workingDir"] = runtime.GetWorkingDirectory()
+		}
 		if r := contract.GetResources(); r != nil && (r.GetCpu() != "" || r.GetMemory() != "") {
 			q := map[string]string{}
 			if r.GetCpu() != "" {
@@ -176,7 +283,16 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			}
 			container["resources"] = map[string]any{"requests": q, "limits": q}
 		}
-		templates = append(templates, map[string]any{"name": "step-" + step.GetId(), "container": container})
+		stepTemplate := map[string]any{"name": "step-" + step.GetId(), "container": container}
+		platform := strings.Split(runtime.GetPlatform(), "/")
+		if len(platform) != 2 {
+			return nil, fmt.Errorf("argo target: step %q has invalid container platform %q", step.GetId(), runtime.GetPlatform())
+		}
+		stepTemplate["nodeSelector"] = map[string]string{
+			"kubernetes.io/os":   platform[0],
+			"kubernetes.io/arch": platform[1],
+		}
+		templates = append(templates, stepTemplate)
 	}
 	templates = append([]any{map[string]any{"name": "main", "dag": map[string]any{"tasks": tasks}}}, templates...)
 	return map[string]any{"apiVersion": "argoproj.io/v1alpha1", "kind": "WorkflowTemplate", "metadata": map[string]any{"name": name, "namespace": d.Profile.Target.Namespace, "annotations": map[string]string{"massive.dev/plan-hash": p.GetPlanHash(), "massive.dev/deployment-hash": d.DeploymentHash, "massive.dev/execution-status": "structural-only"}}, "spec": map[string]any{"entrypoint": "main", "serviceAccountName": d.Profile.Target.ServiceAccountName, "artifactRepositoryRef": map[string]any{"configMap": d.Profile.ArtifactStoreBinding, "key": "default-v1"}, "templates": templates}}, nil
@@ -248,7 +364,7 @@ func buildBundle(p *planpb.WorkflowPlan, d *deployment.Spec, files []File) (*Bun
 	if err != nil {
 		return nil, err
 	}
-	manifest := &planpb.TargetBundleManifest{SchemaVersion: u32(0), Target: str(Kind), PlanHash: str(p.GetPlanHash()), BundleHash: str(bundleHash), Files: entries, Validations: []*planpb.ValidationResult{{Name: str("argo-schema"), Passed: boolp(true)}, {Name: str("dag-integrity"), Passed: boolp(true)}, {Name: str("credential-free-binding"), Passed: boolp(true)}}, Provenance: &planpb.BundleProvenance{CompilerName: str(p.GetProvenance().GetCompilerName()), CompilerVersion: str(p.GetProvenance().GetCompilerVersion())}}
+	manifest := &planpb.TargetBundleManifest{SchemaVersion: u32(0), Target: str(Kind), PlanHash: str(p.GetPlanHash()), BundleHash: str(bundleHash), Files: entries, Validations: []*planpb.ValidationResult{{Name: str("argo-schema"), Passed: boolp(true)}, {Name: str("dag-integrity"), Passed: boolp(true)}, {Name: str("credential-free-binding"), Passed: boolp(true)}}, Provenance: &planpb.BundleProvenance{CompilerName: str(p.GetProvenance().GetCompilerName()), CompilerVersion: str(p.GetProvenance().GetCompilerVersion())}, DeploymentHash: str(d.DeploymentHash)}
 	raw, err := protojson.Marshal(manifest)
 	if err != nil {
 		return nil, err
