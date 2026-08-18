@@ -10,6 +10,7 @@ from typing import Protocol, cast
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
+from referencing.exceptions import Unresolvable
 
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .datastore import Datastore, DatastoreConflictError, DatastoreNotFoundError
@@ -253,7 +254,12 @@ def _validate_canonical_json(datastore: Datastore, schema_ref: str, body: bytes)
     try:
         Draft202012Validator.check_schema(schema)
         cast(SchemaValidator, Draft202012Validator(schema)).validate(document)
-    except (SchemaError, ValidationError) as error:
+    except (
+        SchemaError,
+        ValidationError,
+        re.error,
+        Unresolvable,
+    ) as error:
         raise ArtifactValidationError(f"value does not satisfy schema {schema_ref}") from error
 
 

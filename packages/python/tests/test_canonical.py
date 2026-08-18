@@ -25,22 +25,39 @@ def test_canonical_hash_matches_shared_golden_vector() -> None:
 def test_canonical_json_consumes_the_cross_runtime_v0_corpus() -> None:
     repository = Path(__file__).resolve().parents[3]
     corpus = repository / "conformance/fixtures/canonical-json-v0"
+    valid_directory = corpus / "valid"
+    invalid_directory = corpus / "invalid"
+    assert valid_directory.is_dir()
+    assert invalid_directory.is_dir()
+    valid_paths = sorted(valid_directory.glob("*.json"))
+    invalid_paths = sorted(invalid_directory.glob("*.json"))
+    assert len(valid_paths) >= 2
+    assert len(invalid_paths) >= 7
+    assert {"integers.json", "utf16-key-order.json"} <= {path.name for path in valid_paths}
 
-    for path in sorted((corpus / "valid").glob("*.json")):
+    for path in valid_paths:
         source = path.read_bytes().removesuffix(b"\n")
         value = cast(JsonValue, json.loads(source))
 
         assert canonical_json(value).encode() == source, path.name
 
-    for path in sorted((corpus / "invalid").glob("*.json")):
+    rejected = {
+        "exponent.json",
+        "fraction.json",
+        "lone-surrogate-key.json",
+        "lone-surrogate-value.json",
+        "unsafe-integer.json",
+    }
+    normalized = {"negative-zero.json", "whitespace.json"}
+    assert rejected | normalized == {path.name for path in invalid_paths}
+    for path in invalid_paths:
         source = path.read_bytes().removesuffix(b"\n")
         value = cast(JsonValue, json.loads(source))
-        try:
-            canonical = canonical_json(value).encode()
-        except (TypeError, ValueError):
-            continue
-
-        assert canonical != source, path.name
+        if path.name in rejected:
+            with pytest.raises((TypeError, ValueError)):
+                canonical_json(value)
+        else:
+            assert canonical_json(value).encode() != source, path.name
 
 
 @pytest.mark.parametrize("value", [1.5, 1 << 53, -(1 << 53)])

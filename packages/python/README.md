@@ -91,4 +91,10 @@ numbers. `emit()` rejects Pydantic input or output schemas containing JSON
 Schema `type: "number"` before a workflow is submitted, including nested
 models and collection items. Model a fractional value as a string (or scale it
 to an integer) until a future protocol version defines a cross-runtime decimal
-representation.
+representation. This includes Python's `Decimal`: it is unsupported unless the
+model field is explicitly a `str` and the step serializes the decimal into that
+string itself.
+
+`Any` and unconstrained mappings are also rejected at `emit()` in v0. They can
+admit floats that no runtime can encode consistently. Prefer a concrete model,
+`list[int]`, `dict[str, int]`, or another explicit JSON shape.
