@@ -114,9 +114,9 @@ Backends consume `WorkflowPlan`. They should not need to inspect authoring sourc
 V0 should include:
 
 - Python SDK and supported TypeScript SDK.
-- Graphology-backed builder model.
+- Typed SDK builder models (Pydantic-backed in Python; Graphology-backed in TypeScript).
 - Proto schemas for the compiled plan and target manifests.
-- Deterministic `WorkflowSpec` JSON emission from the TypeScript SDK.
+- Deterministic `WorkflowSpec` JSON emission from Python and TypeScript SDKs.
 - Go backend compiler that validates specs and writes canonical JSON `WorkflowPlan` artifacts.
 - Local filesystem datastore.
 - S3-compatible object-store datastore.
