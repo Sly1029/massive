@@ -303,7 +303,7 @@ def test_emit_accepts_nested_decimal_validation_inputs_by_their_serialized_shape
     ] == "string"
 
 
-def test_emit_rejects_bare_float_workflow_and_step_inputs() -> None:
+def test_emit_rejects_bare_float_workflow_and_registered_step_inputs() -> None:
     workflow_float = GraphBuilder(
         name="float-workflow-input",
         input_type=float,
@@ -322,6 +322,9 @@ def test_emit_rejects_bare_float_workflow_and_step_inputs() -> None:
         output_type=Request,
         defaults=_defaults(),
     )
+    # Keep the float step disconnected so a safe workflow input cannot mask its
+    # role-specific diagnostic. Emission validates every registered step; the
+    # compiler separately owns reachability validation.
     step_float.add(step_float.step()(float_input))
     assert step_float.edge_from(step_float.start).to(step_float.end) is None
 

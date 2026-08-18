@@ -104,7 +104,10 @@ That distinction makes `Decimal` useful without inventing a second wire
 format. Pydantic accepts a Decimal input in its validation schema and serializes
 the output as a JSON string, so an output such as `Decimal("10.5")` is stored as
 `{"value":"10.5"}`. A following Decimal-typed step can validate that string
-again. Actual float/`number` output schemas are rejected at `emit()` because
+again. The published validation schema deliberately retains Pydantic's
+number-or-string input shape; canonical-json-v0 framing is an additional,
+authoritative constraint that rejects a fractional JSON number before schema
+validation. Actual float/`number` output schemas are rejected at `emit()` because
 their serialized values cannot be represented by v0; use `Decimal`, a string,
 or a scaled integer instead.
 
