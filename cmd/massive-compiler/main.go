@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
+	"github.com/Sly1029/massive/internal/target/argo"
 )
 
 func main() {
@@ -27,7 +29,10 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("expected subcommand: compile")
+		return fmt.Errorf("expected subcommand: compile or bundle-argo")
+	}
+	if args[0] == "bundle-argo" {
+		return bundleArgo(args[1:])
 	}
 	if args[0] != "compile" {
 		return fmt.Errorf("unknown subcommand %q", args[0])
@@ -69,5 +74,44 @@ func run(args []string) error {
 	}
 
 	fmt.Printf("compiled workflow %q: %s -> %s\n", workflowSpec.Workflow.Name, result.PlanHash, outputPath)
+	return nil
+}
+
+func bundleArgo(args []string) error {
+	flags := flag.NewFlagSet("bundle-argo", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	planPath := flags.String("plan", "", "canonical workflow plan JSON")
+	deploymentPath := flags.String("deployment", "", "DeploymentSpec JSON")
+	outDir := flags.String("out", "", "bundle output directory")
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("parse bundle-argo flags: %w", err)
+	}
+	if *planPath == "" || *deploymentPath == "" || *outDir == "" {
+		return fmt.Errorf("bundle-argo requires --plan, --deployment, and --out")
+	}
+	planJSON, err := os.ReadFile(*planPath)
+	if err != nil {
+		return fmt.Errorf("read plan %q: %w", *planPath, err)
+	}
+	d, err := deployment.ReadFile(*deploymentPath)
+	if err != nil {
+		return err
+	}
+	b, err := argo.Compile(planJSON, d)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(*outDir, 0o755); err != nil {
+		return err
+	}
+	for _, f := range b.Files {
+		if err := os.WriteFile(filepath.Join(*outDir, f.Path), f.Bytes, 0o644); err != nil {
+			return fmt.Errorf("write bundle file %s: %w", f.Path, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(*outDir, "bundle-manifest.json"), append(b.ManifestJSON, '\n'), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("bundled argo plan %s -> %s\n", d.PlanHash, *outDir)
 	return nil
 }

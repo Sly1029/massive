@@ -18,3 +18,10 @@ var WorkflowSpecSchemaJSON []byte
 //
 //go:embed deployment-spec.schema.json
 var DeploymentSpecSchemaJSON []byte
+
+// ArgoWorkflowsCRDVersion and ArgoWorkflowsCRDSchemaJSON pin the upstream Argo
+// WorkflowTemplate schema used for offline target validation.
+const ArgoWorkflowsCRDVersion = "v3.7.16"
+
+//go:embed argo-workflows-v3.7.16.schema.json
+var ArgoWorkflowsCRDSchemaJSON []byte

@@ -2,6 +2,14 @@
 
 Status: draft
 
+The current implementation is a **static-DAG structural bundle**. It validates
+the generated `WorkflowTemplate` offline against Argo Workflows v3.7.16 and is
+safe to apply to a cluster, but it is not yet an executable remote runtime: a
+cluster-side step driver, committed materialization manifest, and submission
+binding are still required before a run can resolve plan/source/environment
+artifacts. The template is annotated `massive.dev/execution-status:
+structural-only` to make that boundary explicit.
+
 Argo is the first non-local backend. The Argo compiler emits a deploy bundle, not only a single WorkflowTemplate.
 
 The Argo backend proves the main product thesis: a portable typed graph plus execution contract can lower to real infrastructure with pods, resources, object storage, environment artifacts, network policy, secret binding, observability, and generated deployment artifacts.
