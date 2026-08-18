@@ -2,6 +2,12 @@
 
 Status: draft
 
+> This document describes the implemented TypeScript-first v0 substrate. The
+> accepted next-version product and architecture direction is
+> [Workflow Platform v2 Direction](workflow-platform-v2.md). It makes Python the
+> priority frontend for v2 and replaces mutable-state/channel proposals
+> with explicit immutable dataflow.
+
 Massive is a portable workflow compiler. It is not, at least initially, a durable execution runtime. Authors define typed workflows in TypeScript, the SDK lowers them into a language-neutral workflow specification, and backend compilers render that specification into runnable artifacts such as a local async plan or an Argo deploy bundle.
 
 Two audiences anchor the design. Workflow authors get a typed TypeScript SDK and a one-command local loop. Platform teams get the differentiating layer: compiled, deterministic, provenance-carrying deploy bundles whose execution contracts (environment, resources, secrets, network) are verifiable artifacts rather than runtime configuration. When scope decisions are close, the compile/verify/provenance layer wins.
@@ -111,7 +117,7 @@ V0 should include:
 
 Design was informed by:
 
-- Semgrep Workflows: Python/Metaflow authoring, Argo compilation, S3-backed code packages and artifacts, runtime network/secret isolation work.
+- Existing workflow systems: Python authoring, Argo compilation, object-store-backed code packages and artifacts, and runtime network/secret isolation.
 - Metaflow: static graph extraction, datastore model, Argo support, and environment plugins such as uv and PyPI.
 - Pydantic Graph: builder API with typed state, typed dependencies, typed step input/output, map/spread, join, and reducers.
 - Graphology and NetworkX: mature graph libraries that should own graph operations in their respective languages.

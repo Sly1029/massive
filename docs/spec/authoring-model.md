@@ -1,5 +1,9 @@
 # Authoring Model
 
+> **V0 scope:** this document records the current TypeScript authoring model.
+> [Workflow Platform v2 Direction](workflow-platform-v2.md) is normative for the
+> Python-first v2 model and supersedes shared-state or channel semantics.
+
 Status: draft
 
 The v0 authoring API is TypeScript-first and functional/declarative. It should feel closer to `pydantic-graph`'s `GraphBuilder` than to a class hierarchy or AST-extracted control flow.
@@ -119,7 +123,7 @@ const scan = g.step("scan", {
     findings: "findings",
     risk: "risk",
   },
-  run: async ({ input, tools }) => tools.semgrep.scan(input),
+  run: async ({ input, tools }) => tools.analyzer.scan(input),
 });
 ```
 
@@ -133,7 +137,7 @@ const scan = g.step("scan", {
     findings: (out) => out.findings,
     risk: (out) => out.risk,
   },
-  run: async ({ input, tools }) => tools.semgrep.scan(input),
+  run: async ({ input, tools }) => tools.analyzer.scan(input),
 });
 ```
 

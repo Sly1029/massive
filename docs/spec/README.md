@@ -3,6 +3,8 @@
 Draft specification for Massive.
 
 - [Overview](overview.md)
+- [Workflow Platform v2 Direction](workflow-platform-v2.md) — normative direction
+  for the Python SDK and the next Massive graph model
 - [Authoring Model](authoring-model.md)
 - [IR And Datastore](ir-and-datastore.md)
 - [Environment Materialization](environment-materialization.md)

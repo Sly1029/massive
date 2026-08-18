@@ -1,5 +1,9 @@
 # IR And Datastore
 
+> **V0 scope:** this document records the current IR and datastore substrate.
+> See [Workflow Platform v2 Direction](workflow-platform-v2.md) for the accepted
+> versioned Graph IR, Artifact Runtime, and Python-first evolution.
+
 Status: draft
 
 Massive's canonical compiled artifact is a JSON `WorkflowPlan` typed by proto3 schemas. The v0 schema lives at [`../../conformance/schema/workflow-plan.proto`](../../conformance/schema/workflow-plan.proto), with target bundle output described by [`../../conformance/schema/bundle-manifest.proto`](../../conformance/schema/bundle-manifest.proto).

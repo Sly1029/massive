@@ -1,5 +1,11 @@
 # Open Questions
 
+> **V0 scope:** this file preserves unresolved questions from the original
+> TypeScript-first design. Decisions accepted for v2, including immutable
+> explicit dataflow and Python priority, are recorded in
+> [Workflow Platform v2 Direction](workflow-platform-v2.md) and are no longer
+> open here.
+
 Status: draft
 
 This document tracks decisions that are intentionally unsettled or likely to change after building real workflows.

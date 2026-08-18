@@ -1,5 +1,9 @@
 # Implementation Roadmap
 
+> **V0 scope:** completed and current items below describe the existing
+> TypeScript-first substrate. Future prioritization is superseded by the delivery
+> sequence in [Workflow Platform v2 Direction](workflow-platform-v2.md).
+
 Status: draft
 
 This roadmap turns the architecture in [overview.md](overview.md), [ir-and-datastore.md](ir-and-datastore.md), [argo-backend.md](argo-backend.md), and [environment-materialization.md](environment-materialization.md) into an implementation plan that can be **handed off and parallelized** across multiple agents or engineers.
