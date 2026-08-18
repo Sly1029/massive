@@ -14,6 +14,7 @@ massive-python-runner = "massive.runner:main"
 
 [dependency-groups]
 dev = [
+  "boto3-stubs[s3]>=1.35,<2",
   "pytest>=8.3,<9",
   "pyright>=1.1.390,<2",
   "ruff>=0.9,<1",

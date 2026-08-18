@@ -12,12 +12,15 @@ from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-import boto3
 from botocore.config import Config
+from botocore.session import get_session
 from jsonschema import Draft202012Validator
 from pydantic import TypeAdapter
+
+if TYPE_CHECKING:
+    from mypy_boto3_s3 import S3Client
 
 from .builder import StepDefinition
 from .canonical import JsonValue, canonical_json, sha256_ref
@@ -69,30 +72,46 @@ class LocalDatastore:
         temporary = target.with_name(f".tmp-{target.name}")
         temporary.write_bytes(body)
         temporary.replace(target)
-        metadata = self.root / ".massive-datastore-metadata" / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
+        metadata = (
+            self.root
+            / ".massive-datastore-metadata"
+            / f"{hashlib.sha256(key.encode()).hexdigest()}.json"
+        )
         metadata.parent.mkdir(parents=True, exist_ok=True)
         metadata.write_text('{"contentType":"application/json"}')
 
 
 class S3Datastore:
     def __init__(self, descriptor: Descriptor) -> None:
-        kwargs: dict[str, object] = {"region_name": _string(descriptor, "region")}
-        if isinstance(descriptor.get("endpoint"), str):
-            kwargs["endpoint_url"] = descriptor["endpoint"]
-        if descriptor.get("forcePathStyle") is True:
-            kwargs["config"] = Config(s3={"addressing_style": "path"})
+        endpoint_value = descriptor.get("endpoint")
+        endpoint = endpoint_value if isinstance(endpoint_value, str) else None
+        config = (
+            Config(s3={"addressing_style": "path"})
+            if descriptor.get("forcePathStyle") is True
+            else None
+        )
         self.bucket = _string(descriptor, "bucket")
         prefix = descriptor.get("prefix", "")
         if not isinstance(prefix, str):
             raise DescriptorError("S3 datastore prefix must be a string")
         self.prefix = prefix.strip("/")
-        self.client = boto3.client("s3", **kwargs)
+        self.client = cast(
+            "S3Client",
+            get_session().create_client(
+                "s3",
+                region_name=_string(descriptor, "region"),
+                endpoint_url=endpoint,
+                config=config,
+            ),
+        )
 
     def read(self, key: str) -> bytes:
         return self.client.get_object(Bucket=self.bucket, Key=self._key(key))["Body"].read()
 
     def write(self, key: str, body: bytes) -> None:
-        self.client.put_object(Bucket=self.bucket, Key=self._key(key), Body=body, ContentType="application/json")
+        self.client.put_object(
+            Bucket=self.bucket, Key=self._key(key), Body=body, ContentType="application/json"
+        )
 
     def _key(self, key: str) -> str:
         return key if self.prefix == "" else f"{self.prefix}/{key}"
@@ -202,7 +221,9 @@ async def _await_output(value: Awaitable[object]) -> object:
     return await value
 
 
-def _read_input(descriptor: Descriptor, datastore: Datastore) -> tuple[JsonValue, dict[str, object]]:
+def _read_input(
+    descriptor: Descriptor, datastore: Datastore
+) -> tuple[JsonValue, dict[str, object]]:
     input_descriptor = _require_mapping(descriptor, "input")
     artifact = _require_mapping(input_descriptor, "artifact")
     expected_hash = _string(artifact, "hash")
@@ -259,14 +280,22 @@ def _source_root(source_package: Descriptor, datastore: Datastore) -> Generator[
                 names: set[str] = set()
                 total_size = 0
                 for member in archive_file:
-                    if not member.isfile() or not _safe_archive_path(member.name) or member.name in names:
-                        raise DescriptorError(f"source archive contains unsafe entry {member.name!r}")
+                    if (
+                        not member.isfile()
+                        or not _safe_archive_path(member.name)
+                        or member.name in names
+                    ):
+                        raise DescriptorError(
+                            f"source archive contains unsafe entry {member.name!r}"
+                        )
                     total_size += member.size
                     if len(names) >= _MAX_SOURCE_FILES or total_size > _MAX_SOURCE_BYTES:
                         raise DescriptorError("source archive exceeds source package limits")
                     source = archive_file.extractfile(member)
                     if source is None:
-                        raise DescriptorError(f"source archive entry {member.name!r} cannot be read")
+                        raise DescriptorError(
+                            f"source archive entry {member.name!r} cannot be read"
+                        )
                     target = root / member.name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(source.read())
@@ -331,8 +360,11 @@ def _sha256_ref_bytes(body: bytes) -> str:
 
 
 def _safe_archive_path(path: str) -> bool:
-    return bool(path) and not path.startswith("/") and "\\" not in path and all(
-        part not in {"", ".", ".."} for part in path.split("/")
+    return (
+        bool(path)
+        and not path.startswith("/")
+        and "\\" not in path
+        and all(part not in {"", ".", ".."} for part in path.split("/"))
     )
 
 
