@@ -21,7 +21,6 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/google/uuid"
-	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const jsonContentType = "application/json"
@@ -695,57 +694,22 @@ func resolveOutputArtifact(ctx context.Context, store datastore.Datastore, descr
 			Schema:      descriptor.Output.Schema,
 		},
 		Published: manifestPublishedArtifact{
-			Manifest: manifestArtifactRef(published.Manifest),
-			Body:     manifestArtifactRef(published.Body),
-			Schema:   published.Schema,
+			Manifest: manifestArtifactRef{
+				Key:         published.Manifest.Key,
+				Hash:        published.Manifest.Hash,
+				Size:        published.Manifest.Size,
+				ContentType: published.Manifest.ContentType,
+			},
+			Body: manifestArtifactRef{
+				Key:         published.Body.Key,
+				Hash:        published.Body.Hash,
+				Size:        published.Body.Size,
+				ContentType: published.Body.ContentType,
+			},
+			Schema: published.Schema,
 		},
 		Body: body,
 	}, nil
-}
-
-func validateSchemaBlob(ctx context.Context, store datastore.Datastore, schemaRef string) ([]byte, error) {
-	key, err := blobKeyForHash(schemaRef)
-	if err != nil {
-		return nil, err
-	}
-	object, err := store.Get(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("schema blob %s is missing: %w", key, err)
-	}
-	if err := verifyDigest(schemaRef, object.Body); err != nil {
-		return nil, fmt.Errorf("schema blob %s: %w", key, err)
-	}
-	canonicalBody, err := canonical.CanonicalizeJSON(object.Body)
-	if err != nil {
-		return nil, fmt.Errorf("schema blob %s is not canonical JSON: %w", key, err)
-	}
-	if !bytes.Equal(canonicalBody, object.Body) {
-		return nil, fmt.Errorf("schema blob %s is not canonical JSON", key)
-	}
-	return object.Body, nil
-}
-
-func validateJSON(schemaBytes []byte, documentBytes []byte) error {
-	schemaDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaBytes))
-	if err != nil {
-		return fmt.Errorf("decode schema: %w", err)
-	}
-	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(documentBytes))
-	if err != nil {
-		return fmt.Errorf("decode document: %w", err)
-	}
-	compiler := jsonschema.NewCompiler()
-	if err := compiler.AddResource("schema.json", schemaDocument); err != nil {
-		return fmt.Errorf("register schema: %w", err)
-	}
-	compiled, err := compiler.Compile("schema.json")
-	if err != nil {
-		return fmt.Errorf("compile schema: %w", err)
-	}
-	if err := compiled.Validate(instance); err != nil {
-		return err
-	}
-	return nil
 }
 
 func resultForEnd(ctx context.Context, store datastore.Datastore, projectKey string, runID string, endNode string, index executionIndex, outputs map[string]nodeOutput) (manifestDataArtifact, error) {
@@ -820,7 +784,8 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 	}
 	return runManifest{
 		Kind:          "RunManifest",
-		SchemaVersion: 0,
+		SchemaVersion: 1,
+		Encoding:      "json-v1",
 		PlanHash:      planHash,
 		ProjectKey:    projectKey,
 		RunID:         runID,

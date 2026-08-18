@@ -202,7 +202,7 @@ Project keys must not embed run IDs, timestamps, branch names, or other transien
 
 ### Run object templates
 
-`<run-id>` is an opaque run identifier chosen by the orchestrator (for example a UUID string). `<step-id>` is the graph node id. `<attempt>` is a positive integer attempt number (v0 uses `1` on first success path). `<channel-name>` is the portable channel name from the graph.
+`<run-id>` is an opaque run identifier chosen by the orchestrator (for example a UUID string). `<step-id>` is the graph node id. `<attempt>` is a positive integer attempt number (the local v1 executor currently uses only `1`). `<channel-name>` is the portable channel name from the graph.
 
 Templates:
 
@@ -214,7 +214,14 @@ projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```
 
-`run-manifest.json` is the run manifest the orchestrator records when it creates a run (WS-5.1): plan hash, run status, and per-step attempt/artifact records. `result.json` is the final run result artifact the CLI surfaces as the run's output location (WS-6.1). Both are canonical JSON.
+`run-manifest.json` is the v1 (`schemaVersion: 1`, `encoding: "json-v1"`) run
+manifest the orchestrator records when it creates a run: plan hash, run status,
+and per-step attempt/artifact records. Its output record contains the immutable
+attempt-manifest reference and its content-addressed body reference.
+`result.json` is the final run result artifact the CLI surfaces as the run's
+output location. Both are canonical JSON. The local v1 executor currently
+records only attempt `1` for each node; retry scheduling is intentionally not
+implemented by this transport slice.
 
 Examples:
 

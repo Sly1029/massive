@@ -30,7 +30,10 @@ interface RunManifest {
     readonly nodeId: string;
     readonly status: string;
     readonly attempts?: readonly {
-      readonly output?: { readonly key: string; readonly hash: string };
+      readonly output?: {
+        readonly manifest: { readonly key: string; readonly hash: string };
+        readonly body: { readonly key: string; readonly hash: string };
+      };
       readonly input?: { readonly key: string; readonly hash: string };
       readonly diagnostic?: string;
     }[];
@@ -75,7 +78,9 @@ export async function inspectRun(
       lines.push(`      input   ${attempt.input.key}  ${attempt.input.hash}`);
     }
     if (attempt?.output !== undefined) {
-      lines.push(`      output  ${attempt.output.key}  ${attempt.output.hash}`);
+      lines.push(
+        `      output  ${attempt.output.manifest.key}  ${attempt.output.manifest.hash}`,
+      );
     }
     if (attempt?.diagnostic !== undefined && attempt.diagnostic !== "") {
       lines.push(`      error   ${attempt.diagnostic}`);

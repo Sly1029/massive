@@ -3,6 +3,7 @@ package orchestrator
 type runManifest struct {
 	Kind          string                `json:"kind"`
 	SchemaVersion uint32                `json:"schemaVersion"`
+	Encoding      string                `json:"encoding"`
 	PlanHash      string                `json:"planHash"`
 	ProjectKey    string                `json:"projectKey"`
 	RunID         string                `json:"runId"`
@@ -10,6 +11,11 @@ type runManifest struct {
 	Steps         []manifestStep        `json:"steps"`
 	Result        *manifestDataArtifact `json:"result,omitempty"`
 }
+
+// The run-manifest transport is intentionally versioned independently of the
+// graph IR. Schema v1/json-v1 records manifest-last outputs. The local
+// orchestrator currently executes one attempt per node (attempt 1); target
+// retry scheduling and later attempt records are a subsequent slice.
 
 type manifestStep struct {
 	NodeID   string            `json:"nodeId"`

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -50,6 +51,7 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	// Assert their distinct provenance on the un-normalized descriptor.
 	planPackageHash := compiled.Plan.GetSourcePackages()[0].GetPackageHash()
 	descriptor := invoker.descriptors[0]
+	assertLiveDescriptorValidAgainstFrozenSchema(t, descriptor)
 	if descriptor.SchemaVersion != 1 || descriptor.Encoding != "json-v1" {
 		t.Fatalf("descriptor protocol = (%d, %q), want v1/json-v1", descriptor.SchemaVersion, descriptor.Encoding)
 	}
@@ -96,6 +98,41 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	golden := normalizeDescriptorJSON(t, readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json"), "run-linear-chain-0001", "/tmp/massive-conformance-store")
 	if !bytes.Equal(actual, golden) {
 		t.Fatalf("descriptor mismatch\nactual:   %s\nexpected: %s", actual, golden)
+	}
+}
+
+func assertLiveDescriptorValidAgainstFrozenSchema(t *testing.T, descriptor StepInvocationDescriptor) {
+	t.Helper()
+
+	descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
+	if err := os.WriteFile(descriptorPath, mustMarshalCanonical(t, descriptor), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := repoRootForTest(t)
+	parserURL := "file://" + filepath.ToSlash(filepath.Join(root, "packages", "sdk", "src", "runner", "descriptor.ts"))
+	cmd := exec.Command(
+		"deno", "eval", "--config", filepath.Join(root, "deno.json"),
+		`const module = await import(Deno.args[0]); await module.parseStepInvocationDescriptorText(await Deno.readTextFile(Deno.args[1]));`,
+		parserURL, descriptorPath,
+	)
+	cmd.Dir = root
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("live Go descriptor violates frozen schema: %v\n%s", err, output)
+	}
+}
+
+func TestRunOutputManifestKeyIncludesAttempt(t *testing.T) {
+	projectKey := NormalizeProjectKey("acme/security-workflows")
+	first := runOutputManifestKey(projectKey, "run-key-attempt", "double", 1)
+	second := runOutputManifestKey(projectKey, "run-key-attempt", "double", 2)
+	if first == second {
+		t.Fatalf("attempt-specific manifest keys collide: %s", first)
+	}
+	if !strings.Contains(first.String(), "/double/1/output-manifest.json") {
+		t.Fatalf("first attempt key = %q", first)
+	}
+	if !strings.Contains(second.String(), "/double/2/output-manifest.json") {
+		t.Fatalf("second attempt key = %q", second)
 	}
 }
 

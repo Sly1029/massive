@@ -623,7 +623,10 @@ interface ManifestView {
     readonly nodeId: string;
     readonly status: string;
     readonly attempts?: readonly {
-      readonly output?: { readonly key: string; readonly hash: string };
+      readonly output?: {
+        readonly manifest: { readonly key: string; readonly hash: string };
+        readonly body: { readonly key: string; readonly hash: string };
+      };
       readonly diagnostic?: string;
     }[];
   }[];
@@ -692,7 +695,7 @@ function buildSteps(
       ...(diagnostic === undefined || diagnostic === "" ? {} : { diagnostic }),
       ...(attempt?.output === undefined
         ? {}
-        : { outputKey: attempt.output.key }),
+        : { outputKey: attempt.output.manifest.key }),
     };
     return summary;
   });

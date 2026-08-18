@@ -123,15 +123,6 @@
         "schema": { "$ref": "#/$defs/hashRef" }
       }
     },
-    "dataArtifactDestination": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["artifact", "schema"],
-      "properties": {
-        "artifact": { "$ref": "#/$defs/artifactDestination" },
-        "schema": { "$ref": "#/$defs/hashRef" }
-      }
-    },
     "dataArtifactManifestDestination": {
       "type": "object",
       "additionalProperties": false,

@@ -47,24 +47,32 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
   assert(resultPath !== undefined, "result.json should exist under the run");
   assertEquals(await Deno.readTextFile(resultPath), `"value:41"`);
 
-  // Per-step output artifact at steps/<id>/1/output.json.
+  // Per-step output is committed by an immutable manifest. The JSON body is
+  // content-addressed separately and is discovered through that manifest.
   const doubleOutput = await findRunArtifact(
     store,
     runId,
-    join("steps", "double", "1", "output.json"),
+    join("steps", "double", "1", "output-manifest.json"),
   );
-  assert(doubleOutput !== undefined, "steps/double/1/output.json should exist");
+  assert(
+    doubleOutput !== undefined,
+    "steps/double/1/output-manifest.json should exist",
+  );
 
   // Run manifest records a succeeded run.
   const manifestPath = await findRunArtifact(store, runId, "run-manifest.json");
   assert(manifestPath !== undefined, "run-manifest.json should exist");
   const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+    readonly schemaVersion: number;
+    readonly encoding: string;
     readonly status: string;
     readonly steps: readonly {
       readonly nodeId: string;
       readonly status: string;
     }[];
   };
+  assertEquals(manifest.schemaVersion, 1);
+  assertEquals(manifest.encoding, "json-v1");
   assertEquals(manifest.status, "succeeded");
   assertEquals(manifest.steps.map((step) => step.nodeId), [
     "double",

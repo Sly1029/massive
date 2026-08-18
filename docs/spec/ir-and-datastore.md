@@ -227,7 +227,7 @@ plans/<plan-key>/provenance.json
 targets/<plan-key>/<target>/bundle-manifest.json
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
-projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output.json
+projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.json
 projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```
@@ -260,7 +260,7 @@ Local execution is not allowed to bypass the compiler by using TypeScript builde
 
 The CLI may hide this sequence behind `massive run workflow.ts` or `massive run workflow/`. That command is orchestration over the same artifacts, not a separate execution mode. It should cache semantic compilation by source package, spec, and plan hash, then cache deployment lowering separately by deployment and bundle hash so target changes do not invalidate the plan.
 
-The Go compiler does not emit a second frontend spec for language runners. It emits `WorkflowPlan` and target/run manifests. Language adapters consume step invocation descriptors derived from that compiled plan: plan hash, run ID, node ID, input artifact references, output artifact destinations, schema refs, symbol refs, source package refs, and environment refs.
+The Go compiler does not emit a second frontend spec for language runners. It emits `WorkflowPlan` and target/run manifests. Language adapters consume step invocation descriptors derived from that compiled plan: plan hash, project key, run ID, node ID, input artifact references, immutable output-manifest destinations, schema refs, symbol refs, source package refs, and environment refs.
 
 For TypeScript v0, the adapter should live with the TypeScript SDK package. That keeps TypeScript import rules, module loading, and author-facing diagnostics close to the authoring surface while preserving Go as the strict compiler for portable inputs and target behavior.
 
@@ -268,7 +268,7 @@ For TypeScript v0, the adapter should live with the TypeScript SDK package. That
 
 The step invocation descriptor is the narrow runtime protocol between Go orchestration and language adapters.
 
-V0 serializes this descriptor as JSON for ease of implementation in TypeScript. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so a future transport can reuse the same semantics.
+V1 serializes this descriptor as JSON for ease of implementation in TypeScript and Python. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so a future transport can reuse the same semantics.
 
 It includes:
 
@@ -289,8 +289,10 @@ Example:
 
 ```json
 {
-  "schemaVersion": 0,
+  "schemaVersion": 1,
+  "encoding": "json-v1",
   "planHash": "sha256:...",
+  "projectKey": "sha256-...",
   "runId": "run-...",
   "nodeId": "double",
   "attempt": 1,
@@ -308,13 +310,13 @@ Example:
     "schema": "sha256:..."
   },
   "output": {
-    "artifact": "runs/.../steps/double/1/output.json",
+    "manifestKey": "projects/.../runs/.../steps/double/1/output-manifest.json",
     "schema": "sha256:..."
   }
 }
 ```
 
-Any future descriptor transport should reuse the same logical fields. Runtime adapters should isolate descriptor parsing from step execution so the JSON transport can be replaced without rewriting symbol loading or step invocation logic.
+Any future descriptor transport should reuse the same logical fields. Runtime adapters should isolate descriptor parsing from step execution so the JSON transport can be replaced without rewriting symbol loading or step invocation logic. The local v1 executor emits one attempt (`attempt: 1`) per node; retry scheduling is not yet implemented.
 
 ## Runtime Data Artifacts
 

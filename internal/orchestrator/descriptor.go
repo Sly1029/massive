@@ -50,11 +50,6 @@ type DataArtifactRef struct {
 	Schema   string      `json:"schema"`
 }
 
-type DataArtifactDestination struct {
-	Artifact ArtifactDestination `json:"artifact"`
-	Schema   string              `json:"schema"`
-}
-
 // DataArtifactManifestDestination names the immutable commit point for a
 // canonical JSON output. The runner does not receive a mutable body key: the
 // artifact runtime derives and conditionally publishes its content-addressed
