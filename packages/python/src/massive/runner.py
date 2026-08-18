@@ -27,7 +27,13 @@ from referencing.exceptions import Unresolvable
 
 from .artifact import ArtifactError, ArtifactRuntime, Destination, Producer
 from .builder import StepDefinition
-from .canonical import JsonValue, canonical_json, sha256_ref
+from .canonical import (
+    CanonicalJsonError,
+    JsonValue,
+    canonical_json,
+    parse_canonical_json,
+    sha256_ref,
+)
 from .context import InvocationContext, StepContext
 from .datastore import (
     Datastore,
@@ -282,12 +288,9 @@ def _validate(schema: Mapping[str, object], value: object, role: str) -> None:
 
 def _parse_canonical_json(body: bytes, label: str) -> JsonValue:
     try:
-        value = cast(JsonValue, json.loads(body))
-        if canonical_json(value).encode() != body:
-            raise ValueError("JSON body is not canonical")
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+        return parse_canonical_json(body)
+    except CanonicalJsonError as error:
         raise SchemaError(f"{label} is not canonical JSON: {error}") from error
-    return value
 
 
 @contextmanager

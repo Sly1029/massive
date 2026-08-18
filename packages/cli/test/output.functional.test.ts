@@ -213,6 +213,70 @@ Deno.test("massive inspect reports an actionable error for v0 and future manifes
   }
 });
 
+Deno.test("massive inspect reports an actionable error for malformed v1 nested data", async () => {
+  const store = await makeStore();
+  const runId = "run-inspect-malformed-v1";
+  const key =
+    `projects/sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/runs/${runId}/run-manifest.json`;
+  const manifestPath = join(store, key);
+  await Deno.mkdir(dirname(manifestPath), { recursive: true });
+
+  // This is a persisted v1 envelope, but its nested output reference is not a
+  // reference. inspect must report a manifest error instead of throwing while
+  // traversing the untrusted nested data.
+  await Deno.writeTextFile(
+    manifestPath,
+    JSON.stringify({
+      kind: "RunManifest",
+      schemaVersion: 1,
+      encoding: "json-v1",
+      planHash: "sha256:" + "a".repeat(64),
+      projectKey: "sha256-" + "c".repeat(64),
+      runId,
+      status: "succeeded",
+      steps: [{
+        nodeId: "step",
+        status: "succeeded",
+        attempts: [{
+          attempt: 1,
+          status: "succeeded",
+          input: {
+            key: "inputs/step.json",
+            hash: "sha256:" + "b".repeat(64),
+            contentType: "application/json",
+            schema: "sha256:" + "d".repeat(64),
+          },
+          output: {
+            manifest: null,
+            body: {
+              key: "blobs/sha256/" + "e".repeat(64),
+              hash: "sha256:" + "e".repeat(64),
+              size: 12,
+              contentType: "application/json",
+            },
+            schema: "sha256:" + "d".repeat(64),
+          },
+          diagnostic: "",
+        }],
+      }],
+    }),
+  );
+
+  const inspect = await runCli([
+    "inspect",
+    runId,
+    "--store",
+    store,
+    "--project",
+    "acme/wf",
+  ]);
+
+  assertEquals(inspect.code, 4, inspect.stderr);
+  assertStringIncludes(inspect.stderr, "invalid run manifest");
+  assertStringIncludes(inspect.stderr, "cannot inspect run");
+  assertStringIncludes(inspect.stderr, "next");
+});
+
 Deno.test("massive inspect rejects an unsafe run id before touching the filesystem", async () => {
   const store = await makeStore();
 

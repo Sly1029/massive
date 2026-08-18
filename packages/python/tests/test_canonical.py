@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from massive import canonical_json, sha256_ref
-from massive.canonical import JsonValue
+from massive.canonical import CanonicalJsonError, JsonValue, parse_canonical_json
 
 
 def test_canonical_hash_matches_shared_golden_vector() -> None:
@@ -81,3 +81,9 @@ def canonical_fixture_payload(path: Path) -> bytes:
 def test_canonical_json_rejects_values_outside_v0_number_contract(value: float) -> None:
     with pytest.raises((TypeError, ValueError)):
         canonical_json(cast(JsonValue, value))
+
+
+@pytest.mark.parametrize("body", [b"\x80", b"1.5", b'{"value":42 }'])
+def test_parse_canonical_json_rejects_malformed_utf8_and_noncanonical_bytes(body: bytes) -> None:
+    with pytest.raises(CanonicalJsonError):
+        parse_canonical_json(body)

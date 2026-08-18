@@ -13,7 +13,13 @@ from jsonschema.exceptions import SchemaError, ValidationError
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StrictStr
 from referencing.exceptions import Unresolvable
 
-from .canonical import JsonValue, canonical_json, sha256_ref
+from .canonical import (
+    CanonicalJsonError,
+    JsonValue,
+    canonical_json,
+    parse_canonical_json,
+    sha256_ref,
+)
 from .datastore import Datastore, DatastoreConflictError, DatastoreNotFoundError
 from .identity import PositiveAttempt, ProjectKey, SafePathSegment, Sha256Reference
 
@@ -266,12 +272,9 @@ def _validate_canonical_json(datastore: Datastore, schema_ref: str, body: bytes)
 
 def _parse_canonical_json(body: bytes, label: str, error_type: type[ArtifactError]) -> JsonValue:
     try:
-        value = cast(JsonValue, json.loads(body))
-        if canonical_json(value).encode() != body:
-            raise ValueError("JSON body is not canonical")
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+        return parse_canonical_json(body)
+    except CanonicalJsonError as error:
         raise error_type(f"{label} is not canonical JSON") from error
-    return value
 
 
 def _canonical_manifest(manifest: dict[str, JsonValue]) -> bytes:

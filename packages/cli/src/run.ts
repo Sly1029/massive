@@ -1,6 +1,7 @@
 import { dirname, relative, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stat } from "node:fs/promises";
+import { z } from "zod";
 import {
   computeSpecHash,
   type Datastore,
@@ -618,28 +619,59 @@ function stripExport(specifier: string): string {
 
 // --- Run manifest read (authoritative) -------------------------------------
 
-interface ManifestView {
-  readonly schemaVersion: number;
-  readonly encoding: string;
-  readonly planHash: string;
-  readonly status: string;
-  readonly steps: readonly {
-    readonly nodeId: string;
-    readonly status: string;
-    readonly attempts?: readonly {
-      readonly output?: {
-        readonly manifest: { readonly key: string; readonly hash: string };
-        readonly body: { readonly key: string; readonly hash: string };
-      };
-      readonly input?: { readonly key: string; readonly hash: string };
-      readonly diagnostic?: string;
-    }[];
-  }[];
-  readonly result?: { readonly key: string; readonly hash: string };
-}
-
 const RUN_MANIFEST_SCHEMA_VERSION = 1;
 const RUN_MANIFEST_ENCODING = "json-v1";
+
+// This matches the Go-owned run-manifest v1 transport in
+// internal/orchestrator/manifest.go. Keep the complete model here because the
+// CLI reads every layer below directly when rendering `inspect` and `run`.
+const ManifestArtifactRefSchema = z.object({
+  key: z.string(),
+  hash: z.string(),
+  size: z.number().int().nonnegative(),
+  contentType: z.string(),
+}).strict();
+
+const ManifestDataArtifactSchema = z.object({
+  key: z.string(),
+  hash: z.string(),
+  contentType: z.string(),
+  schema: z.string(),
+}).strict();
+
+const ManifestPublishedArtifactSchema = z.object({
+  manifest: ManifestArtifactRefSchema,
+  body: ManifestArtifactRefSchema,
+  schema: z.string(),
+}).strict();
+
+const ManifestAttemptSchema = z.object({
+  attempt: z.number().int().positive(),
+  status: z.string(),
+  input: ManifestDataArtifactSchema,
+  output: ManifestPublishedArtifactSchema.optional(),
+  diagnostic: z.string().optional(),
+}).strict();
+
+const ManifestStepSchema = z.object({
+  nodeId: z.string(),
+  status: z.string(),
+  attempts: z.array(ManifestAttemptSchema),
+}).strict();
+
+const ManifestViewSchema = z.object({
+  kind: z.literal("RunManifest"),
+  schemaVersion: z.literal(RUN_MANIFEST_SCHEMA_VERSION),
+  encoding: z.literal(RUN_MANIFEST_ENCODING),
+  planHash: z.string(),
+  projectKey: z.string(),
+  runId: z.string(),
+  status: z.string(),
+  steps: z.array(ManifestStepSchema),
+  result: ManifestDataArtifactSchema.optional(),
+}).strict();
+
+type ManifestView = z.infer<typeof ManifestViewSchema>;
 
 // Run and inspect must never read nested fields from a transport version they
 // do not understand. Keep this error distinct so `run` can retain its
@@ -666,8 +698,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// Reads and validates the independently-versioned run-manifest envelope before
-// exposing any nested result or attempt data to callers.
+// Reads and validates the independently-versioned run manifest before exposing
+// any nested result or attempt data to callers.
 export async function readRunManifestAt(
   store: Datastore,
   key: string,
@@ -686,7 +718,14 @@ export async function readRunManifestAt(
       value.encoding,
     );
   }
-  return value as unknown as ManifestView;
+  const parsed = ManifestViewSchema.safeParse(value);
+  if (!parsed.success) {
+    const details = parsed.error.issues.map((issue) =>
+      `${issue.path.join(".") || "manifest"}: ${issue.message}`
+    ).join("; ");
+    throw new Error(`invalid run manifest at ${key}: ${details}`);
+  }
+  return parsed.data;
 }
 
 // Reads a manifest at a known key; undefined for ordinary best-effort read
