@@ -148,11 +148,12 @@ func assertLiveDescriptorValidAgainstFrozenSchema(t *testing.T, descriptor StepI
 
 func TestFrozenDescriptorSchemaRejectsRawProjectID(t *testing.T) {
 	document := readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json")
-	document = bytes.Replace(
+	document = replaceJSONFixtureField(
+		t,
 		document,
-		[]byte(`"projectKey": "sha256-9999999999999999999999999999999999999999999999999999999999999999"`),
-		[]byte(`"projectKey": "acme/security-workflows"`),
-		1,
+		"projectKey",
+		"sha256-"+strings.Repeat("9", 64),
+		"acme/security-workflows",
 	)
 	descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
 	if err := os.WriteFile(descriptorPath, document, 0o600); err != nil {
@@ -170,6 +171,9 @@ func TestFrozenDescriptorSchemaRejectsRawProjectID(t *testing.T) {
 	if err == nil {
 		t.Fatal("frozen descriptor schema accepted raw project id")
 	}
+	if !strings.Contains(string(output), "StepInvocationDescriptor JSON schema violation") {
+		t.Fatalf("descriptor rejection = %q, want frozen schema diagnostic", output)
+	}
 	if !strings.Contains(string(output), "projectKey") {
 		t.Fatalf("descriptor validation error = %q, want projectKey", output)
 	}
@@ -186,7 +190,7 @@ func TestFrozenDescriptorSchemaConstrainsArtifactIdentitySegments(t *testing.T) 
 	} {
 		for _, value := range []string{"nested/value", ".", "..", strings.Repeat("a", 129)} {
 			t.Run(field+" rejects "+value, func(t *testing.T) {
-				document := replaceFixtureValue(t, fixture, `"`+field+`": "`+original+`"`, `"`+field+`": "`+value+`"`)
+				document := replaceJSONFixtureField(t, fixture, field, original, value)
 				descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
 				if err := os.WriteFile(descriptorPath, document, 0o600); err != nil {
 					t.Fatal(err)
@@ -201,6 +205,9 @@ func TestFrozenDescriptorSchemaConstrainsArtifactIdentitySegments(t *testing.T) 
 				if err == nil {
 					t.Fatalf("frozen descriptor schema accepted unsafe %s %q", field, value)
 				}
+				if !strings.Contains(string(output), "StepInvocationDescriptor JSON schema violation") {
+					t.Fatalf("descriptor rejection = %q, want frozen schema diagnostic", output)
+				}
 				if !strings.Contains(string(output), field) {
 					t.Fatalf("descriptor validation error = %q, want %s", output, field)
 				}
@@ -214,7 +221,7 @@ func TestFrozenDescriptorSchemaConstrainsArtifactIdentitySegments(t *testing.T) 
 	} {
 		for _, value := range []string{"_step", ".hidden", strings.Repeat("a", 128)} {
 			t.Run(field+" accepts "+value, func(t *testing.T) {
-				document := replaceFixtureValue(t, fixture, `"`+field+`": "`+original+`"`, `"`+field+`": "`+value+`"`)
+				document := replaceJSONFixtureField(t, fixture, field, original, value)
 				descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
 				if err := os.WriteFile(descriptorPath, document, 0o600); err != nil {
 					t.Fatal(err)
@@ -231,6 +238,25 @@ func TestFrozenDescriptorSchemaConstrainsArtifactIdentitySegments(t *testing.T) 
 			})
 		}
 	}
+}
+
+func replaceJSONFixtureField(t *testing.T, document []byte, field string, oldValue string, newValue string) []byte {
+	t.Helper()
+	return replaceFixtureValue(
+		t,
+		document,
+		fmt.Sprintf(`"%s": %s`, field, mustJSONString(t, oldValue)),
+		fmt.Sprintf(`"%s": %s`, field, mustJSONString(t, newValue)),
+	)
+}
+
+func mustJSONString(t *testing.T, value string) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
 
 func replaceFixtureValue(t *testing.T, document []byte, old string, new string) []byte {
@@ -252,12 +278,14 @@ func TestSafePathSegmentContractAgreesAcrossSchemasAndGo(t *testing.T) {
 	}
 	cases := []boundaryCase{
 		{value: "safe_SEGMENT.@:#-Z", valid: true},
+		{value: "_step", valid: true},
+		{value: ".hidden", valid: true},
 		{value: strings.Repeat("a", 128), valid: true},
 		{value: "", valid: false},
 		{value: ".", valid: false},
 		{value: "..", valid: false},
 		{value: "nested/value", valid: false},
-		{value: `nested\\value`, valid: false},
+		{value: `nested\value`, valid: false},
 		{value: strings.Repeat("a", 129), valid: false},
 	}
 	descriptorFixture := readRepoFile(t, "conformance", "fixtures", "descriptors", "linear-chain", "descriptor.json")
@@ -271,7 +299,7 @@ func TestSafePathSegmentContractAgreesAcrossSchemasAndGo(t *testing.T) {
 				t.Fatalf("Go safe path segment validation = %t, want %t", got, testCase.valid)
 			}
 
-			descriptor := replaceFixtureValue(t, descriptorFixture, `"runId": "run-linear-chain-0001"`, `"runId": "`+testCase.value+`"`)
+			descriptor := replaceJSONFixtureField(t, descriptorFixture, "runId", "run-linear-chain-0001", testCase.value)
 			descriptorPath := filepath.Join(t.TempDir(), "descriptor.json")
 			if err := os.WriteFile(descriptorPath, descriptor, 0o600); err != nil {
 				t.Fatal(err)
@@ -282,12 +310,21 @@ func TestSafePathSegmentContractAgreesAcrossSchemasAndGo(t *testing.T) {
 				parserURL, descriptorPath,
 			)
 			cmd.Dir = root
-			_, err := cmd.CombinedOutput()
-			if got := err == nil; got != testCase.valid {
-				t.Fatalf("descriptor schema acceptance = %t, want %t", got, testCase.valid)
+			output, err := cmd.CombinedOutput()
+			if testCase.valid {
+				if err != nil {
+					t.Fatalf("descriptor schema rejected valid segment: %v\n%s", err, output)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("descriptor schema accepted invalid segment")
+				}
+				if !strings.Contains(string(output), "StepInvocationDescriptor JSON schema violation") {
+					t.Fatalf("descriptor rejection = %q, want frozen schema diagnostic", output)
+				}
 			}
 
-			workflowSpec := replaceAllFixtureValues(t, workflowSpecFixture, `"__start"`, `"`+testCase.value+`"`)
+			workflowSpec := replaceAllFixtureValues(t, workflowSpecFixture, mustJSONString(t, "__start"), mustJSONString(t, testCase.value))
 			_, err = spec.Parse(workflowSpec)
 			if got := err == nil; got != testCase.valid {
 				t.Fatalf("WorkflowSpec schema acceptance = %t, want %t (error: %v)", got, testCase.valid, err)
@@ -522,6 +559,9 @@ func TestUnsafeRawPlanIdentityRejectedBeforeArtifactWrites(t *testing.T) {
 				storeRoot := newStoreRoot(t)
 				sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
 				compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+				if compiled.Plan.GetGraph() == nil || len(compiled.Plan.GetGraph().GetNodes()) < 2 || len(compiled.Plan.GetGraph().GetEdges()) == 0 {
+					t.Fatal("linear-chain fixture no longer has the graph entries this raw-plan test mutates")
+				}
 				mutation.mutate(compiled.Plan, hostile)
 				invoker := &functionalStepInvoker{storeRoot: storeRoot}
 
@@ -551,6 +591,34 @@ func TestUnsafeRawPlanIdentityRejectedBeforeArtifactWrites(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestNilRawPlanGraphRejectedBeforeArtifactWrites(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	invoker := &functionalStepInvoker{storeRoot: storeRoot}
+
+	_, err := Run(context.Background(), RunConfig{
+		Plan:              &planpb.WorkflowPlan{},
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "acme/security-workflows",
+		RunID:             "run-nil-graph",
+		SourcePackageRoot: t.TempDir(),
+		StepInvoker:       invoker,
+	}, []byte("20"))
+	if err == nil {
+		t.Fatal("Run accepted a plan without graph IR")
+	}
+	var invalid *InvalidRunInputError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("error = %T (%v), want *InvalidRunInputError", err, err)
+	}
+	if invalid.Field != "plan graph" {
+		t.Fatalf("error field = %q, want plan graph", invalid.Field)
+	}
+	if len(invoker.descriptors) != 0 {
+		t.Fatalf("runner received %d descriptors after graph rejection", len(invoker.descriptors))
+	}
+	assertNoRunSideEffects(t, storeRoot)
 }
 
 func TestUnsafePlanNodeIDRejectedBeforeArtifactWrites(t *testing.T) {
