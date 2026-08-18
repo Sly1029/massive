@@ -1,5 +1,6 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ValidateFunction } from "ajv/dist/2020.js";
+import { z } from "zod";
 import manifestSchema from "./data-artifact-manifest.schema.json" with {
   type: "json",
 };
@@ -34,6 +35,55 @@ export interface ArtifactProducer {
   readonly nodeId: string;
   readonly attempt: number;
 }
+
+const hashRefSchema = z
+  .string()
+  .regex(/^sha256:[0-9a-f]{64}$/, "must be a lowercase SHA-256 reference");
+
+const projectKeySchema = z
+  .string()
+  .regex(
+    /^sha256-[0-9a-f]{64}$/,
+    "must be a normalized SHA-256 project namespace key",
+  );
+
+const pathSegmentSchema = z
+  .string()
+  .min(1, "must not be empty")
+  .max(128, "must be at most 128 characters")
+  .regex(
+    /^[A-Za-z0-9_.@:#-]+$/,
+    "must contain only safe ASCII path-segment characters",
+  )
+  .refine((value) => value !== "." && value !== "..", {
+    message: "must not be a dot path segment",
+  });
+
+// The producer is the namespace identity for an immutable output slot. Keep
+// its parsing in one schema rather than relying on Key.parse to accidentally
+// reject only some unsafe values after work has already begun.
+const artifactProducerSchema = z
+  .object({
+    projectKey: projectKeySchema,
+    planHash: hashRefSchema,
+    runId: pathSegmentSchema,
+    nodeId: pathSegmentSchema,
+    attempt: z
+      .number()
+      .int("must be an integer")
+      .positive("must be positive")
+      .max(Number.MAX_SAFE_INTEGER, "must be a safe integer"),
+  })
+  .strict();
+
+const artifactDestinationSchema = z
+  .object({
+    manifestKey: z.custom<Key>((value): value is Key => value instanceof Key, {
+      error: "must be a validated datastore key",
+    }),
+    schema: hashRefSchema,
+  })
+  .strict();
 
 export interface ArtifactRef {
   readonly key: string;
@@ -116,7 +166,8 @@ export class ArtifactRuntime {
     producer: ArtifactProducer,
     body: string | Uint8Array,
   ): Promise<PublishedJson> {
-    validateDestination(destination, producer);
+    const validatedProducer = validateProducer(producer);
+    validateDestination(destination, validatedProducer);
     const bytes = encode(body);
     await this.validateCanonicalJson(destination.schema, bytes);
 
@@ -132,7 +183,7 @@ export class ArtifactRuntime {
       kind: "DataArtifactManifest",
       schemaVersion: 0,
       encoding: "canonical-json-v0",
-      producer,
+      producer: validatedProducer,
       schema: destination.schema,
       body: bodyRef,
     };
@@ -165,7 +216,8 @@ export class ArtifactRuntime {
     destination: ArtifactDestination,
     producer: ArtifactProducer,
   ): Promise<ResolvedJson> {
-    validateDestination(destination, producer);
+    const validatedProducer = validateProducer(producer);
+    validateDestination(destination, validatedProducer);
     const manifestObject = await getArtifactObject(
       this.store,
       destination.manifestKey,
@@ -181,7 +233,7 @@ export class ArtifactRuntime {
       destination.manifestKey,
     );
     if (
-      !sameProducer(manifest.producer, producer) ||
+      !sameProducer(manifest.producer, validatedProducer) ||
       manifest.schema !== destination.schema
     ) {
       throw new ArtifactIntegrityError(
@@ -280,6 +332,15 @@ function validateDestination(
   destination: ArtifactDestination,
   producer: ArtifactProducer,
 ): void {
+  const destinationResult = artifactDestinationSchema.safeParse(destination);
+  if (!destinationResult.success) {
+    throw new ArtifactValidationError(
+      `Invalid artifact destination: ${
+        z.prettifyError(destinationResult.error)
+      }`,
+      { cause: destinationResult.error },
+    );
+  }
   let expected: Key;
   try {
     expected = Key.parse(
@@ -298,6 +359,17 @@ function validateDestination(
       `Manifest destination ${destination.manifestKey.toString()} does not match producer slot ${expected.toString()}`,
     );
   }
+}
+
+function validateProducer(producer: unknown): ArtifactProducer {
+  const result = artifactProducerSchema.safeParse(producer);
+  if (!result.success) {
+    throw new ArtifactValidationError(
+      `Invalid producer identity: ${z.prettifyError(result.error)}`,
+      { cause: result.error },
+    );
+  }
+  return result.data;
 }
 
 async function putImmutable(

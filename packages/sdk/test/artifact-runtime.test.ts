@@ -272,6 +272,79 @@ Deno.test("artifact runtime maps only absent schemas to validation failures", as
   }
 });
 
+Deno.test("artifact runtime enforces the shared producer identity contract before any datastore write", async () => {
+  const fixture = await producerIdentityFixture();
+  assertEquals(fixture.version, 1);
+  assertEquals(fixture.contract, "artifact-producer-v1");
+
+  for (const testCase of fixture.valid) {
+    await withRuntime(async (_store, runtime) => {
+      const producer = testCase.producer as ArtifactProducer;
+      const published = await runtime.publishJson(
+        destinationFor(producer),
+        producer,
+        BODY,
+      );
+      assertEquals(
+        published.manifest.key,
+        destinationFor(producer).manifestKey.toString(),
+      );
+    });
+  }
+
+  for (const testCase of fixture.invalid) {
+    const root = await Deno.makeTempDir({
+      prefix: "massive-invalid-producer-",
+    });
+    try {
+      const runtime = new ArtifactRuntime(
+        new LocalDatastoreClient({ path: root }),
+      );
+      const error = await assertRejects(
+        () =>
+          runtime.publishJson(
+            destination(),
+            testCase.producer as ArtifactProducer,
+            BODY,
+          ),
+        ArtifactValidationError,
+      );
+      assertStringIncludes(error.message, "Invalid producer identity");
+      assertEquals(
+        await directoryEntries(root),
+        [],
+        `${testCase.name} must not create a body, manifest, or metadata record`,
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  }
+});
+
+Deno.test("artifact runtime checks an otherwise valid producer's exact destination before schema access", async () => {
+  const root = await Deno.makeTempDir({
+    prefix: "massive-producer-destination-",
+  });
+  try {
+    const runtime = new ArtifactRuntime(
+      new LocalDatastoreClient({ path: root }),
+    );
+    const error = await assertRejects(
+      () =>
+        runtime.publishJson(
+          destination(),
+          { ...producer(), nodeId: "another-task" },
+          BODY,
+        ),
+      ArtifactValidationError,
+    );
+    assertStringIncludes(error.message, "does not match producer slot");
+    assertEquals(await directoryEntries(root), []);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 async function withRuntime(
   run: (store: LocalDatastoreClient, runtime: ArtifactRuntime) => Promise<void>,
 ): Promise<void> {
@@ -306,4 +379,42 @@ function producer(): ArtifactProducer {
     nodeId: "task",
     attempt: 1,
   };
+}
+
+function destinationFor(producer: ArtifactProducer): ArtifactDestination {
+  return {
+    manifestKey: Key.parse(
+      `projects/${producer.projectKey}/runs/${producer.runId}/steps/${producer.nodeId}/${producer.attempt}/output-manifest.json`,
+    ),
+    schema: SCHEMA_HASH,
+  };
+}
+
+interface ProducerIdentityFixture {
+  readonly version: number;
+  readonly contract: string;
+  readonly valid: readonly ProducerIdentityCase[];
+  readonly invalid: readonly ProducerIdentityCase[];
+}
+
+interface ProducerIdentityCase {
+  readonly name: string;
+  readonly producer: unknown;
+}
+
+async function producerIdentityFixture(): Promise<ProducerIdentityFixture> {
+  return JSON.parse(
+    await Deno.readTextFile(
+      new URL(
+        "../../../conformance/fixtures/artifacts/producer-identities.json",
+        import.meta.url,
+      ),
+    ),
+  ) as ProducerIdentityFixture;
+}
+
+async function directoryEntries(path: string): Promise<string[]> {
+  const entries: string[] = [];
+  for await (const entry of Deno.readDir(path)) entries.push(entry.name);
+  return entries.sort();
 }
