@@ -29,7 +29,13 @@ from .artifact import ArtifactError, ArtifactRuntime, Destination, Producer
 from .builder import StepDefinition
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InvocationContext, StepContext
-from .datastore import Datastore, DatastoreDescriptor, LocalDatastore, S3Datastore
+from .datastore import (
+    Datastore,
+    DatastoreDescriptor,
+    DatastoreNotFoundError,
+    LocalDatastore,
+    S3Datastore,
+)
 from .identity import SHA256_REFERENCE
 
 _SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
@@ -365,7 +371,10 @@ def _source_import_path(root: Path) -> Generator[None, None, None]:
 
 
 def _read(store: Datastore, key: str) -> bytes:
-    return store.get(key).body
+    try:
+        return store.get(key).body
+    except DatastoreNotFoundError as error:
+        raise SchemaError(f"required datastore object is missing: {key}") from error
 
 
 def _datastore(descriptor: DatastoreDescriptor) -> Datastore:

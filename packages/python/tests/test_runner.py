@@ -90,6 +90,23 @@ def test_runner_reports_malformed_schema_as_schema_failure(tmp_path: Path) -> No
     assert result.returncode == 65
 
 
+@pytest.mark.parametrize("target", ["input", "schema"])
+def test_runner_reports_a_missing_required_input_object_as_schema_failure(
+    tmp_path: Path, target: str
+) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    if target == "input":
+        key = descriptor["input"]["artifact"]["key"]
+    else:
+        schema_ref = descriptor["input"]["schema"]
+        key = f"blobs/sha256/{schema_ref.removeprefix('sha256:')}"
+    store.joinpath(key).unlink()
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 65
+
+
 @pytest.mark.parametrize("body", [b"\x80", b"1.5", b'{"value":21 }'])
 def test_runner_reports_invalid_utf8_float_and_noncanonical_input_as_schema_failures(
     tmp_path: Path, body: bytes

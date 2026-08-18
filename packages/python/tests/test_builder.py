@@ -23,10 +23,6 @@ class Result(BaseModel):
     value: int
 
 
-class DecimalRequest(BaseModel):
-    value: float
-
-
 class DecimalResult(BaseModel):
     value: Decimal
 
@@ -96,10 +92,6 @@ def needs_services(context: StepContext[dict[str, str], Request]) -> Result:
 
 def identity(context: StepContext[None, Request]) -> Result:
     return Result(value=context.inputs.value)
-
-
-def decimal_identity(context: StepContext[None, DecimalRequest]) -> Result:
-    return Result(value=int(context.inputs.value))
 
 
 def decimal_result(context: StepContext[None, Request]) -> DecimalResult:
