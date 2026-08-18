@@ -348,7 +348,7 @@ Build against contracts; do **not** block the M2 wedge. See [environment-materia
 - `specHash`: the full `WorkflowSpec` field tree.
 - `sourcePackageHash`: exact file list + per-file content hashes.
 - env key: environment-relevant inputs only (WS-9.1) — never resources/secrets/network/scheduling.
-- `planHash`: spec hash + GraphIR + ExecutionContract + symbol table + target config + patches + compiler version + env materialization refs + datastore manifest refs + mediation provider identity ([ir-and-datastore.md](ir-and-datastore.md#plan-hash)).
+- `planHash`: spec hash + GraphIR + ExecutionContract + symbol table + compiler version + semantic environment/materialization refs. Target profiles, patches, namespaces, and mediation-provider deployment settings belong to separately hashed deployment specs and target bundles ([ir-and-datastore.md](ir-and-datastore.md#plan-hash)).
 - Keys use full `sha256:<hex>`; manifests record the algorithm; UI may shorten for display only.
 - Wall-clock timestamps are not part of canonical compiled artifacts, bundle manifests, hash coverage, or JSON artifacts. If audit timing is needed later, store it in side metadata outside `WorkflowPlan` and `TargetBundleManifest`.
 

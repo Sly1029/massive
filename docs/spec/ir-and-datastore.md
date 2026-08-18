@@ -127,7 +127,12 @@ The compiled plan joins three surfaces:
 
 The Go compiler consumes a `WorkflowSpec`, validates it, materializes or records environments, writes package and datastore references, and emits a canonical JSON `WorkflowPlan`. Target lowering consumes that plan through a separate `DeploymentSpec`.
 
-The plan should be content-addressed and hashable. Same source inputs, compiler version, target config, patches, environment inputs, and materializer settings should produce the same canonical plan hash. Hashes are computed over canonical field trees, not raw JSON whitespace or binary wire encodings.
+The plan should be content-addressed and hashable. The same semantic workflow,
+source identities, compiler version, environment plans, and materializer outputs
+should produce the same canonical plan hash. Target profiles and backend patches
+are deliberately excluded: they produce separately hashed deployment specs and
+target bundles from the same plan. Hashes are computed over canonical field
+trees, not raw JSON whitespace or binary wire encodings.
 
 Plan fixtures and persisted plans use the deterministic canonical JSON encoding documented in [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md). Runners consume the persisted proto-typed JSON plan; target bundles are produced later from a `DeploymentSpec`.
 
@@ -245,7 +250,7 @@ Production targets should require explicit compile/deploy steps.
 
 Local execution is not allowed to bypass the compiler by using TypeScript builder state, in-memory runtime registries, or frontend-only schema registries. The local target is a real target compiled by Go. It reads the same persisted plan and datastore artifacts as other runners, then invokes the appropriate language runtime adapter for each step.
 
-The CLI may hide this sequence behind `massive run workflow.ts` or `massive run workflow/`. That command is orchestration over the same artifacts, not a separate execution mode. It should cache by source package hash, spec hash, plan hash, and target config in the configured datastore so repeated local runs are fast without weakening the compiler boundary.
+The CLI may hide this sequence behind `massive run workflow.ts` or `massive run workflow/`. That command is orchestration over the same artifacts, not a separate execution mode. It should cache semantic compilation by source package, spec, and plan hash, then cache deployment lowering separately by deployment and bundle hash so target changes do not invalidate the plan.
 
 The Go compiler does not emit a second frontend spec for language runners. It emits `WorkflowPlan` and target/run manifests. Language adapters consume step invocation descriptors derived from that compiled plan: plan hash, run ID, node ID, input artifact references, output artifact destinations, schema refs, symbol refs, source package refs, and environment refs.
 
