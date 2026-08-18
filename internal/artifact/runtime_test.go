@@ -3,7 +3,11 @@ package artifact
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -18,6 +22,18 @@ const (
 	testPlanHash   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	testProjectKey = "sha256-0000000000000000000000000000000000000000000000000000000000000000"
 )
+
+type producerIdentityFixture struct {
+	Version  int                    `json:"version"`
+	Contract string                 `json:"contract"`
+	Valid    []producerIdentityCase `json:"valid"`
+	Invalid  []producerIdentityCase `json:"invalid"`
+}
+
+type producerIdentityCase struct {
+	Name     string          `json:"name"`
+	Producer json.RawMessage `json:"producer"`
+}
 
 func TestPublishJSONCommitsBodyBeforeManifestAndConvergesOnRetry(t *testing.T) {
 	ctx := context.Background()
@@ -162,6 +178,81 @@ func TestPublishJSONAcceptsSafeRunAndNodeIdentifiers(t *testing.T) {
 	}
 	if _, err := PublishJSON(ctx, store, destination, producer, []byte(testBody)); err != nil {
 		t.Fatalf("PublishJSON rejected safe producer identifiers: %v", err)
+	}
+}
+
+func TestProducerIdentityConformanceFixture(t *testing.T) {
+	fixture := loadProducerIdentityFixture(t)
+	if fixture.Version != 1 || fixture.Contract != "artifact-producer-v1" {
+		t.Fatalf("unexpected producer identity fixture metadata: %#v", fixture)
+	}
+
+	for _, testCase := range fixture.Valid {
+		t.Run("valid/"+testCase.Name, func(t *testing.T) {
+			if err := validateManifestSchema(manifestForFixtureProducer(testCase.Producer)); err != nil {
+				t.Fatalf("shared manifest schema rejected valid producer: %v", err)
+			}
+			var producer Producer
+			if err := json.Unmarshal(testCase.Producer, &producer); err != nil {
+				t.Fatalf("decode valid producer: %v", err)
+			}
+			ctx := context.Background()
+			store := localStore(t)
+			putSchema(t, store)
+			if _, err := PublishJSON(ctx, store, destinationForProducer(t, producer), producer, []byte(testBody)); err != nil {
+				t.Fatalf("PublishJSON rejected valid producer: %v", err)
+			}
+		})
+	}
+
+	for _, testCase := range fixture.Invalid {
+		t.Run("invalid/"+testCase.Name, func(t *testing.T) {
+			if err := validateManifestSchema(manifestForFixtureProducer(testCase.Producer)); err == nil {
+				t.Fatal("shared manifest schema accepted invalid producer")
+			}
+			var producer Producer
+			if err := json.Unmarshal(testCase.Producer, &producer); err != nil {
+				// The typed Go public API cannot represent booleans or fractions for
+				// Attempt. A descriptor decoder must reject them before it can call
+				// the runtime, which is the same invariant this fixture defines.
+				return
+			}
+			ctx := context.Background()
+			store := localStore(t)
+			putSchema(t, store)
+			if _, err := PublishJSON(ctx, store, testDestination(), producer, []byte(testBody)); !errors.Is(err, ErrValidation) {
+				t.Fatalf("PublishJSON error = %v, want ErrValidation", err)
+			}
+			assertOnlySchemaBlob(t, store)
+		})
+	}
+}
+
+func TestPublishAndResolveValidateDestinationBeforeStoreAccess(t *testing.T) {
+	ctx := context.Background()
+	producer := testProducer()
+	invalidDestinations := []Destination{
+		{ManifestKey: testDestination().ManifestKey, Schema: "sha256:not-a-digest"},
+		{ManifestKey: datastore.MustKey("projects/" + testProjectKey + "/runs/run-1/steps/other/1/output-manifest.json"), Schema: testSchemaHash},
+	}
+
+	for _, destination := range invalidDestinations {
+		t.Run(destination.ManifestKey.String(), func(t *testing.T) {
+			store := localStore(t)
+			if _, err := PublishJSON(ctx, store, destination, producer, []byte(testBody)); !errors.Is(err, ErrValidation) {
+				t.Fatalf("PublishJSON error = %v, want ErrValidation", err)
+			}
+			if _, _, err := ResolveJSON(ctx, store, destination, producer); !errors.Is(err, ErrValidation) {
+				t.Fatalf("ResolveJSON error = %v, want ErrValidation", err)
+			}
+			blobs, err := store.List(ctx, datastore.MustKey("blobs"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(blobs) != 0 {
+				t.Fatalf("invalid destination wrote bodies: %#v", blobs)
+			}
+		})
 	}
 }
 
@@ -330,6 +421,32 @@ func testDestination() Destination {
 
 func testProducer() Producer {
 	return Producer{ProjectKey: testProjectKey, PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1}
+}
+
+func loadProducerIdentityFixture(t *testing.T) producerIdentityFixture {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "conformance", "fixtures", "artifacts", "producer-identities.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture producerIdentityFixture
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	return fixture
+}
+
+func destinationForProducer(t *testing.T, producer Producer) Destination {
+	t.Helper()
+	key, err := datastore.ParseKey("projects/" + producer.ProjectKey + "/runs/" + producer.RunID + "/steps/" + producer.NodeID + "/" + strconv.Itoa(producer.Attempt) + "/output-manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Destination{ManifestKey: key, Schema: testSchemaHash}
+}
+
+func manifestForFixtureProducer(producer json.RawMessage) []byte {
+	return []byte(`{"body":{"contentType":"application/json","hash":"` + testBodyHash + `","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v0","kind":"DataArtifactManifest","producer":` + string(producer) + `,"schema":"` + testSchemaHash + `","schemaVersion":0}`)
 }
 
 func localStore(t *testing.T) datastore.Datastore {

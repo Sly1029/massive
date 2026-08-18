@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +23,7 @@ const (
 	JSONContentType     = "application/json"
 	ManifestContentType = "application/vnd.massive.data-artifact-manifest+json"
 	manifestSchemaRef   = "https://massive.dev/conformance/schema/data-artifact-manifest.schema.json"
+	maxArtifactAttempt  = int64(9007199254740991) // JSON's largest exact integer.
 )
 
 var (
@@ -31,11 +31,6 @@ var (
 	ErrIntegrity        = errors.New("artifact integrity check failed")
 	ErrBodyConflict     = errors.New("artifact body conflict")
 	ErrManifestConflict = errors.New("artifact manifest conflict")
-)
-
-var (
-	safePathSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9_.@:#-]+$`)
-	projectKeyPattern      = regexp.MustCompile(`^sha256-[0-9a-f]{64}$`)
 )
 
 type Destination struct {
@@ -175,6 +170,9 @@ func validateDestination(destination Destination, producer Producer) error {
 	if err := validateProducerIdentity(producer); err != nil {
 		return err
 	}
+	if !isHashRef(destination.Schema) {
+		return fmt.Errorf("%w: schema %q is not a SHA-256 reference", ErrValidation, destination.Schema)
+	}
 	want, err := datastore.ParseKey("projects/" + producer.ProjectKey + "/runs/" + producer.RunID + "/steps/" + producer.NodeID + "/" + strconv.Itoa(producer.Attempt) + "/output-manifest.json")
 	if err != nil {
 		return fmt.Errorf("%w: invalid producer identity: %v", ErrValidation, err)
@@ -189,24 +187,52 @@ func validateProducerIdentity(producer Producer) error {
 	if !isSafeProjectKey(producer.ProjectKey) {
 		return fmt.Errorf("%w: project key %q is not a normalized project namespace key", ErrValidation, producer.ProjectKey)
 	}
+	if !isHashRef(producer.PlanHash) {
+		return fmt.Errorf("%w: plan hash %q is not a SHA-256 reference", ErrValidation, producer.PlanHash)
+	}
 	if !isSafePathSegment(producer.RunID) {
 		return fmt.Errorf("%w: run ID %q is not a safe path segment", ErrValidation, producer.RunID)
 	}
 	if !isSafePathSegment(producer.NodeID) {
 		return fmt.Errorf("%w: node ID %q is not a safe path segment", ErrValidation, producer.NodeID)
 	}
-	if producer.Attempt < 1 {
-		return fmt.Errorf("%w: attempt must be at least one", ErrValidation)
+	if producer.Attempt < 1 || int64(producer.Attempt) > maxArtifactAttempt {
+		return fmt.Errorf("%w: attempt must be an exact positive JSON integer", ErrValidation)
 	}
 	return nil
 }
 
 func isSafePathSegment(value string) bool {
-	return safePathSegmentPattern.MatchString(value) && value != "." && value != ".."
+	if len(value) == 0 || len(value) > 128 || value == "." || value == ".." {
+		return false
+	}
+	for _, character := range []byte(value) {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			strings.ContainsRune("_.@:#-", rune(character)) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func isSafeProjectKey(value string) bool {
-	return projectKeyPattern.MatchString(value)
+	return len(value) == len("sha256-")+64 && strings.HasPrefix(value, "sha256-") && isLowerHex(value[len("sha256-"):])
+}
+
+func isHashRef(value string) bool {
+	return len(value) == len("sha256:")+64 && strings.HasPrefix(value, "sha256:") && isLowerHex(value[len("sha256:"):])
+}
+
+func isLowerHex(value string) bool {
+	for _, character := range []byte(value) {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func validateCanonicalJSON(ctx context.Context, store datastore.Datastore, schemaRef string, body []byte) error {
