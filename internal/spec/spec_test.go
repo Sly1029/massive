@@ -100,6 +100,113 @@ func TestParseReportsCycle(t *testing.T) {
 	}
 }
 
+func TestParseReportsUnsupportedGraphIRVersion(t *testing.T) {
+	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+		root["graph"].(map[string]any)["irVersion"] = "0.2"
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid spec")
+	}
+
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.graph.irVersion" || diagnostics[0].Ref != "0.2" || !strings.Contains(diagnostics[0].Message, "compiler supports >=0.1 <0.2") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
+func TestParseRejectsDuplicateEdge(t *testing.T) {
+	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+		graph := root["graph"].(map[string]any)
+		edges := graph["edges"].([]any)
+		graph["edges"] = append(edges, edges[0])
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid spec")
+	}
+
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.graph.edges[4]" || !strings.Contains(diagnostics[0].Message, "duplicate") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
+func TestParseRejectsStartWithInboundEdge(t *testing.T) {
+	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+		graph := root["graph"].(map[string]any)
+		graph["edges"] = append(graph["edges"].([]any), map[string]any{"from": "__end", "to": "__start"})
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid spec")
+	}
+
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.graph.edges" || !strings.Contains(diagnostics[0].Message, "start node must not have inbound") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
+func TestParseRejectsEndWithMultipleInboundEdges(t *testing.T) {
+	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+		graph := root["graph"].(map[string]any)
+		graph["edges"] = append(graph["edges"].([]any), map[string]any{"from": "increment", "to": "__end"})
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid spec")
+	}
+
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.graph.end" || !strings.Contains(diagnostics[0].Message, "exactly one inbound") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
+func TestParseRejectsMergeInputsThatDoNotMatchInboundEdges(t *testing.T) {
+	data := mutateFixture(t, "diamond", func(root map[string]any) {
+		graph := root["graph"].(map[string]any)
+		for _, rawNode := range graph["nodes"].([]any) {
+			node := rawNode.(map[string]any)
+			if node["id"] == "merge" {
+				node["mergeInputs"] = []any{"left"}
+			}
+		}
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid spec")
+	}
+
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.graph.nodes[5].mergeInputs" || !strings.Contains(diagnostics[0].Message, "exactly match inbound") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
+func TestParseRejectsSourcePackageMapKeyMismatch(t *testing.T) {
+	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+		packages := root["sourcePackages"].(map[string]any)
+		packages["ts-main"].(map[string]any)["packageId"] = "other-package"
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid spec")
+	}
+
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.sourcePackages.ts-main.packageId" || !strings.Contains(diagnostics[0].Message, "must match map key") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
 func fixturePath(name string) string {
 	return filepath.Join("..", "..", "conformance", "fixtures", "specs", name, "workflow-spec.json")
 }

@@ -45,6 +45,7 @@ Deno.test("linear workflow builds runtime registry and emits graph spec", async 
   assertEquals(spec.kind, "WorkflowSpec");
   assertEquals(spec.encoding, "json-v0");
   assertEquals(spec.schemaVersion, 0);
+  assertEquals(spec.graph.irVersion, "0.1");
   assertEquals(spec.workflow.name, "math");
   assertEquals(stepNodes(spec).map((node) => node.id), [
     "double",

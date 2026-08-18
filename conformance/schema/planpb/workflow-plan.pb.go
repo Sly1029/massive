@@ -214,14 +214,17 @@ func (x *WorkflowPlan) GetProvenance() *CompilerProvenance {
 }
 
 type GraphIR struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkflowName  *string                `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3,oneof" json:"workflow_name,omitempty"`
-	InputSchema   *string                `protobuf:"bytes,2,opt,name=input_schema,json=inputSchema,proto3,oneof" json:"input_schema,omitempty"`
-	OutputSchema  *string                `protobuf:"bytes,3,opt,name=output_schema,json=outputSchema,proto3,oneof" json:"output_schema,omitempty"`
-	StartNode     *string                `protobuf:"bytes,4,opt,name=start_node,json=startNode,proto3,oneof" json:"start_node,omitempty"`
-	EndNode       *string                `protobuf:"bytes,5,opt,name=end_node,json=endNode,proto3,oneof" json:"end_node,omitempty"`
-	Nodes         []*GraphNode           `protobuf:"bytes,6,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	Edges         []*GraphEdge           `protobuf:"bytes,7,rep,name=edges,proto3" json:"edges,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	WorkflowName *string                `protobuf:"bytes,1,opt,name=workflow_name,json=workflowName,proto3,oneof" json:"workflow_name,omitempty"`
+	InputSchema  *string                `protobuf:"bytes,2,opt,name=input_schema,json=inputSchema,proto3,oneof" json:"input_schema,omitempty"`
+	OutputSchema *string                `protobuf:"bytes,3,opt,name=output_schema,json=outputSchema,proto3,oneof" json:"output_schema,omitempty"`
+	StartNode    *string                `protobuf:"bytes,4,opt,name=start_node,json=startNode,proto3,oneof" json:"start_node,omitempty"`
+	EndNode      *string                `protobuf:"bytes,5,opt,name=end_node,json=endNode,proto3,oneof" json:"end_node,omitempty"`
+	Nodes        []*GraphNode           `protobuf:"bytes,6,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	Edges        []*GraphEdge           `protobuf:"bytes,7,rep,name=edges,proto3" json:"edges,omitempty"`
+	// Semantic Graph IR version, deliberately distinct from the enclosing plan
+	// transport schema_version.
+	IrVersion     *string `protobuf:"bytes,8,opt,name=ir_version,json=irVersion,proto3,oneof" json:"ir_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -303,6 +306,13 @@ func (x *GraphIR) GetEdges() []*GraphEdge {
 		return x.Edges
 	}
 	return nil
+}
+
+func (x *GraphIR) GetIrVersion() string {
+	if x != nil && x.IrVersion != nil {
+		return *x.IrVersion
+	}
+	return ""
 }
 
 type GraphNode struct {
@@ -1172,7 +1182,7 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\n" +
 	"_spec_hashB\b\n" +
 	"\x06_graphB\r\n" +
-	"\v_provenance\"\xfe\x02\n" +
+	"\v_provenance\"\xb1\x03\n" +
 	"\aGraphIR\x12(\n" +
 	"\rworkflow_name\x18\x01 \x01(\tH\x00R\fworkflowName\x88\x01\x01\x12&\n" +
 	"\finput_schema\x18\x02 \x01(\tH\x01R\vinputSchema\x88\x01\x01\x12(\n" +
@@ -1181,12 +1191,15 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"start_node\x18\x04 \x01(\tH\x03R\tstartNode\x88\x01\x01\x12\x1e\n" +
 	"\bend_node\x18\x05 \x01(\tH\x04R\aendNode\x88\x01\x01\x120\n" +
 	"\x05nodes\x18\x06 \x03(\v2\x1a.massive.plan.v0.GraphNodeR\x05nodes\x120\n" +
-	"\x05edges\x18\a \x03(\v2\x1a.massive.plan.v0.GraphEdgeR\x05edgesB\x10\n" +
+	"\x05edges\x18\a \x03(\v2\x1a.massive.plan.v0.GraphEdgeR\x05edges\x12\"\n" +
+	"\n" +
+	"ir_version\x18\b \x01(\tH\x05R\tirVersion\x88\x01\x01B\x10\n" +
 	"\x0e_workflow_nameB\x0f\n" +
 	"\r_input_schemaB\x10\n" +
 	"\x0e_output_schemaB\r\n" +
 	"\v_start_nodeB\v\n" +
-	"\t_end_node\"\xcd\x02\n" +
+	"\t_end_nodeB\r\n" +
+	"\v_ir_version\"\xcd\x02\n" +
 	"\tGraphNode\x12\x13\n" +
 	"\x02id\x18\x01 \x01(\tH\x00R\x02id\x88\x01\x01\x12\x17\n" +
 	"\x04kind\x18\x02 \x01(\tH\x01R\x04kind\x88\x01\x01\x12&\n" +

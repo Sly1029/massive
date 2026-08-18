@@ -133,7 +133,7 @@ Canonical plans and target bundle manifests must not include wall-clock timestam
 
 ## GraphIR
 
-The v0 `WorkflowSpec` graph IR is intentionally narrow: DAG step nodes, start/end nodes, directed edges, and explicit `mergeInputs` fan-in.
+The v0 `WorkflowSpec` graph IR is intentionally narrow: DAG step nodes, start/end nodes, directed edges, and explicit `mergeInputs` fan-in. Every graph also carries `irVersion`; it is the semantic Graph IR version and remains separate from the enclosing JSON transport `schemaVersion`. The JSON Schema accepts syntactically valid `0.x` versions so future artifacts remain well-formed; the Go compiler is the authoritative consumer that enforces its explicitly declared supported range. Frontends may duplicate that check for authoring ergonomics, but cannot redefine support.
 
 It includes:
 

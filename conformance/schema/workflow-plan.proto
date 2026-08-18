@@ -45,6 +45,9 @@ message GraphIR {
   optional string end_node = 5;
   repeated GraphNode nodes = 6;
   repeated GraphEdge edges = 7;
+  // Semantic Graph IR version, deliberately distinct from the enclosing plan
+  // transport schema_version.
+  optional string ir_version = 8;
 }
 
 message GraphNode {

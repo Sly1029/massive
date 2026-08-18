@@ -158,6 +158,7 @@ func compileGraph(workflowSpec *spec.WorkflowSpec, schedule Schedule, schemaHash
 	}
 
 	return &planpb.GraphIR{
+		IrVersion:    stringPtr(workflowSpec.Graph.IRVersion),
 		WorkflowName: stringPtr(workflowSpec.Workflow.Name),
 		InputSchema:  stringPtr(schemaHashes[workflowSpec.Workflow.InputSchema]),
 		OutputSchema: stringPtr(schemaHashes[workflowSpec.Workflow.OutputSchema]),

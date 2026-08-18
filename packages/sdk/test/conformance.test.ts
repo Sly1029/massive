@@ -73,6 +73,16 @@ Deno.test("WorkflowSpec JSON Schema rejects step nodes without contractRef", asy
   assert(JSON.stringify(validate.errors).includes("contractRef"));
 });
 
+Deno.test("WorkflowSpec JSON Schema leaves supported Graph IR range checks to consumers", async () => {
+	const validate = await compileWorkflowSpecValidator();
+	const spec = (await readJson(
+		"../../../conformance/fixtures/specs/linear-chain/workflow-spec.json",
+	)) as { graph: { irVersion: string } };
+	spec.graph.irVersion = "0.2";
+
+	assert(validate(spec), `syntactically valid future IR should pass shape validation: ${JSON.stringify(validate.errors)}`);
+});
+
 Deno.test("WorkflowSpec JSON Schema rejects post-M2 channel fields in schema v0", async () => {
   const validate = await compileWorkflowSpecValidator();
   const spec = (await readJson("../../../conformance/fixtures/specs/linear-chain/workflow-spec.json")) as {
@@ -218,6 +228,7 @@ const HASH_REF_PATTERN = /^sha256:[0-9a-f]{64}$/;
 type WorkflowSpecFixture = {
   workflow: { name: string };
   graph: {
+	    irVersion: string;
     nodes: { id: string; kind: string; contractRef?: string }[];
     edges: { from: string; to: string }[];
   };
@@ -225,6 +236,7 @@ type WorkflowSpecFixture = {
 
 type WorkflowPlanFixture = {
   graph: {
+	    irVersion: string;
     workflowName: string;
     nodes: { id: string; kind: string; contractRef?: string }[];
     edges: { from: string; to: string }[];
@@ -238,6 +250,7 @@ function assertSpecPlanStructuralConsistency(spec: unknown, plan: unknown, caseI
   const typedPlan = plan as WorkflowPlanFixture;
 
   assertEquals(typedPlan.graph.workflowName, typedSpec.workflow.name, `${caseId} workflow name`);
+  assertEquals(typedPlan.graph.irVersion, typedSpec.graph.irVersion, `${caseId} graph IR version`);
   assertEquals(
     new Set(typedPlan.graph.nodes.map((node) => node.id)),
     new Set(typedSpec.graph.nodes.map((node) => node.id)),

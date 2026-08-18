@@ -12,6 +12,7 @@ import (
 
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/internal/canonical"
+	"github.com/Sly1029/massive/internal/irversion"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -43,10 +44,11 @@ type Workflow struct {
 }
 
 type Graph struct {
-	Start string      `json:"start"`
-	End   string      `json:"end"`
-	Nodes []GraphNode `json:"nodes"`
-	Edges []GraphEdge `json:"edges"`
+	IRVersion string      `json:"irVersion"`
+	Start     string      `json:"start"`
+	End       string      `json:"end"`
+	Nodes     []GraphNode `json:"nodes"`
+	Edges     []GraphEdge `json:"edges"`
 }
 
 type GraphNode struct {
@@ -294,6 +296,12 @@ func collectSchemaDiagnostics(unit *jsonschema.OutputUnit, diagnostics *[]Diagno
 
 func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	var diagnostics []Diagnostic
+	version, err := irversion.Parse(parsed.Graph.IRVersion)
+	if err != nil {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.irVersion", Ref: parsed.Graph.IRVersion, Message: err.Error()})
+	} else if !irversion.CompilerRange.Contains(version) {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.irVersion", Ref: parsed.Graph.IRVersion, Message: fmt.Sprintf("unsupported graph IR version; compiler supports %s", irversion.CompilerRange)})
+	}
 
 	nodeByID := make(map[string]GraphNode, len(parsed.Graph.Nodes))
 	startCount := 0
@@ -327,7 +335,10 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	}
 
 	upstream := make(map[string]map[string]bool, len(parsed.Graph.Nodes))
+	inbound := make(map[string][]string, len(parsed.Graph.Nodes))
+	outbound := make(map[string][]string, len(parsed.Graph.Nodes))
 	adjacency := make(map[string][]string, len(parsed.Graph.Nodes))
+	edgeIndexes := make(map[string]int, len(parsed.Graph.Edges))
 	for index, edge := range parsed.Graph.Edges {
 		path := fmt.Sprintf("$.graph.edges[%d]", index)
 		if _, exists := nodeByID[edge.From]; !exists {
@@ -342,7 +353,15 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		if _, exists := nodeByID[edge.To]; !exists {
 			continue
 		}
+		edgeKey := edge.From + "\x00" + edge.To
+		if firstIndex, exists := edgeIndexes[edgeKey]; exists {
+			diagnostics = append(diagnostics, Diagnostic{Path: path, Ref: edge.From + " -> " + edge.To, Message: fmt.Sprintf("duplicate graph edge; first declared at $.graph.edges[%d]", firstIndex)})
+			continue
+		}
+		edgeIndexes[edgeKey] = index
 		adjacency[edge.From] = append(adjacency[edge.From], edge.To)
+		outbound[edge.From] = append(outbound[edge.From], edge.To)
+		inbound[edge.To] = append(inbound[edge.To], edge.From)
 		if upstream[edge.To] == nil {
 			upstream[edge.To] = make(map[string]bool)
 		}
@@ -350,6 +369,18 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	}
 	for nodeID := range adjacency {
 		sort.Slice(adjacency[nodeID], func(i, j int) bool { return canonical.LessUTF16(adjacency[nodeID][i], adjacency[nodeID][j]) })
+	}
+	if len(inbound[parsed.Graph.Start]) != 0 {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.edges", Ref: parsed.Graph.Start, Message: "start node must not have inbound edges"})
+	}
+	if len(outbound[parsed.Graph.Start]) != 1 {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.start", Ref: parsed.Graph.Start, Message: fmt.Sprintf("start node must have exactly one outbound edge, found %d", len(outbound[parsed.Graph.Start]))})
+	}
+	if len(outbound[parsed.Graph.End]) != 0 {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.edges", Ref: parsed.Graph.End, Message: "end node must not have outbound edges"})
+	}
+	if len(inbound[parsed.Graph.End]) != 1 {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.end", Ref: parsed.Graph.End, Message: fmt.Sprintf("end node must have exactly one inbound edge, found %d", len(inbound[parsed.Graph.End]))})
 	}
 
 	if len(diagnostics) == 0 {
@@ -387,6 +418,28 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("%s.mergeInputs[%d]", path, mergeIndex), Ref: sourceID, Message: "merge input is not an upstream step"})
 			}
 		}
+		if len(node.MergeInputs) == 0 && len(inbound[node.ID]) > 1 {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".mergeInputs", Ref: node.ID, Message: "step with multiple inbound edges must declare mergeInputs"})
+		}
+		if len(node.MergeInputs) > 0 {
+			if len(node.MergeInputs) != len(inbound[node.ID]) {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + ".mergeInputs", Ref: node.ID, Message: "mergeInputs must exactly match inbound edges"})
+				continue
+			}
+			declared := make(map[string]bool, len(node.MergeInputs))
+			for _, sourceID := range node.MergeInputs {
+				if declared[sourceID] {
+					diagnostics = append(diagnostics, Diagnostic{Path: path + ".mergeInputs", Ref: sourceID, Message: "mergeInputs must not contain duplicate source ids"})
+					continue
+				}
+				declared[sourceID] = true
+			}
+			for _, sourceID := range inbound[node.ID] {
+				if !declared[sourceID] {
+					diagnostics = append(diagnostics, Diagnostic{Path: path + ".mergeInputs", Ref: sourceID, Message: "mergeInputs must exactly match inbound edges"})
+				}
+			}
+		}
 	}
 
 	if _, exists := parsed.Schemas[parsed.Workflow.InputSchema]; !exists {
@@ -399,6 +452,17 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	for contractRef, contract := range parsed.Contracts {
 		if _, exists := parsed.Environments[contract.EnvironmentRef]; !exists {
 			diagnostics = append(diagnostics, Diagnostic{Path: "$.contracts." + contractRef + ".environmentRef", Ref: contract.EnvironmentRef, Message: "contract environment reference does not exist"})
+		}
+	}
+	packageRefs := make([]string, 0, len(parsed.SourcePackages))
+	for packageRef := range parsed.SourcePackages {
+		packageRefs = append(packageRefs, packageRef)
+	}
+	sort.Slice(packageRefs, func(i, j int) bool { return canonical.LessUTF16(packageRefs[i], packageRefs[j]) })
+	for _, packageRef := range packageRefs {
+		sourcePackage := parsed.SourcePackages[packageRef]
+		if sourcePackage.PackageID != packageRef {
+			diagnostics = append(diagnostics, Diagnostic{Path: "$.sourcePackages." + packageRef + ".packageId", Ref: sourcePackage.PackageID, Message: "source package id must match map key"})
 		}
 	}
 	for symbolRef, symbol := range parsed.Symbols {

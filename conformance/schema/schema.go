@@ -1,6 +1,8 @@
 // Package schema exposes the frozen conformance contracts to Go consumers,
 // so binaries embed them instead of depending on repo-relative paths at
 // runtime.
+//
+//go:generate ../../scripts/generate-proto.sh
 package schema
 
 import _ "embed"

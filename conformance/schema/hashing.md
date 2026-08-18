@@ -77,7 +77,7 @@ record the result in that member. All other digest members (for example
 
 `specHash` covers the full `WorkflowSpec` field tree emitted by the frontend:
 
-- graph IR, including workflow name, schemas referenced by graph boundaries,
+- graph IR, including its explicit semantic `irVersion`, workflow name, schemas referenced by graph boundaries,
   start/end node IDs, node definitions, edges, and merge-input ordering;
 - schema table;
 - symbol table;

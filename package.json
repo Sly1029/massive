@@ -4,6 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "scripts": {
+    "generate:proto": "./scripts/generate-proto.sh",
     "check:mocks": "node scripts/check-no-test-mocks.mjs",
     "check:proto": "go test ./conformance/schema",
     "check:conformance": "deno test --config deno.json --allow-read --allow-sys=cpus packages/sdk/test/conformance.test.ts && pnpm check:proto",
