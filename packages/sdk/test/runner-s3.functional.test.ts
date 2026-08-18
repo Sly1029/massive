@@ -29,6 +29,8 @@ const secretKey = "massive-runner-test-secret";
 const dockerAccessKeyEnv = "MASSIVE_RUNNER_S3_ACCESS_KEY";
 const dockerSecretAccessKeyEnv = "MASSIVE_RUNNER_S3_SECRET_KEY";
 const sourceArchiveContentType = "application/vnd.massive.source-tar";
+const artifactProjectKey =
+  "sha256:9999999999999999999999999999999999999999999999999999999999999999";
 const valueSchema = {
   type: "object",
   additionalProperties: false,
@@ -280,12 +282,12 @@ Deno.test("artifact runtime uses S3 conditional publication for convergence and 
 
     const convergeDestination = {
       manifestKey: Key.parse(
-        "projects/project-s3/runs/run-converge/steps/task/1/output-manifest.json",
+        `projects/${artifactProjectKey}/runs/run-converge/steps/task/1/output-manifest.json`,
       ),
       schema,
     } as const;
     const convergeProducer = {
-      projectKey: "project-s3",
+      projectKey: artifactProjectKey,
       planHash:
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       runId: "run-converge",
@@ -308,7 +310,7 @@ Deno.test("artifact runtime uses S3 conditional publication for convergence and 
 
     const conflictDestination = {
       manifestKey: Key.parse(
-        "projects/project-s3/runs/run-conflict/steps/task/1/output-manifest.json",
+        `projects/${artifactProjectKey}/runs/run-conflict/steps/task/1/output-manifest.json`,
       ),
       schema,
     } as const;

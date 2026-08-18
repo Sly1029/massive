@@ -25,6 +25,8 @@ const SCHEMA_HASH =
   "sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a";
 const PLAN_HASH =
   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const PROJECT_KEY =
+  "sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 Deno.test("artifact runtime publishes a Go-compatible manifest and converges after body-only recovery", async () => {
   await withRuntime(async (store, runtime) => {
     const bodyKey = blobKeySHA256Hex(BODY_HASH.slice("sha256:".length));
@@ -190,7 +192,7 @@ async function withRuntime(
 function destination(): ArtifactDestination {
   return {
     manifestKey: Key.parse(
-      "projects/project/runs/run-1/steps/task/1/output-manifest.json",
+      `projects/${PROJECT_KEY}/runs/run-1/steps/task/1/output-manifest.json`,
     ),
     schema: SCHEMA_HASH,
   };
@@ -198,7 +200,7 @@ function destination(): ArtifactDestination {
 
 function producer(): ArtifactProducer {
   return {
-    projectKey: "project",
+    projectKey: PROJECT_KEY,
     planHash: PLAN_HASH,
     runId: "run-1",
     nodeId: "task",
