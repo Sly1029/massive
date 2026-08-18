@@ -277,6 +277,48 @@ Deno.test("massive inspect reports an actionable error for malformed v1 nested d
   assertStringIncludes(inspect.stderr, "next");
 });
 
+Deno.test("run-manifest reader accepts Go pending and pre-input failure shapes", async () => {
+  const store = await makeStore();
+  const key =
+    "projects/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/runs/run-in-progress/run-manifest.json";
+  const path = join(store, key);
+  await Deno.mkdir(dirname(path), { recursive: true });
+  await Deno.writeTextFile(
+    path,
+    JSON.stringify({
+      kind: "RunManifest",
+      schemaVersion: 1,
+      encoding: "json-v1",
+      planHash: "sha256:" + "a".repeat(64),
+      projectKey:
+        "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      runId: "run-in-progress",
+      status: "failed",
+      steps: [
+        { nodeId: "pending", status: "pending", attempts: [] },
+        {
+          nodeId: "failed-before-input",
+          status: "failed",
+          attempts: [{
+            attempt: 1,
+            status: "failed",
+            input: { key: "", hash: "", contentType: "", schema: "" },
+            diagnostic: "input could not be assembled",
+          }],
+        },
+      ],
+    }),
+  );
+
+  const manifest = await readRunManifestAt(
+    datastore.local({ path: store }),
+    key,
+  );
+
+  assertEquals(manifest.steps[0]?.attempts, []);
+  assertEquals(manifest.steps[1]?.attempts[0]?.input.key, "");
+});
+
 Deno.test("massive inspect rejects an unsafe run id before touching the filesystem", async () => {
   const store = await makeStore();
 
