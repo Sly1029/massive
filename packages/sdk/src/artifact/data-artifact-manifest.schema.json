@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://massive.dev/conformance/schema/data-artifact-manifest.schema.json",
+  "title": "Massive DataArtifactManifest",
+  "description": "Immutable publication record for one canonical JSON step output. The body becomes visible as a logical output only after this manifest is conditionally created.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schemaVersion", "encoding", "producer", "schema", "body"],
+  "properties": {
+    "kind": { "const": "DataArtifactManifest" },
+    "schemaVersion": { "const": 0 },
+    "encoding": { "const": "canonical-json-v0" },
+    "producer": { "$ref": "#/$defs/producer" },
+    "schema": { "$ref": "#/$defs/hashRef" },
+    "body": { "$ref": "#/$defs/body" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.@/:#-]+$"
+    },
+    "hashRef": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectKey", "planHash", "runId", "nodeId", "attempt"],
+      "properties": {
+        "projectKey": { "$ref": "#/$defs/id" },
+        "planHash": { "$ref": "#/$defs/hashRef" },
+        "runId": { "$ref": "#/$defs/id" },
+        "nodeId": { "$ref": "#/$defs/id" },
+        "attempt": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "hash", "size", "contentType"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^blobs/sha256/[0-9a-f]{64}$"
+        },
+        "hash": { "$ref": "#/$defs/hashRef" },
+        "size": { "type": "integer", "minimum": 0 },
+        "contentType": { "const": "application/json" }
+      }
+    }
+  }
+}

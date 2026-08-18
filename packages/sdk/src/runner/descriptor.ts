@@ -32,8 +32,8 @@ export interface DataArtifactRef {
   readonly schema: HashRef;
 }
 
-export interface DataArtifactDestination {
-  readonly artifact: ArtifactDestination;
+export interface DataArtifactManifestDestination {
+  readonly manifestKey: string;
   readonly schema: HashRef;
 }
 
@@ -77,9 +77,10 @@ export type DatastoreDescriptor =
 
 export interface StepInvocationDescriptor {
   readonly kind: "StepInvocationDescriptor";
-  readonly schemaVersion: 0;
-  readonly encoding: "json-v0";
+  readonly schemaVersion: 1;
+  readonly encoding: "json-v1";
   readonly planHash: HashRef;
+  readonly projectKey: string;
   readonly runId: string;
   readonly nodeId: string;
   readonly attempt: number;
@@ -87,7 +88,7 @@ export interface StepInvocationDescriptor {
   readonly sourcePackage: SourcePackageRef;
   readonly environmentRef: HashRef;
   readonly input: DataArtifactRef;
-  readonly output: DataArtifactDestination;
+  readonly output: DataArtifactManifestDestination;
   readonly channelReads: readonly ChannelArtifactRef[];
   readonly channelWrites: readonly ChannelArtifactDestination[];
   readonly datastore: DatastoreDescriptor;
@@ -113,6 +114,7 @@ export async function parseStepInvocationDescriptor(
     schemaVersion: descriptor.schemaVersion,
     encoding: descriptor.encoding,
     planHash: descriptor.planHash,
+    projectKey: descriptor.projectKey,
     runId: descriptor.runId,
     nodeId: descriptor.nodeId,
     attempt: descriptor.attempt,
@@ -132,7 +134,7 @@ export async function parseStepInvocationDescriptor(
       schema: descriptor.input.schema,
     },
     output: {
-      artifact: { ...descriptor.output.artifact },
+      manifestKey: descriptor.output.manifestKey,
       schema: descriptor.output.schema,
     },
     channelReads: [...(descriptor.channelReads ?? [])].map((channel) => ({

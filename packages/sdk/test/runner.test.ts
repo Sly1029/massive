@@ -2,6 +2,7 @@ import { assert, assertEquals, assertInstanceOf } from "jsr:@std/assert";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ArtifactRuntime } from "../src/artifact/runtime.ts";
 import {
   datastore,
   Key,
@@ -49,7 +50,7 @@ Deno.test("runner descriptor parser accepts every conformance descriptor fixture
       JSON.parse(await Deno.readTextFile(path)),
     );
     assertEquals(descriptor.kind, "StepInvocationDescriptor");
-    assertEquals(descriptor.schemaVersion, 0);
+    assertEquals(descriptor.schemaVersion, 1);
   }
 });
 
@@ -87,23 +88,25 @@ Deno.test("runner executes a real fixture step end to end against a temp local d
       assertEquals(outcome.kind, "success");
       if (outcome.kind !== "success") return;
 
-      const outputText = new TextDecoder().decode(
-        await store.get(descriptor.output.artifact.key),
-      );
       const expectedOutput = stableStringify({ value: 42 });
-      assertEquals(descriptor.output.artifact.key, outputKey());
-      assertEquals(outputText, expectedOutput);
+      assertEquals(descriptor.output.manifestKey, outputManifestKey());
 
       const client = new LocalDatastoreClient({ path: store.root });
-      const stored = await client.get(
-        Key.parse(descriptor.output.artifact.key),
+      const resolved = await new ArtifactRuntime(client).resolveJson(
+        {
+          manifestKey: Key.parse(descriptor.output.manifestKey),
+          schema: descriptor.output.schema,
+        },
+        producerFor(descriptor),
       );
-      assertEquals(stored.info.contentType, "application/json");
+      assertEquals(new TextDecoder().decode(resolved.body), expectedOutput);
+      assertEquals(resolved.published.manifest.key, outputManifestKey());
+      assertEquals(resolved.published.manifest.contentType, "application/vnd.massive.data-artifact-manifest+json");
+      assertEquals(resolved.published.body.contentType, "application/json");
 
       assertEquals(outcome.output, {
-        key: outputKey(),
-        hash: sha256RefText(expectedOutput),
-        contentType: "application/json",
+        manifest: resolved.published.manifest,
+        body: resolved.published.body,
         schema: schemaRef(),
       });
     },
@@ -190,10 +193,12 @@ async function withRunnerFixture(
     const inputText = stableStringify(options.input);
     const descriptor = await parseStepInvocationDescriptor({
       kind: "StepInvocationDescriptor",
-      schemaVersion: 0,
-      encoding: "json-v0",
+      schemaVersion: 1,
+      encoding: "json-v1",
       planHash:
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      projectKey:
+        "sha256-9999999999999999999999999999999999999999999999999999999999999999",
       runId: "run-runner-fixture-0001",
       nodeId: "double",
       attempt: 1,
@@ -226,10 +231,7 @@ async function withRunnerFixture(
         schema: schemaRef(),
       },
       output: {
-        artifact: {
-          key: outputKey(),
-          contentType: "application/json",
-        },
+        manifestKey: outputManifestKey(),
         schema: schemaRef(),
       },
       channelReads: [],
@@ -279,8 +281,18 @@ function inputKey(): string {
   return `${runPrefix()}/inputs/double.json`;
 }
 
-function outputKey(): string {
-  return `${runPrefix()}/steps/double/1/output.json`;
+function outputManifestKey(): string {
+  return `${runPrefix()}/steps/double/1/output-manifest.json`;
+}
+
+function producerFor(descriptor: StepInvocationDescriptor) {
+  return {
+    projectKey: descriptor.projectKey,
+    planHash: descriptor.planHash,
+    runId: descriptor.runId,
+    nodeId: descriptor.nodeId,
+    attempt: descriptor.attempt,
+  } as const;
 }
 
 function runPrefix(): string {

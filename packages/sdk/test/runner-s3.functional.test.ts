@@ -3,10 +3,15 @@ import {
   HeadBucketCommand,
   S3Client,
 } from "npm:@aws-sdk/client-s3@^3.700.0";
-import { assertEquals } from "jsr:@std/assert";
+import { assert, assertEquals, assertInstanceOf } from "jsr:@std/assert";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  ArtifactManifestConflictError,
+  ArtifactRuntime,
+  JSON_CONTENT_TYPE,
+} from "../src/artifact/runtime.ts";
 import { Key, S3DatastoreClient } from "../src/datastore/index.ts";
 import {
   parseStepInvocationDescriptor,
@@ -34,10 +39,12 @@ const valueSchema = {
 Deno.test("S3 invocation descriptors carry transport but no credentials", async () => {
   const descriptor = await parseStepInvocationDescriptor({
     kind: "StepInvocationDescriptor",
-    schemaVersion: 0,
-    encoding: "json-v0",
+    schemaVersion: 1,
+    encoding: "json-v1",
     planHash:
       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    projectKey:
+      "sha256-9999999999999999999999999999999999999999999999999999999999999999",
     runId: "run-s3-descriptor-0001",
     nodeId: "task",
     attempt: 1,
@@ -73,7 +80,7 @@ Deno.test("S3 invocation descriptors carry transport but no credentials", async 
         "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     },
     output: {
-      artifact: { key: outputKey(), contentType: "application/json" },
+      manifestKey: outputManifestKey(),
       schema:
         "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     },
@@ -130,10 +137,12 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
     const inputText = stableStringify({ value: 21 });
     const descriptor = await parseStepInvocationDescriptor({
       kind: "StepInvocationDescriptor",
-      schemaVersion: 0,
-      encoding: "json-v0",
+      schemaVersion: 1,
+      encoding: "json-v1",
       planHash:
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      projectKey:
+        "sha256-9999999999999999999999999999999999999999999999999999999999999999",
       runId: "run-s3-runner-fixture-0001",
       nodeId: "double",
       attempt: 1,
@@ -166,10 +175,7 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
         schema: sha256RefText(schemaText),
       },
       output: {
-        artifact: {
-          key: outputKey(),
-          contentType: "application/json",
-        },
+        manifestKey: outputManifestKey(),
         schema: sha256RefText(schemaText),
       },
       channelReads: [],
@@ -218,16 +224,123 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
       new TextDecoder().decode(child.stderr),
     );
 
-    const output = await store.get(Key.parse(descriptor.output.artifact.key));
+    const output = await new ArtifactRuntime(store).resolveJson(
+      {
+        manifestKey: Key.parse(descriptor.output.manifestKey),
+        schema: descriptor.output.schema,
+      },
+      producerFor(descriptor),
+    );
     assertEquals(
       new TextDecoder().decode(output.body),
       stableStringify({ value: 42 }),
     );
-    assertEquals(output.info.contentType, "application/json");
+    assertEquals(output.published.manifest.contentType, "application/vnd.massive.data-artifact-manifest+json");
+    assertEquals(output.published.body.contentType, "application/json");
   } finally {
     restoreEnvironment(accessKeyEnv, previousAccessKey);
     restoreEnvironment(secretAccessKeyEnv, previousSecretKey);
     await rm(root, { force: true, recursive: true });
+    if (minio.container !== undefined) {
+      await new Deno.Command("docker", { args: ["rm", "-f", minio.container] })
+        .output()
+        .catch(() => {});
+    }
+  }
+});
+
+Deno.test("artifact runtime uses S3 conditional publication for convergence and conflict", async (t) => {
+  const minio = await startMinIO(t);
+  if (minio === undefined) return;
+
+  const previousAccessKey = Deno.env.get(minio.accessKeyEnv);
+  const previousSecretKey = Deno.env.get(minio.secretAccessKeyEnv);
+  try {
+    const bucket = `massive-artifact-${crypto.randomUUID().replaceAll("-", "")}`;
+    Deno.env.set(minio.accessKeyEnv, minio.accessKey);
+    Deno.env.set(minio.secretAccessKeyEnv, minio.secretKey);
+    await createBucket(minio, bucket);
+    const store = new S3DatastoreClient({
+      endpoint: minio.endpoint,
+      forcePathStyle: true,
+      bucket,
+      region: "us-east-1",
+      credentials: {
+        kind: "environment",
+        accessKeyEnv: minio.accessKeyEnv,
+        secretAccessKeyEnv: minio.secretAccessKeyEnv,
+      },
+    });
+    const schemaText = stableStringify(valueSchema);
+    const schema = sha256RefText(schemaText);
+    await store.put(Key.parse(schemaKey(schema)), schemaText, {
+      contentType: JSON_CONTENT_TYPE,
+      ifAbsent: true,
+    });
+
+    const convergeDestination = {
+      manifestKey: Key.parse(
+        "projects/project-s3/runs/run-converge/steps/task/1/output-manifest.json",
+      ),
+      schema,
+    } as const;
+    const convergeProducer = {
+      projectKey: "project-s3",
+      planHash:
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      runId: "run-converge",
+      nodeId: "task",
+      attempt: 1,
+    } as const;
+    const [first, second] = await Promise.all([
+      new ArtifactRuntime(store).publishJson(
+        convergeDestination,
+        convergeProducer,
+        `{"value":42}`,
+      ),
+      new ArtifactRuntime(store).publishJson(
+        convergeDestination,
+        convergeProducer,
+        `{"value":42}`,
+      ),
+    ]);
+    assertEquals(first, second);
+
+    const conflictDestination = {
+      manifestKey: Key.parse(
+        "projects/project-s3/runs/run-conflict/steps/task/1/output-manifest.json",
+      ),
+      schema,
+    } as const;
+    const conflictProducer = { ...convergeProducer, runId: "run-conflict" };
+    const results = await Promise.allSettled([
+      new ArtifactRuntime(store).publishJson(
+        conflictDestination,
+        conflictProducer,
+        `{"value":42}`,
+      ),
+      new ArtifactRuntime(store).publishJson(
+        conflictDestination,
+        conflictProducer,
+        `{"value":43}`,
+      ),
+    ]);
+    assertEquals(results.filter((result) => result.status === "fulfilled").length, 1);
+    const failure = results.find((result) => result.status === "rejected");
+    assert(failure?.status === "rejected", "one publication must lose the manifest race");
+    assertInstanceOf(failure.reason, ArtifactManifestConflictError);
+
+    const resolved = await new ArtifactRuntime(store).resolveJson(
+      conflictDestination,
+      conflictProducer,
+    );
+    assert([
+      `{"value":42}`,
+      `{"value":43}`,
+    ].includes(new TextDecoder().decode(resolved.body)));
+  } finally {
+    restoreEnvironment(minio.accessKeyEnv, previousAccessKey);
+    restoreEnvironment(minio.secretAccessKeyEnv, previousSecretKey);
     if (minio.container !== undefined) {
       await new Deno.Command("docker", { args: ["rm", "-f", minio.container] })
         .output()
@@ -386,8 +499,18 @@ function inputKey(): string {
   return "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-s3-runner-fixture-0001/inputs/double.json";
 }
 
-function outputKey(): string {
-  return "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-s3-runner-fixture-0001/steps/double/1/output.json";
+function outputManifestKey(): string {
+  return "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-s3-runner-fixture-0001/steps/double/1/output-manifest.json";
+}
+
+function producerFor(descriptor: StepInvocationDescriptor) {
+  return {
+    projectKey: descriptor.projectKey,
+    planHash: descriptor.planHash,
+    runId: descriptor.runId,
+    nodeId: descriptor.nodeId,
+    attempt: descriptor.attempt,
+  } as const;
 }
 
 function restoreEnvironment(name: string, value: string | undefined): void {

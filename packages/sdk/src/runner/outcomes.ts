@@ -43,9 +43,18 @@ export interface StepSuccess {
   readonly nodeId: string;
   readonly attempt: number;
   readonly output: {
-    readonly key: string;
-    readonly hash: string;
-    readonly contentType: string;
+    readonly manifest: {
+      readonly key: string;
+      readonly hash: string;
+      readonly size: number;
+      readonly contentType: string;
+    };
+    readonly body: {
+      readonly key: string;
+      readonly hash: string;
+      readonly size: number;
+      readonly contentType: string;
+    };
     readonly schema: string;
   };
 }

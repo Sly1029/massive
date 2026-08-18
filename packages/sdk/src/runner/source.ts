@@ -1,7 +1,8 @@
 import { chmod, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Datastore } from "../datastore/facade.ts";
+import { Key } from "../datastore/key.ts";
+import type { DatastoreClient } from "../datastore/types.ts";
 import { sha256RefBytes } from "../stable.ts";
 import type { StepRun } from "../workflow.ts";
 import type { StepInvocationDescriptor } from "./descriptor.ts";
@@ -20,7 +21,7 @@ export interface ResolvedStepSymbol {
 
 export async function resolveStepSymbol(
   descriptor: StepInvocationDescriptor,
-  store: Datastore,
+  store: DatastoreClient,
 ): Promise<ResolvedStepSymbol> {
   if (descriptor.symbol.language !== "typescript") {
     throw new SymbolResolutionError(
@@ -63,7 +64,7 @@ export async function resolveStepSymbol(
 
 async function fetchSourcePackage(
   descriptor: StepInvocationDescriptor,
-  store: Datastore,
+  store: DatastoreClient,
 ): Promise<string> {
   if (descriptor.sourcePackage.sourceArchive.contentType !== SOURCE_ARCHIVE_CONTENT_TYPE) {
     throw new SymbolResolutionError(
@@ -72,7 +73,9 @@ async function fetchSourcePackage(
   }
   let bytes: Uint8Array;
   try {
-    bytes = await store.get(descriptor.sourcePackage.sourceArchive.key);
+    bytes = (await store.get(
+      Key.parse(descriptor.sourcePackage.sourceArchive.key),
+    )).body;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new SymbolResolutionError(

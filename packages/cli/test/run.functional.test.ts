@@ -47,15 +47,16 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
   assert(resultPath !== undefined, "result.json should exist under the run");
   assertEquals(await Deno.readTextFile(resultPath), `"value:41"`);
 
-  // Per-step output is committed by an immutable manifest. The JSON body is
-  // content-addressed separately and is discovered through that manifest.
-  const doubleOutput = await findRunArtifact(
+  // A step exposes its output only through an immutable manifest. The body is
+  // content-addressed outside the mutable run prefix and both refs are kept
+  // in the journal for inspection/recovery.
+  const doubleManifest = await findRunArtifact(
     store,
     runId,
     join("steps", "double", "1", "output-manifest.json"),
   );
   assert(
-    doubleOutput !== undefined,
+    doubleManifest !== undefined,
     "steps/double/1/output-manifest.json should exist",
   );
 
@@ -69,6 +70,12 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
     readonly steps: readonly {
       readonly nodeId: string;
       readonly status: string;
+      readonly attempts: readonly {
+        readonly output?: {
+          readonly manifest: { readonly key: string };
+          readonly body: { readonly key: string };
+        };
+      }[];
     }[];
   };
   assertEquals(manifest.schemaVersion, 1);
@@ -79,6 +86,9 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
     "increment",
     "label",
   ]);
+  const doubleOutput = manifest.steps[0].attempts[0].output;
+  assert(doubleOutput !== undefined, "double attempt should journal its output");
+  assertEquals(await Deno.readTextFile(join(store, doubleOutput.body.key)), "40");
 });
 
 Deno.test("massive run diamond: fan-in result 81 at the frozen result key", async () => {

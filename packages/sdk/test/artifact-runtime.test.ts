@@ -4,6 +4,7 @@ import {
   type ArtifactDestination,
   ArtifactIntegrityError,
   ArtifactManifestConflictError,
+  ArtifactNotFoundError,
   type ArtifactProducer,
   ArtifactRuntime,
   ArtifactValidationError,
@@ -51,6 +52,25 @@ Deno.test("artifact runtime publishes a Go-compatible manifest and converges aft
     const resolved = await runtime.resolveJson(destination(), producer());
     assertEquals(resolved.published, first);
     assertEquals(decoder.decode(resolved.body), BODY);
+  });
+});
+
+Deno.test("artifact runtime converges concurrent local publishers without exposing incomplete metadata", async () => {
+  await withRuntime(async (store) => {
+    const [first, second] = await Promise.all([
+      new ArtifactRuntime(store).publishJson(destination(), producer(), BODY),
+      new ArtifactRuntime(store).publishJson(destination(), producer(), BODY),
+    ]);
+    assertEquals(first, second);
+    assertEquals(
+      (await store.get(destination().manifestKey)).info.contentType,
+      MANIFEST_CONTENT_TYPE,
+    );
+    assertEquals(
+      (await store.get(blobKeySHA256Hex(BODY_HASH.slice("sha256:".length))))
+        .info.contentType,
+      JSON_CONTENT_TYPE,
+    );
   });
 });
 
@@ -108,6 +128,28 @@ Deno.test("artifact runtime refuses a tampered manifest during resolution", asyn
       ArtifactIntegrityError,
     );
   });
+});
+
+Deno.test("artifact runtime reports an absent manifest through the artifact error taxonomy", async () => {
+  await withRuntime(async (_store, runtime) => {
+    await assertRejects(
+      () => runtime.resolveJson(destination(), producer()),
+      ArtifactNotFoundError,
+    );
+  });
+});
+
+Deno.test("artifact runtime ships the canonical manifest schema with the SDK", async () => {
+  const packaged = await Deno.readTextFile(
+    new URL("../src/artifact/data-artifact-manifest.schema.json", import.meta.url),
+  );
+  const canonical = await Deno.readTextFile(
+    new URL(
+      "../../../conformance/schema/data-artifact-manifest.schema.json",
+      import.meta.url,
+    ),
+  );
+  assertEquals(packaged, canonical);
 });
 
 Deno.test("artifact runtime validates the canonical output against its schema before publishing", async () => {

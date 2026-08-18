@@ -1,6 +1,9 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ErrorObject } from "ajv/dist/2020.js";
-import { type Datastore, datastore } from "../datastore/facade.ts";
+import { ArtifactRuntime } from "../artifact/runtime.ts";
+import { Key } from "../datastore/key.ts";
+import { LocalDatastoreClient } from "../datastore/local.ts";
+import type { DatastoreClient } from "../datastore/types.ts";
 import {
   type JsonValue,
   sha256RefBytes,
@@ -55,11 +58,20 @@ export async function executeStep(
 
       validateJson(outputSchema, output, "output");
 
-      const serializedOutput = stableStringify(output);
-      const outputHash = sha256RefText(serializedOutput);
-      await store.put(descriptor.output.artifact.key, serializedOutput, {
-        contentType: descriptor.output.artifact.contentType,
-      });
+      const published = await new ArtifactRuntime(store).publishJson(
+        {
+          manifestKey: Key.parse(descriptor.output.manifestKey),
+          schema: descriptor.output.schema,
+        },
+        {
+          projectKey: descriptor.projectKey,
+          planHash: descriptor.planHash,
+          runId: descriptor.runId,
+          nodeId: descriptor.nodeId,
+          attempt: descriptor.attempt,
+        },
+        stableStringify(output),
+      );
 
       return {
         kind: "success",
@@ -68,10 +80,9 @@ export async function executeStep(
         nodeId: descriptor.nodeId,
         attempt: descriptor.attempt,
         output: {
-          key: descriptor.output.artifact.key,
-          hash: outputHash,
-          contentType: descriptor.output.artifact.contentType,
-          schema: descriptor.output.schema,
+          manifest: published.manifest,
+          body: published.body,
+          schema: published.schema,
         },
       };
     } finally {
@@ -97,13 +108,14 @@ export async function executeStep(
 
 async function datastoreForDescriptor(
   descriptor: StepInvocationDescriptor,
-): Promise<Datastore> {
+): Promise<DatastoreClient> {
   if (descriptor.datastore.kind === "local") {
-    return datastore.local({ path: descriptor.datastore.path });
+    return new LocalDatastoreClient({ path: descriptor.datastore.path });
   }
 
   try {
-    return await datastore.s3({
+    const { S3DatastoreClient } = await import("../datastore/s3.ts");
+    return new S3DatastoreClient({
       bucket: descriptor.datastore.bucket,
       region: descriptor.datastore.region,
       ...(descriptor.datastore.prefix === undefined
@@ -123,13 +135,13 @@ async function datastoreForDescriptor(
 }
 
 async function readSchema(
-  store: Datastore,
+  store: DatastoreClient,
   schemaRef: string,
 ): Promise<JsonValue> {
   const key = schemaKey(schemaRef);
   let bytes: Uint8Array;
   try {
-    bytes = await store.get(key);
+    bytes = (await store.get(Key.parse(key))).body;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new StepSchemaValidationError(
@@ -155,13 +167,13 @@ async function readSchema(
 }
 
 async function readCanonicalJsonArtifact(
-  store: Datastore,
+  store: DatastoreClient,
   key: string,
   expectedHash: string,
 ): Promise<JsonValue> {
   let bytes: Uint8Array;
   try {
-    bytes = await store.get(key);
+    bytes = (await store.get(Key.parse(key))).body;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new StepSchemaValidationError(

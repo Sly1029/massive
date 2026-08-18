@@ -1,9 +1,11 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ValidateFunction } from "ajv/dist/2020.js";
+import manifestSchema from "./data-artifact-manifest.schema.json" with { type: "json" };
 import { blobKeySHA256Hex, Key } from "../datastore/key.ts";
 import {
   type DatastoreClient,
   DatastoreConflictError,
+  DatastoreNotFoundError,
   type ObjectInfo,
 } from "../datastore/types.ts";
 import { type JsonValue, sha256RefBytes, stableStringify } from "../stable.ts";
@@ -80,6 +82,13 @@ export class ArtifactManifestConflictError extends Error {
   }
 }
 
+export class ArtifactNotFoundError extends Error {
+  constructor(readonly key: Key) {
+    super(`Artifact object not found: ${key.toString()}`);
+    this.name = "ArtifactNotFoundError";
+  }
+}
+
 // ArtifactRuntime is deliberately the only seam that commits a produced JSON
 // value. Callers provide the deterministic attempt destination and canonical
 // value; this module owns body-first publication, immutable-manifest recovery,
@@ -142,7 +151,10 @@ export class ArtifactRuntime {
     producer: ArtifactProducer,
   ): Promise<ResolvedJson> {
     validateDestination(destination, producer);
-    const manifestObject = await this.store.get(destination.manifestKey);
+    const manifestObject = await getArtifactObject(
+      this.store,
+      destination.manifestKey,
+    );
     if (manifestObject.info.contentType !== MANIFEST_CONTENT_TYPE) {
       throw new ArtifactIntegrityError(
         `Manifest ${destination.manifestKey.toString()} has content type ${manifestObject.info.contentType}`,
@@ -168,7 +180,7 @@ export class ArtifactRuntime {
         `Manifest ${destination.manifestKey.toString()} body key does not match its digest`,
       );
     }
-    const bodyObject = await this.store.get(bodyKey);
+    const bodyObject = await getArtifactObject(this.store, bodyKey);
     if (
       bodyObject.info.contentType !== JSON_CONTENT_TYPE ||
       bodyObject.body.byteLength !== manifest.body.size ||
@@ -283,12 +295,7 @@ async function putImmutable(
     if (!(error instanceof DatastoreConflictError)) {
       throw error;
     }
-    let existing;
-    try {
-      existing = await store.get(key);
-    } catch (readError) {
-      throw conflict(key);
-    }
+    const existing = await store.get(key);
     if (
       existing.info.contentType !== contentType ||
       !sameBytes(existing.body, body)
@@ -357,17 +364,23 @@ function validateManifest(body: Uint8Array): Promise<void> {
 }
 
 async function compileManifestValidator(): Promise<ValidateFunction> {
-  const { readFile } = await import("node:fs/promises");
-  const schema = JSON.parse(
-    await readFile(
-      new URL(
-        "../../../../conformance/schema/data-artifact-manifest.schema.json",
-        import.meta.url,
-      ),
-      "utf8",
-    ),
-  ) as AnySchema;
-  return new Ajv2020({ allErrors: true, strict: true }).compile(schema);
+  return new Ajv2020({ allErrors: true, strict: true }).compile(
+    manifestSchema as AnySchema,
+  );
+}
+
+async function getArtifactObject(
+  store: DatastoreClient,
+  key: Key,
+) {
+  try {
+    return await store.get(key);
+  } catch (error) {
+    if (error instanceof DatastoreNotFoundError) {
+      throw new ArtifactNotFoundError(key);
+    }
+    throw error;
+  }
 }
 
 function parseCanonicalJson(body: Uint8Array, role: string): JsonValue {

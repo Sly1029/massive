@@ -57,6 +57,10 @@ export class LocalDatastoreClient implements DatastoreClient {
     await mkdir(directory, { recursive: true });
 
     const bytes = encodeBody(body);
+    const contentType = defaultContentType(options.contentType);
+    if (options.ifAbsent === true) {
+      await this.ensureImmutableMetadata(key, contentType);
+    }
     const temporary = resolve(
       directory,
       `.tmp-${basename(target)}-${randomUUID()}`,
@@ -85,8 +89,9 @@ export class LocalDatastoreClient implements DatastoreClient {
       }
     }
 
-    const contentType = defaultContentType(options.contentType);
-    await this.writeMetadata(key, contentType);
+    if (options.ifAbsent !== true) {
+      await this.writeMetadata(key, contentType);
+    }
     return { key, size: bytes.byteLength, contentType };
   }
 
@@ -195,6 +200,38 @@ export class LocalDatastoreClient implements DatastoreClient {
       JSON.stringify({ contentType } satisfies LocalMetadata),
     );
     await rename(temporary, target);
+  }
+
+  // A conditional body is a publication primitive. Its metadata must exist
+  // before the hard-link exposes that body, otherwise a concurrent reader can
+  // observe application/octet-stream and mistake a compatible retry for an
+  // integrity conflict. A metadata-only crash is safe: an identical retry
+  // reuses it and installs the still-absent body; a differing content type
+  // fails without mutating the established record.
+  private async ensureImmutableMetadata(
+    key: Key,
+    contentType: string,
+  ): Promise<void> {
+    const target = this.metadataPath(key);
+    await mkdir(dirname(target), { recursive: true });
+    const expected = JSON.stringify({ contentType } satisfies LocalMetadata);
+    const temporary = `${target}.tmp-${randomUUID()}`;
+    try {
+      await writeFile(temporary, expected);
+      try {
+        await link(temporary, target);
+        return;
+      } catch (error) {
+        if (!isAlreadyExists(error)) throw error;
+      }
+
+      const existing = await readFile(target, "utf8");
+      if (existing !== expected) {
+        throw new DatastoreConflictError(key);
+      }
+    } finally {
+      await unlink(temporary).catch(() => {});
+    }
   }
 
   private async readContentType(key: Key): Promise<string> {
