@@ -214,14 +214,15 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         source_files, package_hash = source.manifest()
         schema_table: dict[str, JsonValue] = {}
 
-        def schema_ref(annotation: Any) -> str:
+        def schema_ref(annotation: Any, role: str) -> str:
             schema = cast(JsonValue, TypeAdapter(annotation).json_schema(mode="validation"))
+            _assert_canonical_json_schema(schema, role)
             reference = sha256_ref(canonical_json(schema))
             schema_table[reference] = schema
             return reference
 
-        input_schema = schema_ref(self.input_type)
-        output_schema = schema_ref(self.output_type)
+        input_schema = schema_ref(self.input_type, "workflow input schema")
+        output_schema = schema_ref(self.output_type, "workflow output schema")
         environments: dict[str, JsonValue] = {}
         contracts: dict[str, JsonValue] = {}
 
@@ -253,8 +254,8 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                 {
                     "id": node_id,
                     "kind": "step",
-                    "inputSchema": schema_ref(step.input_type),
-                    "outputSchema": schema_ref(step.output_type),
+                    "inputSchema": schema_ref(step.input_type, f"step {node_id!r} input schema"),
+                    "outputSchema": schema_ref(step.output_type, f"step {node_id!r} output schema"),
                     "symbolRef": symbol_ref,
                     "contractRef": contract_ref(step.contract or self.defaults),
                 }
@@ -312,3 +313,53 @@ def _symbol_module(function: Callable[..., Any], root: Path) -> str:
     if not isinstance(loaded, ModuleType) or getattr(loaded, function.__name__, None) is None:
         raise TypeError("workflow step must remain exported from its module")
     return module
+
+
+def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
+    """Reject Pydantic schemas that describe JSON numbers v0 cannot serialize.
+
+    This follows the schema containers Pydantic emits, including local
+    definitions and references. It deliberately checks the concrete `number`
+    type rather than attempting to prove arbitrary JSON Schema constraints.
+    """
+
+    def visit(value: JsonValue, path: str) -> None:
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                visit(item, f"{path}/{index}")
+            return
+        if not isinstance(value, dict):
+            return
+        type_value = value.get("type")
+        if type_value == "number" or (
+            isinstance(type_value, list) and "number" in type_value
+        ):
+            raise ValueError(
+                f"{role} uses JSON Schema type 'number' at {path}; "
+                "canonical-json-v0 is integer-only. Use an integer field or "
+                "encode fractional values as strings."
+            )
+        for key, child in value.items():
+            if key in {"$defs", "dependentSchemas", "patternProperties", "properties"}:
+                if isinstance(child, dict):
+                    for name, definition in child.items():
+                        visit(definition, f"{path}/{key}/{name}")
+            elif key in {
+                "additionalProperties",
+                "allOf",
+                "anyOf",
+                "contains",
+                "dependentSchemas",
+                "else",
+                "if",
+                "items",
+                "oneOf",
+                "patternProperties",
+                "prefixItems",
+                "properties",
+                "then",
+                "unevaluatedProperties",
+            }:
+                visit(child, f"{path}/{key}")
+
+    visit(schema, "#")

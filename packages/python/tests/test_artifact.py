@@ -215,6 +215,27 @@ def test_publish_requires_a_normalized_project_key(tmp_path: Path) -> None:
         runtime.publish_json(destination, producer, BODY)
 
 
+def test_publish_reports_an_invalid_json_schema_as_an_artifact_validation_error(
+    tmp_path: Path,
+) -> None:
+    runtime, store = _runtime(tmp_path)
+    invalid_schema = b'{"type":"not-a-json-schema-type"}'
+    invalid_schema_hash = sha256_ref(invalid_schema)
+    store.put(
+        f"blobs/sha256/{invalid_schema_hash.removeprefix('sha256:')}",
+        invalid_schema,
+        content_type="application/json",
+        if_absent=True,
+    )
+    destination = Destination(
+        manifest_key=f"projects/{PROJECT_KEY}/runs/run-1/steps/task/1/output-manifest.json",
+        schema=invalid_schema_hash,
+    )
+
+    with pytest.raises(ArtifactValidationError, match="does not satisfy schema"):
+        runtime.publish_json(destination, _producer(), BODY)
+
+
 def test_immutable_conflict_preserves_an_unrelated_datastore_read_failure(tmp_path: Path) -> None:
     runtime, store = _runtime(tmp_path)
     store.put(

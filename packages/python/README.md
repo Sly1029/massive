@@ -85,3 +85,10 @@ providers (`deps_type`) are intentionally not part of the invocation protocol
 yet, so use explicit JSON inputs until that surface is designed. Python is the
 primary SDK; the artifact manifest protocol is shared with the other Massive
 runtimes.
+
+`canonical-json-v0` deliberately supports integers, but not floating-point
+numbers. `emit()` rejects Pydantic input or output schemas containing JSON
+Schema `type: "number"` before a workflow is submitted, including nested
+models and collection items. Model a fractional value as a string (or scale it
+to an integer) until a future protocol version defines a cross-runtime decimal
+representation.
