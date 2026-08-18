@@ -16,11 +16,20 @@ type Version struct {
 }
 
 // Current is the Graph IR emitted by this compiler generation.
-var Current = MustParse("0.1")
+const Current = "0.1"
 
-// CompilerRange declares the Graph IR versions accepted by the Go compiler.
+// CompilerRange is the range of Graph IR versions accepted by the Go compiler.
 // A later incompatible 0.x graph revision must update this range explicitly.
-var CompilerRange = MustParseRange(">=0.1 <0.2")
+const CompilerRange = ">=0.1 <0.2"
+
+var compilerRange = MustParseRange(CompilerRange)
+
+// CompilerSupports reports whether the compiler accepts a parsed Graph IR
+// version. Keeping the parsed range private prevents callers from mutating the
+// compiler's compatibility contract at runtime.
+func CompilerSupports(version Version) bool {
+	return compilerRange.Contains(version)
+}
 
 func Parse(input string) (Version, error) {
 	majorText, minorText, ok := strings.Cut(input, ".")

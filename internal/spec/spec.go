@@ -299,7 +299,7 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	version, err := irversion.Parse(parsed.Graph.IRVersion)
 	if err != nil {
 		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.irVersion", Ref: parsed.Graph.IRVersion, Message: err.Error()})
-	} else if !irversion.CompilerRange.Contains(version) {
+	} else if !irversion.CompilerSupports(version) {
 		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.irVersion", Ref: parsed.Graph.IRVersion, Message: fmt.Sprintf("unsupported graph IR version; compiler supports %s", irversion.CompilerRange)})
 	}
 
