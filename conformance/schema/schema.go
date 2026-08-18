@@ -19,6 +19,12 @@ var WorkflowSpecSchemaJSON []byte
 //go:embed deployment-spec.schema.json
 var DeploymentSpecSchemaJSON []byte
 
+// DataArtifactManifestSchemaJSON is the frozen manifest-last publication
+// contract for canonical JSON step outputs.
+//
+//go:embed data-artifact-manifest.schema.json
+var DataArtifactManifestSchemaJSON []byte
+
 // ArgoWorkflowsCRDVersion and ArgoWorkflowsCRDSchemaJSON pin the upstream Argo
 // WorkflowTemplate schema used for offline target validation.
 const ArgoWorkflowsCRDVersion = "v3.7.16"
