@@ -137,6 +137,14 @@ func TestStaticDAGRejectsUnverifiedOrUnsupportedPlan(t *testing.T) {
 	}
 }
 
+func TestStaticDAGRejectsExhaustiveDecisionSemantics(t *testing.T) {
+	result := fixturePlan(t, "exhaustive-decision")
+	_, err := Compile(result.CanonicalJSON, deploymentForPlan(t, result.PlanHash))
+	if err == nil || !strings.Contains(err.Error(), `graph semantic "decision" is unsupported`) {
+		t.Fatalf("error=%v, want explicit decision semantic diagnostic", err)
+	}
+}
+
 func rehashPlan(t *testing.T, value *planpb.WorkflowPlan) ([]byte, string) {
 	t.Helper()
 	value.PlanHash = nil

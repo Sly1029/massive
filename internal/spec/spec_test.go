@@ -18,6 +18,7 @@ func TestParseAcceptsValidFixtures(t *testing.T) {
 		{name: "linear-chain", path: fixturePath("linear-chain")},
 		{name: "diamond", path: fixturePath("diamond")},
 		{name: "python-linear", path: fixturePath("python-linear")},
+		{name: "exhaustive-decision", path: fixturePath("exhaustive-decision")},
 	}
 
 	for _, test := range tests {
@@ -103,7 +104,7 @@ func TestParseReportsCycle(t *testing.T) {
 
 func TestParseReportsUnsupportedGraphIRVersion(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
-		root["graph"].(map[string]any)["irVersion"] = "0.2"
+		root["graph"].(map[string]any)["irVersion"] = "0.3"
 	})
 
 	_, err := Parse(data)
@@ -112,7 +113,7 @@ func TestParseReportsUnsupportedGraphIRVersion(t *testing.T) {
 	}
 
 	diagnostics := diagnosticsFromError(t, err)
-	if diagnostics[0].Path != "$.graph.irVersion" || diagnostics[0].Ref != "0.2" || !strings.Contains(diagnostics[0].Message, "compiler supports >=0.1 <0.2") {
+	if diagnostics[0].Path != "$.graph.irVersion" || diagnostics[0].Ref != "0.3" || !strings.Contains(diagnostics[0].Message, "compiler supports >=0.1 <0.3") {
 		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
 	}
 }
@@ -239,6 +240,77 @@ func TestParseRejectsMergeInputsThatDoNotMatchInboundEdges(t *testing.T) {
 	}
 }
 
+func TestParseRejectsInvalidExhaustiveDecisionContracts(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(map[string]any)
+		message string
+	}{
+		{
+			name: "duplicate case tag",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				for _, rawNode := range graph["nodes"].([]any) {
+					node := rawNode.(map[string]any)
+					if node["id"] == "route" {
+						node["cases"].([]any)[1].(map[string]any)["tag"] = "accepted"
+					}
+				}
+			},
+			message: "decision case tags must be unique",
+		},
+		{
+			name: "missing branch edge",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				edges := graph["edges"].([]any)
+				graph["edges"] = append(edges[:3:3], edges[4:]...)
+			},
+			message: "each decision case requires exactly one conditional outgoing edge",
+		},
+		{
+			name: "select source does not match inbound edge",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				for _, rawNode := range graph["nodes"].([]any) {
+					node := rawNode.(map[string]any)
+					if node["id"] == "choose" {
+						node["selectInputs"].([]any)[1].(map[string]any)["source"] = "classify"
+					}
+				}
+			},
+			message: "select input sources must exactly match inbound edges",
+		},
+		{
+			name: "select source belongs to a different case branch",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				for _, rawNode := range graph["nodes"].([]any) {
+					node := rawNode.(map[string]any)
+					if node["id"] == "choose" {
+						inputs := node["selectInputs"].([]any)
+						inputs[0].(map[string]any)["source"] = "reject"
+						inputs[1].(map[string]any)["source"] = "accept"
+					}
+				}
+			},
+			message: "select input source must be reachable from its decision case branch",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse(mutateFixture(t, "exhaustive-decision", test.mutate))
+			if err == nil {
+				t.Fatal("expected invalid spec")
+			}
+			if !containsDiagnostic(diagnosticsFromError(t, err), test.message) {
+				t.Fatalf("diagnostics = %#v, want %q", diagnosticsFromError(t, err), test.message)
+			}
+		})
+	}
+}
+
 func TestParseRejectsSourcePackageMapKeyMismatch(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
 		packages := root["sourcePackages"].(map[string]any)
@@ -316,4 +388,13 @@ func diagnosticsFromError(t *testing.T, err error) []Diagnostic {
 		t.Fatal("expected diagnostics")
 	}
 	return diagnostics.Diagnostics
+}
+
+func containsDiagnostic(diagnostics []Diagnostic, message string) bool {
+	for _, diagnostic := range diagnostics {
+		if strings.Contains(diagnostic.Message, message) {
+			return true
+		}
+	}
+	return false
 }

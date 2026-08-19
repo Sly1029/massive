@@ -1,0 +1,135 @@
+{
+  "kind": "WorkflowSpec",
+  "schemaVersion": 0,
+  "encoding": "json-v0",
+  "specHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "workflow": {
+    "name": "exhaustive-decision",
+    "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "graph": {
+    "irVersion": "0.2",
+    "start": "__start",
+    "end": "__end",
+    "nodes": [
+      { "id": "__start", "kind": "start" },
+      { "id": "__end", "kind": "end" },
+      {
+        "id": "classify",
+        "kind": "step",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "symbolRef": "exhaustive-decision/classify",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      {
+        "id": "route",
+        "kind": "decision",
+        "inputSchema": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "selector": "kind",
+        "cases": [
+          {
+            "tag": "accepted",
+            "schema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          },
+          {
+            "tag": "rejected",
+            "schema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ]
+      },
+      {
+        "id": "accept",
+        "kind": "step",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "exhaustive-decision/accept",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      {
+        "id": "reject",
+        "kind": "step",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "symbolRef": "exhaustive-decision/reject",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+      },
+      {
+        "id": "choose",
+        "kind": "select",
+        "decisionRef": "route",
+        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "selectInputs": [
+          { "case": "accepted", "source": "accept" },
+          { "case": "rejected", "source": "reject" }
+        ]
+      }
+    ],
+    "edges": [
+      { "from": "__start", "to": "classify" },
+      { "from": "classify", "to": "route" },
+      { "from": "route", "to": "accept", "case": "accepted" },
+      { "from": "route", "to": "reject", "case": "rejected" },
+      { "from": "accept", "to": "choose" },
+      { "from": "reject", "to": "choose" },
+      { "from": "choose", "to": "__end" }
+    ]
+  },
+  "schemas": {
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111": {
+      "type": "number"
+    },
+    "sha256:3333333333333333333333333333333333333333333333333333333333333333": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": { "kind": { "type": "string" } }
+    }
+  },
+  "symbols": {
+    "exhaustive-decision/classify": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "classify"
+    },
+    "exhaustive-decision/accept": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "accept"
+    },
+    "exhaustive-decision/reject": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "reject"
+    }
+  },
+  "sourcePackages": {
+    "ts-main": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "files": [
+        {
+          "path": "workflow.ts",
+          "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      ]
+    }
+  },
+  "environments": {
+    "sha256:7777777777777777777777777777777777777777777777777777777777777777": {
+      "kind": "container",
+      "image": "ghcr.io/massive-dev/typescript-runner@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "platform": "linux/amd64"
+    }
+  },
+  "contracts": {
+    "sha256:8888888888888888888888888888888888888888888888888888888888888888": {
+      "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "network": { "egress": "none" }
+    }
+  }
+}

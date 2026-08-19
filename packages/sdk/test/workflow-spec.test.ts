@@ -1,5 +1,11 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert";
-import { parseWorkflowSpecText, WorkflowSpecError } from "../src/index.ts";
+import {
+  computeSpecHash,
+  parseWorkflowSpec,
+  parseWorkflowSpecText,
+  type WorkflowSpec,
+  WorkflowSpecError,
+} from "../src/index.ts";
 
 Deno.test("parseWorkflowSpecText accepts canonical WorkflowSpec emitted by Python GraphBuilder", async () => {
   const text = await Deno.readTextFile(
@@ -19,6 +25,36 @@ Deno.test("parseWorkflowSpecText accepts canonical WorkflowSpec emitted by Pytho
   }
   assertEquals(spec.symbols[step.symbolRef]?.language, "python");
   assertEquals(spec.sourcePackages["python-main"]?.language, "python");
+});
+
+Deno.test("parseWorkflowSpec accepts data-only Graph IR 0.2 routing", async () => {
+  const fixture = JSON.parse(
+    await Deno.readTextFile(
+      new URL(
+        "../../../conformance/fixtures/specs/exhaustive-decision/workflow-spec.json",
+        import.meta.url,
+      ),
+    ),
+  ) as Omit<WorkflowSpec, "specHash"> & { specHash?: string };
+  const value: WorkflowSpec = {
+    ...fixture,
+    specHash: computeSpecHash(fixture),
+  };
+
+  const spec = await parseWorkflowSpec(value);
+  const decision = spec.graph.nodes.find((node) => node.kind === "decision");
+  const select = spec.graph.nodes.find((node) => node.kind === "select");
+
+  assertEquals(decision?.kind, "decision");
+  assertEquals(select?.kind, "select");
+  if (decision?.kind !== "decision" || select?.kind !== "select") {
+    throw new Error("fixture should preserve data-only routing nodes");
+  }
+  assertEquals(decision.cases.map((entry) => entry.tag), [
+    "accepted",
+    "rejected",
+  ]);
+  assertEquals(select.decisionRef, "route");
 });
 
 Deno.test("parseWorkflowSpecText rejects malformed nested WorkflowSpec fields", async () => {

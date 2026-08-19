@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/spec"
 )
@@ -96,6 +97,47 @@ func TestCompilePreservesPythonFrontendIdentity(t *testing.T) {
 	}
 }
 
+func TestCompileLowersDataOnlyExhaustiveDecision(t *testing.T) {
+	specData := decisionSpecData(t)
+	workflowSpec, err := spec.Parse(specData)
+	if err != nil {
+		t.Fatalf("parse decision WorkflowSpec: %v", err)
+	}
+
+	compiled, err := Compile(workflowSpec, specData)
+	if err != nil {
+		t.Fatalf("compile decision WorkflowSpec: %v", err)
+	}
+
+	var decision, selectNode *planpb.GraphNode
+	for _, node := range compiled.Plan.GetGraph().GetNodes() {
+		switch node.GetKind() {
+		case "decision":
+			decision = node
+		case "select":
+			selectNode = node
+		}
+	}
+	if decision == nil || selectNode == nil {
+		t.Fatalf("compiled graph did not preserve decision/select nodes: %#v", compiled.Plan.GetGraph().GetNodes())
+	}
+	if decision.GetSelector() != "kind" || len(decision.GetCases()) != 2 || decision.GetCases()[0].GetTag() != "accepted" || decision.GetCases()[1].GetTag() != "rejected" {
+		t.Fatalf("compiled decision = %#v", decision)
+	}
+	if selectNode.GetDecisionRef() != "route" || len(selectNode.GetSelectInputs()) != 2 || selectNode.GetSelectInputs()[0].GetSource() != "accept" || selectNode.GetSelectInputs()[1].GetSource() != "reject" {
+		t.Fatalf("compiled select = %#v", selectNode)
+	}
+	var conditional int
+	for _, edge := range compiled.Plan.GetGraph().GetEdges() {
+		if edge.GetCase() != "" {
+			conditional++
+		}
+	}
+	if conditional != 2 {
+		t.Fatalf("compiled conditional edges = %d, want 2", conditional)
+	}
+}
+
 func readFixture(t *testing.T, fixtureKind, name, file string) []byte {
 	t.Helper()
 
@@ -116,6 +158,67 @@ func normalizePlanJSON(t *testing.T, data []byte) []byte {
 		t.Fatal(err)
 	}
 	return canonicalJSON
+}
+
+func decisionSpecData(t *testing.T) []byte {
+	t.Helper()
+	var root map[string]any
+	if err := json.Unmarshal(readFixture(t, "specs", "linear-chain", "workflow-spec.json"), &root); err != nil {
+		t.Fatal(err)
+	}
+	graph := root["graph"].(map[string]any)
+	graph["irVersion"] = "0.2"
+	graph["nodes"] = []any{
+		map[string]any{"id": "__start", "kind": "start"},
+		map[string]any{"id": "__end", "kind": "end"},
+		map[string]any{
+			"id": "classify", "kind": "step",
+			"inputSchema": hashRef("1"), "outputSchema": hashRef("1"),
+			"symbolRef": "linear-chain/double", "contractRef": hashRef("8"),
+		},
+		map[string]any{
+			"id": "route", "kind": "decision", "inputSchema": hashRef("1"), "selector": "kind",
+			"cases": []any{
+				map[string]any{"tag": "accepted", "schema": hashRef("1")},
+				map[string]any{"tag": "rejected", "schema": hashRef("1")},
+			},
+		},
+		map[string]any{
+			"id": "accept", "kind": "step",
+			"inputSchema": hashRef("1"), "outputSchema": hashRef("1"),
+			"symbolRef": "linear-chain/increment", "contractRef": hashRef("8"),
+		},
+		map[string]any{
+			"id": "reject", "kind": "step",
+			"inputSchema": hashRef("1"), "outputSchema": hashRef("1"),
+			"symbolRef": "linear-chain/label", "contractRef": hashRef("8"),
+		},
+		map[string]any{
+			"id": "choose", "kind": "select", "decisionRef": "route", "outputSchema": hashRef("1"),
+			"selectInputs": []any{
+				map[string]any{"case": "accepted", "source": "accept"},
+				map[string]any{"case": "rejected", "source": "reject"},
+			},
+		},
+	}
+	graph["edges"] = []any{
+		map[string]any{"from": "__start", "to": "classify"},
+		map[string]any{"from": "classify", "to": "route"},
+		map[string]any{"from": "route", "to": "accept", "case": "accepted"},
+		map[string]any{"from": "route", "to": "reject", "case": "rejected"},
+		map[string]any{"from": "accept", "to": "choose"},
+		map[string]any{"from": "reject", "to": "choose"},
+		map[string]any{"from": "choose", "to": "__end"},
+	}
+	data, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func hashRef(character string) string {
+	return "sha256:" + string(bytes.Repeat([]byte(character), 64))
 }
 
 func omitEmptyRepeatedFields(t *testing.T, data []byte) []byte {

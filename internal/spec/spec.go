@@ -20,9 +20,11 @@ import (
 var immutableContainerImage = regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`)
 
 const (
-	NodeKindStart = "start"
-	NodeKindStep  = "step"
-	NodeKindEnd   = "end"
+	NodeKindStart    = "start"
+	NodeKindStep     = "step"
+	NodeKindDecision = "decision"
+	NodeKindSelect   = "select"
+	NodeKindEnd      = "end"
 )
 
 type WorkflowSpec struct {
@@ -54,18 +56,36 @@ type Graph struct {
 }
 
 type GraphNode struct {
-	ID           string   `json:"id"`
-	Kind         string   `json:"kind"`
-	InputSchema  string   `json:"inputSchema,omitempty"`
-	OutputSchema string   `json:"outputSchema,omitempty"`
-	SymbolRef    string   `json:"symbolRef,omitempty"`
-	ContractRef  string   `json:"contractRef,omitempty"`
-	MergeInputs  []string `json:"mergeInputs,omitempty"`
+	ID           string         `json:"id"`
+	Kind         string         `json:"kind"`
+	InputSchema  string         `json:"inputSchema,omitempty"`
+	OutputSchema string         `json:"outputSchema,omitempty"`
+	SymbolRef    string         `json:"symbolRef,omitempty"`
+	ContractRef  string         `json:"contractRef,omitempty"`
+	MergeInputs  []string       `json:"mergeInputs,omitempty"`
+	Selector     string         `json:"selector,omitempty"`
+	Cases        []DecisionCase `json:"cases,omitempty"`
+	DecisionRef  string         `json:"decisionRef,omitempty"`
+	SelectInputs []SelectInput  `json:"selectInputs,omitempty"`
 }
 
 type GraphEdge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	Case string `json:"case,omitempty"`
+}
+
+// DecisionCase is a data-only route declaration. Tags are deliberately strings
+// so every frontend can serialize and compare them identically.
+type DecisionCase struct {
+	Tag    string `json:"tag"`
+	Schema string `json:"schema"`
+}
+
+// SelectInput states which branch output supplies one exhaustive case.
+type SelectInput struct {
+	Case   string `json:"case"`
+	Source string `json:"source"`
 }
 
 type Symbol struct {
@@ -297,6 +317,7 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	}
 
 	nodeByID := make(map[string]GraphNode, len(parsed.Graph.Nodes))
+	nodeIndexes := make(map[string]int, len(parsed.Graph.Nodes))
 	startCount := 0
 	endCount := 0
 	for index, node := range parsed.Graph.Nodes {
@@ -306,6 +327,7 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 			continue
 		}
 		nodeByID[node.ID] = node
+		nodeIndexes[node.ID] = index
 		if node.Kind == NodeKindStart {
 			startCount++
 		}
@@ -346,7 +368,7 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		if _, exists := nodeByID[edge.To]; !exists {
 			continue
 		}
-		edgeKey := edge.From + "\x00" + edge.To
+		edgeKey := edge.From + "\x00" + edge.To + "\x00" + edge.Case
 		if firstIndex, exists := edgeIndexes[edgeKey]; exists {
 			diagnostics = append(diagnostics, Diagnostic{Path: path, Ref: edge.From + " -> " + edge.To, Message: fmt.Sprintf("duplicate graph edge; first declared at $.graph.edges[%d]", firstIndex)})
 			continue
@@ -435,6 +457,8 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		}
 	}
 
+	diagnostics = append(diagnostics, validateDecisionAndSelectSemantics(parsed, nodeByID, nodeIndexes)...)
+
 	if _, exists := parsed.Schemas[parsed.Workflow.InputSchema]; !exists {
 		diagnostics = append(diagnostics, Diagnostic{Path: "$.workflow.inputSchema", Ref: parsed.Workflow.InputSchema, Message: "workflow input schema reference does not exist"})
 	}
@@ -468,6 +492,196 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	}
 
 	return diagnostics
+}
+
+func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, nodeIndexes map[string]int) []Diagnostic {
+	var diagnostics []Diagnostic
+	if parsed.Graph.IRVersion == "0.1" {
+		for index, node := range parsed.Graph.Nodes {
+			if node.Kind == NodeKindDecision || node.Kind == NodeKindSelect {
+				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].kind", index), Ref: node.Kind, Message: "graph IR 0.1 permits only static start, step, and end nodes"})
+			}
+		}
+		for index, edge := range parsed.Graph.Edges {
+			if edge.Case != "" {
+				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.edges[%d].case", index), Ref: edge.Case, Message: "graph IR 0.1 does not permit conditional edges"})
+			}
+		}
+	}
+
+	decisionCases := make(map[string]map[string]bool)
+	for index, node := range parsed.Graph.Nodes {
+		if node.Kind != NodeKindDecision {
+			continue
+		}
+		path := fmt.Sprintf("$.graph.nodes[%d]", index)
+		if _, exists := parsed.Schemas[node.InputSchema]; !exists {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.InputSchema, Message: "decision input schema reference does not exist"})
+		}
+		tags := make(map[string]bool, len(node.Cases))
+		for caseIndex, decisionCase := range node.Cases {
+			casePath := fmt.Sprintf("%s.cases[%d]", path, caseIndex)
+			if tags[decisionCase.Tag] {
+				diagnostics = append(diagnostics, Diagnostic{Path: casePath + ".tag", Ref: decisionCase.Tag, Message: "decision case tags must be unique"})
+				continue
+			}
+			tags[decisionCase.Tag] = true
+			if _, exists := parsed.Schemas[decisionCase.Schema]; !exists {
+				diagnostics = append(diagnostics, Diagnostic{Path: casePath + ".schema", Ref: decisionCase.Schema, Message: "decision case schema reference does not exist"})
+			}
+		}
+		decisionCases[node.ID] = tags
+	}
+
+	conditionalCounts := make(map[string]map[string]int)
+	branchTargets := make(map[string]map[string]string)
+	for edgeIndex, edge := range parsed.Graph.Edges {
+		path := fmt.Sprintf("$.graph.edges[%d]", edgeIndex)
+		source, sourceExists := nodeByID[edge.From]
+		if edge.Case == "" {
+			if sourceExists && source.Kind == NodeKindDecision {
+				diagnostics = append(diagnostics, Diagnostic{Path: path, Ref: edge.From + " -> " + edge.To, Message: "decision outputs require a conditional edge case"})
+			}
+			continue
+		}
+		if !sourceExists || source.Kind != NodeKindDecision {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".case", Ref: edge.Case, Message: "conditional edge source must be a decision node"})
+			continue
+		}
+		if !decisionCases[edge.From][edge.Case] {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".case", Ref: edge.Case, Message: "conditional edge case is not declared by its decision"})
+			continue
+		}
+		if conditionalCounts[edge.From] == nil {
+			conditionalCounts[edge.From] = make(map[string]int)
+			branchTargets[edge.From] = make(map[string]string)
+		}
+		conditionalCounts[edge.From][edge.Case]++
+		if branchTargets[edge.From][edge.Case] == "" {
+			branchTargets[edge.From][edge.Case] = edge.To
+		}
+	}
+	for _, decisionID := range sortedKeys(decisionCases) {
+		tags := decisionCases[decisionID]
+		for _, tag := range sortedKeys(tags) {
+			if conditionalCounts[decisionID][tag] != 1 {
+				index := nodeIndexes[decisionID]
+				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].cases", index), Ref: tag, Message: "each decision case requires exactly one conditional outgoing edge"})
+			}
+		}
+	}
+
+	for index, node := range parsed.Graph.Nodes {
+		if node.Kind != NodeKindSelect {
+			continue
+		}
+		path := fmt.Sprintf("$.graph.nodes[%d]", index)
+		decision, exists := nodeByID[node.DecisionRef]
+		if !exists || decision.Kind != NodeKindDecision {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".decisionRef", Ref: node.DecisionRef, Message: "select decisionRef must reference a decision node"})
+		}
+		if _, exists := parsed.Schemas[node.OutputSchema]; !exists {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: node.OutputSchema, Message: "select output schema reference does not exist"})
+		}
+
+		tags := decisionCases[node.DecisionRef]
+		selectedCases := make(map[string]bool, len(node.SelectInputs))
+		selectedSources := make(map[string]bool, len(node.SelectInputs))
+		declaredSources := make(map[string]bool, len(node.SelectInputs))
+		for inputIndex, input := range node.SelectInputs {
+			inputPath := fmt.Sprintf("%s.selectInputs[%d]", path, inputIndex)
+			if selectedCases[input.Case] {
+				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".case", Ref: input.Case, Message: "select input cases must be unique"})
+			}
+			selectedCases[input.Case] = true
+			if exists && !tags[input.Case] {
+				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".case", Ref: input.Case, Message: "select input case is not declared by its decision"})
+			}
+			if selectedSources[input.Source] {
+				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select input sources must be unique"})
+			}
+			selectedSources[input.Source] = true
+			source, sourceExists := nodeByID[input.Source]
+			if !sourceExists || (source.Kind != NodeKindStep && source.Kind != NodeKindSelect) {
+				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select input source must reference a value-producing step or select node"})
+			}
+			if branchTarget := branchTargets[node.DecisionRef][input.Case]; branchTarget != "" && !graphReachable(branchTarget, input.Source, parsed.Graph.Edges) {
+				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select input source must be reachable from its decision case branch"})
+			}
+			declaredSources[input.Source] = true
+		}
+		if exists {
+			for _, tag := range sortedKeys(tags) {
+				if !selectedCases[tag] {
+					diagnostics = append(diagnostics, Diagnostic{Path: path + ".selectInputs", Ref: tag, Message: "select inputs must exactly cover decision case tags"})
+				}
+			}
+			for _, tag := range sortedKeys(selectedCases) {
+				if !tags[tag] {
+					diagnostics = append(diagnostics, Diagnostic{Path: path + ".selectInputs", Ref: tag, Message: "select inputs must exactly cover decision case tags"})
+				}
+			}
+		}
+		actualSources := make(map[string]bool)
+		for edgeIndex, edge := range parsed.Graph.Edges {
+			if edge.To != node.ID {
+				continue
+			}
+			if edge.Case != "" {
+				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.edges[%d].case", edgeIndex), Ref: edge.Case, Message: "select inputs require ordinary source edges"})
+				continue
+			}
+			actualSources[edge.From] = true
+		}
+		for _, source := range sortedKeys(declaredSources) {
+			if !actualSources[source] {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + ".selectInputs", Ref: source, Message: "select input sources must exactly match inbound edges"})
+			}
+		}
+		for _, source := range sortedKeys(actualSources) {
+			if !declaredSources[source] {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + ".selectInputs", Ref: source, Message: "select input sources must exactly match inbound edges"})
+			}
+		}
+	}
+
+	return diagnostics
+}
+
+func graphReachable(start string, target string, edges []GraphEdge) bool {
+	if start == target {
+		return true
+	}
+	adjacency := make(map[string][]string)
+	for _, edge := range edges {
+		adjacency[edge.From] = append(adjacency[edge.From], edge.To)
+	}
+	seen := map[string]bool{start: true}
+	queue := []string{start}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, next := range adjacency[current] {
+			if next == target {
+				return true
+			}
+			if seen[next] {
+				continue
+			}
+			seen[next] = true
+			queue = append(queue, next)
+		}
+	}
+	return false
+}
+
+func sortedKeys[T any](values map[string]T) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return canonical.LessUTF16(keys[i], keys[j]) })
+	return keys
 }
 
 func validateContainerRecipe(environmentRef string, environment Environment) []Diagnostic {

@@ -148,12 +148,38 @@ func compileGraph(workflowSpec *spec.WorkflowSpec, schedule Schedule, schemaHash
 			compiled.ContractRef = stringPtr(contractHashes[node.ContractRef])
 			compiled.MergeInputs = append(compiled.MergeInputs, node.MergeInputs...)
 		}
+		if node.Kind == spec.NodeKindDecision {
+			compiled.InputSchema = stringPtr(schemaHashes[node.InputSchema])
+			compiled.Selector = stringPtr(node.Selector)
+			compiled.Cases = make([]*planpb.DecisionCase, 0, len(node.Cases))
+			for _, decisionCase := range node.Cases {
+				compiled.Cases = append(compiled.Cases, &planpb.DecisionCase{
+					Tag:    stringPtr(decisionCase.Tag),
+					Schema: stringPtr(schemaHashes[decisionCase.Schema]),
+				})
+			}
+		}
+		if node.Kind == spec.NodeKindSelect {
+			compiled.DecisionRef = stringPtr(node.DecisionRef)
+			compiled.OutputSchema = stringPtr(schemaHashes[node.OutputSchema])
+			compiled.SelectInputs = make([]*planpb.SelectInput, 0, len(node.SelectInputs))
+			for _, selectInput := range node.SelectInputs {
+				compiled.SelectInputs = append(compiled.SelectInputs, &planpb.SelectInput{
+					Case:   stringPtr(selectInput.Case),
+					Source: stringPtr(selectInput.Source),
+				})
+			}
+		}
 		nodes = append(nodes, compiled)
 	}
 
 	edges := make([]*planpb.GraphEdge, 0, len(workflowSpec.Graph.Edges))
 	for _, edge := range workflowSpec.Graph.Edges {
-		edges = append(edges, &planpb.GraphEdge{From: stringPtr(edge.From), To: stringPtr(edge.To)})
+		compiled := &planpb.GraphEdge{From: stringPtr(edge.From), To: stringPtr(edge.To)}
+		if edge.Case != "" {
+			compiled.Case = stringPtr(edge.Case)
+		}
+		edges = append(edges, compiled)
 	}
 
 	return &planpb.GraphIR{
