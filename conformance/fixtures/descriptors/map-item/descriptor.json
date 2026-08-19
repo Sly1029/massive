@@ -1,0 +1,30 @@
+{
+  "kind": "StepInvocationDescriptor",
+  "schemaVersion": 2,
+  "encoding": "json-v2",
+  "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "projectKey": "sha256-9999999999999999999999999999999999999999999999999999999999999999",
+  "runId": "run-map-item-0001",
+  "nodeId": "double",
+  "attempt": 1,
+  "scope": { "frames": [{ "kind": "map-item", "mapId": "fanout", "index": 0 }] },
+  "symbol": { "packageId": "ts-main", "language": "typescript", "module": "./workflow.ts", "export": "double" },
+  "sourcePackage": {
+    "packageId": "ts-main",
+    "language": "typescript",
+    "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "sourceArchive": { "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar", "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "contentType": "application/vnd.massive.source-tar" }
+  },
+  "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+  "input": {
+    "artifact": { "key": "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-map-item-0001/inputs/double/scopes/maps/fanout/items/0.json", "hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333", "contentType": "application/json" },
+    "schema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "output": {
+    "manifestKey": "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-map-item-0001/steps/double/scopes/maps/fanout/items/0/1/output-manifest.json",
+    "schema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "channelReads": [],
+  "channelWrites": [],
+  "datastore": { "kind": "local", "path": "/tmp/massive-conformance-store" }
+}

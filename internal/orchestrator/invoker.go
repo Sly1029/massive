@@ -111,7 +111,13 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		return StepInvocationOutcome{}, fmt.Errorf("marshal descriptor for %s: %w", descriptor.NodeID, err)
 	}
 
-	descriptorPath := filepath.Join(descriptorDir, descriptor.RunID+"-"+descriptor.NodeID+"-"+fmt.Sprint(descriptor.Attempt)+".json")
+	descriptorPath, err := descriptorFilePath(descriptorDir, descriptor)
+	if err != nil {
+		return StepInvocationOutcome{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(descriptorPath), 0o755); err != nil {
+		return StepInvocationOutcome{}, fmt.Errorf("create descriptor scope directory: %w", err)
+	}
 	if err := os.WriteFile(descriptorPath, descriptorBytes, 0o644); err != nil {
 		return StepInvocationOutcome{}, fmt.Errorf("write descriptor %q: %w", descriptorPath, err)
 	}
@@ -167,6 +173,27 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		ExitCode:   exitError.ExitCode(),
 		Diagnostic: diagnostic,
 	}, nil
+}
+
+func descriptorFilePath(descriptorDir string, descriptor StepInvocationDescriptor) (string, error) {
+	if !validSafePathSegment(descriptor.RunID) || !validSafePathSegment(descriptor.NodeID) || descriptor.Attempt < 1 {
+		return "", fmt.Errorf("invalid descriptor identity for filename")
+	}
+	parts := []string{descriptorDir, descriptor.RunID, descriptor.NodeID}
+	if descriptor.Scope != nil {
+		if len(descriptor.Scope.Frames) == 0 {
+			return "", fmt.Errorf("invalid empty descriptor scope")
+		}
+		parts = append(parts, "scopes")
+		for _, frame := range descriptor.Scope.Frames {
+			if frame.Kind != "map-item" || !validSafePathSegment(frame.MapID) || frame.Index < 0 {
+				return "", fmt.Errorf("invalid descriptor scope frame")
+			}
+			parts = append(parts, "maps", frame.MapID, "items", fmt.Sprint(frame.Index))
+		}
+	}
+	parts = append(parts, fmt.Sprint(descriptor.Attempt)+".json")
+	return filepath.Join(parts...), nil
 }
 
 func substituteDescriptorPath(command []string, descriptorPath string) []string {

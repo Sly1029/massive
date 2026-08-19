@@ -213,6 +213,19 @@ projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.j
 projects/<project-key>/runs/<run-id>/result.json
 ```
 
+Mapped invocations preserve their static `<step-id>` and add every ordered
+outer-to-inner scope frame. `mapId` is a safe segment; `index` is a canonical
+base-10, nonnegative JSON-safe integer with no leading zeroes (except `0`).
+The same frame path is used for item input and its descriptor filename, so
+concurrent map items cannot overwrite each other:
+
+```text
+projects/<project-key>/runs/<run-id>/inputs/<step-id>/scopes/maps/<map-id>/items/<index>.json
+projects/<project-key>/runs/<run-id>/steps/<step-id>/scopes/maps/<map-id>/items/<index>[/scopes/maps/<nested-map-id>/items/<nested-index>]/<attempt>/output-manifest.json
+```
+
+Static invocations omit `scope` and retain the original static paths.
+
 `run-manifest.json` is the v2 (`schemaVersion: 2`, `encoding: "json-v2"`) run
 manifest the orchestrator records when it creates a run: plan hash, run status,
 per-step attempt/artifact records, and durable decision outcomes. A selected
@@ -237,7 +250,7 @@ implemented by this transport slice.
 The v2 run-manifest protocol has no v1 compatibility reader or dual-write mode.
 An implementation must reject a v1 run manifest instead of guessing or silently
 upgrading its routing state. The step invocation descriptor is independently
-versioned and remains `schemaVersion: 1`, `encoding: "json-v1"`.
+versioned and is `schemaVersion: 2`, `encoding: "json-v2"`.
 
 Examples:
 

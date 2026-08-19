@@ -274,8 +274,8 @@ Deno.test("artifact runtime maps only absent schemas to validation failures", as
 
 Deno.test("artifact runtime enforces the shared producer identity contract before any datastore write", async () => {
   const fixture = await producerIdentityFixture();
-  assertEquals(fixture.version, 1);
-  assertEquals(fixture.contract, "artifact-producer-v1");
+  assertEquals(fixture.version, 2);
+  assertEquals(fixture.contract, "artifact-producer-v2");
 
   for (const testCase of fixture.valid) {
     await withRuntime(async (_store, runtime) => {
@@ -382,13 +382,44 @@ function producer(): ArtifactProducer {
 }
 
 function destinationFor(producer: ArtifactProducer): ArtifactDestination {
+  const item = producer.scope === undefined
+    ? ""
+    : `/scopes${producer.scope.frames.map((frame) =>
+      `/maps/${frame.mapId}/items/${frame.index}`
+    ).join("")}`;
   return {
     manifestKey: Key.parse(
-      `projects/${producer.projectKey}/runs/${producer.runId}/steps/${producer.nodeId}/${producer.attempt}/output-manifest.json`,
+      `projects/${producer.projectKey}/runs/${producer.runId}/steps/${producer.nodeId}${item}/${producer.attempt}/output-manifest.json`,
     ),
     schema: SCHEMA_HASH,
   };
 }
+
+Deno.test("artifact runtime gives map items distinct immutable output slots without changing node IDs", async () => {
+  await withRuntime(async (_store, runtime) => {
+    const first = {
+      ...producer(),
+      scope: { frames: [{ kind: "map-item" as const, mapId: "fanout", index: 0 }] },
+    };
+    const second = {
+      ...first,
+      scope: { frames: [{ kind: "map-item" as const, mapId: "fanout", index: 1 }] },
+    };
+
+    assertEquals(
+      destinationFor(first).manifestKey.toString(),
+      `projects/${PROJECT_KEY}/runs/run-1/steps/task/scopes/maps/fanout/items/0/1/output-manifest.json`,
+    );
+    assertEquals(first.nodeId, second.nodeId);
+    assertEquals(
+      destinationFor(first).manifestKey.toString() ===
+        destinationFor(second).manifestKey.toString(),
+      false,
+    );
+    await runtime.publishJson(destinationFor(first), first, BODY);
+    await runtime.publishJson(destinationFor(second), second, BODY);
+  });
+});
 
 interface ProducerIdentityFixture {
   readonly version: number;

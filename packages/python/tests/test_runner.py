@@ -274,8 +274,8 @@ def _descriptor(
     package_hash = "sha256:" + "d" * 64
     descriptor: dict[str, Any] = {
         "kind": "StepInvocationDescriptor",
-        "schemaVersion": 1,
-        "encoding": "json-v1",
+        "schemaVersion": 2,
+        "encoding": "json-v2",
         "planHash": "sha256:" + "a" * 64,
         "projectKey": PROJECT_KEY,
         "runId": "python-runner-test",

@@ -281,7 +281,7 @@ The run manifest is independently versioned as `schemaVersion: 2`,
 `encoding: "json-v2"`. It records durable decision selections and marks
 inactive branch steps as `"skipped"` with a structured `skipReason`; there is
 no v1 compatibility reader or dual-write mode. The step invocation descriptor
-below remains the separate v1/json-v1 transport.
+below remains the separate v2/json-v2 transport.
 
 The exact path format should be specified in the proto-typed JSON manifest, not hardcoded by backend runners.
 
@@ -319,9 +319,9 @@ For TypeScript v0, the adapter should live with the TypeScript SDK package. That
 
 The step invocation descriptor is the narrow runtime protocol between Go orchestration and language adapters.
 
-V1 serializes this descriptor as JSON for ease of implementation in TypeScript and Python. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so a future transport can reuse the same semantics.
+V2 serializes this descriptor as JSON for ease of implementation in TypeScript and Python. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so a future transport can reuse the same semantics.
 
-The first `json-v1` descriptor release is coupled to the v2 rewrite, so
+The `json-v2` descriptor release is coupled to the v2 rewrite, so
 pre-release tightening of identity-segment validation needs no transport bump.
 The Graph IR remains explicitly unstable at `0.x`; v2 workflows are rewritten
 rather than run through a compatibility mode. After release, an incompatible
@@ -333,7 +333,7 @@ It includes:
 - plan hash,
 - run ID,
 - node ID,
-- attempt number,
+- attempt number and optional ordered execution scope (outer-to-inner map-item frames),
 - symbol reference,
 - source package reference,
 - environment reference,
@@ -345,13 +345,14 @@ Example:
 
 ```json
 {
-  "schemaVersion": 1,
-  "encoding": "json-v1",
+  "schemaVersion": 2,
+  "encoding": "json-v2",
   "planHash": "sha256:...",
   "projectKey": "sha256-...",
   "runId": "run-...",
   "nodeId": "double",
   "attempt": 1,
+  "scope": { "frames": [{ "kind": "map-item", "mapId": "fanout", "index": 0 }] },
   "symbol": {
     "packageId": "ts-main",
     "module": "./workflow.ts",

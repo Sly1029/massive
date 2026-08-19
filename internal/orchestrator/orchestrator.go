@@ -240,7 +240,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 		}
 
 		inputArtifact := manifestDataArtifact{
-			Key:         runInputKey(projectKey, runID, nodeID).String(),
+			Key:         runInputKey(projectKey, runID, nodeID, nil).String(),
 			Hash:        canonical.DigestBytes(inputBytes),
 			ContentType: jsonContentType,
 			Schema:      node.GetInputSchema(),
@@ -691,8 +691,8 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 
 	return StepInvocationDescriptor{
 		Kind:          "StepInvocationDescriptor",
-		SchemaVersion: 1,
-		Encoding:      "json-v1",
+		SchemaVersion: 2,
+		Encoding:      "json-v2",
 		PlanHash:      config.Plan.GetPlanHash(),
 		ProjectKey:    projectKey,
 		RunID:         runID,
@@ -724,7 +724,7 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 			Schema: input.Schema,
 		},
 		Output: DataArtifactManifestDestination{
-			ManifestKey: runOutputManifestKey(projectKey, runID, node.GetId(), 1).String(),
+			ManifestKey: runOutputManifestKey(projectKey, runID, node.GetId(), nil, 1).String(),
 			Schema:      node.GetOutputSchema(),
 		},
 		ChannelReads:  []ChannelArtifactRef{},
@@ -936,6 +936,7 @@ func resolveOutputArtifact(ctx context.Context, store datastore.Datastore, descr
 		RunID:      descriptor.RunID,
 		NodeID:     descriptor.NodeID,
 		Attempt:    descriptor.Attempt,
+		Scope:      descriptor.Scope,
 	})
 	if err != nil {
 		return nodeOutput{}, fmt.Errorf("resolve output artifact manifest %s: %w", manifestKey, err)
@@ -1248,12 +1249,26 @@ func runManifestKey(projectKey string, runID string) datastore.Key {
 	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/run-manifest.json")
 }
 
-func runInputKey(projectKey string, runID string, stepID string) datastore.Key {
-	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/inputs/" + stepID + ".json")
+func runInputKey(projectKey string, runID string, stepID string, scope *ExecutionScope) datastore.Key {
+	key := "projects/" + projectKey + "/runs/" + runID + "/inputs/" + stepID
+	if scope != nil {
+		key += "/scopes"
+		for _, frame := range scope.Frames {
+			key += "/maps/" + frame.MapID + "/items/" + fmt.Sprint(frame.Index)
+		}
+	}
+	return datastore.MustKey(key + ".json")
 }
 
-func runOutputManifestKey(projectKey string, runID string, stepID string, attempt int) datastore.Key {
-	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/steps/" + stepID + "/" + fmt.Sprint(attempt) + "/output-manifest.json")
+func runOutputManifestKey(projectKey string, runID string, stepID string, scope *ExecutionScope, attempt int) datastore.Key {
+	key := "projects/" + projectKey + "/runs/" + runID + "/steps/" + stepID
+	if scope != nil {
+		key += "/scopes"
+		for _, frame := range scope.Frames {
+			key += "/maps/" + frame.MapID + "/items/" + fmt.Sprint(frame.Index)
+		}
+	}
+	return datastore.MustKey(key + "/" + fmt.Sprint(attempt) + "/output-manifest.json")
 }
 
 func runResultKey(projectKey string, runID string) datastore.Key {

@@ -8,8 +8,8 @@
   "required": ["kind", "schemaVersion", "encoding", "producer", "schema", "body"],
   "properties": {
     "kind": { "const": "DataArtifactManifest" },
-    "schemaVersion": { "const": 0 },
-    "encoding": { "const": "canonical-json-v0" },
+    "schemaVersion": { "const": 1 },
+    "encoding": { "const": "canonical-json-v1" },
     "producer": { "$ref": "#/$defs/producer" },
     "schema": { "$ref": "#/$defs/hashRef" },
     "body": { "$ref": "#/$defs/body" }
@@ -27,6 +27,28 @@
       "description": "Normalized, single-segment project datastore namespace key; it is the SHA-256 digest of the normalized project identity, prefixed with sha256-.",
       "pattern": "^sha256-[0-9a-f]{64}$"
     },
+    "mapItemScopeFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "mapId", "index"],
+      "properties": {
+        "kind": { "const": "map-item" },
+        "mapId": { "$ref": "#/$defs/pathSegment" },
+        "index": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+      }
+    },
+    "executionScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frames"],
+      "properties": {
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/mapItemScopeFrame" }
+        }
+      }
+    },
     "hashRef": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
@@ -40,7 +62,8 @@
         "planHash": { "$ref": "#/$defs/hashRef" },
         "runId": { "$ref": "#/$defs/pathSegment" },
         "nodeId": { "$ref": "#/$defs/pathSegment" },
-        "attempt": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+        "scope": { "$ref": "#/$defs/executionScope" }
       }
     },
     "body": {

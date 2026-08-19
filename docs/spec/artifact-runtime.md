@@ -1,6 +1,6 @@
 # Artifact Runtime
 
-Status: v1 canonical-JSON output protocol
+Status: v2 canonical-JSON output protocol
 
 The Artifact Runtime is the deep module that turns one schema-valid canonical
 JSON value into an immutable workflow output. Step code continues to return a
@@ -21,7 +21,10 @@ ResolveJSON(destination, expectedProducer) -> PublishedJSON + canonicalBody
 ```
 
 `destination` contains the pinned schema reference and deterministic manifest
-key. The key must match the producer's project, run, node, and attempt slot.
+key. The key must match the producer's project, run, node, ordered execution
+scope, and attempt slot. Static producers omit `scope`; a mapped producer
+carries non-empty outer-to-inner `scope.frames`, each
+`{kind:"map-item",mapId,index}`.
 Callers cannot choose a body key: the runtime derives it from the exact bytes.
 `producer.projectKey` is the normalized datastore namespace key, exactly
 `sha256-` followed by 64 lowercase hexadecimal characters. It is the digest of
@@ -30,7 +33,7 @@ hierarchical path segment.
 
 The versioned manifest shape is frozen by
 `conformance/schema/data-artifact-manifest.schema.json`. Its encoding is
-`canonical-json-v0`, the integer-only canonical field-tree format defined in
+`canonical-json-v1`, the integer-only canonical field-tree format defined in
 [`hashing.md`](../../conformance/schema/hashing.md). A future incompatible
 canonicalizer requires a new encoding value and consumer support range.
 
@@ -59,7 +62,7 @@ outputs by listing body keys.
 
 ## Breaking Output Migration
 
-This is a breaking v0 output migration: a step output is now published at
+This is a breaking v1 output migration: a step output is now published at
 `.../output-manifest.json`, rather than the legacy `.../output.json` value
 location. The runtime provides neither a compatibility reader nor dual
 publication. Workflows move to the v2 SDK and its separate deployment namespace

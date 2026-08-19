@@ -34,6 +34,19 @@ export interface ArtifactProducer {
   readonly runId: string;
   readonly nodeId: string;
   readonly attempt: number;
+  readonly scope?: ExecutionScope;
+}
+
+export interface MapItemScopeFrame {
+  readonly kind: "map-item";
+  readonly mapId: string;
+  readonly index: number;
+}
+
+// Frames are ordered outer-to-inner. The optional wrapper leaves the static
+// invocation identity unchanged while making nested map identities explicit.
+export interface ExecutionScope {
+  readonly frames: readonly MapItemScopeFrame[];
 }
 
 const hashRefSchema = z
@@ -59,6 +72,16 @@ const pathSegmentSchema = z
     message: "must not be a dot path segment",
   });
 
+const mapItemScopeFrameSchema = z.object({
+  kind: z.literal("map-item"),
+  mapId: pathSegmentSchema,
+  index: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+}).strict();
+
+const executionScopeSchema = z.object({
+  frames: z.array(mapItemScopeFrameSchema).min(1),
+}).strict();
+
 // The producer is the namespace identity for an immutable output slot. Keep
 // its parsing in one schema rather than relying on Key.parse to accidentally
 // reject only some unsafe values after work has already begun.
@@ -73,6 +96,7 @@ const artifactProducerSchema = z
       .int("must be an integer")
       .positive("must be positive")
       .max(Number.MAX_SAFE_INTEGER, "must be a safe integer"),
+    scope: executionScopeSchema.optional(),
   })
   .strict();
 
@@ -105,8 +129,8 @@ export interface ResolvedJson {
 
 interface DataArtifactManifest {
   readonly kind: "DataArtifactManifest";
-  readonly schemaVersion: 0;
-  readonly encoding: "canonical-json-v0";
+  readonly schemaVersion: 1;
+  readonly encoding: "canonical-json-v1";
   readonly producer: ArtifactProducer;
   readonly schema: string;
   readonly body: ArtifactRef;
@@ -181,8 +205,8 @@ export class ArtifactRuntime {
     };
     const manifest: DataArtifactManifest = {
       kind: "DataArtifactManifest",
-      schemaVersion: 0,
-      encoding: "canonical-json-v0",
+      schemaVersion: 1,
+      encoding: "canonical-json-v1",
       producer: validatedProducer,
       schema: destination.schema,
       body: bodyRef,
@@ -344,7 +368,7 @@ function validateDestination(
   let expected: Key;
   try {
     expected = Key.parse(
-      `projects/${producer.projectKey}/runs/${producer.runId}/steps/${producer.nodeId}/${producer.attempt}/output-manifest.json`,
+      `projects/${producer.projectKey}/runs/${producer.runId}/steps/${producer.nodeId}${scopeKeySuffix(producer.scope)}/${producer.attempt}/output-manifest.json`,
     );
   } catch (error) {
     throw new ArtifactValidationError(
@@ -531,7 +555,27 @@ function sameProducer(
     left.planHash === right.planHash &&
     left.runId === right.runId &&
     left.nodeId === right.nodeId &&
-    left.attempt === right.attempt;
+    left.attempt === right.attempt &&
+    sameScope(left.scope, right.scope);
+}
+
+function sameScope(
+  left: ExecutionScope | undefined,
+  right: ExecutionScope | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.frames.length === right.frames.length && left.frames.every((frame, index) => {
+    const other = right.frames[index];
+    return other !== undefined && frame.kind === other.kind &&
+      frame.mapId === other.mapId && frame.index === other.index;
+  });
+}
+
+function scopeKeySuffix(scope: ExecutionScope | undefined): string {
+  if (scope === undefined) return "";
+  return "/scopes" + scope.frames.map((frame) =>
+    `/maps/${frame.mapId}/items/${frame.index}`
+  ).join("");
 }
 
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {

@@ -94,6 +94,24 @@ func TestSubstituteDescriptorPathKeepsTemplateBehavior(t *testing.T) {
 	}
 }
 
+func TestDescriptorFilePathIncludesEveryOrderedScopeFrame(t *testing.T) {
+	root := t.TempDir()
+	path, err := descriptorFilePath(root, StepInvocationDescriptor{
+		RunID: "run-1", NodeID: "task", Attempt: 1,
+		Scope: &ExecutionScope{Frames: []MapItemScopeFrame{
+			{Kind: "map-item", MapID: "outer", Index: 0},
+			{Kind: "map-item", MapID: "inner", Index: 4},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "run-1", "task", "scopes", "maps", "outer", "items", "0", "maps", "inner", "items", "4", "1.json")
+	if path != want {
+		t.Fatalf("scoped descriptor path = %q, want %q", path, want)
+	}
+}
+
 func mustAbs(t *testing.T, path string) string {
 	t.Helper()
 

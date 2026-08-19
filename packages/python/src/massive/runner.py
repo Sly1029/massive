@@ -43,6 +43,7 @@ from .datastore import (
     S3Datastore,
 )
 from .identity import SHA256_REFERENCE
+from .identity import ExecutionScope as ArtifactExecutionScope
 
 _SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
 _MAX_SOURCE_FILES = 1024
@@ -70,6 +71,16 @@ class DataArtifactManifestDestination(TypedDict):
     schema: str
 
 
+class MapItemScopeFrame(TypedDict):
+    kind: Literal["map-item"]
+    mapId: str
+    index: int
+
+
+class ExecutionScope(TypedDict):
+    frames: list[MapItemScopeFrame]
+
+
 class SymbolDescriptor(TypedDict):
     packageId: str
     language: Literal["typescript", "python"]
@@ -87,13 +98,14 @@ class SourcePackageDescriptor(TypedDict):
 
 class StepInvocationDescriptor(TypedDict):
     kind: Literal["StepInvocationDescriptor"]
-    schemaVersion: Literal[1]
-    encoding: Literal["json-v1"]
+    schemaVersion: Literal[2]
+    encoding: Literal["json-v2"]
     planHash: str
     projectKey: str
     runId: str
     nodeId: str
     attempt: int
+    scope: NotRequired[ExecutionScope]
     symbol: SymbolDescriptor
     sourcePackage: SourcePackageDescriptor
     environmentRef: str
@@ -232,6 +244,11 @@ def _execute_source(
                 run_id=descriptor["runId"],
                 node_id=descriptor["nodeId"],
                 attempt=descriptor["attempt"],
+                scope=(
+                    None
+                    if "scope" not in descriptor
+                    else ArtifactExecutionScope.model_validate(descriptor["scope"])
+                ),
             ),
             output_text.encode(),
         )

@@ -126,13 +126,13 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	// Assert their distinct provenance on the un-normalized descriptor.
 	planPackageHash := compiled.Plan.GetSourcePackages()[0].GetPackageHash()
 	descriptor := invoker.descriptors[0]
-	if descriptor.SchemaVersion != 1 || descriptor.Encoding != "json-v1" {
-		t.Fatalf("descriptor protocol = (%d, %q), want v1/json-v1", descriptor.SchemaVersion, descriptor.Encoding)
+	if descriptor.SchemaVersion != 2 || descriptor.Encoding != "json-v2" {
+		t.Fatalf("descriptor protocol = (%d, %q), want v2/json-v2", descriptor.SchemaVersion, descriptor.Encoding)
 	}
 	if descriptor.ProjectKey != NormalizeProjectKey("acme/security-workflows") {
 		t.Fatalf("descriptor projectKey = %q", descriptor.ProjectKey)
 	}
-	if descriptor.Output.ManifestKey != runOutputManifestKey(descriptor.ProjectKey, descriptor.RunID, descriptor.NodeID, descriptor.Attempt).String() {
+	if descriptor.Output.ManifestKey != runOutputManifestKey(descriptor.ProjectKey, descriptor.RunID, descriptor.NodeID, descriptor.Scope, descriptor.Attempt).String() {
 		t.Fatalf("descriptor output manifest key = %q", descriptor.Output.ManifestKey)
 	}
 	runManifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
@@ -416,8 +416,8 @@ func replaceAllFixtureValues(t *testing.T, document []byte, old string, new stri
 
 func TestRunOutputManifestKeyIncludesAttempt(t *testing.T) {
 	projectKey := NormalizeProjectKey("acme/security-workflows")
-	first := runOutputManifestKey(projectKey, "run-key-attempt", "double", 1)
-	second := runOutputManifestKey(projectKey, "run-key-attempt", "double", 2)
+	first := runOutputManifestKey(projectKey, "run-key-attempt", "double", nil, 1)
+	second := runOutputManifestKey(projectKey, "run-key-attempt", "double", nil, 2)
 	if first == second {
 		t.Fatalf("attempt-specific manifest keys collide: %s", first)
 	}
@@ -426,6 +426,22 @@ func TestRunOutputManifestKeyIncludesAttempt(t *testing.T) {
 	}
 	if !strings.Contains(second.String(), "/double/2/output-manifest.json") {
 		t.Fatalf("second attempt key = %q", second)
+	}
+}
+
+func TestRunOutputManifestKeyIncludesOrderedMapScope(t *testing.T) {
+	projectKey := NormalizeProjectKey("acme/security-workflows")
+	scope := &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: "outer", Index: 0}, {Kind: "map-item", MapID: "inner", Index: 3}}}
+	first := runOutputManifestKey(projectKey, "run-map-scope", "double", scope, 1)
+	second := runOutputManifestKey(projectKey, "run-map-scope", "double", &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: "outer", Index: 3}, {Kind: "map-item", MapID: "inner", Index: 0}}}, 1)
+	if first == second {
+		t.Fatalf("ordered map scopes collide: %s", first)
+	}
+	if want := "/scopes/maps/outer/items/0/maps/inner/items/3/1/output-manifest.json"; !strings.Contains(first.String(), want) {
+		t.Fatalf("first scoped key = %q, want %q", first, want)
+	}
+	if got, want := runInputKey(projectKey, "run-map-scope", "double", scope).String(), "projects/"+projectKey+"/runs/run-map-scope/inputs/double/scopes/maps/outer/items/0/maps/inner/items/3.json"; got != want {
+		t.Fatalf("scoped input key = %q, want %q", got, want)
 	}
 }
 
@@ -932,6 +948,7 @@ func (i *functionalStepInvoker) InvokeSteps(ctx context.Context, batch StepInvoc
 			RunID:      descriptor.RunID,
 			NodeID:     descriptor.NodeID,
 			Attempt:    descriptor.Attempt,
+			Scope:      descriptor.Scope,
 		}, output); err != nil {
 			return nil, err
 		}

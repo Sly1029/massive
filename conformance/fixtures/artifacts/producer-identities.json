@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "contract": "artifact-producer-v1",
+  "version": 2,
+  "contract": "artifact-producer-v2",
   "valid": [
     {
       "name": "all-allowed-path-segment-characters",
@@ -20,6 +20,22 @@
         "runId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "nodeId": "task",
         "attempt": 9007199254740991
+      }
+    },
+    {
+      "name": "ordered-nested-map-item-scope",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 1,
+        "scope": {
+          "frames": [
+            { "kind": "map-item", "mapId": "outer", "index": 0 },
+            { "kind": "map-item", "mapId": "inner", "index": 9007199254740991 }
+          ]
+        }
       }
     }
   ],
@@ -112,6 +128,39 @@
         "runId": "run-1",
         "nodeId": "task",
         "attempt": 9007199254740992
+      }
+    },
+    {
+      "name": "scope-must-have-at-least-one-frame",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 1,
+        "scope": { "frames": [] }
+      }
+    },
+    {
+      "name": "map-index-must-be-a-nonnegative-safe-integer",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 1,
+        "scope": { "frames": [{ "kind": "map-item", "mapId": "fanout", "index": -1 }] }
+      }
+    },
+    {
+      "name": "map-id-must-be-a-safe-segment",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 1,
+        "scope": { "frames": [{ "kind": "map-item", "mapId": "../fanout", "index": 0 }] }
       }
     }
   ]

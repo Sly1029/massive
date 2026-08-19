@@ -55,7 +55,7 @@ Deno.test("runner descriptor parser accepts every conformance descriptor fixture
       JSON.parse(await Deno.readTextFile(path)),
     );
     assertEquals(descriptor.kind, "StepInvocationDescriptor");
-    assertEquals(descriptor.schemaVersion, 1);
+    assertEquals(descriptor.schemaVersion, 2);
   }
 });
 
@@ -340,8 +340,8 @@ async function withRunnerFixture(
     const inputText = stableStringify(options.input);
     const descriptor = await parseStepInvocationDescriptor({
       kind: "StepInvocationDescriptor",
-      schemaVersion: 1,
-      encoding: "json-v1",
+      schemaVersion: 2,
+      encoding: "json-v2",
       planHash:
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       projectKey:
@@ -439,6 +439,7 @@ function producerFor(descriptor: StepInvocationDescriptor) {
     runId: descriptor.runId,
     nodeId: descriptor.nodeId,
     attempt: descriptor.attempt,
+    ...(descriptor.scope === undefined ? {} : { scope: descriptor.scope }),
   } as const;
 }
 

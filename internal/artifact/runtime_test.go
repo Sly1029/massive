@@ -7,7 +7,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"testing"
 
@@ -68,7 +67,7 @@ func TestPublishJSONCommitsBodyBeforeManifestAndConvergesOnRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantManifest := `{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v0","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"sha256-0000000000000000000000000000000000000000000000000000000000000000","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":0}`
+	wantManifest := `{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v1","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"sha256-0000000000000000000000000000000000000000000000000000000000000000","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":1}`
 	if !bytes.Equal(manifest.Body, []byte(wantManifest)) {
 		t.Fatalf("manifest bytes\n got: %s\nwant: %s", manifest.Body, wantManifest)
 	}
@@ -181,9 +180,35 @@ func TestPublishJSONAcceptsSafeRunAndNodeIdentifiers(t *testing.T) {
 	}
 }
 
+func TestPublishJSONUsesOrderedMapScopeAsPartOfTheProducerSlot(t *testing.T) {
+	ctx := context.Background()
+	store := localStore(t)
+	putSchema(t, store)
+	first := Producer{
+		ProjectKey: testProjectKey, PlanHash: testPlanHash, RunID: "run-1", NodeID: "task", Attempt: 1,
+		Scope: &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: "outer", Index: 0}, {Kind: "map-item", MapID: "inner", Index: 3}}},
+	}
+	second := first
+	second.Scope = &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: "outer", Index: 0}, {Kind: "map-item", MapID: "inner", Index: 4}}}
+	firstDestination := destinationForProducer(t, first)
+	secondDestination := destinationForProducer(t, second)
+	if firstDestination.ManifestKey == secondDestination.ManifestKey {
+		t.Fatalf("map item output slots collide: %s", firstDestination.ManifestKey)
+	}
+	if got, want := firstDestination.ManifestKey.String(), "projects/sha256-0000000000000000000000000000000000000000000000000000000000000000/runs/run-1/steps/task/scopes/maps/outer/items/0/maps/inner/items/3/1/output-manifest.json"; got != want {
+		t.Fatalf("map scope key = %q, want %q", got, want)
+	}
+	if _, err := PublishJSON(ctx, store, firstDestination, first, []byte(testBody)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PublishJSON(ctx, store, secondDestination, second, []byte(testBody)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProducerIdentityConformanceFixture(t *testing.T) {
 	fixture := loadProducerIdentityFixture(t)
-	if fixture.Version != 1 || fixture.Contract != "artifact-producer-v1" {
+	if fixture.Version != 2 || fixture.Contract != "artifact-producer-v2" {
 		t.Fatalf("unexpected producer identity fixture metadata: %#v", fixture)
 	}
 
@@ -356,15 +381,15 @@ func TestPublishJSONConcurrentConflictsHaveOneWinnerAndNeverOverwrite(t *testing
 }
 
 func TestDataArtifactManifestSchemaContract(t *testing.T) {
-	valid := []byte(`{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v0","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"sha256-0000000000000000000000000000000000000000000000000000000000000000","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":0}`)
+	valid := []byte(`{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v1","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"sha256-0000000000000000000000000000000000000000000000000000000000000000","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":1}`)
 	if err := validateManifestSchema(valid); err != nil {
 		t.Fatalf("valid shared manifest schema rejected fixture: %v", err)
 	}
 
 	for name, document := range map[string][]byte{
-		"additional property":      bytes.Replace(valid, []byte(`"schemaVersion":0`), []byte(`"schemaVersion":0,"unexpected":true`), 1),
+		"additional property":      bytes.Replace(valid, []byte(`"schemaVersion":1`), []byte(`"schemaVersion":1,"unexpected":true`), 1),
 		"content type":             bytes.Replace(valid, []byte(`"application/json"`), []byte(`"text/plain"`), 1),
-		"schema version":           bytes.Replace(valid, []byte(`"schemaVersion":0`), []byte(`"schemaVersion":1`), 1),
+		"schema version":           bytes.Replace(valid, []byte(`"schemaVersion":1`), []byte(`"schemaVersion":0`), 1),
 		"raw project identity":     bytes.Replace(valid, []byte(`"sha256-0000000000000000000000000000000000000000000000000000000000000000"`), []byte(`"example/python-e2e"`), 1),
 		"hierarchical project key": bytes.Replace(valid, []byte(`"sha256-0000000000000000000000000000000000000000000000000000000000000000"`), []byte(`"sha256-0000000000000000000000000000000000000000000000000000000000000000/nested"`), 1),
 		"uppercase project key":    bytes.Replace(valid, []byte(`"sha256-0000000000000000000000000000000000000000000000000000000000000000"`), []byte(`"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"`), 1),
@@ -438,7 +463,7 @@ func loadProducerIdentityFixture(t *testing.T) producerIdentityFixture {
 
 func destinationForProducer(t *testing.T, producer Producer) Destination {
 	t.Helper()
-	key, err := datastore.ParseKey("projects/" + producer.ProjectKey + "/runs/" + producer.RunID + "/steps/" + producer.NodeID + "/" + strconv.Itoa(producer.Attempt) + "/output-manifest.json")
+	key, err := outputManifestKey(producer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +471,7 @@ func destinationForProducer(t *testing.T, producer Producer) Destination {
 }
 
 func manifestForFixtureProducer(producer json.RawMessage) []byte {
-	return []byte(`{"body":{"contentType":"application/json","hash":"` + testBodyHash + `","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v0","kind":"DataArtifactManifest","producer":` + string(producer) + `,"schema":"` + testSchemaHash + `","schemaVersion":0}`)
+	return []byte(`{"body":{"contentType":"application/json","hash":"` + testBodyHash + `","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v1","kind":"DataArtifactManifest","producer":` + string(producer) + `,"schema":"` + testSchemaHash + `","schemaVersion":1}`)
 }
 
 func localStore(t *testing.T) datastore.Datastore {
