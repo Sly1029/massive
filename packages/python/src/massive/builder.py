@@ -344,9 +344,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                     f"decision {decision_id!r} case {tag!r} output type does not match select output"
                 )
             root = definition.branch_roots.get(tag)
-            if root is None:
-                raise ValueError(f"decision {decision_id!r} case {tag!r} has no branch edge")
-            if not self._is_reachable(root, source.node_id):
+            if root is not None and not self._is_reachable(root, source.node_id):
                 raise ValueError(
                     f"decision {decision_id!r} case {tag!r} select source is not in that branch"
                 )
@@ -412,6 +410,17 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             raise ValueError("workflow start has no edge")
         if not any(target_id == _END for _, target_id in self._edges):
             raise ValueError("workflow end has no edge")
+
+        for select in self._selects.values():
+            decision = self._decisions[select.decision_id]
+            for tag, selected_source in select.inputs.items():
+                root = decision.branch_roots.get(tag)
+                if root is None:
+                    raise ValueError(f"decision {decision.id!r} case {tag!r} has no branch edge")
+                if not self._is_reachable(root, selected_source.node_id):
+                    raise ValueError(
+                        f"decision {decision.id!r} case {tag!r} select source is not in that branch"
+                    )
 
         source_files, package_hash = source.manifest()
         schema_table: dict[str, JsonValue] = {}

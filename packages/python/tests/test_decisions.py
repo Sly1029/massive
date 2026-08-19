@@ -85,10 +85,12 @@ def test_emit_serializes_an_exhaustive_pydantic_decision_as_data_only_ir() -> No
     rejected = graph.add(graph.step()(reject))
 
     route = graph.decision(classified, on="kind", id="review-route")
-    graph.edge_from(graph.start).to(classified)
-    graph.edge_from(route.case(Approved)).to(approved)
-    graph.edge_from(route.case(Rejected)).to(rejected)
+    approved_input = route.case(Approved)
+    rejected_input = route.case(Rejected)
     selected = route.select(Result, approved=approved, rejected=rejected)
+    graph.edge_from(graph.start).to(classified)
+    graph.edge_from(approved_input).to(approved)
+    graph.edge_from(rejected_input).to(rejected)
     graph.edge_from(selected).to(graph.end)
 
     specification = _emit(graph)
