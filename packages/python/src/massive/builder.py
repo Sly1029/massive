@@ -45,7 +45,9 @@ _DECISION_GRAPH_IR_VERSION = "0.2"
 _MAP_GRAPH_IR_VERSION = "0.3"
 DEFAULT_MAP_CONCURRENCY = 20
 MAX_MAP_CONCURRENCY = 2**32 - 1
-_MAP_CONCURRENCY = TypeAdapter(Annotated[StrictInt, Field(ge=1, le=MAX_MAP_CONCURRENCY)])
+_MAP_CONCURRENCY: TypeAdapter[int] = TypeAdapter[int](
+    Annotated[StrictInt, Field(ge=1, le=MAX_MAP_CONCURRENCY)]
+)
 
 
 class SchemaPurpose(str, Enum):
@@ -466,7 +468,12 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         )
         for source in inputs.values():
             self._add_edge(source.node_id, select_id, None)
-        handle = NodeHandle(node_id=select_id, input_type=output_type, output_type=output_type)
+        output_annotation = cast(Any, output_type)
+        handle: NodeHandle[SelectT] = NodeHandle(
+            node_id=select_id,
+            input_type=output_annotation,
+            output_type=output_annotation,
+        )
         self._handles[select_id] = handle
         return handle
 
@@ -852,8 +859,8 @@ def _direct_list_item_schema(annotation: Any, role: str) -> object:
     root, definitions = _core_schema_parts(annotation)
     if root.get("type") != "list":
         raise TypeError(f"{role} must be a direct concrete list[T]")
-    item_schema = root.get("items_schema")
-    if not isinstance(item_schema, dict) or item_schema.get("type") == "any":
+    item_schema = _schema_mapping(root.get("items_schema"))
+    if item_schema is None or item_schema.get("type") == "any":
         raise TypeError(f"{role} must be a direct concrete list[T]")
     return _normalize_core_schema_node(item_schema, definitions, set())
 
@@ -864,34 +871,39 @@ def _normalized_core_schema(annotation: Any) -> object:
 
 
 def _core_schema_parts(annotation: Any) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
-    core_schema = cast(dict[str, object], TypeAdapter(annotation).core_schema)
+    adapter: TypeAdapter[object] = TypeAdapter(annotation)
+    core_schema = cast(dict[str, object], adapter.core_schema)
     definitions: dict[str, dict[str, object]] = {}
 
     def collect(value: object) -> None:
-        if isinstance(value, dict):
-            schema = cast(dict[str, object], value)
+        schema = _schema_mapping(value)
+        if schema is not None:
             if schema.get("type") == "definitions":
-                raw_definitions = schema.get("definitions")
-                if isinstance(raw_definitions, list):
+                raw_definitions = _schema_list(schema.get("definitions"))
+                if raw_definitions is not None:
                     for raw_definition in raw_definitions:
-                        if isinstance(raw_definition, dict):
-                            definition = cast(dict[str, object], raw_definition)
+                        definition = _schema_mapping(raw_definition)
+                        if definition is not None:
                             reference = definition.get("ref")
                             if isinstance(reference, str):
                                 definitions[reference] = definition
             for child in schema.values():
                 collect(child)
-        elif isinstance(value, list):
-            for child in value:
+        else:
+            items = _schema_list(value)
+            if items is None:
+                return
+            for child in items:
                 collect(child)
 
     collect(core_schema)
     root = core_schema
     while root.get("type") == "definitions":
         wrapped = root.get("schema")
-        if not isinstance(wrapped, dict):
+        wrapped_schema = _schema_mapping(wrapped)
+        if wrapped_schema is None:
             break
-        root = cast(dict[str, object], wrapped)
+        root = wrapped_schema
     return root, definitions
 
 
@@ -900,8 +912,8 @@ def _normalize_core_schema_node(
     definitions: dict[str, dict[str, object]],
     resolving: set[str],
 ) -> object:
-    if isinstance(value, dict):
-        schema = cast(dict[str, object], value)
+    schema = _schema_mapping(value)
+    if schema is not None:
         if schema.get("type") == "definition-ref":
             reference = schema.get("schema_ref")
             if isinstance(reference, str) and reference in definitions:
@@ -919,11 +931,25 @@ def _normalize_core_schema_node(
             else:
                 normalized[key] = _normalize_core_schema_node(child, definitions, resolving)
         return normalized
-    if isinstance(value, list):
-        return [_normalize_core_schema_node(child, definitions, resolving) for child in value]
+    items = _schema_list(value)
+    if items is not None:
+        return [_normalize_core_schema_node(child, definitions, resolving) for child in items]
     if isinstance(value, tuple):
-        return tuple(_normalize_core_schema_node(child, definitions, resolving) for child in value)
+        tuple_items = cast(tuple[object, ...], value)
+        return tuple(_normalize_core_schema_node(child, definitions, resolving) for child in tuple_items)
     return value
+
+
+def _schema_mapping(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return cast(dict[str, object], value)
+
+
+def _schema_list(value: object) -> list[object] | None:
+    if not isinstance(value, list):
+        return None
+    return cast(list[object], value)
 
 
 def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]]:
