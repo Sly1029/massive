@@ -21,6 +21,69 @@ import (
 	"github.com/Sly1029/massive/internal/spec"
 )
 
+func TestExhaustiveDecisionFixtureCasesValidateRepresentativeOutputs(t *testing.T) {
+	data := readRepoFile(t, "conformance", "fixtures", "specs", "exhaustive-decision", "workflow-spec.json")
+	workflowSpec, err := spec.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	representativeOutputs := map[string]json.RawMessage{
+		"accepted": json.RawMessage(`{"kind":"accepted","value":4}`),
+		"rejected": json.RawMessage(`{"kind":"rejected","reason":"policy"}`),
+	}
+	wrongTagOutputs := map[string]json.RawMessage{
+		"accepted": json.RawMessage(`{"kind":"rejected","value":4}`),
+		"rejected": json.RawMessage(`{"kind":"accepted","reason":"policy"}`),
+	}
+	var decision spec.GraphNode
+	for _, node := range workflowSpec.Graph.Nodes {
+		if node.Kind == spec.NodeKindDecision {
+			decision = node
+			break
+		}
+	}
+	if decision.ID == "" {
+		t.Fatal("exhaustive decision fixture has no decision node")
+	}
+	for _, decisionCase := range decision.Cases {
+		value, exists := representativeOutputs[decisionCase.Tag]
+		if !exists {
+			t.Fatalf("decision case %q has no representative output", decisionCase.Tag)
+		}
+		schemaJSON := workflowSpec.Schemas[decisionCase.Schema]
+		schemaHash, err := canonical.DigestJSON(schemaJSON)
+		if err != nil {
+			t.Fatalf("hash decision case %q schema: %v", decisionCase.Tag, err)
+		}
+		if schemaHash != decisionCase.Schema {
+			t.Fatalf("decision case %q schema ref = %q, want content hash %q", decisionCase.Tag, decisionCase.Schema, schemaHash)
+		}
+		if err := validateJSONAgainstSchema(string(schemaJSON), value); err != nil {
+			t.Fatalf("decision case %q rejects its representative output: %v", decisionCase.Tag, err)
+		}
+		if err := validateJSONAgainstSchema(string(schemaJSON), wrongTagOutputs[decisionCase.Tag]); err == nil {
+			t.Fatalf("decision case %q accepts its shape with the wrong discriminant", decisionCase.Tag)
+		}
+		for otherTag, otherValue := range representativeOutputs {
+			if otherTag == decisionCase.Tag {
+				continue
+			}
+			if err := validateJSONAgainstSchema(string(schemaJSON), otherValue); err == nil {
+				t.Fatalf("decision case %q accepts representative output for %q", decisionCase.Tag, otherTag)
+			}
+		}
+	}
+
+	recomputedHash, err := spec.RecomputedSpecHash(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflowSpec.SpecHash != recomputedHash {
+		t.Fatalf("fixture specHash = %q, want recomputed %q", workflowSpec.SpecHash, recomputedHash)
+	}
+}
+
 func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	storeRoot := newStoreRoot(t)
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
