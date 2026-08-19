@@ -133,6 +133,17 @@ func TestParseRejectsMapWhoseArrayContractsDoNotExactlyMatchItems(t *testing.T) 
 	}
 }
 
+func TestParseRejectsMapConcurrencyOutsidePlanUint32Contract(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		nodes := root["graph"].(map[string]any)["nodes"].([]any)
+		nodes[1].(map[string]any)["maxConcurrency"] = float64(1 << 32)
+	})
+
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected maxConcurrency above uint32 to be rejected")
+	}
+}
+
 func TestParseResolvesEscapedLocalJSONPointerInMapArrayItems(t *testing.T) {
 	data := mutateFixture(t, "finite-map", func(root map[string]any) {
 		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
