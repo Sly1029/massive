@@ -1,6 +1,8 @@
 """Typed, portable workflow authoring for Massive."""
 
 from .builder import (
+    DEFAULT_MAP_CONCURRENCY,
+    MAX_MAP_CONCURRENCY,
     CaseHandle,
     DecisionHandle,
     GraphBuilder,
@@ -21,6 +23,8 @@ from .contracts import (
 from .source_package import SourcePackage, source_package
 
 __all__ = [
+    "DEFAULT_MAP_CONCURRENCY",
+    "MAX_MAP_CONCURRENCY",
     "CaseHandle",
     "ContainerEnvironment",
     "ContainerInvocationPlan",

@@ -11,7 +11,15 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from massive import GraphBuilder, StepContext, container, execution, source_package
+from massive import (
+    DEFAULT_MAP_CONCURRENCY,
+    MAX_MAP_CONCURRENCY,
+    GraphBuilder,
+    StepContext,
+    container,
+    execution,
+    source_package,
+)
 from massive.builder import _assert_canonical_json_schema
 
 
@@ -90,6 +98,16 @@ class ExtraAllowedResult(BaseModel):
     value: int
 
 
+class SharedChild(BaseModel):
+    value: int
+
+
+class RecursiveItem(BaseModel):
+    left: SharedChild
+    right: SharedChild
+    children: list[RecursiveItem]
+
+
 def needs_services(context: StepContext[dict[str, str], Request]) -> Result:
     return Result(value=context.inputs.value)
 
@@ -159,6 +177,27 @@ def load_any_requests(context: StepContext[None, Request]) -> list[Any]:
 
 
 def result_identity(context: StepContext[None, Result]) -> Result:
+    return context.inputs
+
+
+def list_result_identity(context: StepContext[None, list[Result]]) -> list[Result]:
+    return context.inputs
+
+
+def load_results(context: StepContext[None, Request]) -> list[Result]:
+    return [Result(value=context.inputs.value)]
+
+
+def load_recursive_items(context: StepContext[None, Request]) -> list[RecursiveItem]:
+    leaf = RecursiveItem(
+        left=SharedChild(value=context.inputs.value),
+        right=SharedChild(value=context.inputs.value),
+        children=[],
+    )
+    return [leaf]
+
+
+def recursive_item_identity(context: StepContext[None, RecursiveItem]) -> RecursiveItem:
     return context.inputs
 
 
@@ -259,6 +298,140 @@ def test_map_emits_one_ordered_collection_node_with_its_registered_mapper() -> N
     assert "increment_request" not in nodes
 
 
+def test_map_can_be_the_only_node_and_uses_the_shared_default_concurrency() -> None:
+    graph = GraphBuilder(
+        name="map-start",
+        input_type=list[Request],
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    mapped = graph.map(graph.start, graph.step()(increment_request), id="increment-items")
+    graph.edge_from(mapped).to(graph.end)
+
+    nodes = {node["id"]: node for node in _emit(graph).value["graph"]["nodes"]}
+
+    assert nodes["increment-items"]["maxConcurrency"] == DEFAULT_MAP_CONCURRENCY
+
+
+def test_map_allows_fan_out_to_multiple_list_consumers() -> None:
+    graph = GraphBuilder(
+        name="map-fan-out",
+        input_type=list[Result],
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    mapped = graph.map(graph.start, graph.step()(result_identity), id="copy-items")
+    first = graph.add(graph.step()(list_result_identity), id="first")
+    second = graph.add(graph.step()(list_result_identity), id="second")
+    graph.edge_from(mapped).to(first).to(graph.end)
+    graph.edge_from(mapped).to(second).to(graph.end)
+
+    graph_ir = _emit(graph).value["graph"]
+
+    assert {"from": "copy-items", "to": "first"} in graph_ir["edges"]
+    assert {"from": "copy-items", "to": "second"} in graph_ir["edges"]
+
+
+def test_map_accepts_recursive_and_reused_model_item_schemas() -> None:
+    graph = GraphBuilder(
+        name="recursive-map",
+        input_type=Request,
+        output_type=list[RecursiveItem],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(load_recursive_items))
+    mapped = graph.map(source, graph.step()(recursive_item_identity), id="copy-recursive")
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(mapped).to(graph.end)
+
+    assert _emit(graph).value["graph"]["irVersion"] == "0.3"
+
+
+def test_map_uses_pydantic_validation_for_concurrency() -> None:
+    graph = GraphBuilder(
+        name="map-invalid-concurrency",
+        input_type=list[Request],
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        graph.map(graph.start, graph.step()(increment_request), id="invalid-concurrency", concurrency=0)
+
+    with pytest.raises(ValidationError, match="valid integer"):
+        graph.map(graph.start, graph.step()(increment_request), id="boolean-concurrency", concurrency=True)
+
+    graph.map(
+        graph.start,
+        graph.step()(increment_request),
+        id="maximum-concurrency",
+        concurrency=MAX_MAP_CONCURRENCY,
+    )
+
+    with pytest.raises(ValidationError, match="less than or equal to 4294967295"):
+        graph.map(
+            graph.start,
+            graph.step()(increment_request),
+            id="overflow-concurrency",
+            concurrency=MAX_MAP_CONCURRENCY + 1,
+        )
+
+
+def test_map_rejects_duplicate_ids_and_cross_graph_sources() -> None:
+    graph = GraphBuilder(
+        name="map-identities",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(load_requests))
+    graph.map(source, graph.step()(increment_request), id="duplicate")
+
+    with pytest.raises(ValueError, match="duplicate or reserved map id 'duplicate'"):
+        graph.map(source, graph.step()(increment_request), id="duplicate")
+
+    other_graph = GraphBuilder(
+        name="other-map-identities",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    other_source = other_graph.add(other_graph.step()(load_requests))
+
+    with pytest.raises(ValueError, match="map source 'load_requests' belongs to a different graph"):
+        graph.map(other_source, graph.step()(increment_request), id="foreign")
+
+
+def test_map_uses_the_mapper_symbol_and_contract_override() -> None:
+    graph = GraphBuilder(
+        name="map-contract",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(load_requests))
+    mapper = graph.step(
+        contract=execution(
+            environment=container(
+                "example.invalid/map-override@sha256:"
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                platform="linux/amd64",
+            )
+        )
+    )(increment_request)
+    mapped = graph.map(source, mapper, id="overridden")
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(mapped).to(graph.end)
+
+    specification = _emit(graph).value
+    map_node = next(node for node in specification["graph"]["nodes"] if node["id"] == "overridden")
+    contract = specification["contracts"][map_node["contractRef"]]
+    environment = specification["environments"][contract["environmentRef"]]
+
+    assert map_node["symbolRef"] == "python-tests:test_builder#increment_request"
+    assert environment["image"].startswith("example.invalid/map-override@sha256:")
+
+
 def test_map_emit_requires_a_direct_concrete_list_source() -> None:
     graph = GraphBuilder(
         name="map-non-list-source",
@@ -267,14 +440,10 @@ def test_map_emit_requires_a_direct_concrete_list_source() -> None:
         defaults=_defaults(),
     )
     source = graph.add(graph.step()(identity))
-    mapped = graph.map(source, graph.step()(increment_request), id="not-a-list")
-    graph.edge_from(graph.start).to(source)
-    graph.edge_from(mapped).to(graph.end)
-
     with pytest.raises(
-        TypeError, match=r"map 'not-a-list' input must be a direct concrete list\[T\]"
+        TypeError, match=r"map source 'identity' must be a direct concrete list\[T\]"
     ):
-        _emit(graph)
+        graph.map(source, graph.step()(increment_request), id="not-a-list")
 
 
 def test_map_emit_rejects_unconstrained_list_items() -> None:
@@ -285,14 +454,10 @@ def test_map_emit_rejects_unconstrained_list_items() -> None:
         defaults=_defaults(),
     )
     source = graph.add(graph.step()(load_any_requests))
-    mapped = graph.map(source, graph.step()(increment_request), id="any-items")
-    graph.edge_from(graph.start).to(source)
-    graph.edge_from(mapped).to(graph.end)
-
     with pytest.raises(
-        TypeError, match=r"map 'any-items' input must be a direct concrete list\[T\]"
+        TypeError, match=r"map source 'load_any_requests' must be a direct concrete list\[T\]"
     ):
-        _emit(graph)
+        graph.map(source, graph.step()(increment_request), id="any-items")
 
 
 def test_map_emit_requires_the_source_item_type_to_match_the_mapper_input() -> None:
@@ -303,15 +468,14 @@ def test_map_emit_requires_the_source_item_type_to_match_the_mapper_input() -> N
         defaults=_defaults(),
     )
     source = graph.add(graph.step()(load_requests))
-    mapped = graph.map(source, graph.step()(result_identity), id="wrong-item")
-    graph.edge_from(graph.start).to(source)
-    graph.edge_from(mapped).to(graph.end)
+    with pytest.raises(
+        TypeError,
+        match="map source 'load_requests' item type does not match mapper input type",
+    ):
+        graph.map(source, graph.step()(result_identity), id="wrong-item")
 
-    with pytest.raises(TypeError, match="source item type does not match mapper input type"):
-        _emit(graph)
 
-
-def test_map_rejects_a_map_result_as_its_source() -> None:
+def test_map_allows_sequential_composition() -> None:
     graph = GraphBuilder(
         name="nested-map",
         input_type=Request,
@@ -320,9 +484,30 @@ def test_map_rejects_a_map_result_as_its_source() -> None:
     )
     source = graph.add(graph.step()(load_requests))
     mapped = graph.map(source, graph.step()(increment_request), id="first-map")
+    remapped = graph.map(mapped, graph.step()(result_identity), id="second-map")
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(remapped).to(graph.end)
 
-    with pytest.raises(ValueError, match="nested maps are not supported"):
-        graph.map(mapped, graph.step()(result_identity), id="second-map")
+    graph_ir = _emit(graph).value["graph"]
+
+    assert {"from": "first-map", "to": "second-map"} in graph_ir["edges"]
+
+
+def test_map_emit_requires_an_outgoing_edge() -> None:
+    graph = GraphBuilder(
+        name="map-multiple-consumers",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(load_requests))
+    graph.map(source, graph.step()(increment_request), id="increment-all")
+    alternate_result = graph.add(graph.step()(load_results))
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(graph.start).to(alternate_result).to(graph.end)
+
+    with pytest.raises(ValueError, match="map 'increment-all' must have an outgoing edge"):
+        _emit(graph)
 
 
 def test_map_emit_requires_exactly_one_incoming_edge() -> None:

@@ -172,10 +172,15 @@ map_graph.edge_from(results).to(map_graph.end)
 
 `map()` accepts only a direct, concrete `list[T]` source and requires the mapper
 input to be exactly `T`. Its mapper is registered by `map()`, rather than with
-`add()`, and the map result cannot be mapped again. Emission produces one
-Graph IR 0.3 `map` node with its input, item-input, item-output, and collected
-output schemas plus `maxConcurrency`. Execution support for map nodes is not
-included in this authoring slice.
+`add()`. The result preserves source order and represents an empty input as an
+empty `list[Result]`; it may feed ordinary downstream nodes, including a later
+map as sequential composition. `concurrency` defaults to 20 and must be a
+strict integer from 1 through 4,294,967,295.
+
+Emission produces one Graph IR 0.3 `map` node with its input, item-input,
+item-output, and collected-output schemas, mapper symbol and contract, and
+`maxConcurrency`. The emitted map contract is the execution boundary; no local
+in-memory map behavior is part of the authoring API.
 
 ## Artifact handling
 

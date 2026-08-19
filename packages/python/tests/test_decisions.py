@@ -122,6 +122,10 @@ def collect_approved_results(context: StepContext[None, list[Result]]) -> Result
     return context.inputs[0]
 
 
+def rejected_results(context: StepContext[None, Rejected]) -> list[Result]:
+    return [Result(value=0)]
+
+
 def test_emit_serializes_an_exhaustive_pydantic_decision_as_data_only_ir() -> None:
     graph = GraphBuilder(
         name="decision-workflow",
@@ -191,6 +195,32 @@ def test_map_can_follow_a_decision_branch_and_select_its_downstream_result() -> 
     assert graph_ir["irVersion"] == "0.3"
     assert {"from": "approved_items", "to": "map-approved"} in graph_ir["edges"]
     assert {"from": "map-approved", "to": "collect_approved_results"} in graph_ir["edges"]
+
+
+def test_select_accepts_a_direct_map_result_with_a_synthesized_list_output_type() -> None:
+    graph = GraphBuilder(
+        name="decision-map-select",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    classified = graph.add(graph.step()(classify))
+    approved_source = graph.add(graph.step()(approved_items))
+    approved_map = graph.map(approved_source, graph.step()(map_approved), id="map-approved")
+    rejected_result = graph.add(graph.step()(rejected_results))
+    route = graph.decision(classified, on="kind", id="review-route")
+    approved_input = route.case(Approved)
+    rejected_input = route.case(Rejected)
+    selected = route.select(list[Result], approved=approved_map, rejected=rejected_result)
+    graph.edge_from(graph.start).to(classified)
+    graph.edge_from(approved_input).to(approved_source)
+    graph.edge_from(rejected_input).to(rejected_result)
+    graph.edge_from(selected).to(graph.end)
+
+    graph_ir = _emit(graph).value["graph"]
+
+    assert graph_ir["irVersion"] == "0.3"
+    assert {"from": "map-approved", "to": "review-route-select"} in graph_ir["edges"]
 
 
 def test_decision_rejects_nonportable_or_ambiguous_authoring_forms() -> None:
