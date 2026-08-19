@@ -53,6 +53,19 @@ class MultiTagged(BaseModel):
 MultiTagRoute = Annotated[MultiTagged | Rejected, Field(discriminator="kind")]
 
 
+class FastTrack(BaseModel):
+    kind: Literal["fast"]
+    value: int
+
+
+class ManualReview(BaseModel):
+    kind: Literal["manual"]
+    value: int
+
+
+InnerRoute = Annotated[FastTrack | ManualReview, Field(discriminator="kind")]
+
+
 def classify(context: StepContext[None, Request]) -> Route:
     return Approved(kind="approved", value=context.inputs.value)
 
@@ -83,6 +96,18 @@ def astral(context: StepContext[None, Astral]) -> Result:
 
 def private_use(context: StepContext[None, PrivateUse]) -> Result:
     return Result(value=2)
+
+
+def review(context: StepContext[None, Approved]) -> InnerRoute:
+    return FastTrack(kind="fast", value=context.inputs.value)
+
+
+def fast_track(context: StepContext[None, FastTrack]) -> Result:
+    return Result(value=context.inputs.value)
+
+
+def manual_review(context: StepContext[None, ManualReview]) -> Result:
+    return Result(value=context.inputs.value)
 
 
 def test_emit_serializes_an_exhaustive_pydantic_decision_as_data_only_ir() -> None:
@@ -228,6 +253,43 @@ def test_decision_cases_and_select_inputs_use_utf16_ordering() -> None:
     assert nodes["unicode-route-select"]["selectInputs"] == [
         {"case": "\U00010000", "source": "astral"},
         {"case": "\ue000", "source": "private_use"},
+    ]
+
+
+def test_emit_allows_an_outer_select_to_choose_a_nested_select() -> None:
+    graph = GraphBuilder(
+        name="nested-decision",
+        input_type=Request,
+        output_type=Result,
+        defaults=_defaults(),
+    )
+    classified = graph.add(graph.step()(classify))
+    reviewed = graph.add(graph.step()(review))
+    fast_result = graph.add(graph.step()(fast_track))
+    manual_result = graph.add(graph.step()(manual_review))
+    rejected_result = graph.add(graph.step()(reject))
+
+    outer = graph.decision(classified, on="kind", id="outer")
+    graph.edge_from(graph.start).to(classified)
+    graph.edge_from(outer.case(Approved)).to(reviewed)
+    graph.edge_from(outer.case(Rejected)).to(rejected_result)
+
+    inner = graph.decision(reviewed, on="kind", id="inner")
+    graph.edge_from(inner.case(FastTrack)).to(fast_result)
+    graph.edge_from(inner.case(ManualReview)).to(manual_result)
+    selected_inner = inner.select(Result, fast=fast_result, manual=manual_result)
+
+    selected_outer = outer.select(
+        Result,
+        approved=selected_inner,
+        rejected=rejected_result,
+    )
+    graph.edge_from(selected_outer).to(graph.end)
+
+    nodes = {node["id"]: node for node in _emit(graph).value["graph"]["nodes"]}
+    assert nodes["outer-select"]["selectInputs"] == [
+        {"case": "approved", "source": "inner-select"},
+        {"case": "rejected", "source": "reject"},
     ]
 
 

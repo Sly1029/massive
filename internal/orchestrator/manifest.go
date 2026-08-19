@@ -29,8 +29,11 @@ type manifestStep struct {
 // manifestDecision is the durable decision record. Replays must use this
 // selection rather than evaluate the classifier body a second time.
 type manifestDecision struct {
-	NodeID       string `json:"nodeId"`
-	SelectedCase string `json:"selectedCase"`
+	NodeID       string              `json:"nodeId"`
+	Status       string              `json:"status"`
+	SelectedCase string              `json:"selectedCase,omitempty"`
+	Diagnostic   string              `json:"diagnostic,omitempty"`
+	SkipReason   *manifestSkipReason `json:"skipReason,omitempty"`
 }
 
 // manifestSkipReason makes an inactive branch observable rather than leaving

@@ -80,10 +80,6 @@ type nodeOutput struct {
 	Body      []byte
 }
 
-type skippedNode struct {
-	reason manifestSkipReason
-}
-
 func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, error) {
 	if config.Plan == nil {
 		return nil, fmt.Errorf("run config requires a workflow plan")
@@ -181,19 +177,43 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	}
 
 	selectedCases := make(map[string]string)
-	skipped := make(map[string]skippedNode)
+	inactive := make(map[string]manifestSkipReason)
 	for _, nodeID := range index.nodeOrder {
 		node := index.nodesByID[nodeID]
+		reason, err := activationSkipReason(node, index.inboundByTarget[nodeID], selectedCases, inactive)
+		if err != nil {
+			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
+		}
+		if reason != nil {
+			inactive[nodeID] = *reason
+			switch node.GetKind() {
+			case "step":
+				markStepSkipped(&manifest, nodeID, *reason)
+			case "decision":
+				markDecisionSkipped(&manifest, nodeID, *reason)
+			case "select":
+				// Selects are graph control nodes. Their inactivity is propagated
+				// through the activation map rather than materializing an artifact.
+			default:
+				return failRun(ctx, store, manifestKey, &manifest, result, nodeID, fmt.Sprintf("unsupported plan node kind %q for %q", node.GetKind(), nodeID))
+			}
+			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		switch node.GetKind() {
 		case "decision":
 			selectedCase, output, err := routeDecision(node, index, outputs)
 			if err != nil {
-				return failRun(ctx, store, manifestKey, &manifest, result, "", err.Error())
+				markDecisionFailed(&manifest, nodeID, err.Error())
+				return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
 			}
 			selectedCases[nodeID] = selectedCase
 			outputs[nodeID] = output
 			manifest.Decisions = append(manifest.Decisions, manifestDecision{
 				NodeID:       nodeID,
+				Status:       "selected",
 				SelectedCase: selectedCase,
 			})
 			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
@@ -203,25 +223,13 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 		case "select":
 			output, err := selectOutput(node, outputs, selectedCases)
 			if err != nil {
-				return failRun(ctx, store, manifestKey, &manifest, result, "", err.Error())
+				return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
 			}
 			outputs[nodeID] = output
 			continue
 		case "start", "end":
 			continue
 		case "step":
-			reason, err := skipReasonForStep(node, index.inboundByTarget[nodeID], selectedCases, skipped)
-			if err != nil {
-				return failRun(ctx, store, manifestKey, &manifest, result, "", err.Error())
-			}
-			if reason != nil {
-				markStepSkipped(&manifest, nodeID, *reason)
-				skipped[nodeID] = skippedNode{reason: *reason}
-				if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-					return nil, err
-				}
-				continue
-			}
 		default:
 			return failRun(ctx, store, manifestKey, &manifest, result, "", fmt.Sprintf("unsupported plan node kind %q for %q", node.GetKind(), nodeID))
 		}
@@ -774,12 +782,12 @@ func inputForNode(node *planpb.GraphNode, inbound []*planpb.GraphEdge, outputs m
 // same immutable artifact to the conditional edge. It never invokes user code.
 func routeDecision(node *planpb.GraphNode, index executionIndex, outputs map[string]nodeOutput) (string, nodeOutput, error) {
 	inbound := index.inboundByTarget[node.GetId()]
+	if len(inbound) != 1 {
+		return "", nodeOutput{}, fmt.Errorf("decision %q requires exactly one input edge", node.GetId())
+	}
 	inputBytes, err := inputForNode(node, inbound, outputs)
 	if err != nil {
 		return "", nodeOutput{}, fmt.Errorf("decision %q input: %w", node.GetId(), err)
-	}
-	if len(inbound) != 1 {
-		return "", nodeOutput{}, fmt.Errorf("decision %q requires exactly one input edge", node.GetId())
 	}
 	input, ok := outputs[inbound[0].GetFrom()]
 	if !ok {
@@ -810,7 +818,10 @@ func routeDecision(node *planpb.GraphNode, index executionIndex, outputs map[str
 			return "", nodeOutput{}, fmt.Errorf("decision %q case %q references unavailable schema %q", node.GetId(), tag, decisionCase.GetSchema())
 		}
 		if err := validateJSONAgainstSchema(schema, inputBytes); err != nil {
-			return "", nodeOutput{}, fmt.Errorf("decision %q selected case %q does not satisfy its schema: %w", node.GetId(), tag, err)
+			// Schema-library errors can include a rendered instance. The manifest is
+			// durable user-visible control-plane state, so retain the actionable
+			// route identity without copying classified data into its diagnostic.
+			return "", nodeOutput{}, fmt.Errorf("decision %q selected case %q does not satisfy its schema", node.GetId(), tag)
 		}
 		return tag, input, nil
 	}
@@ -840,20 +851,43 @@ func selectOutput(node *planpb.GraphNode, outputs map[string]nodeOutput, selecte
 	return nodeOutput{}, fmt.Errorf("select %q has no input for selected case %q", node.GetId(), tag)
 }
 
-func skipReasonForStep(node *planpb.GraphNode, inbound []*planpb.GraphEdge, selectedCases map[string]string, skipped map[string]skippedNode) (*manifestSkipReason, error) {
+// activationSkipReason is the scheduler's control-region gate. Every node
+// kind uses it before execution: an inactive outer branch suppresses nested
+// decisions and selects as well as ordinary steps. Selects deliberately read
+// only their chosen input; the other select inputs are inactive by design.
+func activationSkipReason(node *planpb.GraphNode, inbound []*planpb.GraphEdge, selectedCases map[string]string, inactive map[string]manifestSkipReason) (*manifestSkipReason, error) {
+	if node.GetKind() == "select" {
+		if reason, exists := inactive[node.GetDecisionRef()]; exists {
+			return &reason, nil
+		}
+		selectedCase, exists := selectedCases[node.GetDecisionRef()]
+		if !exists {
+			return nil, fmt.Errorf("select %q depends on unresolved decision %q", node.GetId(), node.GetDecisionRef())
+		}
+		for _, input := range node.GetSelectInputs() {
+			if input.GetCase() != selectedCase {
+				continue
+			}
+			if reason, exists := inactive[input.GetSource()]; exists {
+				return &reason, nil
+			}
+			return nil, nil
+		}
+		return nil, fmt.Errorf("select %q has no input for selected case %q", node.GetId(), selectedCase)
+	}
+
 	for _, edge := range inbound {
+		if reason, exists := inactive[edge.GetFrom()]; exists {
+			return &reason, nil
+		}
 		if edge.GetCase() != "" {
 			selectedCase, exists := selectedCases[edge.GetFrom()]
 			if !exists {
-				return nil, fmt.Errorf("conditional step %q depends on unresolved decision %q", node.GetId(), edge.GetFrom())
+				return nil, fmt.Errorf("conditional node %q depends on unresolved decision %q", node.GetId(), edge.GetFrom())
 			}
 			if selectedCase != edge.GetCase() {
 				return &manifestSkipReason{Kind: "decision-not-selected", DecisionID: edge.GetFrom(), Case: edge.GetCase()}, nil
 			}
-		}
-		if ancestor, exists := skipped[edge.GetFrom()]; exists {
-			reason := ancestor.reason
-			return &reason, nil
 		}
 	}
 	return nil, nil
@@ -1125,6 +1159,22 @@ func markStepSkipped(manifest *runManifest, nodeID string, reason manifestSkipRe
 		manifest.Steps[index].SkipReason = &reason
 		return
 	}
+}
+
+func markDecisionFailed(manifest *runManifest, nodeID string, diagnostic string) {
+	manifest.Decisions = append(manifest.Decisions, manifestDecision{
+		NodeID:     nodeID,
+		Status:     "failed",
+		Diagnostic: diagnostic,
+	})
+}
+
+func markDecisionSkipped(manifest *runManifest, nodeID string, reason manifestSkipReason) {
+	manifest.Decisions = append(manifest.Decisions, manifestDecision{
+		NodeID:     nodeID,
+		Status:     StatusSkipped,
+		SkipReason: &reason,
+	})
 }
 
 func failRun(ctx context.Context, store datastore.Datastore, manifestKey datastore.Key, manifest *runManifest, result *RunResult, stepID string, diagnostic string) (*RunResult, error) {

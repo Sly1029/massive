@@ -296,6 +296,27 @@ func TestParseRejectsInvalidExhaustiveDecisionContracts(t *testing.T) {
 			},
 			message: "select input source must be reachable from its decision case branch",
 		},
+		{
+			name: "case branches converge before their select",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				graph["edges"] = append(graph["edges"].([]any), map[string]any{"from": "accept", "to": "reject"})
+			},
+			message: "cases may converge only through select",
+		},
+		{
+			name: "conditional branches share a target",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				for _, rawEdge := range graph["edges"].([]any) {
+					edge := rawEdge.(map[string]any)
+					if edge["from"] == "route" && edge["case"] == "rejected" {
+						edge["to"] = "accept"
+					}
+				}
+			},
+			message: "conditional branches may not share a target",
+		},
 	}
 
 	for _, test := range tests {

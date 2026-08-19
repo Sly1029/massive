@@ -693,7 +693,14 @@ const ManifestStepSchema = z.object({
 
 const ManifestDecisionSchema = z.object({
   nodeId: z.string(),
-  selectedCase: z.string(),
+  status: z.enum(["selected", "failed", "skipped"]),
+  selectedCase: z.string().optional(),
+  diagnostic: z.string().optional(),
+  skipReason: z.object({
+    kind: z.literal("decision-not-selected"),
+    decisionId: z.string(),
+    case: z.string(),
+  }).strict().optional(),
 }).strict();
 
 const ManifestViewSchema = z.object({

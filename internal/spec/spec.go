@@ -559,6 +559,7 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 
 	conditionalCounts := make(map[string]map[string]int)
 	branchTargets := make(map[string]map[string]string)
+	conditionalTargets := make(map[string][]int)
 	for edgeIndex, edge := range parsed.Graph.Edges {
 		path := fmt.Sprintf("$.graph.edges[%d]", edgeIndex)
 		source, sourceExists := nodeByID[edge.From]
@@ -584,6 +585,7 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			targetIndex := nodeIndexes[edge.To]
 			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].inputSchema", targetIndex), Ref: edge.To, Message: "conditional target input schema must equal decision case schema"})
 		}
+		conditionalTargets[edge.To] = append(conditionalTargets[edge.To], edgeIndex)
 		if conditionalCounts[edge.From] == nil {
 			conditionalCounts[edge.From] = make(map[string]int)
 			branchTargets[edge.From] = make(map[string]string)
@@ -591,6 +593,14 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 		conditionalCounts[edge.From][edge.Case]++
 		if branchTargets[edge.From][edge.Case] == "" {
 			branchTargets[edge.From][edge.Case] = edge.To
+		}
+	}
+	for _, target := range sortedKeys(conditionalTargets) {
+		if len(conditionalTargets[target]) < 2 {
+			continue
+		}
+		for _, edgeIndex := range conditionalTargets[target] {
+			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.edges[%d].to", edgeIndex), Ref: target, Message: "conditional branches may not share a target in graph IR 0.2"})
 		}
 	}
 	for _, decisionID := range sortedKeys(decisionCases) {
@@ -679,6 +689,8 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 		}
 	}
 
+	diagnostics = append(diagnostics, validateExclusiveDecisionBranches(parsed, decisionCases, branchTargets, nodeIndexes)...)
+
 	return diagnostics
 }
 
@@ -687,6 +699,73 @@ func outputSchemaOfValueProducer(node GraphNode) (string, bool) {
 		return "", false
 	}
 	return node.OutputSchema, true
+}
+
+// validateExclusiveDecisionBranches keeps 0.2's activation model local: a
+// decision's cases may meet only at that decision's select. Without this
+// restriction a node can be reachable through incompatible case paths, which
+// would require a lineage lattice rather than the single durable selection the
+// runtime records. Nested decisions remain valid because their complete region
+// belongs to exactly one case of every enclosing decision.
+func validateExclusiveDecisionBranches(parsed *WorkflowSpec, decisionCases map[string]map[string]bool, branchTargets map[string]map[string]string, nodeIndexes map[string]int) []Diagnostic {
+	selectsByDecision := make(map[string][]string)
+	for _, node := range parsed.Graph.Nodes {
+		if node.Kind == NodeKindSelect {
+			selectsByDecision[node.DecisionRef] = append(selectsByDecision[node.DecisionRef], node.ID)
+		}
+	}
+
+	var diagnostics []Diagnostic
+	for _, decisionID := range sortedKeys(decisionCases) {
+		selects := selectsByDecision[decisionID]
+		if len(selects) != 1 {
+			index := nodeIndexes[decisionID]
+			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d]", index), Ref: decisionID, Message: "decision requires exactly one select node in graph IR 0.2"})
+			continue
+		}
+		selectID := selects[0]
+		owners := make(map[string][]string)
+		for _, tag := range sortedKeys(decisionCases[decisionID]) {
+			root := branchTargets[decisionID][tag]
+			if root == "" {
+				continue
+			}
+			for nodeID := range graphReachableBefore(root, selectID, parsed.Graph.Edges) {
+				owners[nodeID] = append(owners[nodeID], tag)
+			}
+		}
+		for _, nodeID := range sortedKeys(owners) {
+			if len(owners[nodeID]) < 2 {
+				continue
+			}
+			index := nodeIndexes[nodeID]
+			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d]", index), Ref: nodeID, Message: fmt.Sprintf("decision %q cases may converge only through select %q", decisionID, selectID)})
+		}
+	}
+	return diagnostics
+}
+
+func graphReachableBefore(start string, stop string, edges []GraphEdge) map[string]bool {
+	adjacency := make(map[string][]string)
+	for _, edge := range edges {
+		adjacency[edge.From] = append(adjacency[edge.From], edge.To)
+	}
+	seen := make(map[string]bool)
+	queue := []string{start}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current == stop || seen[current] {
+			continue
+		}
+		seen[current] = true
+		for _, next := range adjacency[current] {
+			if !seen[next] {
+				queue = append(queue, next)
+			}
+		}
+	}
+	return seen
 }
 
 func graphReachable(start string, target string, edges []GraphEdge) bool {

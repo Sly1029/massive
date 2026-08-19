@@ -389,6 +389,8 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         adjacency: dict[str, list[str]] = {}
         for edge_source, edge_target in self._edges:
             adjacency.setdefault(edge_source, []).append(edge_target)
+        for edge_source, edge_target, _ in self._conditional_edges:
+            adjacency.setdefault(edge_source, []).append(edge_target)
         while pending:
             current = pending.pop()
             if current == target:

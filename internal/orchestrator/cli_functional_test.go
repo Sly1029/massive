@@ -433,6 +433,85 @@ func TestOrchestratorCLISchemaFailureRealRunner(t *testing.T) {
 	}
 }
 
+func TestOrchestratorCLIDecisionRoutingFailuresAreDurablyJournaled(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		input      string
+		diagnostic string
+	}{
+		{name: "missing selector", input: "1", diagnostic: `selector "kind" is missing`},
+		{name: "non-string selector", input: "2", diagnostic: `selector "kind" must be a string`},
+		{name: "unknown tag", input: "3", diagnostic: `unknown case "unknown"`},
+		{name: "selected case schema violation", input: "4", diagnostic: `selected case "accepted" does not satisfy its schema`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := writeRunWorkspace(t, decisionFailureSpec(t), []byte(`
+export function classify(args: { readonly input: number }): Record<string, unknown> {
+  if (args.input === 1) return {};
+  if (args.input === 2) return { kind: 42 };
+  if (args.input === 3) return { kind: "unknown" };
+  return { kind: "accepted" };
+}
+
+export function accept(args: { readonly input: number }): number {
+  return args.input;
+}
+
+export function reject(args: { readonly input: number }): number {
+  return args.input;
+}
+`))
+			storeRoot := newStoreRoot(t)
+			runID := "decision-routing-" + strings.ReplaceAll(test.name, " ", "-")
+			result := runCommand(t,
+				"go", "run", "./cmd/massive-orchestrator", "run",
+				"--spec", filepath.Join(workspace, "workflow-spec.json"),
+				"--store", storeRoot,
+				"--project", "acme/decision-routing",
+				"--run-id", runID,
+				"--input", test.input,
+			)
+			if result.err == nil {
+				t.Fatalf("orchestrator succeeded for malformed route\nstdout:\n%s", result.stdout)
+			}
+			if !strings.Contains(result.stderr, test.diagnostic) {
+				t.Fatalf("stderr = %q, want route diagnostic %q", result.stderr, test.diagnostic)
+			}
+
+			manifest := readRunManifest(t, storeRoot, NormalizeProjectKey("acme/decision-routing"), runID)
+			if manifest.Status != StatusFailed {
+				t.Fatalf("manifest status = %q, want failed", manifest.Status)
+			}
+			if len(manifest.Decisions) != 1 {
+				t.Fatalf("decision records = %#v, want one failed route", manifest.Decisions)
+			}
+			decision := manifest.Decisions[0]
+			if decision.NodeID != "route" || decision.Status != StatusFailed || !strings.Contains(decision.Diagnostic, test.diagnostic) {
+				t.Fatalf("decision record = %#v, want failed route with %q", decision, test.diagnostic)
+			}
+			if len(manifest.Steps) == 0 || manifest.Steps[0].NodeID != "classify" || manifest.Steps[0].Status != StatusSucceeded {
+				t.Fatalf("steps = %#v, want classifier to have completed before route failure", manifest.Steps)
+			}
+		})
+	}
+}
+
+func decisionFailureSpec(t *testing.T) []byte {
+	t.Helper()
+
+	var document map[string]any
+	if err := json.Unmarshal(readRepoFile(t, "conformance", "fixtures", "specs", "exhaustive-decision", "workflow-spec.json"), &document); err != nil {
+		t.Fatal(err)
+	}
+	schemas := document["schemas"].(map[string]any)
+	schemas["sha256:3333333333333333333333333333333333333333333333333333333333333333"] = map[string]any{"type": "object"}
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 type commandResult struct {
 	stdout string
 	stderr string
