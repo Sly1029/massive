@@ -17,6 +17,7 @@ func TestParseAcceptsValidFixtures(t *testing.T) {
 		{name: "passthrough", path: fixturePath("passthrough")},
 		{name: "linear-chain", path: fixturePath("linear-chain")},
 		{name: "diamond", path: fixturePath("diamond")},
+		{name: "python-linear", path: fixturePath("python-linear")},
 	}
 
 	for _, test := range tests {

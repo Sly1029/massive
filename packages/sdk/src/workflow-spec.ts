@@ -25,6 +25,10 @@ export async function parseWorkflowSpec(
 ): Promise<WorkflowSpec> {
   assertCanonicalFieldTree(value);
 
+  return validateWorkflowSpec(value);
+}
+
+async function validateWorkflowSpec(value: unknown): Promise<WorkflowSpec> {
   const validate = await compileWorkflowSpecValidator();
   if (!validate(value)) {
     throw new WorkflowSpecError(
@@ -60,16 +64,20 @@ export async function parseWorkflowSpecText(
     assertCanonicalFieldTree(value);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new WorkflowSpecError(`WorkflowSpec is not canonical JSON: ${message}`);
+    throw new WorkflowSpecError(
+      `WorkflowSpec is not canonical JSON: ${message}`,
+    );
   }
   if (stableStringify(value) !== text) {
     throw new WorkflowSpecError("WorkflowSpec is not canonical JSON");
   }
 
-  return parseWorkflowSpec(value);
+  return validateWorkflowSpec(value);
 }
 
-function compileWorkflowSpecValidator(): Promise<ValidateFunction<WorkflowSpec>> {
+function compileWorkflowSpecValidator(): Promise<
+  ValidateFunction<WorkflowSpec>
+> {
   workflowSpecValidator ??= compileSchema();
   return workflowSpecValidator;
 }

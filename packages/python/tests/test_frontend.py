@@ -20,6 +20,21 @@ def test_emit_writes_a_canonical_spec_for_the_single_exported_graph(tmp_path: Pa
     assert json.loads(result.stdout)["workflow"]["name"] == "frontend-graph"
 
 
+def test_checked_python_workflow_matches_shared_conformance_fixture() -> None:
+    repository = Path(__file__).resolve().parents[3]
+    workflow = repository / "packages/cli/test/fixtures/python-linear/workflow.py"
+    expected = (
+        repository
+        / "conformance/fixtures/specs/python-linear/workflow-spec.json"
+    ).read_text()
+
+    result = _emit(workflow, "graph")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert result.stdout == expected.rstrip("\n")
+
+
 def test_emit_selects_the_requested_named_graph(tmp_path: Path) -> None:
     workflow = tmp_path / "workflow.py"
     workflow.write_text(_workflow_source("first") + "\n" + _workflow_source("second"))

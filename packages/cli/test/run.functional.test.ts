@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert";
 import { basename, dirname } from "node:path";
+import { parseWorkflowSpecText } from "@massive/sdk";
 import {
   copyFixture,
   exists,
@@ -122,8 +123,59 @@ Deno.test("massive run Python graph: same compiler, runner, and frozen artifact 
   assertStringIncludes(result.stdout, '{"value":21}');
 
   const keys = await listStoreKeys(store);
-  assertEquals(keys.some((key) => key.endsWith("output-manifest.json")), true);
+  const specKey = keys.find((key) => key.endsWith("/workflow-spec.json"));
+  const planKey = keys.find((key) => key.endsWith("/workflow.json"));
+  const outputManifestKey = keys.find((key) =>
+    key.endsWith("output-manifest.json")
+  );
+  assert(specKey !== undefined, "canonical WorkflowSpec should be persisted");
+  assert(planKey !== undefined, "compiled WorkflowPlan should be persisted");
+  assert(
+    outputManifestKey !== undefined,
+    "Python output should be visible through a committed manifest",
+  );
   assertEquals(keys.some((key) => key.includes("/source.tar")), true);
+
+  const spec = await parseWorkflowSpecText(
+    await Deno.readTextFile(join(store, specKey)),
+  );
+  assertEquals(spec.graph.irVersion, "0.1");
+  assertEquals(spec.sourcePackages["python-main"]?.language, "python");
+
+  const plan = JSON.parse(await Deno.readTextFile(join(store, planKey))) as {
+    graph: { nodes: { kind: string; symbolRef?: string }[] };
+    symbols: {
+      language: string;
+      module: string;
+      export: string;
+      packageId: string;
+      symbolRef: string;
+    }[];
+    environments: { kind: string; container?: { image: string } }[];
+  };
+  assertEquals(plan.symbols, [{
+    export: "add_one",
+    language: "python",
+    module: "workflow",
+    packageId: "python-main",
+    symbolRef: "python-main:workflow#add_one",
+  }]);
+  assertEquals(
+    plan.graph.nodes.find((node) => node.kind === "step")?.symbolRef,
+    "python-main:workflow#add_one",
+  );
+  assertEquals(plan.environments[0]?.kind, "container-plan");
+  assertStringIncludes(
+    plan.environments[0]?.container?.image ?? "",
+    "python-runner@sha256:",
+  );
+
+  const outputManifest = JSON.parse(
+    await Deno.readTextFile(join(store, outputManifestKey)),
+  ) as { kind: string; producer: { nodeId: string; attempt: number } };
+  assertEquals(outputManifest.kind, "DataArtifactManifest");
+  assertEquals(outputManifest.producer.nodeId, "add_one");
+  assertEquals(outputManifest.producer.attempt, 1);
 });
 
 Deno.test("massive run diamond: fan-in result 81 at the frozen result key", async () => {

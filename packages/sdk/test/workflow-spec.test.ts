@@ -1,16 +1,18 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert";
-import {
-  parseWorkflowSpecText,
-  WorkflowSpecError,
-} from "../src/index.ts";
+import { parseWorkflowSpecText, WorkflowSpecError } from "../src/index.ts";
 
 Deno.test("parseWorkflowSpecText accepts canonical WorkflowSpec emitted by Python GraphBuilder", async () => {
-  const text = await emitPythonWorkflowSpec();
+  const text = await Deno.readTextFile(
+    new URL(
+      "../../../conformance/fixtures/specs/python-linear/workflow-spec.json",
+      import.meta.url,
+    ),
+  );
 
-  const spec = await parseWorkflowSpecText(text);
+  const spec = await parseWorkflowSpecText(text.trimEnd());
   const step = spec.graph.nodes.find((node) => node.kind === "step");
 
-  assertEquals(spec.workflow.name, "python-emission");
+  assertEquals(spec.workflow.name, "python-linear");
   assertEquals(step?.kind, "step");
   if (step?.kind !== "step") {
     throw new Error("Python fixture should emit a step node");
@@ -93,7 +95,15 @@ specification = module.graph.emit(
 sys.stdout.write(specification.to_json())
 `;
   const output = await new Deno.Command("uv", {
-    args: ["run", "--project", "packages/python", "--frozen", "python", "-c", program],
+    args: [
+      "run",
+      "--project",
+      "packages/python",
+      "--frozen",
+      "python",
+      "-c",
+      program,
+    ],
   }).output();
 
   if (!output.success) {
