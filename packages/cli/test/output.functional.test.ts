@@ -125,7 +125,7 @@ Deno.test("run-manifest reader refuses retired and future transports before nest
   for (
     const protocol of [
       { schemaVersion: 1, encoding: "json-v1" },
-      { schemaVersion: 3, encoding: "json-v3" },
+      { schemaVersion: 4, encoding: "json-v4" },
     ]
   ) {
     await t.step(`${protocol.encoding}`, async () => {
@@ -166,7 +166,7 @@ Deno.test("massive inspect reports an actionable error for retired and future ma
   for (
     const protocol of [
       { schemaVersion: 1, encoding: "json-v1" },
-      { schemaVersion: 3, encoding: "json-v3" },
+      { schemaVersion: 4, encoding: "json-v4" },
     ]
   ) {
     await t.step(`${protocol.encoding}`, async () => {
@@ -213,23 +213,23 @@ Deno.test("massive inspect reports an actionable error for retired and future ma
   }
 });
 
-Deno.test("massive inspect reports an actionable error for malformed v2 nested data", async () => {
+Deno.test("massive inspect reports an actionable error for malformed v3 nested data", async () => {
   const store = await makeStore();
-  const runId = "run-inspect-malformed-v2";
+  const runId = "run-inspect-malformed-v3";
   const key =
     `projects/sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/runs/${runId}/run-manifest.json`;
   const manifestPath = join(store, key);
   await Deno.mkdir(dirname(manifestPath), { recursive: true });
 
-  // This is a persisted v2 envelope, but its nested output reference is not a
+  // This is a persisted v3 envelope, but its nested output reference is not a
   // reference. inspect must report a manifest error instead of throwing while
   // traversing the untrusted nested data.
   await Deno.writeTextFile(
     manifestPath,
     JSON.stringify({
       kind: "RunManifest",
-      schemaVersion: 2,
-      encoding: "json-v2",
+      schemaVersion: 3,
+      encoding: "json-v3",
       planHash: "sha256:" + "a".repeat(64),
       projectKey: "sha256-" + "c".repeat(64),
       runId,
@@ -257,7 +257,6 @@ Deno.test("massive inspect reports an actionable error for malformed v2 nested d
             },
             schema: "sha256:" + "d".repeat(64),
           },
-          diagnostic: "",
         }],
       }],
     }),
@@ -314,8 +313,8 @@ Deno.test("run-manifest reader rejects impossible decision states", async (t) =>
         path,
         JSON.stringify({
           kind: "RunManifest",
-          schemaVersion: 2,
-          encoding: "json-v2",
+          schemaVersion: 3,
+          encoding: "json-v3",
           planHash: "sha256:" + "a".repeat(64),
           projectKey: "sha256-" + "e".repeat(64),
           runId: "invalid-decision",
@@ -345,8 +344,8 @@ Deno.test("run-manifest reader accepts Go pending and pre-input failure shapes",
     path,
     JSON.stringify({
       kind: "RunManifest",
-      schemaVersion: 2,
-      encoding: "json-v2",
+      schemaVersion: 3,
+      encoding: "json-v3",
       planHash: "sha256:" + "a".repeat(64),
       projectKey:
         "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",

@@ -101,7 +101,8 @@ type StepInvoker interface {
 }
 
 type StepInvocationBatch struct {
-	Steps []StepInvocation
+	Steps          []StepInvocation
+	MaxConcurrency int
 }
 
 type StepInvocation struct {
@@ -111,6 +112,7 @@ type StepInvocation struct {
 type StepInvocationOutcome struct {
 	NodeID     string
 	Attempt    int
+	Scope      *ExecutionScope
 	Status     string
 	ExitCode   int
 	Diagnostic string

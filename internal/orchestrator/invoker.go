@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/Sly1029/massive/internal/artifact"
 )
@@ -101,13 +102,28 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 		defer cleanup()
 	}
 
-	outcomes := make([]StepInvocationOutcome, 0, len(batch.Steps))
-	for _, step := range batch.Steps {
-		outcome, err := i.invokeOne(ctx, descriptorDir, step.Descriptor)
+	maxConcurrency := batch.MaxConcurrency
+	if maxConcurrency <= 0 || maxConcurrency > len(batch.Steps) {
+		maxConcurrency = len(batch.Steps)
+	}
+	outcomes := make([]StepInvocationOutcome, len(batch.Steps))
+	semaphore := make(chan struct{}, maxConcurrency)
+	errs := make([]error, len(batch.Steps))
+	var group sync.WaitGroup
+	for index, step := range batch.Steps {
+		group.Add(1)
+		go func(index int, descriptor StepInvocationDescriptor) {
+			defer group.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			outcomes[index], errs[index] = i.invokeOne(ctx, descriptorDir, descriptor)
+		}(index, step.Descriptor)
+	}
+	group.Wait()
+	for _, err := range errs {
 		if err != nil {
 			return nil, err
 		}
-		outcomes = append(outcomes, outcome)
 	}
 	return outcomes, nil
 }
@@ -162,6 +178,7 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		return StepInvocationOutcome{
 			NodeID:     descriptor.NodeID,
 			Attempt:    descriptor.Attempt,
+			Scope:      descriptor.Scope,
 			Status:     StatusSucceeded,
 			ExitCode:   0,
 			Diagnostic: diagnostic,
@@ -176,6 +193,7 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 	return StepInvocationOutcome{
 		NodeID:     descriptor.NodeID,
 		Attempt:    descriptor.Attempt,
+		Scope:      descriptor.Scope,
 		Status:     StatusFailed,
 		ExitCode:   exitError.ExitCode(),
 		Diagnostic: diagnostic,

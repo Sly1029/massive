@@ -20,6 +20,7 @@ import (
 	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/google/uuid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -143,7 +144,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 		return nil, fmt.Errorf("canonicalize workflow input: %w", err)
 	}
 
-	manifest := newRunManifest(config.Plan.GetPlanHash(), projectKey, runID, index.stepOrder)
+	manifest := newRunManifest(config.Plan.GetPlanHash(), projectKey, runID, index.stepOrder, index.nodesByID)
 	manifestKey := runManifestKey(projectKey, runID)
 	if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
 		return nil, err
@@ -187,7 +188,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 		if reason != nil {
 			inactive[nodeID] = *reason
 			switch node.GetKind() {
-			case "step":
+			case "step", "map":
 				markStepSkipped(&manifest, nodeID, *reason)
 			case "decision":
 				markDecisionSkipped(&manifest, nodeID, *reason)
@@ -228,6 +229,13 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 			outputs[nodeID] = output
 			continue
 		case "start", "end":
+			continue
+		case "map":
+			output, err := runMapNode(ctx, store, config, invoker, projectKey, runID, node, index, outputs, &manifest, manifestKey)
+			if err != nil {
+				return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
+			}
+			outputs[nodeID] = output
 			continue
 		case "step":
 		default:
@@ -736,6 +744,170 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 	}, nil
 }
 
+func descriptorForMapItem(config RunConfig, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex, itemIndex int) (StepInvocationDescriptor, error) {
+	descriptor, err := descriptorForStep(config, projectKey, runID, node, input, index)
+	if err != nil {
+		return StepInvocationDescriptor{}, err
+	}
+	scope := &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: node.GetId(), Index: itemIndex}}}
+	descriptor.Scope = scope
+	descriptor.Input.Schema = node.GetItemInputSchema()
+	descriptor.Output.Schema = node.GetItemOutputSchema()
+	descriptor.Output.ManifestKey = runOutputManifestKey(projectKey, runID, node.GetId(), scope, 1).String()
+	return descriptor, nil
+}
+
+func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, projectKey string, runID string, node *planpb.GraphNode, index executionIndex, outputs map[string]nodeOutput, manifest *runManifest, manifestKey datastore.Key) (nodeOutput, error) {
+	inputBytes, err := inputForNode(node, index.inboundByTarget[node.GetId()], outputs)
+	if err != nil {
+		return nodeOutput{}, err
+	}
+	input := manifestDataArtifact{
+		Key:         runInputKey(projectKey, runID, node.GetId(), nil).String(),
+		Hash:        canonical.DigestBytes(inputBytes),
+		ContentType: jsonContentType,
+		Schema:      node.GetInputSchema(),
+	}
+	if _, err := store.Put(ctx, datastore.MustKey(input.Key), inputBytes, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
+		return nodeOutput{}, fmt.Errorf("write map input artifact for %s: %w", node.GetId(), err)
+	}
+
+	markAttemptRunning(manifest, node.GetId(), input)
+	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+		return nodeOutput{}, err
+	}
+	items, err := mapexec.Expand(inputBytes)
+	if err != nil {
+		return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), err.Error())
+	}
+	markMapItemsPending(manifest, node.GetId(), items)
+
+	descriptors := make([]StepInvocation, 0, len(items))
+	for _, item := range items {
+		scope := &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: node.GetId(), Index: item.Index}}}
+		itemInput := manifestDataArtifact{
+			Key:         runInputKey(projectKey, runID, node.GetId(), scope).String(),
+			Hash:        canonical.DigestBytes(item.Body),
+			ContentType: jsonContentType,
+			Schema:      node.GetItemInputSchema(),
+		}
+		if _, err := store.Put(ctx, datastore.MustKey(itemInput.Key), item.Body, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
+			return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), fmt.Sprintf("write map item %d input: %v", item.Index, err))
+		}
+		descriptor, err := descriptorForMapItem(config, projectKey, runID, node, itemInput, index, item.Index)
+		if err != nil {
+			return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), err.Error())
+		}
+		markMapItemRunning(manifest, node.GetId(), item.Index, itemInput)
+		descriptors = append(descriptors, StepInvocation{Descriptor: descriptor})
+	}
+	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+		return nodeOutput{}, err
+	}
+
+	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: descriptors, MaxConcurrency: int(node.GetMaxConcurrency())})
+	if err != nil {
+		return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), err.Error())
+	}
+	byIndex, err := mapOutcomesByIndex(node.GetId(), outcomes, len(items))
+	if err != nil {
+		return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), err.Error())
+	}
+
+	results := make([]mapexec.Result, 0, len(items))
+	for itemIndex, descriptor := range descriptors {
+		if config.Hooks.AfterStepInvocation != nil {
+			if err := config.Hooks.AfterStepInvocation(ctx, descriptor.Descriptor); err != nil {
+				return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), err.Error())
+			}
+		}
+		outcome := byIndex[itemIndex]
+		if outcome.Status != StatusSucceeded {
+			diagnostic := runnerDiagnostic(outcome)
+			markMapItemFailed(manifest, node.GetId(), itemIndex, diagnostic)
+			if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+				return nodeOutput{}, err
+			}
+			continue
+		}
+		output, err := resolveOutputArtifact(ctx, store, descriptor.Descriptor, index)
+		if err != nil {
+			markMapItemFailed(manifest, node.GetId(), itemIndex, err.Error())
+			if writeErr := writeRunManifest(ctx, store, manifestKey, *manifest); writeErr != nil {
+				return nodeOutput{}, writeErr
+			}
+			continue
+		}
+		markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
+		results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
+		if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+			return nodeOutput{}, err
+		}
+	}
+	if mapHasFailedItem(*manifest, node.GetId()) {
+		return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), "one or more map items failed")
+	}
+	collected, err := mapexec.Collect(results)
+	if err != nil {
+		return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), err.Error())
+	}
+	published, err := artifact.PublishJSON(ctx, store, artifact.Destination{
+		ManifestKey: runOutputManifestKey(projectKey, runID, node.GetId(), nil, 1),
+		Schema:      node.GetOutputSchema(),
+	}, artifact.Producer{
+		ProjectKey: projectKey,
+		PlanHash:   config.Plan.GetPlanHash(),
+		RunID:      runID,
+		NodeID:     node.GetId(),
+		Attempt:    1,
+	}, collected)
+	if err != nil {
+		return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), fmt.Sprintf("publish map collection: %v", err))
+	}
+	output := nodeOutputFromPublished(published, collected)
+	markAttemptSucceeded(manifest, node.GetId(), output.Published)
+	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+		return nodeOutput{}, err
+	}
+	return output, nil
+}
+
+func mapOutcomesByIndex(mapID string, outcomes []StepInvocationOutcome, itemCount int) (map[int]StepInvocationOutcome, error) {
+	if len(outcomes) != itemCount {
+		return nil, fmt.Errorf("map invoker returned %d outcomes, want %d", len(outcomes), itemCount)
+	}
+	byIndex := make(map[int]StepInvocationOutcome, itemCount)
+	for _, outcome := range outcomes {
+		if outcome.NodeID != mapID || outcome.Attempt != 1 || outcome.Scope == nil || len(outcome.Scope.Frames) != 1 {
+			return nil, fmt.Errorf("map invoker returned an outcome without the expected scoped identity")
+		}
+		frame := outcome.Scope.Frames[0]
+		if frame.Kind != "map-item" || frame.MapID != mapID || frame.Index < 0 || frame.Index >= itemCount {
+			return nil, fmt.Errorf("map invoker returned an outcome outside the map item scope")
+		}
+		if _, exists := byIndex[frame.Index]; exists {
+			return nil, fmt.Errorf("map invoker returned duplicate outcome for item %d", frame.Index)
+		}
+		byIndex[frame.Index] = outcome
+	}
+	if len(byIndex) != itemCount {
+		return nil, fmt.Errorf("map invoker omitted an item outcome")
+	}
+	return byIndex, nil
+}
+
+func nodeOutputFromPublished(published artifact.PublishedJSON, body []byte) nodeOutput {
+	return nodeOutput{
+		Artifact: manifestDataArtifact{Key: published.Body.Key, Hash: published.Body.Hash, ContentType: published.Body.ContentType, Schema: published.Schema},
+		Published: manifestPublishedArtifact{
+			Manifest: manifestArtifactRef{Key: published.Manifest.Key, Hash: published.Manifest.Hash, Size: published.Manifest.Size, ContentType: published.Manifest.ContentType},
+			Body:     manifestArtifactRef{Key: published.Body.Key, Hash: published.Body.Hash, Size: published.Body.Size, ContentType: published.Body.ContentType},
+			Schema:   published.Schema,
+		},
+		Body: body,
+	}
+}
+
 func inputForNode(node *planpb.GraphNode, inbound []*planpb.GraphEdge, outputs map[string]nodeOutput) ([]byte, error) {
 	if len(node.GetMergeInputs()) == 0 {
 		if len(inbound) != 1 {
@@ -1039,7 +1211,7 @@ func buildExecutionIndex(workflowPlan *planpb.WorkflowPlan) (executionIndex, err
 		if node.GetKind() != "start" && node.GetKind() != "end" {
 			index.nodeOrder = append(index.nodeOrder, nodeID)
 		}
-		if node.GetKind() == "step" {
+		if node.GetKind() == "step" || node.GetKind() == "map" {
 			index.stepOrder = append(index.stepOrder, nodeID)
 		}
 	}
@@ -1093,15 +1265,20 @@ func topologicalPlanOrder(graph *planpb.GraphIR) ([]string, error) {
 	return order, nil
 }
 
-func newRunManifest(planHash string, projectKey string, runID string, stepOrder []string) runManifest {
+func newRunManifest(planHash string, projectKey string, runID string, stepOrder []string, nodesByID map[string]*planpb.GraphNode) runManifest {
 	steps := make([]manifestStep, 0, len(stepOrder))
 	for _, stepID := range stepOrder {
-		steps = append(steps, manifestStep{NodeID: stepID, Status: StatusPending, Attempts: []manifestAttempt{}})
+		step := manifestStep{NodeID: stepID, Status: StatusPending, Attempts: []manifestAttempt{}}
+		if nodesByID[stepID].GetKind() == "map" {
+			items := []manifestMapItem{}
+			step.Items = &items
+		}
+		steps = append(steps, step)
 	}
 	return runManifest{
 		Kind:          "RunManifest",
-		SchemaVersion: 2,
-		Encoding:      "json-v2",
+		SchemaVersion: 3,
+		Encoding:      "json-v3",
 		PlanHash:      planHash,
 		ProjectKey:    projectKey,
 		RunID:         runID,
@@ -1109,6 +1286,85 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 		Steps:         steps,
 		Decisions:     []manifestDecision{},
 	}
+}
+
+func findManifestStep(manifest *runManifest, nodeID string) *manifestStep {
+	for index := range manifest.Steps {
+		if manifest.Steps[index].NodeID == nodeID {
+			return &manifest.Steps[index]
+		}
+	}
+	return nil
+}
+
+func markMapItemsPending(manifest *runManifest, nodeID string, items []mapexec.Item) {
+	step := findManifestStep(manifest, nodeID)
+	if step == nil || step.Items == nil {
+		return
+	}
+	journalItems := make([]manifestMapItem, len(items))
+	for index, item := range items {
+		journalItems[index] = manifestMapItem{Index: item.Index, Status: StatusPending, Attempts: []manifestAttempt{}}
+	}
+	step.Items = &journalItems
+}
+
+func markMapItemRunning(manifest *runManifest, nodeID string, itemIndex int, input manifestDataArtifact) {
+	step := findManifestStep(manifest, nodeID)
+	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
+		return
+	}
+	item := &(*step.Items)[itemIndex]
+	item.Status = StatusRunning
+	item.Attempts = []manifestAttempt{{Attempt: 1, Status: StatusRunning, Input: input}}
+}
+
+func markMapItemSucceeded(manifest *runManifest, nodeID string, itemIndex int, output manifestPublishedArtifact) {
+	step := findManifestStep(manifest, nodeID)
+	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
+		return
+	}
+	item := &(*step.Items)[itemIndex]
+	item.Status = StatusSucceeded
+	item.Attempts[0].Status = StatusSucceeded
+	item.Attempts[0].Output = &output
+}
+
+func markMapItemFailed(manifest *runManifest, nodeID string, itemIndex int, diagnostic string) {
+	step := findManifestStep(manifest, nodeID)
+	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
+		return
+	}
+	item := &(*step.Items)[itemIndex]
+	item.Status = StatusFailed
+	if len(item.Attempts) == 0 {
+		item.Attempts = []manifestAttempt{{Attempt: 1, Status: StatusFailed, Diagnostic: diagnostic}}
+		return
+	}
+	item.Attempts[0].Status = StatusFailed
+	item.Attempts[0].Diagnostic = diagnostic
+}
+
+func mapHasFailedItem(manifest runManifest, nodeID string) bool {
+	for _, step := range manifest.Steps {
+		if step.NodeID != nodeID || step.Items == nil {
+			continue
+		}
+		for _, item := range *step.Items {
+			if item.Status != StatusSucceeded {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func failMapNode(ctx context.Context, store datastore.Datastore, manifestKey datastore.Key, manifest *runManifest, nodeID string, diagnostic string) error {
+	markAttemptFailed(manifest, nodeID, diagnostic)
+	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+		return err
+	}
+	return errors.New(diagnostic)
 }
 
 func markAttemptRunning(manifest *runManifest, nodeID string, input manifestDataArtifact) {

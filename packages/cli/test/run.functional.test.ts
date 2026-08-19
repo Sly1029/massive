@@ -81,8 +81,8 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
       }[];
     }[];
   };
-  assertEquals(manifest.schemaVersion, 2);
-  assertEquals(manifest.encoding, "json-v2");
+  assertEquals(manifest.schemaVersion, 3);
+  assertEquals(manifest.encoding, "json-v3");
   assertEquals(manifest.status, "succeeded");
   assertEquals(manifest.steps.map((step) => step.nodeId), [
     "double",
@@ -334,8 +334,8 @@ Deno.test("massive run Python decision: selects the approved branch and journals
       attempts: { output?: { body: { key: string; hash: string } } }[];
     }[];
   };
-  assertEquals(manifest.schemaVersion, 2);
-  assertEquals(manifest.encoding, "json-v2");
+  assertEquals(manifest.schemaVersion, 3);
+  assertEquals(manifest.encoding, "json-v3");
   assertEquals(manifest.decisions, [{
     nodeId: "route",
     status: "selected",

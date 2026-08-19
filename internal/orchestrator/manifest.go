@@ -23,7 +23,17 @@ type manifestStep struct {
 	NodeID     string              `json:"nodeId"`
 	Status     string              `json:"status"`
 	Attempts   []manifestAttempt   `json:"attempts"`
+	Items      *[]manifestMapItem  `json:"items,omitempty"`
 	SkipReason *manifestSkipReason `json:"skipReason,omitempty"`
+}
+
+// manifestMapItem keeps each source-indexed invocation observable even when a
+// sibling fails. Its attempts describe the item runner; the containing map
+// step's attempts describe collection into the static map-node output slot.
+type manifestMapItem struct {
+	Index    int               `json:"index"`
+	Status   string            `json:"status"`
+	Attempts []manifestAttempt `json:"attempts"`
 }
 
 // manifestDecision is the durable decision record. Replays must use this
