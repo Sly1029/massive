@@ -137,7 +137,10 @@ first-class decisions, maps, broadcasts, and joins. Massive must own persistence
 durability, artifact handling, and compilation because Pydantic Graph does not
 provide those contracts.
 
-An illustrative workflow should feel approximately like this:
+The following is a forward-looking sketch of the intended reducer tier. It is
+not executable against the current SDK: finite `map()` returning an ordered
+`list[R]` is implemented, while dependency injection, reducer contexts, and
+`reduce()` remain future work.
 
 ```python
 from pydantic import BaseModel
@@ -183,8 +186,8 @@ result = g.reduce(findings, total)
 g.add(g.edge_from(result).to(g.end))
 ```
 
-The final syntax may change after prototypes and real rewrites. The following
-properties are not optional:
+The reducer syntax may change after prototypes and real workflow rewrites. The
+following properties are not optional:
 
 - topology is explicit and inspectable before execution;
 - step inputs and outputs are statically typed and validated at runtime;
@@ -242,9 +245,12 @@ steps; the IR does not serialize Python callables.
 
 ### Map scopes and lineage
 
-A map is a first-class scope, even if the SDK offers concise `g.map(...)` sugar.
-Its body may eventually contain multiple tasks. V2 initially maps only finite,
-already-crystallized collections.
+A map is a first-class scope, even though the SDK offers concise `g.map(...)`
+sugar. Graph IR 0.3 deliberately starts with one mapper task and one
+value-producing map node: it expands a finite, already-crystallized `list[T]`,
+runs the mapper under bounded concurrency, and publishes a source-ordered
+`list[R]`. Its body may eventually contain multiple tasks without changing the
+structured execution-scope identity used by item artifacts.
 
 The compiler tracks scope lineage:
 
@@ -256,8 +262,10 @@ The compiler tracks scope lineage:
 This model is more precise than inferring rank from nested lists and prevents
 accidental Cartesian products.
 
-An empty map structurally reaches its reducer's initial value. It must not need
-a sentinel item or a string ID naming a downstream join.
+An empty Graph IR 0.3 map publishes canonical `[]` at its ordinary output slot.
+It does not need a sentinel item or a string ID naming a downstream join. When
+explicit reducers land, an empty collection will reach the reducer's declared
+initial value.
 
 ### Gather and reduce are distinct
 
@@ -266,10 +274,12 @@ ancestor outputs into a typed model. The compiler verifies dominance and scope
 lineage; it is not limited to immediately adjacent nodes and assumes nothing
 about a repository layout.
 
-A reducer consumes homogeneous outputs from a dynamic map scope. Reducers are
-explicit durable task nodes in the first implementation. Collection order is
-source-index order, never task-completion order. Built-in associative reducers
-can be optimized later without changing this contract.
+A reducer consumes homogeneous outputs from a dynamic map scope. Graph IR 0.3
+first exposes the ordered collected list as an ordinary value; an author may
+feed it to a normal typed step today. First-class durable reducer nodes are the
+next semantic slice. Collection order is source-index order, never
+task-completion order. Built-in associative reducers can be optimized later
+without changing this contract.
 
 ### Failure and retry have tiers
 

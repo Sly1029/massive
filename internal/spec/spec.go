@@ -431,8 +431,10 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".contractRef", Ref: node.ContractRef, Message: "contract reference does not exist"})
 		}
 		for mergeIndex, sourceID := range node.MergeInputs {
-			if source, exists := nodeByID[sourceID]; !exists || source.Kind != NodeKindStep {
-				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("%s.mergeInputs[%d]", path, mergeIndex), Ref: sourceID, Message: "merge input step does not exist"})
+			source, exists := nodeByID[sourceID]
+			_, valueProducer := outputSchemaOfValueProducer(source)
+			if !exists || !valueProducer {
+				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("%s.mergeInputs[%d]", path, mergeIndex), Ref: sourceID, Message: "merge input value producer does not exist"})
 				continue
 			}
 			if !upstream[node.ID][sourceID] {
@@ -716,12 +718,17 @@ func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, i
 			continue
 		}
 		path := fmt.Sprintf("$.graph.nodes[%d]", index)
-		for field, schemaRef := range map[string]string{
-			"inputSchema": node.InputSchema, "itemInputSchema": node.ItemInputSchema,
-			"itemOutputSchema": node.ItemOutputSchema, "outputSchema": node.OutputSchema,
+		for _, field := range []struct {
+			name string
+			ref  string
+		}{
+			{name: "inputSchema", ref: node.InputSchema},
+			{name: "itemInputSchema", ref: node.ItemInputSchema},
+			{name: "itemOutputSchema", ref: node.ItemOutputSchema},
+			{name: "outputSchema", ref: node.OutputSchema},
 		} {
-			if _, exists := parsed.Schemas[schemaRef]; !exists {
-				diagnostics = append(diagnostics, Diagnostic{Path: path + "." + field, Ref: schemaRef, Message: "map schema reference does not exist"})
+			if _, exists := parsed.Schemas[field.ref]; !exists {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + "." + field.name, Ref: field.ref, Message: "map schema reference does not exist"})
 			}
 		}
 		if _, exists := parsed.Symbols[node.SymbolRef]; !exists {
@@ -733,10 +740,14 @@ func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, i
 		if node.MaxConcurrency == 0 {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".maxConcurrency", Ref: node.ID, Message: "map maxConcurrency must be positive"})
 		}
-		if !arraySchemaItemsExactlyMatch(parsed.Schemas[node.InputSchema], parsed.Schemas[node.ItemInputSchema]) {
+		_, inputSchemaExists := parsed.Schemas[node.InputSchema]
+		_, itemInputSchemaExists := parsed.Schemas[node.ItemInputSchema]
+		if inputSchemaExists && itemInputSchemaExists && !arraySchemaItemsExactlyMatch(parsed.Schemas[node.InputSchema], parsed.Schemas[node.ItemInputSchema]) {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.InputSchema, Message: "map inputSchema must be an array whose items exactly equal itemInputSchema"})
 		}
-		if !arraySchemaItemsExactlyMatch(parsed.Schemas[node.OutputSchema], parsed.Schemas[node.ItemOutputSchema]) {
+		_, outputSchemaExists := parsed.Schemas[node.OutputSchema]
+		_, itemOutputSchemaExists := parsed.Schemas[node.ItemOutputSchema]
+		if outputSchemaExists && itemOutputSchemaExists && !arraySchemaItemsExactlyMatch(parsed.Schemas[node.OutputSchema], parsed.Schemas[node.ItemOutputSchema]) {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: node.OutputSchema, Message: "map outputSchema must be an array whose items exactly equal itemOutputSchema"})
 		}
 		if len(inbound[node.ID]) != 1 {
@@ -796,6 +807,9 @@ func graphValueInputSchema(node GraphNode, workflowOutputSchema string) (string,
 }
 
 func arraySchemaItemsExactlyMatch(arraySchema, itemSchema json.RawMessage) bool {
+	if !isUsableJSONSchema(arraySchema) || !isUsableJSONSchema(itemSchema) {
+		return false
+	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(arraySchema, &object); err != nil {
 		return false
@@ -804,7 +818,7 @@ func arraySchemaItemsExactlyMatch(arraySchema, itemSchema json.RawMessage) bool 
 	if err := json.Unmarshal(object["type"], &kind); err != nil || kind != "array" || len(object["items"]) == 0 {
 		return false
 	}
-	items, ok := resolveLocalJSONReference(arraySchema, object["items"])
+	items, ok := standaloneArrayItemSchema(arraySchema, object["items"])
 	if !ok {
 		return false
 	}
@@ -817,6 +831,180 @@ func arraySchemaItemsExactlyMatch(arraySchema, itemSchema json.RawMessage) bool 
 		return false
 	}
 	return bytes.Equal(canonicalItems, canonicalItemSchema)
+}
+
+// standaloneArrayItemSchema compares Pydantic's list[T] schema with its
+// separately emitted T schema in one definition scope. For non-recursive
+// models Pydantic inlines T at the standalone root and carries only T's
+// transitive dependencies in $defs. Recursive models retain a root $ref and
+// include T itself. Reconstruct exactly that document shape; do not attempt
+// general JSON Schema equivalence.
+func standaloneArrayItemSchema(document, items json.RawMessage) (json.RawMessage, bool) {
+	var referenceOnly map[string]json.RawMessage
+	if err := json.Unmarshal(items, &referenceOnly); err != nil || len(referenceOnly) != 1 {
+		return items, true
+	}
+	referenceJSON, hasReference := referenceOnly["$ref"]
+	if !hasReference {
+		return items, true
+	}
+	var reference string
+	if err := json.Unmarshal(referenceJSON, &reference); err != nil {
+		return nil, false
+	}
+	rootName, ok := localDefinitionName(reference, true)
+	if !ok {
+		return resolveLocalJSONReference(document, items)
+	}
+
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(document, &root); err != nil {
+		return nil, false
+	}
+	var definitions map[string]json.RawMessage
+	if err := json.Unmarshal(root["$defs"], &definitions); err != nil {
+		return nil, false
+	}
+	rootSchema, exists := definitions[rootName]
+	if !exists {
+		return nil, false
+	}
+	closure, recursive, ok := localDefinitionClosure(rootName, rootSchema, definitions)
+	if !ok {
+		return nil, false
+	}
+
+	var standalone any
+	if recursive {
+		closure[rootName] = rootSchema
+		standalone = map[string]any{"$defs": closure, "$ref": reference}
+	} else {
+		var rootObject map[string]any
+		if err := json.Unmarshal(rootSchema, &rootObject); err != nil {
+			return nil, false
+		}
+		if len(closure) > 0 {
+			rootObject["$defs"] = closure
+		}
+		standalone = rootObject
+	}
+	encoded, err := json.Marshal(standalone)
+	if err != nil {
+		return nil, false
+	}
+	return encoded, true
+}
+
+func localDefinitionClosure(rootName string, rootSchema json.RawMessage, definitions map[string]json.RawMessage) (map[string]json.RawMessage, bool, bool) {
+	references, ok := localDefinitionReferences(rootSchema)
+	if !ok {
+		return nil, false, false
+	}
+	closure := make(map[string]json.RawMessage)
+	queued := sortedKeys(references)
+	recursive := false
+	for len(queued) > 0 {
+		name := queued[0]
+		queued = queued[1:]
+		if name == rootName {
+			recursive = true
+			continue
+		}
+		if _, seen := closure[name]; seen {
+			continue
+		}
+		definition, exists := definitions[name]
+		if !exists {
+			return nil, false, false
+		}
+		closure[name] = definition
+		dependencies, ok := localDefinitionReferences(definition)
+		if !ok {
+			return nil, false, false
+		}
+		for _, dependency := range sortedKeys(dependencies) {
+			if dependency == rootName {
+				recursive = true
+				continue
+			}
+			if _, seen := closure[dependency]; !seen {
+				queued = append(queued, dependency)
+			}
+		}
+		sort.Slice(queued, func(i, j int) bool { return canonical.LessUTF16(queued[i], queued[j]) })
+	}
+	return closure, recursive, true
+}
+
+func localDefinitionReferences(schema json.RawMessage) (map[string]bool, bool) {
+	var value any
+	if err := json.Unmarshal(schema, &value); err != nil {
+		return nil, false
+	}
+	references := make(map[string]bool)
+	var visit func(any) bool
+	visit = func(current any) bool {
+		switch typed := current.(type) {
+		case []any:
+			for _, item := range typed {
+				if !visit(item) {
+					return false
+				}
+			}
+		case map[string]any:
+			for key, child := range typed {
+				if key == "$ref" {
+					reference, isString := child.(string)
+					if !isString {
+						return false
+					}
+					name, local := localDefinitionName(reference, false)
+					if !local {
+						return false
+					}
+					references[name] = true
+				}
+				if !visit(child) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	if !visit(value) {
+		return nil, false
+	}
+	return references, true
+}
+
+func localDefinitionName(reference string, requireDefinitionRoot bool) (string, bool) {
+	parsed, err := url.Parse(reference)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.Path != "" || parsed.RawQuery != "" || !strings.HasPrefix(parsed.Fragment, "/") {
+		return "", false
+	}
+	encodedTokens := strings.Split(parsed.Fragment[1:], "/")
+	if len(encodedTokens) < 2 || (requireDefinitionRoot && len(encodedTokens) != 2) {
+		return "", false
+	}
+	definitionToken, ok := decodeJSONPointerToken(encodedTokens[0])
+	if !ok || definitionToken != "$defs" {
+		return "", false
+	}
+	name, ok := decodeJSONPointerToken(encodedTokens[1])
+	return name, ok && name != ""
+}
+
+func isUsableJSONSchema(schema json.RawMessage) bool {
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(schema))
+	if err != nil {
+		return false
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("map-boundary.schema.json", document); err != nil {
+		return false
+	}
+	_, err = compiler.Compile("map-boundary.schema.json")
+	return err == nil
 }
 
 // resolveLocalJSONReference follows reference-only local JSON Pointer values
@@ -875,7 +1063,7 @@ func resolveLocalJSONPointer(document json.RawMessage, reference string) (json.R
 			continue
 		}
 		var array []json.RawMessage
-		if err := json.Unmarshal(current, &array); err != nil || (len(token) > 1 && token[0] == '0') {
+		if err := json.Unmarshal(current, &array); err != nil || !isJSONPointerArrayIndex(token) {
 			return nil, false
 		}
 		index, err := strconv.Atoi(token)
@@ -885,6 +1073,18 @@ func resolveLocalJSONPointer(document json.RawMessage, reference string) (json.R
 		current = array[index]
 	}
 	return current, true
+}
+
+func isJSONPointerArrayIndex(token string) bool {
+	if token == "" || (len(token) > 1 && token[0] == '0') {
+		return false
+	}
+	for index := range len(token) {
+		if token[index] < '0' || token[index] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeJSONPointerToken(encoded string) (string, bool) {

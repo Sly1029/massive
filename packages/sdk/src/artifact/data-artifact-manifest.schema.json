@@ -9,7 +9,7 @@
   "properties": {
     "kind": { "const": "DataArtifactManifest" },
     "schemaVersion": { "const": 1 },
-    "encoding": { "const": "canonical-json-v1" },
+    "encoding": { "const": "canonical-json-v0" },
     "producer": { "$ref": "#/$defs/producer" },
     "schema": { "$ref": "#/$defs/hashRef" },
     "body": { "$ref": "#/$defs/body" }

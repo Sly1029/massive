@@ -121,6 +121,83 @@ Deno.test("runner executes a real fixture step end to end against a temp local d
   );
 });
 
+Deno.test("runner publishes a scoped invocation with collision-free identity", async () => {
+  await withRunnerFixture(
+    { input: { value: 21 }, stepExport: "assertMappedIdentity" },
+    async ({ descriptor, store }) => {
+      const scoped = {
+        ...descriptor,
+        scope: {
+          frames: [{
+            kind: "map-item" as const,
+            mapId: "map-double",
+            index: 3,
+          }],
+        },
+        output: {
+          ...descriptor.output,
+          manifestKey: scopedOutputManifestKey(),
+        },
+      };
+      const outcome = await executeStep(scoped);
+
+      assertEquals(outcome.kind, "success");
+      const resolved = await new ArtifactRuntime(
+        new LocalDatastoreClient({ path: store.root }),
+      ).resolveJson(
+        {
+          manifestKey: Key.parse(scoped.output.manifestKey),
+          schema: scoped.output.schema,
+        },
+        producerFor(scoped),
+      );
+      assertEquals(new TextDecoder().decode(resolved.body), '{"value":42}');
+    },
+  );
+});
+
+Deno.test("runner preserves every ordered frame in a nested idempotency identity", async () => {
+  await withRunnerFixture(
+    { input: { value: 21 }, stepExport: "assertNestedMappedIdentity" },
+    async ({ descriptor }) => {
+      const scope = {
+        frames: [
+          { kind: "map-item" as const, mapId: "outer", index: 0 },
+          { kind: "map-item" as const, mapId: "inner", index: 4 },
+        ],
+      };
+      const outcome = await executeStep({
+        ...descriptor,
+        scope,
+        output: {
+          ...descriptor.output,
+          manifestKey:
+            `${runPrefix()}/steps/double/scopes/maps/outer/items/0/maps/inner/items/4/1/output-manifest.json`,
+        },
+      });
+
+      assertEquals(outcome.kind, "success");
+    },
+  );
+});
+
+Deno.test("runner rejects a scope and output-slot mismatch before user code", async () => {
+  await withRunnerFixture(
+    { input: { value: 21 }, stepExport: "explode" },
+    async ({ descriptor }) => {
+      const outcome = await executeStep({
+        ...descriptor,
+        scope: {
+          frames: [{ kind: "map-item", mapId: "map-double", index: 3 }],
+        },
+      });
+
+      assertEquals(outcome.kind, "schema-validation-failure");
+      assertEquals(outcome.exitCode, RUNNER_EXIT_CODES.schemaValidationFailure);
+    },
+  );
+});
+
 Deno.test("runner reports descriptor/resolution failures with exit 64", async () => {
   await withRunnerFixture(
     { input: { value: 1 }, stepExport: "missing" },
@@ -430,6 +507,10 @@ function inputKey(): string {
 
 function outputManifestKey(): string {
   return `${runPrefix()}/steps/double/1/output-manifest.json`;
+}
+
+function scopedOutputManifestKey(): string {
+  return `${runPrefix()}/steps/double/scopes/maps/map-double/items/3/1/output-manifest.json`;
 }
 
 function producerFor(descriptor: StepInvocationDescriptor) {

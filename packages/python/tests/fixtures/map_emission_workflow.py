@@ -9,8 +9,12 @@ class Request(BaseModel):
     value: int
 
 
-class Item(BaseModel):
+class Detail(BaseModel):
     value: int
+
+
+class Item(BaseModel):
+    detail: Detail
 
 
 class Result(BaseModel):
@@ -18,11 +22,11 @@ class Result(BaseModel):
 
 
 def load_items(context: StepContext[None, Request]) -> list[Item]:
-    return [Item(value=context.inputs.value)]
+    return [Item(detail=Detail(value=context.inputs.value))]
 
 
 def render_item(context: StepContext[None, Item]) -> Result:
-    return Result(label=str(context.inputs.value))
+    return Result(label=str(context.inputs.detail.value))
 
 
 graph = GraphBuilder(

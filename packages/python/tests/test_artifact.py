@@ -44,26 +44,67 @@ def test_publish_resolve_and_retry_use_the_go_compatible_manifest(tmp_path: Path
     assert resolved == BODY
     assert first.body.hash == BODY_HASH
     assert store.get(_destination().manifest_key).body == (
-        b'{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v1","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":1}'
+        b'{"body":{"contentType":"application/json","hash":"sha256:dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","key":"blobs/sha256/dc60e632a90329ccfd34fbe904d94704dbbb6669575185e26389854ff64139c3","size":12},"encoding":"canonical-json-v0","kind":"DataArtifactManifest","producer":{"attempt":1,"nodeId":"task","planHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectKey":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","runId":"run-1"},"schema":"sha256:cc6d2156c280bb3efad77622be3c070cf9a18fbf7ddaf4db6a7c6988a417048a","schemaVersion":1}'
     )
 
 
-def test_map_item_scope_uses_a_distinct_output_slot_without_changing_node_id(tmp_path: Path) -> None:
+def test_map_item_scope_uses_a_distinct_output_slot_without_changing_node_id(
+    tmp_path: Path,
+) -> None:
     runtime, _store = _runtime(tmp_path)
     first = Producer.model_validate(
-        {**_producer().model_dump(exclude={"scope"}), "scope": {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 0}]}}
+        {
+            **_producer().model_dump(exclude={"scope"}),
+            "scope": {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 0}]},
+        }
     )
     second = Producer.model_validate(
-        {**_producer().model_dump(exclude={"scope"}), "scope": {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 1}]}}
+        {
+            **_producer().model_dump(exclude={"scope"}),
+            "scope": {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 1}]},
+        }
     )
 
     first_destination = _destination_for(first)
     second_destination = _destination_for(second)
     assert first.node_id == second.node_id == "task"
-    assert first_destination.manifest_key == f"projects/{PROJECT_KEY}/runs/run-1/steps/task/scopes/maps/fanout/items/0/1/output-manifest.json"
+    assert (
+        first_destination.manifest_key
+        == f"projects/{PROJECT_KEY}/runs/run-1/steps/task/scopes/maps/fanout/items/0/1/output-manifest.json"
+    )
     assert first_destination != second_destination
     runtime.publish_json(first_destination, first, BODY)
     runtime.publish_json(second_destination, second, BODY)
+
+
+def test_nested_scope_manifest_matches_the_shared_cross_runtime_bytes(tmp_path: Path) -> None:
+    runtime, store = _runtime(tmp_path)
+    producer = Producer.model_validate(
+        {
+            **_producer().model_dump(exclude={"scope"}),
+            "scope": {
+                "frames": [
+                    {"kind": "map-item", "mapId": "outer", "index": 0},
+                    {"kind": "map-item", "mapId": "inner", "index": 4},
+                ]
+            },
+        }
+    )
+    destination = _destination_for(producer)
+
+    runtime.publish_json(destination, producer, BODY)
+
+    fixture = (
+        (
+            Path(__file__).resolve().parents[3]
+            / "conformance/fixtures/artifacts/canonical-json/scoped-manifest.json"
+        )
+        .read_bytes()
+        .rstrip(b"\n")
+    )
+    assert store.get(destination.manifest_key).body == fixture
+    _publication, resolved = runtime.resolve_json(destination, producer)
+    assert resolved == BODY
 
 
 def test_publish_completes_a_body_only_interrupted_publication(tmp_path: Path) -> None:
@@ -160,7 +201,11 @@ def test_local_conditional_put_never_overwrites_a_same_type_race(tmp_path: Path)
 def test_local_conditional_put_recovers_a_metadata_only_crash_state(tmp_path: Path) -> None:
     store = LocalDatastore(tmp_path / "store")
     key = "objects/recover.json"
-    metadata = store.root / ".massive-datastore-metadata" / f"{sha256_ref(key).removeprefix('sha256:')}.json"
+    metadata = (
+        store.root
+        / ".massive-datastore-metadata"
+        / f"{sha256_ref(key).removeprefix('sha256:')}.json"
+    )
     metadata.parent.mkdir(parents=True)
     metadata.write_text('{"contentType":"application/json"}')
 
@@ -209,7 +254,9 @@ def test_resolve_rejects_tampered_publications(tmp_path: Path, tamper: str) -> N
         runtime.resolve_json(_destination(), _producer())
 
 
-def test_resolve_reports_a_missing_manifest_separately_from_integrity_failures(tmp_path: Path) -> None:
+def test_resolve_reports_a_missing_manifest_separately_from_integrity_failures(
+    tmp_path: Path,
+) -> None:
     runtime, _store = _runtime(tmp_path)
 
     with pytest.raises(ArtifactNotFoundError):
@@ -456,8 +503,11 @@ def _destination(run_id: str = "run-1") -> Destination:
 
 
 def _destination_for(producer: Producer) -> Destination:
-    scope = "" if producer.scope is None else "/scopes" + "".join(
-        f"/maps/{frame.map_id}/items/{frame.index}" for frame in producer.scope.frames
+    scope = (
+        ""
+        if producer.scope is None
+        else "/scopes"
+        + "".join(f"/maps/{frame.map_id}/items/{frame.index}" for frame in producer.scope.frames)
     )
     return Destination(
         manifest_key=(
@@ -476,8 +526,6 @@ def _producer(run_id: str = "run-1") -> Producer:
         node_id="task",
         attempt=1,
     )
-
-
 
 
 def _write_content_type(store: LocalDatastore, key: str, content_type: str) -> None:

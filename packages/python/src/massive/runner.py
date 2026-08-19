@@ -184,15 +184,52 @@ def _execute(descriptor: StepInvocationDescriptor) -> None:
     if symbol["packageId"] != source_package["packageId"]:
         raise DescriptorError("symbol package does not match source package")
     datastore = _datastore(descriptor["datastore"])
+    destination, producer = _publication_identity(descriptor)
+    try:
+        ArtifactRuntime(datastore).validate_destination(destination, producer)
+    except (ArtifactError, PydanticValidationError) as error:
+        raise SchemaError(f"output artifact destination is invalid: {error}") from error
     input_value, _input_schema = _read_input(descriptor, datastore)
     with _source_root(source_package, datastore) as source_root:
         function, input_adapter, output_adapter = _resolve_step(symbol, source_root)
-        _execute_source(descriptor, datastore, function, input_adapter, output_adapter, input_value)
+        _execute_source(
+            descriptor,
+            datastore,
+            destination,
+            producer,
+            function,
+            input_adapter,
+            output_adapter,
+            input_value,
+        )
+
+
+def _publication_identity(
+    descriptor: StepInvocationDescriptor,
+) -> tuple[Destination, Producer]:
+    output = descriptor["output"]
+    return (
+        Destination(manifest_key=output["manifestKey"], schema_ref=output["schema"]),
+        Producer(
+            project_key=descriptor["projectKey"],
+            plan_hash=descriptor["planHash"],
+            run_id=descriptor["runId"],
+            node_id=descriptor["nodeId"],
+            attempt=descriptor["attempt"],
+            scope=(
+                None
+                if "scope" not in descriptor
+                else ArtifactExecutionScope.model_validate(descriptor["scope"])
+            ),
+        ),
+    )
 
 
 def _execute_source(
     descriptor: StepInvocationDescriptor,
     datastore: Datastore,
+    destination: Destination,
+    producer: Producer,
     function: StepFunction,
     input_adapter: TypeAdapter[object] | None,
     output_adapter: TypeAdapter[object] | None,
@@ -238,25 +275,10 @@ def _execute_source(
         output_text = canonical_json(cast(JsonValue, output))
     except (TypeError, ValueError) as error:
         raise SchemaError(f"output is not canonical JSON: {error}") from error
-    output_descriptor = descriptor["output"]
     try:
         ArtifactRuntime(datastore).publish_json(
-            Destination(
-                manifest_key=output_descriptor["manifestKey"],
-                schema_ref=output_descriptor["schema"],
-            ),
-            Producer(
-                project_key=descriptor["projectKey"],
-                plan_hash=descriptor["planHash"],
-                run_id=descriptor["runId"],
-                node_id=descriptor["nodeId"],
-                attempt=descriptor["attempt"],
-                scope=(
-                    None
-                    if "scope" not in descriptor
-                    else ArtifactExecutionScope.model_validate(descriptor["scope"])
-                ),
-            ),
+            destination,
+            producer,
             output_text.encode(),
         )
     except (ArtifactError, PydanticValidationError) as error:

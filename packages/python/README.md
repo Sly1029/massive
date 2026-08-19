@@ -175,12 +175,18 @@ input to be exactly `T`. Its mapper is registered by `map()`, rather than with
 `add()`. The result preserves source order and represents an empty input as an
 empty `list[Result]`; it may feed ordinary downstream nodes, including a later
 map as sequential composition. `concurrency` defaults to 20 and must be a
-strict integer from 1 through 4,294,967,295.
+strict integer from 1 through 4,294,967,295. It is an upper bound: a target may
+apply a lower executor capacity. The local process executor currently caps a
+map at 32 simultaneous child processes.
 
 Emission produces one Graph IR 0.3 `map` node with its input, item-input,
 item-output, and collected-output schemas, mapper symbol and contract, and
 `maxConcurrency`. The emitted map contract is the execution boundary; no local
 in-memory map behavior is part of the authoring API.
+
+Finite maps execute through `massive run`'s local compiled path today. The Argo
+target rejects Graph IR 0.3 map nodes with an explicit unsupported-semantic
+diagnostic; it does not generate a template that changes map behavior.
 
 ## Artifact handling
 

@@ -118,6 +118,7 @@ def test_python_model_map_emits_a_spec_accepted_by_go_compiler(tmp_path: Path) -
     map_node = next(node for node in emitted["graph"]["nodes"] if node["kind"] == "map")
     assert emitted["graph"]["irVersion"] == "0.3"
     assert emitted["schemas"][map_node["inputSchema"]]["items"] == {"$ref": "#/$defs/Item"}
+    assert "Detail" in emitted["schemas"][map_node["inputSchema"]]["$defs"]
     assert emitted["schemas"][map_node["outputSchema"]]["items"] == {"$ref": "#/$defs/Result"}
     compiled = json.loads((tmp_path / "compiled/workflow-plan.json").read_text())
     compiled_map = next(node for node in compiled["graph"]["nodes"] if node["kind"] == "map")

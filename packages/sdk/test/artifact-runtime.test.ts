@@ -384,9 +384,11 @@ function producer(): ArtifactProducer {
 function destinationFor(producer: ArtifactProducer): ArtifactDestination {
   const item = producer.scope === undefined
     ? ""
-    : `/scopes${producer.scope.frames.map((frame) =>
-      `/maps/${frame.mapId}/items/${frame.index}`
-    ).join("")}`;
+    : `/scopes${
+      producer.scope.frames.map((frame) =>
+        `/maps/${frame.mapId}/items/${frame.index}`
+      ).join("")
+    }`;
   return {
     manifestKey: Key.parse(
       `projects/${producer.projectKey}/runs/${producer.runId}/steps/${producer.nodeId}${item}/${producer.attempt}/output-manifest.json`,
@@ -399,11 +401,15 @@ Deno.test("artifact runtime gives map items distinct immutable output slots with
   await withRuntime(async (_store, runtime) => {
     const first = {
       ...producer(),
-      scope: { frames: [{ kind: "map-item" as const, mapId: "fanout", index: 0 }] },
+      scope: {
+        frames: [{ kind: "map-item" as const, mapId: "fanout", index: 0 }],
+      },
     };
     const second = {
       ...first,
-      scope: { frames: [{ kind: "map-item" as const, mapId: "fanout", index: 1 }] },
+      scope: {
+        frames: [{ kind: "map-item" as const, mapId: "fanout", index: 1 }],
+      },
     };
 
     assertEquals(
@@ -418,6 +424,43 @@ Deno.test("artifact runtime gives map items distinct immutable output slots with
     );
     await runtime.publishJson(destinationFor(first), first, BODY);
     await runtime.publishJson(destinationFor(second), second, BODY);
+  });
+});
+
+Deno.test("artifact runtime matches the shared nested-scope manifest bytes", async () => {
+  await withRuntime(async (store, runtime) => {
+    const scopedProducer: ArtifactProducer = {
+      ...producer(),
+      scope: {
+        frames: [
+          { kind: "map-item", mapId: "outer", index: 0 },
+          { kind: "map-item", mapId: "inner", index: 4 },
+        ],
+      },
+    };
+    const scopedDestination: ArtifactDestination = {
+      ...destination(),
+      manifestKey: Key.parse(
+        `projects/${PROJECT_KEY}/runs/run-1/steps/task/scopes/maps/outer/items/0/maps/inner/items/4/1/output-manifest.json`,
+      ),
+    };
+    await runtime.publishJson(scopedDestination, scopedProducer, BODY);
+    const expected = (await Deno.readTextFile(
+      new URL(
+        "../../../conformance/fixtures/artifacts/canonical-json/scoped-manifest.json",
+        import.meta.url,
+      ),
+    )).trimEnd();
+    assertEquals(
+      decoder.decode((await store.get(scopedDestination.manifestKey)).body),
+      expected,
+    );
+    assertEquals(
+      decoder.decode(
+        (await runtime.resolveJson(scopedDestination, scopedProducer)).body,
+      ),
+      BODY,
+    );
   });
 });
 

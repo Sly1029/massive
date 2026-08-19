@@ -44,7 +44,7 @@ async def inspect_item(context: StepContext[None, Item]) -> Finding:
     # still be deterministic by source index.
     await asyncio.sleep((4 - context.inputs.value) * 0.02)
     if context.inputs.value < 0:
-        raise ValueError("negative values cannot be inspected")
+        raise ValueError("private-fixture-payload must not enter durable state")
     return Finding(source=context.inputs.value, doubled=context.inputs.value * 2)
 
 

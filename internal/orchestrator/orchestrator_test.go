@@ -445,6 +445,100 @@ func TestRunOutputManifestKeyIncludesOrderedMapScope(t *testing.T) {
 	}
 }
 
+func TestRunFiniteMapPublishesScopedItemsAndOrderedCollection(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "workflow.ts"), []byte("// executed by the functional datastore invoker\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compiled, manifests := compileConsistentFixture(t, "finite-map", sourceRoot)
+	invoker := &functionalStepInvoker{storeRoot: storeRoot}
+
+	result, err := Run(context.Background(), RunConfig{
+		Plan:              compiled.Plan,
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "examples/finite-map",
+		RunID:             "finite-map-go-writer",
+		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
+		StepInvoker:       invoker,
+	}, []byte(`[2,1,2]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	assertStoredJSON(t, storeRoot, result.ResultKey, `["item:2","item:1","item:2"]`)
+
+	manifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
+	if len(manifest.Steps) != 1 || manifest.Steps[0].Items == nil || len(*manifest.Steps[0].Items) != 3 {
+		t.Fatalf("map journal = %#v, want three item records", manifest.Steps)
+	}
+	for index, item := range *manifest.Steps[0].Items {
+		if item.Status != StatusSucceeded || len(item.Attempts) != 1 || item.Attempts[0].Output == nil {
+			t.Fatalf("item %d = %#v, want one successful publication", index, item)
+		}
+		wantScope := fmt.Sprintf("/scopes/maps/map-items/items/%d/1/output-manifest.json", index)
+		if !strings.Contains(item.Attempts[0].Output.Manifest.Key, wantScope) {
+			t.Fatalf("item %d output key = %q, want scoped suffix %q", index, item.Attempts[0].Output.Manifest.Key, wantScope)
+		}
+	}
+}
+
+func TestRunFiniteMapPersistsNotStartedItemsAfterInvokerFailure(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "workflow.ts"), []byte("// runner intentionally unavailable\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compiled, manifests := compileConsistentFixture(t, "finite-map", sourceRoot)
+
+	result, err := Run(context.Background(), RunConfig{
+		Plan:              compiled.Plan,
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "examples/finite-map-failure",
+		RunID:             "finite-map-invoker-failure",
+		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
+		StepInvoker: &ProcessStepInvoker{
+			CommandTemplate: []string{"massive-runner-that-does-not-exist"},
+			ProcessLimit:    2,
+		},
+	}, []byte(`[1,2,3,4,5]`))
+	if err == nil {
+		t.Fatal("run succeeded with an unavailable map runner")
+	}
+	if result == nil || result.Status != StatusFailed {
+		t.Fatalf("result = %#v, want durable failed run", result)
+	}
+	manifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
+	items := *manifest.Steps[0].Items
+	failed, notStarted := 0, 0
+	for _, item := range items {
+		switch item.Status {
+		case StatusFailed:
+			failed++
+			if len(item.Attempts) != 1 || item.Attempts[0].Diagnostic != "map item did not complete" {
+				t.Fatalf("started infrastructure failure = %#v", item)
+			}
+		case StatusNotStarted:
+			notStarted++
+			if len(item.Attempts) != 0 {
+				t.Fatalf("not-started item has attempts: %#v", item)
+			}
+		default:
+			t.Fatalf("nonterminal item after failed map: %#v", item)
+		}
+	}
+	if failed == 0 || failed > 2 || notStarted == 0 || failed+notStarted != len(items) {
+		t.Fatalf("terminal item counts = failed:%d not-started:%d total:%d", failed, notStarted, len(items))
+	}
+	if body := string(getObject(t, storeRoot, result.ManifestKey).Body); strings.Contains(body, "runner-failure") {
+		t.Fatalf("infrastructure failure was persisted as an author runner failure: %s", body)
+	}
+}
+
 func TestTamperedOutputManifestFailsIntegrityValidation(t *testing.T) {
 	storeRoot := newStoreRoot(t)
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
@@ -955,6 +1049,7 @@ func (i *functionalStepInvoker) InvokeSteps(ctx context.Context, batch StepInvoc
 		outcomes = append(outcomes, StepInvocationOutcome{
 			NodeID:  descriptor.NodeID,
 			Attempt: descriptor.Attempt,
+			Scope:   descriptor.Scope,
 			Status:  StatusSucceeded,
 		})
 	}
@@ -981,6 +1076,8 @@ func runFixtureStep(nodeID string, inputBytes []byte) ([]byte, error) {
 		output = input.(map[string]any)["value"]
 	case "reject":
 		output = float64(0)
+	case "map-items":
+		output = fmt.Sprintf("item:%v", input)
 	default:
 		return nil, errors.New("unknown fixture step " + nodeID)
 	}

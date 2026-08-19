@@ -29,7 +29,7 @@ func TestExpandAndCollectPreserveSourceIndexAndDuplicates(t *testing.T) {
 		{Index: 0, Body: []byte(`{"doubled":6}`)},
 		{Index: 2, Body: []byte(`{"doubled":6}`)},
 	}
-	collected, err := mapexec.Collect(completed)
+	collected, err := mapexec.Collect(len(items), completed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestEmptyMapCollectsAnEmptyArray(t *testing.T) {
 	if len(items) != 0 {
 		t.Fatalf("got %d items, want none", len(items))
 	}
-	collected, err := mapexec.Collect(nil)
+	collected, err := mapexec.Collect(0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestExpandAndCollectRejectValuesOutsideCanonicalArrayContract(t *testing.T)
 			}
 		})
 	}
-	if _, err := mapexec.Collect([]mapexec.Result{{Index: 0, Body: []byte(`{"value": 1}`)}}); err == nil {
+	if _, err := mapexec.Collect(1, []mapexec.Result{{Index: 0, Body: []byte(`{"value": 1}`)}}); err == nil {
 		t.Fatal("expected collection error for noncanonical item")
 	}
 }
@@ -88,9 +88,19 @@ func TestCollectRejectsIncompleteOrDuplicateResultIdentity(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := mapexec.Collect(results); err == nil {
+			if _, err := mapexec.Collect(len(results), results); err == nil {
 				t.Fatal("expected result identity error")
 			}
 		})
+	}
+}
+
+func TestCollectRejectsAResultSetShorterThanTheExpandedInput(t *testing.T) {
+	if _, err := mapexec.Collect(4, []mapexec.Result{
+		{Index: 0, Body: []byte(`1`)},
+		{Index: 1, Body: []byte(`2`)},
+		{Index: 2, Body: []byte(`3`)},
+	}); err == nil {
+		t.Fatal("expected collection error for a missing tail result")
 	}
 }

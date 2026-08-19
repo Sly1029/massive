@@ -2,12 +2,14 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Sly1029/massive/internal/artifact"
 )
@@ -165,18 +167,11 @@ func TestProcessStepInvokerBoundsHighCardinalityBatchWithRealProcesses(t *testin
 
 	steps := make([]StepInvocation, 24)
 	for index := range steps {
-		steps[index] = StepInvocation{Descriptor: StepInvocationDescriptor{
-			RunID:   "bounded-batch",
-			NodeID:  "map-items",
-			Attempt: 1,
-			Scope: &ExecutionScope{Frames: []MapItemScopeFrame{{
-				Kind: "map-item", MapID: "map-items", Index: index,
-			}}},
-		}}
+		steps[index] = StepInvocation{Descriptor: processMapDescriptor("bounded-batch", index)}
 	}
-	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{script}}).InvokeSteps(
+	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{script}, ProcessLimit: 3}).InvokeSteps(
 		context.Background(),
-		StepInvocationBatch{Steps: steps, MaxConcurrency: 3},
+		StepInvocationBatch{Steps: steps, MaxConcurrency: 1_000_000},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +185,73 @@ func TestProcessStepInvokerBoundsHighCardinalityBatchWithRealProcesses(t *testin
 	}
 	if maximum != 3 {
 		t.Fatalf("maximum live child processes = %d, want exactly 3", maximum)
+	}
+}
+
+func TestProcessStepInvokerStopsDispatchAfterContextCancellation(t *testing.T) {
+	state := t.TempDir()
+	startedPath := filepath.Join(state, "started")
+	script := filepath.Join(state, "runner.sh")
+	source := "#!/bin/sh\nprintf x >> '" + startedPath + "'\nsleep 5\n"
+	if err := os.WriteFile(script, []byte(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	steps := make([]StepInvocation, 20)
+	for index := range steps {
+		steps[index] = StepInvocation{Descriptor: processMapDescriptor("cancelled-batch", index)}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{script}}).InvokeSteps(
+		ctx,
+		StepInvocationBatch{Steps: steps, MaxConcurrency: 3},
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context deadline", err)
+	}
+	started := len(mustReadFile(t, startedPath))
+	if started == 0 || started > 3 {
+		t.Fatalf("started processes = %d, want 1..3", started)
+	}
+	if len(outcomes) != started {
+		t.Fatalf("outcomes = %d, started = %d", len(outcomes), started)
+	}
+	for _, outcome := range outcomes {
+		if outcome.Status != stepInvocationStatusCancelled || outcome.Diagnostic != "" {
+			t.Fatalf("cancelled outcome = %#v, want sanitized cancelled status", outcome)
+		}
+	}
+}
+
+func TestProcessStepInvokerStopsDispatchAfterInfrastructureFailure(t *testing.T) {
+	steps := make([]StepInvocation, 20)
+	for index := range steps {
+		steps[index] = StepInvocation{Descriptor: processMapDescriptor("missing-runner", index)}
+	}
+	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{"massive-runner-that-does-not-exist"}}).InvokeSteps(
+		context.Background(),
+		StepInvocationBatch{Steps: steps, MaxConcurrency: 3},
+	)
+	if err == nil {
+		t.Fatal("missing runner returned no infrastructure error")
+	}
+	if len(outcomes) == 0 || len(outcomes) > 3 {
+		t.Fatalf("outcomes = %d, want only the started worker set", len(outcomes))
+	}
+}
+
+func processMapDescriptor(runID string, index int) StepInvocationDescriptor {
+	projectKey := "sha256-" + strings.Repeat("a", 64)
+	planHash := "sha256:" + strings.Repeat("b", 64)
+	schemaRef := "sha256:" + strings.Repeat("c", 64)
+	scope := &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: "map-items", Index: index}}}
+	return StepInvocationDescriptor{
+		PlanHash: planHash, ProjectKey: projectKey, RunID: runID, NodeID: "map-items", Attempt: 1, Scope: scope,
+		Output: DataArtifactManifestDestination{
+			ManifestKey: runOutputManifestKey(projectKey, runID, "map-items", scope, 1).String(),
+			Schema:      schemaRef,
+		},
 	}
 }
 

@@ -162,6 +162,17 @@
         "attempt": 1,
         "scope": { "frames": [{ "kind": "map-item", "mapId": "../fanout", "index": 0 }] }
       }
+    },
+    {
+      "name": "scope-frame-kind-must-be-map-item",
+      "producer": {
+        "projectKey": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+        "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "runId": "run-1",
+        "nodeId": "task",
+        "attempt": 1,
+        "scope": { "frames": [{ "kind": "channel-item", "mapId": "fanout", "index": 0 }] }
+      }
     }
   ]
 }

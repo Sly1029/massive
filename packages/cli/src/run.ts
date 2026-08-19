@@ -699,26 +699,95 @@ const ManifestSkipReasonSchema = z.object({
 }).strict();
 
 const ManifestMapItemSchema = z.discriminatedUnion("status", [
-  z.object({ index: z.number().int().nonnegative(), status: z.literal("pending"), attempts: z.array(ManifestAttemptSchema).length(0) }).strict(),
-  z.object({ index: z.number().int().nonnegative(), status: z.literal("running"), attempts: z.array(ManifestAttemptSchema).length(1) }).strict(),
-  z.object({ index: z.number().int().nonnegative(), status: z.literal("succeeded"), attempts: z.array(ManifestAttemptSchema).length(1) }).strict(),
-  z.object({ index: z.number().int().nonnegative(), status: z.literal("failed"), attempts: z.array(ManifestAttemptSchema).length(1) }).strict(),
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("pending"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+  }).strict(),
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("not-started"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+    diagnostic: z.string().min(1),
+  }).strict(),
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("running"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("succeeded"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("failed"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
 ]);
 
 const ManifestStepSchema = z.discriminatedUnion("status", [
-  z.object({ nodeId: z.string(), status: z.literal("pending"), attempts: z.array(ManifestAttemptSchema).length(0) }).strict(),
-  z.object({ nodeId: z.string(), status: z.literal("running"), attempts: z.array(ManifestAttemptSchema).length(1) }).strict(),
-  z.object({ nodeId: z.string(), status: z.literal("succeeded"), attempts: z.array(ManifestAttemptSchema).length(1) }).strict(),
-  z.object({ nodeId: z.string(), status: z.literal("failed"), attempts: z.array(ManifestAttemptSchema).length(1) }).strict(),
-  z.object({ nodeId: z.string(), status: z.literal("skipped"), attempts: z.array(ManifestAttemptSchema).length(0), skipReason: ManifestSkipReasonSchema }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("pending"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("running"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("succeeded"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("failed"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("skipped"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+    skipReason: ManifestSkipReasonSchema,
+  }).strict(),
 ]);
 
 const ManifestMapStepSchema = z.discriminatedUnion("status", [
-  z.object({ nodeId: z.string(), status: z.literal("pending"), attempts: z.array(ManifestAttemptSchema).length(0), items: z.array(ManifestMapItemSchema) }).strict(),
-  z.object({ nodeId: z.string(), status: z.literal("running"), attempts: z.array(ManifestAttemptSchema).length(1), items: z.array(ManifestMapItemSchema) }).strict(),
-  z.object({ nodeId: z.string(), status: z.literal("succeeded"), attempts: z.array(ManifestAttemptSchema).length(1), items: z.array(ManifestMapItemSchema) }).strict(),
-  z.object({ nodeId: z.string(), status: z.literal("failed"), attempts: z.array(ManifestAttemptSchema).length(1), items: z.array(ManifestMapItemSchema) }).strict(),
-  z.object({ nodeId: z.string(), status: z.literal("skipped"), attempts: z.array(ManifestAttemptSchema).length(0), items: z.array(ManifestMapItemSchema), skipReason: ManifestSkipReasonSchema }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("pending"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+    items: z.array(ManifestMapItemSchema),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("running"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+    items: z.array(ManifestMapItemSchema),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("succeeded"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+    items: z.array(ManifestMapItemSchema),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("failed"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+    items: z.array(ManifestMapItemSchema),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("skipped"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+    items: z.array(ManifestMapItemSchema),
+    skipReason: ManifestSkipReasonSchema,
+  }).strict(),
 ]);
 
 const ManifestDecisionSchema = z.discriminatedUnion("status", [
@@ -752,9 +821,18 @@ const ManifestCommonSchema = z.object({
 });
 
 const ManifestViewSchema = z.discriminatedUnion("status", [
-  ManifestCommonSchema.extend({ status: z.literal("running"), result: z.never().optional() }).strict(),
-  ManifestCommonSchema.extend({ status: z.literal("failed"), result: z.never().optional() }).strict(),
-  ManifestCommonSchema.extend({ status: z.literal("succeeded"), result: ManifestDataArtifactSchema }).strict(),
+  ManifestCommonSchema.extend({
+    status: z.literal("running"),
+    result: z.never().optional(),
+  }).strict(),
+  ManifestCommonSchema.extend({
+    status: z.literal("failed"),
+    result: z.never().optional(),
+  }).strict(),
+  ManifestCommonSchema.extend({
+    status: z.literal("succeeded"),
+    result: ManifestDataArtifactSchema,
+  }).strict(),
 ]).superRefine((manifest, context) => {
   for (const [stepIndex, step] of manifest.steps.entries()) {
     const attempt = step.attempts[0];
@@ -788,12 +866,33 @@ const ManifestViewSchema = z.discriminatedUnion("status", [
       if (itemAttempt !== undefined && itemAttempt.status !== item.status) {
         context.addIssue({
           code: "custom",
-          path: ["steps", stepIndex, "items", itemOffset, "attempts", 0, "status"],
+          path: [
+            "steps",
+            stepIndex,
+            "items",
+            itemOffset,
+            "attempts",
+            0,
+            "status",
+          ],
           message: "item attempt status must match its item status",
         });
       }
     }
-    if (step.status === "succeeded" && step.items.some((item) => item.status !== "succeeded")) {
+    if (
+      step.status !== "failed" &&
+      step.items.some((item) => item.status === "not-started")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", stepIndex, "items"],
+        message: "not-started map items require a failed map",
+      });
+    }
+    if (
+      step.status === "succeeded" &&
+      step.items.some((item) => item.status !== "succeeded")
+    ) {
       context.addIssue({
         code: "custom",
         path: ["steps", stepIndex, "items"],
@@ -802,7 +901,9 @@ const ManifestViewSchema = z.discriminatedUnion("status", [
     }
     if (
       step.status === "failed" &&
-      step.items.some((item) => item.status === "pending" || item.status === "running")
+      step.items.some((item) =>
+        item.status === "pending" || item.status === "running"
+      )
     ) {
       context.addIssue({
         code: "custom",

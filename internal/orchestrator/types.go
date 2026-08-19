@@ -8,11 +8,12 @@ import (
 )
 
 const (
-	StatusPending   = "pending"
-	StatusRunning   = "running"
-	StatusSucceeded = "succeeded"
-	StatusFailed    = "failed"
-	StatusSkipped   = "skipped"
+	StatusPending    = "pending"
+	StatusRunning    = "running"
+	StatusSucceeded  = "succeeded"
+	StatusFailed     = "failed"
+	StatusSkipped    = "skipped"
+	StatusNotStarted = "not-started"
 )
 
 // SourceArchiveContentType identifies the portable, deterministic USTAR source

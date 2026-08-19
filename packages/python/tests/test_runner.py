@@ -47,7 +47,9 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
         ),
     )
     assert body == canonical_json(cast(JsonValue, expected)).encode()
-    assert publication.manifest.content_type == "application/vnd.massive.data-artifact-manifest+json"
+    assert (
+        publication.manifest.content_type == "application/vnd.massive.data-artifact-manifest+json"
+    )
     assert publication.body.content_type == "application/json"
 
 
@@ -118,7 +120,8 @@ def test_runner_exposes_collision_free_scoped_idempotency_keys(
     assert result.returncode == 0, result.stderr
     publication, body = ArtifactRuntime(LocalDatastore(store)).resolve_json(
         Destination(
-            manifest_key=descriptor["output"]["manifestKey"], schema_ref=descriptor["output"]["schema"]
+            manifest_key=descriptor["output"]["manifestKey"],
+            schema_ref=descriptor["output"]["schema"],
         ),
         Producer.model_validate(
             {
@@ -273,7 +276,9 @@ def test_runner_uses_serialized_decimal_output_as_valid_downstream_input(tmp_pat
 def test_runner_reports_an_invalid_immutable_output_slot_as_schema_failure(
     tmp_path: Path,
 ) -> None:
-    descriptor_path, descriptor, _store = _descriptor(tmp_path, export="double")
+    # explode would exit 66 if the runner reached user code. Destination
+    # binding is part of descriptor validation and must fail first.
+    descriptor_path, descriptor, _store = _descriptor(tmp_path, export="explode")
     descriptor["output"]["manifestKey"] = (
         f"projects/{PROJECT_KEY}/runs/python-runner-test/steps/other/1/output-manifest.json"
     )
@@ -312,22 +317,34 @@ def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path) -> None:
     descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
     bucket = f"massive-python-{uuid.uuid4().hex}"
     client = boto3.client(
-        "s3", endpoint_url=endpoint, region_name="us-east-1", aws_access_key_id=access_key,
+        "s3",
+        endpoint_url=endpoint,
+        region_name="us-east-1",
+        aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
     )
     client.create_bucket(Bucket=bucket)
     for path in store.rglob("*"):
         if path.is_file() and ".massive-datastore-metadata" not in path.parts:
-            client.put_object(Bucket=bucket, Key=str(path.relative_to(store)), Body=path.read_bytes())
+            client.put_object(
+                Bucket=bucket, Key=str(path.relative_to(store)), Body=path.read_bytes()
+            )
     descriptor["datastore"] = {
-        "kind": "s3", "bucket": bucket, "region": "us-east-1", "endpoint": endpoint,
+        "kind": "s3",
+        "bucket": bucket,
+        "region": "us-east-1",
+        "endpoint": endpoint,
         "forcePathStyle": True,
     }
     serialized = canonical_json(cast(JsonValue, descriptor))
     assert access_key not in serialized
     assert secret_key not in serialized
     descriptor_path.write_text(serialized)
-    environment = {**os.environ, "AWS_ACCESS_KEY_ID": access_key, "AWS_SECRET_ACCESS_KEY": secret_key}
+    environment = {
+        **os.environ,
+        "AWS_ACCESS_KEY_ID": access_key,
+        "AWS_SECRET_ACCESS_KEY": secret_key,
+    }
 
     result = _run(descriptor_path, environment)
 
@@ -413,7 +430,9 @@ def _descriptor(
     return descriptor_path, descriptor, store
 
 
-def _run(descriptor_path: Path, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    descriptor_path: Path, environment: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     repository = Path(__file__).resolve().parents[3]
     return subprocess.run(
         [sys.executable, "-m", "massive.runner", str(descriptor_path)],

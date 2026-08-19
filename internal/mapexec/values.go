@@ -50,12 +50,15 @@ func Expand(body []byte) ([]Item, error) {
 // Collect builds one canonical JSON array in source-index order, independent
 // of runner completion order. A result set must contain each dense source
 // index exactly once; partial, duplicate, or foreign results are rejected.
-func Collect(results []Result) ([]byte, error) {
-	ordered := make([][]byte, len(results))
-	seen := make([]bool, len(results))
+func Collect(expectedCount int, results []Result) ([]byte, error) {
+	if expectedCount < 0 || len(results) != expectedCount {
+		return nil, fmt.Errorf("map returned %d results, want %d", len(results), expectedCount)
+	}
+	ordered := make([][]byte, expectedCount)
+	seen := make([]bool, expectedCount)
 	for _, result := range results {
-		if result.Index < 0 || result.Index >= len(results) {
-			return nil, fmt.Errorf("map result index %d is outside dense range 0..%d", result.Index, len(results)-1)
+		if result.Index < 0 || result.Index >= expectedCount {
+			return nil, fmt.Errorf("map result index %d is outside dense range 0..%d", result.Index, expectedCount-1)
 		}
 		if seen[result.Index] {
 			return nil, fmt.Errorf("map result index %d is duplicated", result.Index)

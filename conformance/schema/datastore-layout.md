@@ -221,14 +221,15 @@ concurrent map items cannot overwrite each other:
 
 ```text
 projects/<project-key>/runs/<run-id>/inputs/<step-id>/scopes/maps/<map-id>/items/<index>.json
-projects/<project-key>/runs/<run-id>/steps/<step-id>/scopes/maps/<map-id>/items/<index>[/scopes/maps/<nested-map-id>/items/<nested-index>]/<attempt>/output-manifest.json
+projects/<project-key>/runs/<run-id>/steps/<step-id>/scopes/maps/<map-id>/items/<index>[/maps/<nested-map-id>/items/<nested-index>]/<attempt>/output-manifest.json
 ```
 
 Static invocations omit `scope` and retain the original static paths.
 
-`run-manifest.json` is the v2 (`schemaVersion: 2`, `encoding: "json-v2"`) run
+`run-manifest.json` is the v3 (`schemaVersion: 3`, `encoding: "json-v3"`) run
 manifest the orchestrator records when it creates a run: plan hash, run status,
-per-step attempt/artifact records, and durable decision outcomes. A selected
+per-step attempt/artifact records, finite-map item records, and durable
+decision outcomes. A selected
 decision record has `nodeId`, `status: "selected"`, and `selectedCase`. A failed
 record has `status: "failed"` and a safe diagnostic; an inactive nested decision
 has `status: "skipped"` and the same structured `skipReason` used by steps. The
@@ -242,15 +243,25 @@ step's `case`. Selected and non-branch steps retain the ordinary attempt record.
 An attempt output contains the immutable output-manifest reference and its
 content-addressed body reference.
 
+A map step owns a dense, source-ordered `items` array. Each item remains tied
+to its static map node by an ordered execution scope and records its own
+attempt. Successful collection is source-index ordered, never completion
+ordered. An item that was not dispatched because the map failed has terminal
+status `"not-started"`, zero attempts, and a safe diagnostic. A successful map
+requires every item to succeed. A failed map has no pending or running items
+and never publishes the static collection manifest. An empty map succeeds with
+an empty item array and publishes canonical `[]` at the map node's static
+output slot.
+
 `result.json` is the final run result artifact the CLI surfaces as the run's
 output location. Both are canonical JSON. The local orchestrator currently
 records only attempt `1` for each node; retry scheduling is intentionally not
 implemented by this transport slice.
 
-The v2 run-manifest protocol has no v1 compatibility reader or dual-write mode.
-An implementation must reject a v1 run manifest instead of guessing or silently
-upgrading its routing state. The step invocation descriptor is independently
-versioned and is `schemaVersion: 2`, `encoding: "json-v2"`.
+The v3 run-manifest protocol has no compatibility reader or dual-write mode.
+An implementation must reject an earlier run manifest instead of guessing or
+silently upgrading its routing state. The step invocation descriptor is
+independently versioned and remains `schemaVersion: 2`, `encoding: "json-v2"`.
 
 Examples:
 

@@ -85,7 +85,7 @@ type dataArtifactManifest struct {
 // PublishJSON validates canonical JSON, convergently installs its content body,
 // then conditionally creates the immutable manifest that commits visibility.
 func PublishJSON(ctx context.Context, store datastore.Datastore, destination Destination, producer Producer, body []byte) (PublishedJSON, error) {
-	if err := validateDestination(destination, producer); err != nil {
+	if err := ValidateDestination(destination, producer); err != nil {
 		return PublishedJSON{}, err
 	}
 	if err := validateCanonicalJSON(ctx, store, destination.Schema, body); err != nil {
@@ -101,7 +101,7 @@ func PublishJSON(ctx context.Context, store datastore.Datastore, destination Des
 	manifest := dataArtifactManifest{
 		Kind:          "DataArtifactManifest",
 		SchemaVersion: 1,
-		Encoding:      "canonical-json-v1",
+		Encoding:      "canonical-json-v0",
 		Producer:      producer,
 		Schema:        destination.Schema,
 		Body:          bodyRef,
@@ -133,7 +133,7 @@ func PublishJSON(ctx context.Context, store datastore.Datastore, destination Des
 // ResolveJSON returns a value only after verifying its immutable manifest,
 // producer, content-addressed body, canonical encoding, and pinned schema.
 func ResolveJSON(ctx context.Context, store datastore.Datastore, destination Destination, producer Producer) (PublishedJSON, []byte, error) {
-	if err := validateDestination(destination, producer); err != nil {
+	if err := ValidateDestination(destination, producer); err != nil {
 		return PublishedJSON{}, nil, err
 	}
 	manifestObject, err := store.Get(ctx, destination.ManifestKey)
@@ -180,7 +180,9 @@ func ResolveJSON(ctx context.Context, store datastore.Datastore, destination Des
 	}, bodyObject.Body, nil
 }
 
-func validateDestination(destination Destination, producer Producer) error {
+// ValidateDestination binds a caller-provided manifest key to the complete
+// immutable producer identity before user code can run.
+func ValidateDestination(destination Destination, producer Producer) error {
 	if err := validateProducerIdentity(producer); err != nil {
 		return err
 	}

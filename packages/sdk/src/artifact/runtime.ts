@@ -130,7 +130,7 @@ export interface ResolvedJson {
 interface DataArtifactManifest {
   readonly kind: "DataArtifactManifest";
   readonly schemaVersion: 1;
-  readonly encoding: "canonical-json-v1";
+  readonly encoding: "canonical-json-v0";
   readonly producer: ArtifactProducer;
   readonly schema: string;
   readonly body: ArtifactRef;
@@ -185,6 +185,13 @@ export class ArtifactNotFoundError extends ArtifactError {
 export class ArtifactRuntime {
   constructor(private readonly store: DatastoreClient) {}
 
+  validateDestination(
+    destination: ArtifactDestination,
+    producer: ArtifactProducer,
+  ): void {
+    validateDestination(destination, validateProducer(producer));
+  }
+
   async publishJson(
     destination: ArtifactDestination,
     producer: ArtifactProducer,
@@ -206,7 +213,7 @@ export class ArtifactRuntime {
     const manifest: DataArtifactManifest = {
       kind: "DataArtifactManifest",
       schemaVersion: 1,
-      encoding: "canonical-json-v1",
+      encoding: "canonical-json-v0",
       producer: validatedProducer,
       schema: destination.schema,
       body: bodyRef,
@@ -368,7 +375,9 @@ function validateDestination(
   let expected: Key;
   try {
     expected = Key.parse(
-      `projects/${producer.projectKey}/runs/${producer.runId}/steps/${producer.nodeId}${scopeKeySuffix(producer.scope)}/${producer.attempt}/output-manifest.json`,
+      `projects/${producer.projectKey}/runs/${producer.runId}/steps/${producer.nodeId}${
+        scopeKeySuffix(producer.scope)
+      }/${producer.attempt}/output-manifest.json`,
     );
   } catch (error) {
     throw new ArtifactValidationError(
@@ -564,18 +573,19 @@ function sameScope(
   right: ExecutionScope | undefined,
 ): boolean {
   if (left === undefined || right === undefined) return left === right;
-  return left.frames.length === right.frames.length && left.frames.every((frame, index) => {
-    const other = right.frames[index];
-    return other !== undefined && frame.kind === other.kind &&
-      frame.mapId === other.mapId && frame.index === other.index;
-  });
+  return left.frames.length === right.frames.length &&
+    left.frames.every((frame, index) => {
+      const other = right.frames[index];
+      return other !== undefined && frame.kind === other.kind &&
+        frame.mapId === other.mapId && frame.index === other.index;
+    });
 }
 
 function scopeKeySuffix(scope: ExecutionScope | undefined): string {
   if (scope === undefined) return "";
-  return "/scopes" + scope.frames.map((frame) =>
-    `/maps/${frame.mapId}/items/${frame.index}`
-  ).join("");
+  return "/scopes" +
+    scope.frames.map((frame) => `/maps/${frame.mapId}/items/${frame.index}`)
+      .join("");
 }
 
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {

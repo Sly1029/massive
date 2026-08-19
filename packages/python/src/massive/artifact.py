@@ -127,6 +127,10 @@ class ArtifactRuntime:
     def __init__(self, datastore: Datastore) -> None:
         self._datastore = datastore
 
+    def validate_destination(self, destination: Destination, producer: Producer) -> None:
+        """Validate an immutable producer slot before invoking user code."""
+        _validate_destination(destination, producer)
+
     def publish_json(
         self, destination: Destination, producer: Producer, body: bytes
     ) -> PublishedJSON:
@@ -144,7 +148,7 @@ class ArtifactRuntime:
             {
                 "kind": "DataArtifactManifest",
                 "schemaVersion": 1,
-                "encoding": "canonical-json-v1",
+                "encoding": "canonical-json-v0",
                 "producer": producer.identity_json(),
                 "schema": destination.schema_ref,
                 "body": body_ref.json(),

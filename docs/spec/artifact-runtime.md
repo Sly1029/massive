@@ -33,7 +33,7 @@ hierarchical path segment.
 
 The versioned manifest shape is frozen by
 `conformance/schema/data-artifact-manifest.schema.json`. Its encoding is
-`canonical-json-v1`, the integer-only canonical field-tree format defined in
+`canonical-json-v0`, the integer-only canonical field-tree format defined in
 [`hashing.md`](../../conformance/schema/hashing.md). A future incompatible
 canonicalizer requires a new encoding value and consumer support range.
 
@@ -62,7 +62,7 @@ outputs by listing body keys.
 
 ## Breaking Output Migration
 
-This is a breaking v1 output migration: a step output is now published at
+This is a breaking platform-v2 output-path change: a step output is published at
 `.../output-manifest.json`, rather than the legacy `.../output.json` value
 location. The runtime provides neither a compatibility reader nor dual
 publication. Workflows move to the v2 SDK and its separate deployment namespace

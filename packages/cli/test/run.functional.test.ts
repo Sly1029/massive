@@ -308,13 +308,22 @@ Deno.test("massive run Python map: preserves item failures without publishing a 
   assertEquals(result.code, 66, result.stderr);
   const manifestPath = await findRunArtifact(store, runId, "run-manifest.json");
   assert(manifestPath !== undefined, "failed map run should have a manifest");
-  const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+  const manifestText = await Deno.readTextFile(manifestPath);
+  assert(
+    !manifestText.includes("private-fixture-payload"),
+    "durable map diagnostics must not contain user exception text",
+  );
+  const manifest = JSON.parse(manifestText) as {
     status: string;
     steps: {
       nodeId: string;
       status: string;
       attempts: { status: string; output?: unknown }[];
-      items?: { index: number; status: string; attempts: { status: string }[] }[];
+      items?: {
+        index: number;
+        status: string;
+        attempts: { status: string }[];
+      }[];
     }[];
   };
   const map = manifest.steps.find((step) => step.nodeId === "inspect-items");
@@ -338,6 +347,67 @@ Deno.test("massive run Python map: preserves item failures without publishing a 
     "a partial map must not publish its collected output",
   );
 });
+
+for (
+  const testCase of [
+    {
+      name: "selected branch composes two maps",
+      mode: "mapped",
+      runId: "python-map-branch-selected",
+      expected: [{ value: 5 }, { value: 3 }],
+      mapStatuses: ["succeeded", "succeeded"],
+    },
+    {
+      name: "unselected branch skips both maps",
+      mode: "bypass",
+      runId: "python-map-branch-skipped",
+      expected: [{ value: 2 }, { value: 1 }],
+      mapStatuses: ["skipped", "skipped"],
+    },
+  ] as const
+) {
+  Deno.test(`massive run Python map: ${testCase.name}`, async () => {
+    const fixture = await copyFixture("python-map-branches");
+    const store = await makeStore();
+    const result = await runCli([
+      "run",
+      join(fixture, "workflow.py"),
+      "--input",
+      JSON.stringify({ mode: testCase.mode, values: [2, 1] }),
+      "--store",
+      store,
+      "--project",
+      "acme/python-map-branches",
+      "--run-id",
+      testCase.runId,
+      "--json",
+    ]);
+
+    assertEquals(result.code, 0, result.stderr);
+    const outcome = JSON.parse(result.stdout) as {
+      result: { value: number }[];
+    };
+    assertEquals(outcome.result, [...testCase.expected]);
+    const manifestPath = await findRunArtifact(
+      store,
+      testCase.runId,
+      "run-manifest.json",
+    );
+    assert(manifestPath !== undefined);
+    const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+      steps: { nodeId: string; status: string; items?: unknown[] }[];
+    };
+    const maps = ["double-items", "increment-items"].map((nodeId) =>
+      manifest.steps.find((step) => step.nodeId === nodeId)
+    );
+    assertEquals(maps.map((step) => step?.status), [...testCase.mapStatuses]);
+    if (testCase.mode === "bypass") {
+      assertEquals(maps.map((step) => step?.items), [[], []]);
+    } else {
+      assertEquals(maps.map((step) => step?.items?.length), [2, 2]);
+    }
+  });
+}
 
 Deno.test("massive run Python decision: selects the approved branch and journals the route", async () => {
   const fixture = await copyFixture("python-decision");

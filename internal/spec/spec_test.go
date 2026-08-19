@@ -158,6 +158,59 @@ func TestParseResolvesEscapedLocalJSONPointerInMapArrayItems(t *testing.T) {
 	}
 }
 
+func TestParseComparesNestedPydanticListItemsInAStandaloneDefinitionScope(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		itemInput := "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+		child := map[string]any{
+			"properties": map[string]any{"value": map[string]any{"type": "integer"}},
+			"required":   []any{"value"}, "title": "Child", "type": "object",
+		}
+		item := map[string]any{
+			"properties": map[string]any{"child": map[string]any{"$ref": "#/$defs/Child"}},
+			"required":   []any{"child"}, "title": "Item", "type": "object",
+		}
+		root["schemas"].(map[string]any)[inputList] = map[string]any{
+			"$defs": map[string]any{"Child": child, "Item": item},
+			"items": map[string]any{"$ref": "#/$defs/Item"}, "type": "array",
+		}
+		root["schemas"].(map[string]any)[itemInput] = map[string]any{
+			"$defs":      map[string]any{"Child": child},
+			"properties": map[string]any{"child": map[string]any{"$ref": "#/$defs/Child"}},
+			"required":   []any{"child"}, "title": "Item", "type": "object",
+		}
+	})
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("parse nested Pydantic map schemas: %v", err)
+	}
+}
+
+func TestParseRejectsDanglingMapItemSchemaReferences(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		itemInput := "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+		item := map[string]any{
+			"properties": map[string]any{"child": map[string]any{"$ref": "#/$defs/Child"}},
+			"required":   []any{"child"}, "type": "object",
+		}
+		root["schemas"].(map[string]any)[inputList] = map[string]any{
+			"$defs": map[string]any{"Child": map[string]any{"type": "integer"}, "Item": item},
+			"items": map[string]any{"$ref": "#/$defs/Item"}, "type": "array",
+		}
+		root["schemas"].(map[string]any)[itemInput] = item
+	})
+	if _, err := Parse(data); err == nil {
+		t.Fatal("accepted a standalone item schema with a dangling local reference")
+	}
+}
+
+func TestResolveLocalJSONPointerRejectsSignedArrayIndexes(t *testing.T) {
+	document := json.RawMessage(`{"values":["zero","one"]}`)
+	if _, ok := resolveLocalJSONPointer(document, "#/values/+1"); ok {
+		t.Fatal("accepted a signed RFC 6901 array index")
+	}
+}
+
 func TestParseForbidsMapFieldsBeforeGraphIR03(t *testing.T) {
 	data := mutateFixture(t, "finite-map", func(root map[string]any) {
 		root["graph"].(map[string]any)["irVersion"] = "0.2"
@@ -188,6 +241,28 @@ func TestParseAllowsMapOutputFanout(t *testing.T) {
 	})
 	if _, err := Parse(data); err != nil {
 		t.Fatalf("parse map output fanout: %v", err)
+	}
+}
+
+func TestParseAllowsMapOutputAsAnOrderedMergeInput(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		outputList := "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+		contractRef := "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+		graph := root["graph"].(map[string]any)
+		graph["nodes"] = append(graph["nodes"].([]any),
+			map[string]any{"id": "right", "kind": "step", "inputSchema": outputList, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef},
+			map[string]any{"id": "merge", "kind": "step", "inputSchema": outputList, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef, "mergeInputs": []any{"map-items", "right"}},
+		)
+		graph["edges"] = []any{
+			map[string]any{"from": "__start", "to": "map-items"},
+			map[string]any{"from": "map-items", "to": "right"},
+			map[string]any{"from": "map-items", "to": "merge"},
+			map[string]any{"from": "right", "to": "merge"},
+			map[string]any{"from": "merge", "to": "__end"},
+		}
+	})
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("parse map output as merge input: %v", err)
 	}
 }
 
