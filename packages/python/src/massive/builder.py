@@ -336,6 +336,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             raise ValueError(
                 f"decision {decision_id!r} select cases must match exactly: {', '.join(details)}"
             )
+        lineages = self._activation_lineages()
         for tag, source in inputs.items():
             if source.node_id not in self._known_node_ids():
                 raise ValueError("decision select source belongs to a different graph")
@@ -347,6 +348,13 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             if root is not None and not self._is_reachable(root, source.node_id):
                 raise ValueError(
                     f"decision {decision_id!r} case {tag!r} select source is not in that branch"
+                )
+            if root is not None:
+                self._validate_select_source_lineage(
+                    definition,
+                    tag,
+                    source,
+                    lineages,
                 )
         select_id = f"{decision_id}-select"
         if select_id in self._known_node_ids():
@@ -401,6 +409,84 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             pending.extend(adjacency.get(current, ()))
         return False
 
+    def _activation_lineages(self) -> dict[str, dict[str, str]]:
+        inbound: dict[str, list[tuple[str, str | None]]] = {}
+        for source, target in self._edges:
+            inbound.setdefault(target, []).append((source, None))
+        for source, target, tag in self._conditional_edges:
+            inbound.setdefault(target, []).append((source, tag))
+
+        pending = self._known_node_ids()
+        lineages: dict[str, dict[str, str]] = {}
+        while pending:
+            progressed = False
+            for node_id in sorted(pending, key=_canonical_sort_key):
+                select = self._selects.get(node_id)
+                if select is not None:
+                    enclosing = lineages.get(select.decision_id)
+                    if enclosing is None:
+                        continue
+                    lineages[node_id] = dict(enclosing)
+                    pending.remove(node_id)
+                    progressed = True
+                    break
+
+                dependencies = inbound.get(node_id, [])
+                if any(source not in lineages for source, _ in dependencies):
+                    continue
+                lineage: dict[str, str] = {}
+                for source, case in dependencies:
+                    for decision_id, tag in lineages[source].items():
+                        existing = lineage.get(decision_id)
+                        if existing is not None and existing != tag:
+                            raise ValueError(
+                                f"node {node_id!r} requires incompatible cases of decision "
+                                f"{decision_id!r}"
+                            )
+                        lineage[decision_id] = tag
+                    if case is not None:
+                        lineage[source] = case
+                lineages[node_id] = lineage
+                pending.remove(node_id)
+                progressed = True
+                break
+            if not progressed:
+                break
+        return lineages
+
+    def _validate_select_source_lineage(
+        self,
+        definition: _DecisionDefinition,
+        tag: str,
+        source: NodeHandle[Any],
+        lineages: dict[str, dict[str, str]],
+    ) -> None:
+        enclosing = lineages.get(definition.id)
+        actual = lineages.get(source.node_id)
+        if enclosing is None or actual is None:
+            return
+        expected = {**enclosing, definition.id: tag}
+        if actual == expected:
+            return
+        extras = [
+            f"{decision_id}={actual_tag!r}"
+            for decision_id, actual_tag in sorted(
+                actual.items(), key=lambda item: _canonical_sort_key(item[0])
+            )
+            if expected.get(decision_id) != actual_tag
+        ]
+        if extras:
+            raise ValueError(
+                f"decision {definition.id!r} case {tag!r} select source "
+                f"{source.node_id!r} has unresolved nested decision requirement "
+                f"{', '.join(extras)}; select nested decision outputs before using them "
+                "in an enclosing select"
+            )
+        raise ValueError(
+            f"decision {definition.id!r} case {tag!r} select source "
+            f"{source.node_id!r} is not active for the whole decision case"
+        )
+
     def emit(self, *, source: SourcePackage) -> WorkflowSpec:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
@@ -413,6 +499,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         if not any(target_id == _END for _, target_id in self._edges):
             raise ValueError("workflow end has no edge")
 
+        lineages = self._activation_lineages()
         for select in self._selects.values():
             decision = self._decisions[select.decision_id]
             for tag, selected_source in select.inputs.items():
@@ -423,6 +510,12 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                     raise ValueError(
                         f"decision {decision.id!r} case {tag!r} select source is not in that branch"
                     )
+                self._validate_select_source_lineage(
+                    decision,
+                    tag,
+                    selected_source,
+                    lineages,
+                )
 
         source_files, package_hash = source.manifest()
         schema_table: dict[str, JsonValue] = {}

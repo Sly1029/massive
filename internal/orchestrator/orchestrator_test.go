@@ -849,6 +849,53 @@ func TestSourcePackageHashGoldenVector(t *testing.T) {
 	}
 }
 
+func TestRunFailsAtSelectWhenACompiledPlanBypassesLineageValidation(t *testing.T) {
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "workflow.ts"), []byte("// exercised through the functional datastore invoker\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compiled, manifests := compileConsistentFixture(t, "exhaustive-decision", sourceRoot)
+	for _, node := range compiled.Plan.GetGraph().GetNodes() {
+		if node.GetId() != "choose" {
+			continue
+		}
+		for _, input := range node.GetSelectInputs() {
+			if input.GetCase() == "accepted" {
+				source := "reject"
+				input.Source = &source
+			}
+		}
+	}
+
+	storeRoot := newStoreRoot(t)
+	result, err := Run(context.Background(), RunConfig{
+		Plan:              compiled.Plan,
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "acme/invalid-lineage",
+		RunID:             "invalid-lineage",
+		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
+		StepInvoker:       &functionalStepInvoker{storeRoot: storeRoot},
+	}, []byte("4"))
+	if err == nil {
+		t.Fatal("run accepted an inactive selected source")
+	}
+	var runError *RunError
+	if !errors.As(err, &runError) {
+		t.Fatalf("run error = %T, want RunError", err)
+	}
+	if runError.StepID != "choose" || !strings.Contains(runError.Diagnostic, `selected source "reject" is inactive`) {
+		t.Fatalf("run error = %#v, want select-attributed inactive-source failure", runError)
+	}
+	if result == nil || result.Status != StatusFailed {
+		t.Fatalf("result = %#v, want durable failed run", result)
+	}
+	manifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
+	if manifest.Status != StatusFailed || len(manifest.Decisions) != 1 || manifest.Decisions[0].SelectedCase != "accepted" {
+		t.Fatalf("manifest = %#v, want failed run with durable accepted selection", manifest)
+	}
+}
+
 type functionalStepInvoker struct {
 	storeRoot   string
 	descriptors []StepInvocationDescriptor
@@ -911,6 +958,12 @@ func runFixtureStep(nodeID string, inputBytes []byte) ([]byte, error) {
 		output = input.(float64) + 1
 	case "label":
 		output = "value:41"
+	case "classify":
+		output = map[string]any{"kind": "accepted", "value": input.(float64)}
+	case "accept":
+		output = input.(map[string]any)["value"]
+	case "reject":
+		output = float64(0)
 	default:
 		return nil, errors.New("unknown fixture step " + nodeID)
 	}

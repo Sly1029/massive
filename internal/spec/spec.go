@@ -690,6 +690,7 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 	}
 
 	diagnostics = append(diagnostics, validateExclusiveDecisionBranches(parsed, decisionCases, branchTargets, nodeIndexes)...)
+	diagnostics = append(diagnostics, validateDecisionActivationLineage(parsed, nodeByID, nodeIndexes)...)
 
 	return diagnostics
 }
@@ -766,6 +767,144 @@ func graphReachableBefore(start string, stop string, edges []GraphEdge) map[stri
 		}
 	}
 	return seen
+}
+
+// validateDecisionActivationLineage proves that every select source exists for
+// the whole case it represents. A conditional edge adds a decision=case
+// requirement. That requirement flows through ordinary data dependencies. A
+// select removes its own decision requirement while retaining requirements
+// imposed by enclosing decisions.
+func validateDecisionActivationLineage(parsed *WorkflowSpec, nodeByID map[string]GraphNode, nodeIndexes map[string]int) []Diagnostic {
+	order, complete := graphTopologicalOrder(parsed.Graph.Nodes, parsed.Graph.Edges)
+	if !complete {
+		return nil
+	}
+
+	inbound := make(map[string][]GraphEdge, len(parsed.Graph.Nodes))
+	for _, edge := range parsed.Graph.Edges {
+		inbound[edge.To] = append(inbound[edge.To], edge)
+	}
+	lineages := make(map[string]map[string]string, len(parsed.Graph.Nodes))
+	var diagnostics []Diagnostic
+	for _, nodeID := range order {
+		node, exists := nodeByID[nodeID]
+		if !exists {
+			continue
+		}
+		if node.Kind == NodeKindSelect {
+			enclosing, exists := lineages[node.DecisionRef]
+			if !exists {
+				continue
+			}
+			lineages[nodeID] = cloneActivationLineage(enclosing)
+			for inputIndex, input := range node.SelectInputs {
+				actual, exists := lineages[input.Source]
+				if !exists {
+					continue
+				}
+				expected := cloneActivationLineage(enclosing)
+				expected[node.DecisionRef] = input.Case
+				if activationLineagesEqual(actual, expected) {
+					continue
+				}
+				path := fmt.Sprintf("$.graph.nodes[%d].selectInputs[%d].source", nodeIndexes[nodeID], inputIndex)
+				diagnostics = append(diagnostics, Diagnostic{
+					Path:    path,
+					Ref:     input.Source,
+					Message: activationLineageDiagnostic(actual, expected),
+				})
+			}
+			continue
+		}
+
+		lineage := make(map[string]string)
+		for _, edge := range inbound[nodeID] {
+			for decisionID, tag := range lineages[edge.From] {
+				if existing, conflict := lineage[decisionID]; conflict && existing != tag {
+					continue
+				}
+				lineage[decisionID] = tag
+			}
+			if edge.Case != "" {
+				lineage[edge.From] = edge.Case
+			}
+		}
+		lineages[nodeID] = lineage
+	}
+	return diagnostics
+}
+
+func cloneActivationLineage(lineage map[string]string) map[string]string {
+	cloned := make(map[string]string, len(lineage)+1)
+	for decisionID, tag := range lineage {
+		cloned[decisionID] = tag
+	}
+	return cloned
+}
+
+func activationLineagesEqual(actual map[string]string, expected map[string]string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for decisionID, tag := range expected {
+		if actual[decisionID] != tag {
+			return false
+		}
+	}
+	return true
+}
+
+func activationLineageDiagnostic(actual map[string]string, expected map[string]string) string {
+	var extras []string
+	for _, decisionID := range sortedKeys(actual) {
+		if expected[decisionID] == actual[decisionID] {
+			continue
+		}
+		extras = append(extras, fmt.Sprintf("%s=%q", decisionID, actual[decisionID]))
+	}
+	if len(extras) > 0 {
+		return "select input source has unresolved nested decision requirement " + strings.Join(extras, ", ") + "; select nested decision outputs before using them in an enclosing select"
+	}
+	return "select input source activation lineage must exactly match its decision case lineage"
+}
+
+func graphTopologicalOrder(nodes []GraphNode, edges []GraphEdge) ([]string, bool) {
+	indegree := make(map[string]int, len(nodes))
+	adjacency := make(map[string][]string, len(nodes))
+	for _, node := range nodes {
+		indegree[node.ID] = 0
+	}
+	for _, edge := range edges {
+		if _, exists := indegree[edge.From]; !exists {
+			continue
+		}
+		if _, exists := indegree[edge.To]; !exists {
+			continue
+		}
+		adjacency[edge.From] = append(adjacency[edge.From], edge.To)
+		indegree[edge.To]++
+	}
+	ready := make([]string, 0, len(nodes))
+	for nodeID, degree := range indegree {
+		if degree == 0 {
+			ready = append(ready, nodeID)
+		}
+	}
+	sort.Slice(ready, func(i, j int) bool { return canonical.LessUTF16(ready[i], ready[j]) })
+	order := make([]string, 0, len(nodes))
+	for len(ready) > 0 {
+		current := ready[0]
+		ready = ready[1:]
+		order = append(order, current)
+		for _, next := range adjacency[current] {
+			indegree[next]--
+			if indegree[next] == 0 {
+				ready = append(ready, next)
+			}
+		}
+		sort.Slice(ready, func(i, j int) bool { return canonical.LessUTF16(ready[i], ready[j]) })
+	}
+	return order, len(order) == len(nodes)
 }
 
 func graphReachable(start string, target string, edges []GraphEdge) bool {

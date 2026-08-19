@@ -869,7 +869,10 @@ func activationSkipReason(node *planpb.GraphNode, inbound []*planpb.GraphEdge, s
 				continue
 			}
 			if reason, exists := inactive[input.GetSource()]; exists {
-				return &reason, nil
+				return nil, fmt.Errorf(
+					"select %q selected source %q is inactive because decision %q did not select case %q",
+					node.GetId(), input.GetSource(), reason.DecisionID, reason.Case,
+				)
 			}
 			return nil, nil
 		}

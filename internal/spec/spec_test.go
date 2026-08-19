@@ -332,6 +332,72 @@ func TestParseRejectsInvalidExhaustiveDecisionContracts(t *testing.T) {
 	}
 }
 
+func TestParseValidatesNestedSelectActivationLineage(t *testing.T) {
+	if _, err := Parse(nestedDecisionSpec(t, "inner-select")); err != nil {
+		t.Fatalf("nested select should collapse its own decision requirement: %v", err)
+	}
+
+	_, err := Parse(nestedDecisionSpec(t, "inner-accept"))
+	if err == nil {
+		t.Fatal("accepted outer select source that depends on one nested decision case")
+	}
+	for _, diagnostic := range diagnosticsFromError(t, err) {
+		if diagnostic.Path == "$.graph.nodes[6].selectInputs[0].source" && strings.Contains(diagnostic.Message, "unresolved nested decision requirement") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v, want outer select lineage diagnostic", diagnosticsFromError(t, err))
+}
+
+func nestedDecisionSpec(t *testing.T, outerAcceptedSource string) []byte {
+	t.Helper()
+
+	return mutateFixture(t, "exhaustive-decision", func(root map[string]any) {
+		graph := root["graph"].(map[string]any)
+		integerSchema := root["workflow"].(map[string]any)["outputSchema"].(string)
+		unionSchema := nodeByID(root, "classify")["outputSchema"].(string)
+		acceptedSchema := nodeByID(root, "accept")["inputSchema"].(string)
+		rejectedSchema := nodeByID(root, "reject")["inputSchema"].(string)
+		contractRef := nodeByID(root, "accept")["contractRef"].(string)
+
+		nodeByID(root, "accept")["outputSchema"] = unionSchema
+		choose := nodeByID(root, "choose")
+		choose["selectInputs"].([]any)[0].(map[string]any)["source"] = outerAcceptedSource
+		graph["nodes"] = append(graph["nodes"].([]any),
+			map[string]any{
+				"id": "inner", "kind": "decision", "inputSchema": unionSchema, "selector": "kind",
+				"cases": []any{
+					map[string]any{"tag": "accepted", "schema": acceptedSchema},
+					map[string]any{"tag": "rejected", "schema": rejectedSchema},
+				},
+			},
+			map[string]any{"id": "inner-accept", "kind": "step", "inputSchema": acceptedSchema, "outputSchema": integerSchema, "symbolRef": "exhaustive-decision/accept", "contractRef": contractRef},
+			map[string]any{"id": "inner-reject", "kind": "step", "inputSchema": rejectedSchema, "outputSchema": integerSchema, "symbolRef": "exhaustive-decision/reject", "contractRef": contractRef},
+			map[string]any{
+				"id": "inner-select", "kind": "select", "decisionRef": "inner", "outputSchema": integerSchema,
+				"selectInputs": []any{
+					map[string]any{"case": "accepted", "source": "inner-accept"},
+					map[string]any{"case": "rejected", "source": "inner-reject"},
+				},
+			},
+		)
+		graph["edges"] = []any{
+			map[string]any{"from": "__start", "to": "classify"},
+			map[string]any{"from": "classify", "to": "route"},
+			map[string]any{"from": "route", "to": "accept", "case": "accepted"},
+			map[string]any{"from": "route", "to": "reject", "case": "rejected"},
+			map[string]any{"from": "accept", "to": "inner"},
+			map[string]any{"from": "inner", "to": "inner-accept", "case": "accepted"},
+			map[string]any{"from": "inner", "to": "inner-reject", "case": "rejected"},
+			map[string]any{"from": "inner-accept", "to": "inner-select"},
+			map[string]any{"from": "inner-reject", "to": "inner-select"},
+			map[string]any{"from": outerAcceptedSource, "to": "choose"},
+			map[string]any{"from": "reject", "to": "choose"},
+			map[string]any{"from": "choose", "to": "__end"},
+		}
+	})
+}
+
 func TestParseRejectsDecisionSchemaContractMismatches(t *testing.T) {
 	tests := []struct {
 		name    string

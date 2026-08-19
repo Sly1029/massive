@@ -293,6 +293,36 @@ def test_emit_allows_an_outer_select_to_choose_a_nested_select() -> None:
     ]
 
 
+def test_outer_select_rejects_a_source_from_only_one_nested_case() -> None:
+    graph = GraphBuilder(
+        name="invalid-nested-decision",
+        input_type=Request,
+        output_type=Result,
+        defaults=_defaults(),
+    )
+    classified = graph.add(graph.step()(classify))
+    reviewed = graph.add(graph.step()(review))
+    fast_result = graph.add(graph.step()(fast_track))
+    manual_result = graph.add(graph.step()(manual_review))
+    rejected_result = graph.add(graph.step()(reject))
+
+    outer = graph.decision(classified, on="kind", id="outer")
+    graph.edge_from(graph.start).to(classified)
+    graph.edge_from(outer.case(Approved)).to(reviewed)
+    graph.edge_from(outer.case(Rejected)).to(rejected_result)
+
+    inner = graph.decision(reviewed, on="kind", id="inner")
+    graph.edge_from(inner.case(FastTrack)).to(fast_result)
+    graph.edge_from(inner.case(ManualReview)).to(manual_result)
+    inner.select(Result, fast=fast_result, manual=manual_result)
+
+    with pytest.raises(
+        ValueError,
+        match="source 'fast_track' has unresolved nested decision requirement inner='fast'",
+    ):
+        outer.select(Result, approved=fast_result, rejected=rejected_result)
+
+
 def _defaults():
     return execution(
         environment=container(
