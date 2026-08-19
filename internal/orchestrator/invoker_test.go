@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -136,6 +138,68 @@ func TestProcessStepInvokerRejectsUnsafeScopeIdentityBeforeWritingDescriptors(t 
 			}
 		})
 	}
+}
+
+func TestProcessStepInvokerBoundsHighCardinalityBatchWithRealProcesses(t *testing.T) {
+	state := t.TempDir()
+	if err := os.Mkdir(filepath.Join(state, "active"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "max"), []byte("0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(state, "runner.sh")
+	source := "#!/bin/sh\n" +
+		"state='" + state + "'\n" +
+		"while ! mkdir \"$state/lock\" 2>/dev/null; do sleep 0.005; done\n" +
+		"mkdir \"$state/active/$$\"\n" +
+		"count=$(find \"$state/active\" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')\n" +
+		"max=$(cat \"$state/max\")\n" +
+		"if [ \"$count\" -gt \"$max\" ]; then printf '%s' \"$count\" > \"$state/max\"; fi\n" +
+		"rmdir \"$state/lock\"\n" +
+		"sleep 0.08\n" +
+		"rmdir \"$state/active/$$\"\n"
+	if err := os.WriteFile(script, []byte(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	steps := make([]StepInvocation, 24)
+	for index := range steps {
+		steps[index] = StepInvocation{Descriptor: StepInvocationDescriptor{
+			RunID:   "bounded-batch",
+			NodeID:  "map-items",
+			Attempt: 1,
+			Scope: &ExecutionScope{Frames: []MapItemScopeFrame{{
+				Kind: "map-item", MapID: "map-items", Index: index,
+			}}},
+		}}
+	}
+	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{script}}).InvokeSteps(
+		context.Background(),
+		StepInvocationBatch{Steps: steps, MaxConcurrency: 3},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != len(steps) {
+		t.Fatalf("outcomes = %d, want %d", len(outcomes), len(steps))
+	}
+	maximum, err := strconv.Atoi(strings.TrimSpace(string(mustReadFile(t, filepath.Join(state, "max")))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maximum != 3 {
+		t.Fatalf("maximum live child processes = %d, want exactly 3", maximum)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func mustAbs(t *testing.T, path string) string {

@@ -287,6 +287,58 @@ Deno.test("massive run Python map: persists scoped items and collects in source 
   }
 });
 
+Deno.test("massive run Python map: preserves item failures without publishing a collection", async () => {
+  const fixture = await copyFixture("python-map");
+  const store = await makeStore();
+  const runId = "python-map-partial-failure";
+  const result = await runCli([
+    "run",
+    join(fixture, "workflow.py"),
+    "--input",
+    '{"values":[1,-1,3]}',
+    "--store",
+    store,
+    "--project",
+    "acme/python-map",
+    "--run-id",
+    runId,
+    "--json",
+  ]);
+
+  assertEquals(result.code, 66, result.stderr);
+  const manifestPath = await findRunArtifact(store, runId, "run-manifest.json");
+  assert(manifestPath !== undefined, "failed map run should have a manifest");
+  const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+    status: string;
+    steps: {
+      nodeId: string;
+      status: string;
+      attempts: { status: string; output?: unknown }[];
+      items?: { index: number; status: string; attempts: { status: string }[] }[];
+    }[];
+  };
+  const map = manifest.steps.find((step) => step.nodeId === "inspect-items");
+  assert(map !== undefined, "map node should be journaled");
+  assertEquals(manifest.status, "failed");
+  assertEquals(map.status, "failed");
+  assertEquals(map.attempts[0]?.status, "failed");
+  assertEquals(map.attempts[0]?.output, undefined);
+  assertEquals(map.items?.map((item) => [item.index, item.status]), [
+    [0, "succeeded"],
+    [1, "failed"],
+    [2, "succeeded"],
+  ]);
+  assertEquals(
+    await findRunArtifact(
+      store,
+      runId,
+      join("steps", "inspect-items", "1", "output-manifest.json"),
+    ),
+    undefined,
+    "a partial map must not publish its collected output",
+  );
+});
+
 Deno.test("massive run Python decision: selects the approved branch and journals the route", async () => {
   const fixture = await copyFixture("python-decision");
   const store = await makeStore();

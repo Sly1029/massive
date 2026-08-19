@@ -755,7 +755,63 @@ const ManifestViewSchema = z.discriminatedUnion("status", [
   ManifestCommonSchema.extend({ status: z.literal("running"), result: z.never().optional() }).strict(),
   ManifestCommonSchema.extend({ status: z.literal("failed"), result: z.never().optional() }).strict(),
   ManifestCommonSchema.extend({ status: z.literal("succeeded"), result: ManifestDataArtifactSchema }).strict(),
-]);
+]).superRefine((manifest, context) => {
+  for (const [stepIndex, step] of manifest.steps.entries()) {
+    const attempt = step.attempts[0];
+    if (attempt !== undefined && attempt.status !== step.status) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", stepIndex, "attempts", 0, "status"],
+        message: "attempt status must match its step status",
+      });
+    }
+    if (!("items" in step)) continue;
+    if (step.status === "pending" || step.status === "skipped") {
+      if (step.items.length !== 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["steps", stepIndex, "items"],
+          message: "pending or skipped maps cannot have item records",
+        });
+      }
+      continue;
+    }
+    for (const [itemOffset, item] of step.items.entries()) {
+      if (item.index !== itemOffset) {
+        context.addIssue({
+          code: "custom",
+          path: ["steps", stepIndex, "items", itemOffset, "index"],
+          message: "map item indexes must be dense and source ordered",
+        });
+      }
+      const itemAttempt = item.attempts[0];
+      if (itemAttempt !== undefined && itemAttempt.status !== item.status) {
+        context.addIssue({
+          code: "custom",
+          path: ["steps", stepIndex, "items", itemOffset, "attempts", 0, "status"],
+          message: "item attempt status must match its item status",
+        });
+      }
+    }
+    if (step.status === "succeeded" && step.items.some((item) => item.status !== "succeeded")) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", stepIndex, "items"],
+        message: "a successful map requires every item to succeed",
+      });
+    }
+    if (
+      step.status === "failed" &&
+      step.items.some((item) => item.status === "pending" || item.status === "running")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", stepIndex, "items"],
+        message: "a failed map requires every item to be terminal",
+      });
+    }
+  }
+});
 
 type ManifestView = z.infer<typeof ManifestViewSchema>;
 

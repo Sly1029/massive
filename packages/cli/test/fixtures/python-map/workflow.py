@@ -43,6 +43,8 @@ async def inspect_item(context: StepContext[None, Item]) -> Finding:
     # Finish in a different order than the source collection. Collection must
     # still be deterministic by source index.
     await asyncio.sleep((4 - context.inputs.value) * 0.02)
+    if context.inputs.value < 0:
+        raise ValueError("negative values cannot be inspected")
     return Finding(source=context.inputs.value, doubled=context.inputs.value * 2)
 
 

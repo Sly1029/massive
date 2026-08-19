@@ -107,18 +107,22 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 		maxConcurrency = len(batch.Steps)
 	}
 	outcomes := make([]StepInvocationOutcome, len(batch.Steps))
-	semaphore := make(chan struct{}, maxConcurrency)
 	errs := make([]error, len(batch.Steps))
+	jobs := make(chan int)
 	var group sync.WaitGroup
-	for index, step := range batch.Steps {
+	for range maxConcurrency {
 		group.Add(1)
-		go func(index int, descriptor StepInvocationDescriptor) {
+		go func() {
 			defer group.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-			outcomes[index], errs[index] = i.invokeOne(ctx, descriptorDir, descriptor)
-		}(index, step.Descriptor)
+			for index := range jobs {
+				outcomes[index], errs[index] = i.invokeOne(ctx, descriptorDir, batch.Steps[index].Descriptor)
+			}
+		}()
 	}
+	for index := range batch.Steps {
+		jobs <- index
+	}
+	close(jobs)
 	group.Wait()
 	for _, err := range errs {
 		if err != nil {

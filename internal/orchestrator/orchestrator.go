@@ -851,20 +851,25 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 	if err != nil {
 		return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), err.Error())
 	}
-	published, err := artifact.PublishJSON(ctx, store, artifact.Destination{
+	collectionDestination := artifact.Destination{
 		ManifestKey: runOutputManifestKey(projectKey, runID, node.GetId(), nil, 1),
 		Schema:      node.GetOutputSchema(),
-	}, artifact.Producer{
+	}
+	collectionProducer := artifact.Producer{
 		ProjectKey: projectKey,
 		PlanHash:   config.Plan.GetPlanHash(),
 		RunID:      runID,
 		NodeID:     node.GetId(),
 		Attempt:    1,
-	}, collected)
-	if err != nil {
+	}
+	if _, err := artifact.PublishJSON(ctx, store, collectionDestination, collectionProducer, collected); err != nil {
 		return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), fmt.Sprintf("publish map collection: %v", err))
 	}
-	output := nodeOutputFromPublished(published, collected)
+	published, verifiedBody, err := artifact.ResolveJSON(ctx, store, collectionDestination, collectionProducer)
+	if err != nil {
+		return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), fmt.Sprintf("verify map collection: %v", err))
+	}
+	output := nodeOutputFromPublished(published, verifiedBody)
 	markAttemptSucceeded(manifest, node.GetId(), output.Published)
 	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
 		return nodeOutput{}, err
@@ -1360,11 +1365,36 @@ func mapHasFailedItem(manifest runManifest, nodeID string) bool {
 }
 
 func failMapNode(ctx context.Context, store datastore.Datastore, manifestKey datastore.Key, manifest *runManifest, nodeID string, diagnostic string) error {
+	markUnfinishedMapItemsFailed(manifest, nodeID)
 	markAttemptFailed(manifest, nodeID, diagnostic)
 	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
 		return err
 	}
 	return errors.New(diagnostic)
+}
+
+func markUnfinishedMapItemsFailed(manifest *runManifest, nodeID string) {
+	step := findManifestStep(manifest, nodeID)
+	if step == nil || step.Items == nil {
+		return
+	}
+	for index := range *step.Items {
+		item := &(*step.Items)[index]
+		if item.Status != StatusPending && item.Status != StatusRunning {
+			continue
+		}
+		item.Status = StatusFailed
+		if len(item.Attempts) == 0 {
+			item.Attempts = []manifestAttempt{{
+				Attempt:    1,
+				Status:     StatusFailed,
+				Diagnostic: "map node failed before this item completed",
+			}}
+			continue
+		}
+		item.Attempts[0].Status = StatusFailed
+		item.Attempts[0].Diagnostic = "map node failed before this item completed"
+	}
 }
 
 func markAttemptRunning(manifest *runManifest, nodeID string, input manifestDataArtifact) {
