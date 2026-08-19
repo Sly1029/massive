@@ -133,6 +133,20 @@ func TestParseRejectsMapWhoseArrayContractsDoNotExactlyMatchItems(t *testing.T) 
 	}
 }
 
+func TestParseResolvesEscapedLocalJSONPointerInMapArrayItems(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		root["schemas"].(map[string]any)[inputList] = map[string]any{
+			"type":  "array",
+			"items": map[string]any{"$ref": "#/$defs/Item~1model~0v1"},
+			"$defs": map[string]any{"Item/model~v1": map[string]any{"type": "integer"}},
+		}
+	})
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("parse map with escaped local JSON Pointer: %v", err)
+	}
+}
+
 func TestParseForbidsMapFieldsBeforeGraphIR03(t *testing.T) {
 	data := mutateFixture(t, "finite-map", func(root map[string]any) {
 		root["graph"].(map[string]any)["irVersion"] = "0.2"

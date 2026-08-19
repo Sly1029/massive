@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
@@ -802,7 +804,11 @@ func arraySchemaItemsExactlyMatch(arraySchema, itemSchema json.RawMessage) bool 
 	if err := json.Unmarshal(object["type"], &kind); err != nil || kind != "array" || len(object["items"]) == 0 {
 		return false
 	}
-	canonicalItems, err := canonical.CanonicalizeJSON(object["items"])
+	items, ok := resolveLocalJSONReference(arraySchema, object["items"])
+	if !ok {
+		return false
+	}
+	canonicalItems, err := canonical.CanonicalizeJSON(items)
 	if err != nil {
 		return false
 	}
@@ -811,6 +817,97 @@ func arraySchemaItemsExactlyMatch(arraySchema, itemSchema json.RawMessage) bool 
 		return false
 	}
 	return bytes.Equal(canonicalItems, canonicalItemSchema)
+}
+
+// resolveLocalJSONReference follows reference-only local JSON Pointer values
+// within one top-level array schema. It intentionally does not try to prove
+// arbitrary JSON Schema equivalence: after dereferencing, callers still
+// compare the canonical JSON fragments exactly.
+func resolveLocalJSONReference(document, value json.RawMessage) (json.RawMessage, bool) {
+	resolved := value
+	seen := make(map[string]bool)
+	for {
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(resolved, &object); err != nil {
+			return resolved, true
+		}
+		referenceValue, hasReference := object["$ref"]
+		if !hasReference || len(object) != 1 {
+			return resolved, true
+		}
+		var reference string
+		if err := json.Unmarshal(referenceValue, &reference); err != nil || seen[reference] {
+			return nil, false
+		}
+		seen[reference] = true
+		target, ok := resolveLocalJSONPointer(document, reference)
+		if !ok {
+			return nil, false
+		}
+		resolved = target
+	}
+}
+
+func resolveLocalJSONPointer(document json.RawMessage, reference string) (json.RawMessage, bool) {
+	parsed, err := url.Parse(reference)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.Path != "" || parsed.RawQuery != "" {
+		return nil, false
+	}
+	current := document
+	if parsed.Fragment == "" {
+		return current, true
+	}
+	if !strings.HasPrefix(parsed.Fragment, "/") {
+		return nil, false
+	}
+	for _, encodedToken := range strings.Split(parsed.Fragment[1:], "/") {
+		token, ok := decodeJSONPointerToken(encodedToken)
+		if !ok {
+			return nil, false
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(current, &object); err == nil {
+			next, exists := object[token]
+			if !exists {
+				return nil, false
+			}
+			current = next
+			continue
+		}
+		var array []json.RawMessage
+		if err := json.Unmarshal(current, &array); err != nil || (len(token) > 1 && token[0] == '0') {
+			return nil, false
+		}
+		index, err := strconv.Atoi(token)
+		if err != nil || index < 0 || index >= len(array) {
+			return nil, false
+		}
+		current = array[index]
+	}
+	return current, true
+}
+
+func decodeJSONPointerToken(encoded string) (string, bool) {
+	var decoded strings.Builder
+	for index := 0; index < len(encoded); index++ {
+		if encoded[index] != '~' {
+			decoded.WriteByte(encoded[index])
+			continue
+		}
+		if index+1 >= len(encoded) {
+			return "", false
+		}
+		index++
+		switch encoded[index] {
+		case '0':
+			decoded.WriteByte('~')
+		case '1':
+			decoded.WriteByte('/')
+		default:
+			return "", false
+		}
+	}
+	return decoded.String(), true
 }
 
 // validateExclusiveDecisionBranches keeps 0.2's activation model local: a
