@@ -81,8 +81,8 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
       }[];
     }[];
   };
-  assertEquals(manifest.schemaVersion, 1);
-  assertEquals(manifest.encoding, "json-v1");
+  assertEquals(manifest.schemaVersion, 2);
+  assertEquals(manifest.encoding, "json-v2");
   assertEquals(manifest.status, "succeeded");
   assertEquals(manifest.steps.map((step) => step.nodeId), [
     "double",
@@ -218,11 +218,43 @@ Deno.test("massive run Python decision: selects one typed branch and journals th
     schemaVersion: number;
     encoding: string;
     decisions: { nodeId: string; selectedCase: string }[];
+    steps: {
+      nodeId: string;
+      status: string;
+      skipReason?: { kind: string; decisionId: string; case: string };
+      attempts: { output?: { body: { key: string; hash: string } } }[];
+    }[];
   };
+  assertEquals(manifest.schemaVersion, 2);
+  assertEquals(manifest.encoding, "json-v2");
   assertEquals(manifest.decisions, [{
     nodeId: "route",
     selectedCase: "approved",
   }]);
+  assertEquals(
+    manifest.steps.find((step) => step.nodeId === "reject")?.skipReason,
+    {
+      kind: "decision-not-selected",
+      decisionId: "route",
+      case: "rejected",
+    },
+  );
+  const approvedBody = manifest.steps.find((step) => step.nodeId === "approve")
+    ?.attempts[0]?.output?.body;
+  assert(
+    approvedBody !== undefined,
+    "selected branch should publish one output body",
+  );
+  assertEquals(
+    await Deno.readTextFile(join(store, approvedBody.key)),
+    '{"message":"approved:91"}',
+  );
+  const keys = await listStoreKeys(store);
+  assertEquals(
+    keys.some((key) => key.includes("/steps/choose/")),
+    false,
+    "select must alias the selected body rather than publish a synthetic step output",
+  );
 });
 
 Deno.test("massive run diamond: fan-in result 81 at the frozen result key", async () => {

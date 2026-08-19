@@ -21,6 +21,7 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/google/uuid"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const jsonContentType = "application/json"
@@ -55,8 +56,10 @@ type executionIndex struct {
 	contractsByRef  map[string]*planpb.ExecutionContract
 	packagesByID    map[string]sourcePackageArtifact
 	inboundByTarget map[string][]*planpb.GraphEdge
+	nodeOrder       []string
 	stepOrder       []string
 	schemaRefs      map[string]bool
+	schemaJSON      map[string]string
 }
 
 type sourcePackageArtifact struct {
@@ -75,6 +78,10 @@ type nodeOutput struct {
 	Artifact  manifestDataArtifact
 	Published manifestPublishedArtifact
 	Body      []byte
+}
+
+type skippedNode struct {
+	reason manifestSkipReason
 }
 
 func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, error) {
@@ -173,8 +180,52 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 		},
 	}
 
-	for _, nodeID := range index.stepOrder {
+	selectedCases := make(map[string]string)
+	skipped := make(map[string]skippedNode)
+	for _, nodeID := range index.nodeOrder {
 		node := index.nodesByID[nodeID]
+		switch node.GetKind() {
+		case "decision":
+			selectedCase, output, err := routeDecision(node, index, outputs)
+			if err != nil {
+				return failRun(ctx, store, manifestKey, &manifest, result, "", err.Error())
+			}
+			selectedCases[nodeID] = selectedCase
+			outputs[nodeID] = output
+			manifest.Decisions = append(manifest.Decisions, manifestDecision{
+				NodeID:       nodeID,
+				SelectedCase: selectedCase,
+			})
+			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+				return nil, err
+			}
+			continue
+		case "select":
+			output, err := selectOutput(node, outputs, selectedCases)
+			if err != nil {
+				return failRun(ctx, store, manifestKey, &manifest, result, "", err.Error())
+			}
+			outputs[nodeID] = output
+			continue
+		case "start", "end":
+			continue
+		case "step":
+			reason, err := skipReasonForStep(node, index.inboundByTarget[nodeID], selectedCases, skipped)
+			if err != nil {
+				return failRun(ctx, store, manifestKey, &manifest, result, "", err.Error())
+			}
+			if reason != nil {
+				markStepSkipped(&manifest, nodeID, *reason)
+				skipped[nodeID] = skippedNode{reason: *reason}
+				if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+					return nil, err
+				}
+				continue
+			}
+		default:
+			return failRun(ctx, store, manifestKey, &manifest, result, "", fmt.Sprintf("unsupported plan node kind %q for %q", node.GetKind(), nodeID))
+		}
+
 		inputBytes, err := inputForNode(node, index.inboundByTarget[nodeID], outputs)
 		if err != nil {
 			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
@@ -718,6 +769,119 @@ func inputForNode(node *planpb.GraphNode, inbound []*planpb.GraphEdge, outputs m
 	return canonical.CanonicalizeJSON(out.Bytes())
 }
 
+// routeDecision is deliberately data-only: it reads the already-published
+// classifier value, validates the selected branch schema, and forwards the
+// same immutable artifact to the conditional edge. It never invokes user code.
+func routeDecision(node *planpb.GraphNode, index executionIndex, outputs map[string]nodeOutput) (string, nodeOutput, error) {
+	inbound := index.inboundByTarget[node.GetId()]
+	inputBytes, err := inputForNode(node, inbound, outputs)
+	if err != nil {
+		return "", nodeOutput{}, fmt.Errorf("decision %q input: %w", node.GetId(), err)
+	}
+	if len(inbound) != 1 {
+		return "", nodeOutput{}, fmt.Errorf("decision %q requires exactly one input edge", node.GetId())
+	}
+	input, ok := outputs[inbound[0].GetFrom()]
+	if !ok {
+		return "", nodeOutput{}, fmt.Errorf("decision %q input source %q has no output", node.GetId(), inbound[0].GetFrom())
+	}
+	if input.Artifact.Schema != node.GetInputSchema() {
+		return "", nodeOutput{}, fmt.Errorf("decision %q input schema %q does not match declared schema %q", node.GetId(), input.Artifact.Schema, node.GetInputSchema())
+	}
+
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(inputBytes, &value); err != nil {
+		return "", nodeOutput{}, fmt.Errorf("decision %q selector %q requires a JSON object: %w", node.GetId(), node.GetSelector(), err)
+	}
+	rawTag, exists := value[node.GetSelector()]
+	if !exists {
+		return "", nodeOutput{}, fmt.Errorf("decision %q selector %q is missing", node.GetId(), node.GetSelector())
+	}
+	var tag string
+	if err := json.Unmarshal(rawTag, &tag); err != nil {
+		return "", nodeOutput{}, fmt.Errorf("decision %q selector %q must be a string", node.GetId(), node.GetSelector())
+	}
+	for _, decisionCase := range node.GetCases() {
+		if decisionCase.GetTag() != tag {
+			continue
+		}
+		schema := index.schemaJSON[decisionCase.GetSchema()]
+		if schema == "" {
+			return "", nodeOutput{}, fmt.Errorf("decision %q case %q references unavailable schema %q", node.GetId(), tag, decisionCase.GetSchema())
+		}
+		if err := validateJSONAgainstSchema(schema, inputBytes); err != nil {
+			return "", nodeOutput{}, fmt.Errorf("decision %q selected case %q does not satisfy its schema: %w", node.GetId(), tag, err)
+		}
+		return tag, input, nil
+	}
+	return "", nodeOutput{}, fmt.Errorf("decision %q selector %q has unknown case %q", node.GetId(), node.GetSelector(), tag)
+}
+
+// selectOutput aliases the chosen branch's DataArtifactRef and body. It must
+// not republish the data: the source attempt already committed it manifest-last.
+func selectOutput(node *planpb.GraphNode, outputs map[string]nodeOutput, selectedCases map[string]string) (nodeOutput, error) {
+	tag, exists := selectedCases[node.GetDecisionRef()]
+	if !exists {
+		return nodeOutput{}, fmt.Errorf("select %q has no durable selection for decision %q", node.GetId(), node.GetDecisionRef())
+	}
+	for _, input := range node.GetSelectInputs() {
+		if input.GetCase() != tag {
+			continue
+		}
+		output, exists := outputs[input.GetSource()]
+		if !exists {
+			return nodeOutput{}, fmt.Errorf("select %q selected source %q has no output", node.GetId(), input.GetSource())
+		}
+		if output.Artifact.Schema != node.GetOutputSchema() {
+			return nodeOutput{}, fmt.Errorf("select %q output schema %q does not match selected source schema %q", node.GetId(), node.GetOutputSchema(), output.Artifact.Schema)
+		}
+		return output, nil
+	}
+	return nodeOutput{}, fmt.Errorf("select %q has no input for selected case %q", node.GetId(), tag)
+}
+
+func skipReasonForStep(node *planpb.GraphNode, inbound []*planpb.GraphEdge, selectedCases map[string]string, skipped map[string]skippedNode) (*manifestSkipReason, error) {
+	for _, edge := range inbound {
+		if edge.GetCase() != "" {
+			selectedCase, exists := selectedCases[edge.GetFrom()]
+			if !exists {
+				return nil, fmt.Errorf("conditional step %q depends on unresolved decision %q", node.GetId(), edge.GetFrom())
+			}
+			if selectedCase != edge.GetCase() {
+				return &manifestSkipReason{Kind: "decision-not-selected", DecisionID: edge.GetFrom(), Case: edge.GetCase()}, nil
+			}
+		}
+		if ancestor, exists := skipped[edge.GetFrom()]; exists {
+			reason := ancestor.reason
+			return &reason, nil
+		}
+	}
+	return nil, nil
+}
+
+func validateJSONAgainstSchema(schemaJSON string, valueJSON []byte) error {
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader([]byte(schemaJSON)))
+	if err != nil {
+		return fmt.Errorf("decode schema: %w", err)
+	}
+	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(valueJSON))
+	if err != nil {
+		return fmt.Errorf("decode value: %w", err)
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("decision-case.schema.json", document); err != nil {
+		return fmt.Errorf("register schema: %w", err)
+	}
+	schema, err := compiler.Compile("decision-case.schema.json")
+	if err != nil {
+		return fmt.Errorf("compile schema: %w", err)
+	}
+	if err := schema.Validate(instance); err != nil {
+		return err
+	}
+	return nil
+}
+
 func resolveOutputArtifact(ctx context.Context, store datastore.Datastore, descriptor StepInvocationDescriptor, index executionIndex) (nodeOutput, error) {
 	if !index.schemaRefs[descriptor.Output.Schema] {
 		return nodeOutput{}, fmt.Errorf("output schema ref %s is not present in the plan", descriptor.Output.Schema)
@@ -794,17 +958,24 @@ func buildExecutionIndex(workflowPlan *planpb.WorkflowPlan) (executionIndex, err
 	if graph == nil {
 		return executionIndex{}, fmt.Errorf("workflow plan is missing graph")
 	}
+	nodeOrder, err := topologicalPlanOrder(graph)
+	if err != nil {
+		return executionIndex{}, err
+	}
 
 	index := executionIndex{
 		nodesByID:       make(map[string]*planpb.GraphNode, len(graph.GetNodes())),
 		symbolsByRef:    make(map[string]*planpb.SymbolEntry, len(workflowPlan.GetSymbols())),
 		contractsByRef:  make(map[string]*planpb.ExecutionContract, len(workflowPlan.GetContracts())),
 		inboundByTarget: make(map[string][]*planpb.GraphEdge, len(graph.GetNodes())),
+		nodeOrder:       make([]string, 0, len(graph.GetNodes())),
 		stepOrder:       make([]string, 0, len(graph.GetNodes())),
 		schemaRefs:      make(map[string]bool, len(workflowPlan.GetSchemas())),
+		schemaJSON:      make(map[string]string, len(workflowPlan.GetSchemas())),
 	}
 	for _, schemaEntry := range workflowPlan.GetSchemas() {
 		index.schemaRefs[schemaEntry.GetHash()] = true
+		index.schemaJSON[schemaEntry.GetHash()] = schemaEntry.GetCanonicalJson()
 	}
 	for _, symbol := range workflowPlan.GetSymbols() {
 		index.symbolsByRef[symbol.GetSymbolRef()] = symbol
@@ -815,9 +986,6 @@ func buildExecutionIndex(workflowPlan *planpb.WorkflowPlan) (executionIndex, err
 	for _, node := range graph.GetNodes() {
 		index.nodesByID[node.GetId()] = node
 		index.inboundByTarget[node.GetId()] = nil
-		if node.GetKind() == "step" {
-			index.stepOrder = append(index.stepOrder, node.GetId())
-		}
 	}
 	for _, edge := range graph.GetEdges() {
 		if index.nodesByID[edge.GetFrom()] == nil {
@@ -828,7 +996,63 @@ func buildExecutionIndex(workflowPlan *planpb.WorkflowPlan) (executionIndex, err
 		}
 		index.inboundByTarget[edge.GetTo()] = append(index.inboundByTarget[edge.GetTo()], edge)
 	}
+	for _, nodeID := range nodeOrder {
+		node := index.nodesByID[nodeID]
+		if node.GetKind() != "start" && node.GetKind() != "end" {
+			index.nodeOrder = append(index.nodeOrder, nodeID)
+		}
+		if node.GetKind() == "step" {
+			index.stepOrder = append(index.stepOrder, nodeID)
+		}
+	}
 	return index, nil
+}
+
+func topologicalPlanOrder(graph *planpb.GraphIR) ([]string, error) {
+	nodes := make(map[string]bool, len(graph.GetNodes()))
+	indegree := make(map[string]int, len(graph.GetNodes()))
+	adjacency := make(map[string][]string, len(graph.GetNodes()))
+	for _, node := range graph.GetNodes() {
+		if node.GetId() == "" {
+			return nil, errors.New("workflow plan contains a graph node without an id")
+		}
+		if nodes[node.GetId()] {
+			return nil, fmt.Errorf("workflow plan contains duplicate graph node id %q", node.GetId())
+		}
+		nodes[node.GetId()] = true
+		indegree[node.GetId()] = 0
+	}
+	for _, edge := range graph.GetEdges() {
+		if !nodes[edge.GetFrom()] || !nodes[edge.GetTo()] {
+			return nil, fmt.Errorf("workflow plan edge %q -> %q references an unknown node", edge.GetFrom(), edge.GetTo())
+		}
+		adjacency[edge.GetFrom()] = append(adjacency[edge.GetFrom()], edge.GetTo())
+		indegree[edge.GetTo()]++
+	}
+	ready := make([]string, 0, len(nodes))
+	for nodeID, degree := range indegree {
+		if degree == 0 {
+			ready = append(ready, nodeID)
+		}
+	}
+	sort.Slice(ready, func(i, j int) bool { return canonical.LessUTF16(ready[i], ready[j]) })
+	order := make([]string, 0, len(nodes))
+	for len(ready) > 0 {
+		current := ready[0]
+		ready = ready[1:]
+		order = append(order, current)
+		for _, next := range adjacency[current] {
+			indegree[next]--
+			if indegree[next] == 0 {
+				ready = append(ready, next)
+			}
+		}
+		sort.Slice(ready, func(i, j int) bool { return canonical.LessUTF16(ready[i], ready[j]) })
+	}
+	if len(order) != len(nodes) {
+		return nil, errors.New("workflow plan graph contains a cycle")
+	}
+	return order, nil
 }
 
 func newRunManifest(planHash string, projectKey string, runID string, stepOrder []string) runManifest {
@@ -838,13 +1062,14 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 	}
 	return runManifest{
 		Kind:          "RunManifest",
-		SchemaVersion: 1,
-		Encoding:      "json-v1",
+		SchemaVersion: 2,
+		Encoding:      "json-v2",
 		PlanHash:      planHash,
 		ProjectKey:    projectKey,
 		RunID:         runID,
 		Status:        StatusRunning,
 		Steps:         steps,
+		Decisions:     []manifestDecision{},
 	}
 }
 
@@ -887,6 +1112,17 @@ func markAttemptFailed(manifest *runManifest, nodeID string, diagnostic string) 
 		}
 		manifest.Steps[index].Attempts[0].Status = StatusFailed
 		manifest.Steps[index].Attempts[0].Diagnostic = diagnostic
+		return
+	}
+}
+
+func markStepSkipped(manifest *runManifest, nodeID string, reason manifestSkipReason) {
+	for index := range manifest.Steps {
+		if manifest.Steps[index].NodeID != nodeID {
+			continue
+		}
+		manifest.Steps[index].Status = StatusSkipped
+		manifest.Steps[index].SkipReason = &reason
 		return
 	}
 }

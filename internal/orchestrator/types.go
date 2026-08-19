@@ -12,6 +12,7 @@ const (
 	StatusRunning   = "running"
 	StatusSucceeded = "succeeded"
 	StatusFailed    = "failed"
+	StatusSkipped   = "skipped"
 )
 
 // SourceArchiveContentType identifies the portable, deterministic USTAR source
