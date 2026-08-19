@@ -88,6 +88,36 @@ Deno.test("WorkflowSpec requires explicit transport, graph, and hash recipe vers
   }
 });
 
+Deno.test("WorkflowSpec source-package file paths are normalized POSIX-relative paths", async () => {
+  const validate = await compileWorkflowSpecValidator();
+  const original = (await readJson(
+    "../../../conformance/fixtures/specs/linear-chain/workflow-spec.json",
+  )) as {
+    sourcePackages: Record<string, { files: { path: string }[] }>;
+  };
+  const validNested = structuredClone(original);
+  Object.values(validNested.sourcePackages)[0]!.files[0]!.path = "src/nested/a.py";
+  assert(validate(validNested), `valid nested path must be accepted: ${JSON.stringify(validate.errors)}`);
+
+  for (
+    const path of [
+      "./a.py",
+      "src//a.py",
+      "src/a.py/",
+      "src\\a.py",
+      "/absolute/a.py",
+      "../a.py",
+      "src/../a.py",
+      ".",
+      "..",
+    ]
+  ) {
+    const spec = structuredClone(original);
+    Object.values(spec.sourcePackages)[0]!.files[0]!.path = path;
+    assertEquals(validate(spec), false, `${JSON.stringify(path)} must be rejected`);
+  }
+});
+
 Deno.test("WorkflowSpec JSON Schema rejects step nodes without contractRef", async () => {
   const validate = await compileWorkflowSpecValidator();
   const spec = await readJson("../../../conformance/fixtures/specs/invalid-missing-contract-ref/workflow-spec.json");

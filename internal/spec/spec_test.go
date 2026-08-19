@@ -684,6 +684,22 @@ func TestParseRejectsSourcePackageHashThatDoesNotMatchVersionedManifest(t *testi
 	}
 }
 
+func TestParseRejectsNonCanonicalSourcePackagePaths(t *testing.T) {
+	for _, path := range []string{"./a.py", "src//a.py", "src/a.py/", `src\a.py`, "/absolute/a.py", "../a.py", "src/../a.py", ".", ".."} {
+		t.Run(path, func(t *testing.T) {
+			data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+				packages := root["sourcePackages"].(map[string]any)
+				files := packages["ts-main"].(map[string]any)["files"].([]any)
+				files[0].(map[string]any)["path"] = path
+			})
+
+			if _, err := Parse(data); err == nil {
+				t.Fatal("expected invalid source package path")
+			}
+		})
+	}
+}
+
 func TestParseRejectsMutableContainerRecipeImage(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
 		environments := root["environments"].(map[string]any)

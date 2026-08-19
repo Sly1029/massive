@@ -116,6 +116,12 @@ Shape:
   ],
   "sourcePackages": [
     {
+      "hashing": {
+        "algorithm": "sha256",
+        "canonicalization": "canonical-json-v0",
+        "recipe": "source-package",
+        "recipeVersion": 1
+      },
       "language": "typescript",
       "packageHash": "sha256:<hex>",
       "packageId": "ts-main"

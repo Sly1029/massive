@@ -5,16 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
-	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/spec"
 )
-
-var digestPattern = regexp.MustCompile(`sha256:[0-9a-f]{64}`)
 
 func TestCompileFixturesMatchGoldenPlans(t *testing.T) {
 	tests := []struct {
@@ -46,10 +42,8 @@ func TestCompileFixturesMatchGoldenPlans(t *testing.T) {
 			}
 
 			golden := readFixture(t, "plans", test.name, "workflow-plan.json")
-			actualNormalized := normalizePlanJSON(t, first.CanonicalJSON)
-			goldenNormalized := normalizePlanJSON(t, golden)
-			if !bytes.Equal(actualNormalized, goldenNormalized) {
-				t.Fatalf("plan mismatch\nactual:   %s\nexpected: %s", actualNormalized, goldenNormalized)
+			if !bytes.Equal(first.CanonicalJSON, golden) {
+				t.Fatalf("plan mismatch\nactual:   %s\nexpected: %s", first.CanonicalJSON, golden)
 			}
 		})
 	}
@@ -207,18 +201,6 @@ func readFixture(t *testing.T, fixtureKind, name, file string) []byte {
 	return data
 }
 
-func normalizePlanJSON(t *testing.T, data []byte) []byte {
-	t.Helper()
-
-	normalized := digestPattern.ReplaceAll(data, []byte("sha256:0000000000000000000000000000000000000000000000000000000000000000"))
-	normalized = omitEmptyRepeatedFields(t, normalized)
-	canonicalJSON, err := canonical.CanonicalizeJSON(normalized)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return canonicalJSON
-}
-
 func decisionSpecData(t *testing.T) []byte {
 	t.Helper()
 	var root map[string]any
@@ -287,22 +269,4 @@ func decisionSpecData(t *testing.T) []byte {
 
 func hashRef(character string) string {
 	return "sha256:" + string(bytes.Repeat([]byte(character), 64))
-}
-
-func omitEmptyRepeatedFields(t *testing.T, data []byte) []byte {
-	t.Helper()
-
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		t.Fatal(err)
-	}
-
-	output, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return output
 }
