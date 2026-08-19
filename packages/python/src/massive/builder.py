@@ -599,15 +599,8 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                 for edge_source, edge_target, _ in self._conditional_edges
                 if edge_target == definition.id
             )
-            outgoing = [
-                (edge_source, edge_target)
-                for edge_source, edge_target in self._edges
-                if edge_source == definition.id
-            ]
             if len(incoming) != 1:
                 raise ValueError(f"map {definition.id!r} must have exactly one incoming edge")
-            if len(outgoing) != 1:
-                raise ValueError(f"map {definition.id!r} must have exactly one outgoing edge")
 
         lineages = self._activation_lineages()
         for select in self._selects.values():

@@ -162,10 +162,6 @@ def result_identity(context: StepContext[None, Result]) -> Result:
     return context.inputs
 
 
-def list_result_identity(context: StepContext[None, list[Result]]) -> list[Result]:
-    return context.inputs
-
-
 def test_graph_without_dependencies_rejects_a_step_that_declares_them() -> None:
     graph = GraphBuilder(
         name="no-deps",
@@ -327,24 +323,6 @@ def test_map_rejects_a_map_result_as_its_source() -> None:
 
     with pytest.raises(ValueError, match="nested maps are not supported"):
         graph.map(mapped, graph.step()(result_identity), id="second-map")
-
-
-def test_map_emit_requires_exactly_one_outgoing_edge() -> None:
-    graph = GraphBuilder(
-        name="map-multiple-consumers",
-        input_type=Request,
-        output_type=list[Result],
-        defaults=_defaults(),
-    )
-    source = graph.add(graph.step()(load_requests))
-    mapped = graph.map(source, graph.step()(increment_request), id="increment-all")
-    additional_consumer = graph.add(graph.step()(list_result_identity))
-    graph.edge_from(graph.start).to(source)
-    graph.edge_from(mapped).to(additional_consumer).to(graph.end)
-    graph.edge_from(mapped).to(graph.end)
-
-    with pytest.raises(ValueError, match="map 'increment-all' must have exactly one outgoing edge"):
-        _emit(graph)
 
 
 def test_map_emit_requires_exactly_one_incoming_edge() -> None:
