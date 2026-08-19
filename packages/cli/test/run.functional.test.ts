@@ -178,7 +178,7 @@ Deno.test("massive run Python graph: same compiler, runner, and frozen artifact 
   assertEquals(outputManifest.producer.attempt, 1);
 });
 
-Deno.test("massive run Python decision: selects one typed branch and journals the route", async () => {
+Deno.test("massive run Python decision: selects the approved branch and journals the route", async () => {
   const fixture = await copyFixture("python-decision");
   const store = await makeStore();
 
@@ -251,7 +251,81 @@ Deno.test("massive run Python decision: selects one typed branch and journals th
   );
   const keys = await listStoreKeys(store);
   assertEquals(
-    keys.some((key) => key.includes("/steps/choose/")),
+    keys.some((key) => key.includes("/steps/route-select/")),
+    false,
+    "select must alias the selected body rather than publish a synthetic step output",
+  );
+});
+
+Deno.test("massive run Python decision: selects the rejected branch and skips approval", async () => {
+  const fixture = await copyFixture("python-decision");
+  const store = await makeStore();
+
+  const result = await runCli([
+    "run",
+    join(fixture, "workflow.py"),
+    "--input",
+    '{"score":10}',
+    "--store",
+    store,
+    "--project",
+    "acme/python-decision",
+    "--run-id",
+    "python-decision-rejected",
+    "--json",
+  ]);
+
+  assertEquals(result.code, 0, result.stderr);
+  const outcome = JSON.parse(result.stdout) as {
+    result: { message: string };
+    steps: { nodeId: string; status: string }[];
+  };
+  assertEquals(outcome.result, { message: "rejected:score below threshold" });
+  assertEquals(outcome.steps, [
+    { nodeId: "classify", status: "succeeded" },
+    { nodeId: "approve", status: "skipped" },
+    { nodeId: "reject", status: "succeeded" },
+  ]);
+
+  const manifestPath = await findRunArtifact(
+    store,
+    "python-decision-rejected",
+    "run-manifest.json",
+  );
+  assert(manifestPath !== undefined, "decision run manifest should exist");
+  const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+    decisions: { nodeId: string; selectedCase: string }[];
+    steps: {
+      nodeId: string;
+      skipReason?: { kind: string; decisionId: string; case: string };
+      attempts: { output?: { body: { key: string } } }[];
+    }[];
+  };
+  assertEquals(manifest.decisions, [{
+    nodeId: "route",
+    selectedCase: "rejected",
+  }]);
+  assertEquals(
+    manifest.steps.find((step) => step.nodeId === "approve")?.skipReason,
+    {
+      kind: "decision-not-selected",
+      decisionId: "route",
+      case: "approved",
+    },
+  );
+  const rejectedBody = manifest.steps.find((step) => step.nodeId === "reject")
+    ?.attempts[0]?.output?.body;
+  assert(
+    rejectedBody !== undefined,
+    "selected branch should publish one output body",
+  );
+  assertEquals(
+    await Deno.readTextFile(join(store, rejectedBody.key)),
+    '{"message":"rejected:score below threshold"}',
+  );
+  const keys = await listStoreKeys(store);
+  assertEquals(
+    keys.some((key) => key.includes("/steps/route-select/")),
     false,
     "select must alias the selected body rather than publish a synthetic step output",
   );
