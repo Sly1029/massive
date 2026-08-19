@@ -58,11 +58,6 @@ func TestDefaultRunnerCommandSelectsPythonRunner(t *testing.T) {
 	}
 
 	want := []string{
-		"uv",
-		"run",
-		"--project",
-		filepath.Join(mustAbs(t, workingDir), "packages", "python"),
-		"--frozen",
 		"massive-python-runner",
 		descriptorPathToken,
 	}

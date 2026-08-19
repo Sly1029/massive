@@ -1,10 +1,13 @@
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert";
+import { basename, dirname } from "node:path";
+import { parseWorkflowSpecText } from "@massive/sdk";
 import {
   copyFixture,
   exists,
   findRunArtifact,
   fixtureEntry,
   join,
+  listStoreKeys,
   makeStore,
   repoRoot,
   runCli,
@@ -87,8 +90,92 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
     "label",
   ]);
   const doubleOutput = manifest.steps[0].attempts[0].output;
-  assert(doubleOutput !== undefined, "double attempt should journal its output");
-  assertEquals(await Deno.readTextFile(join(store, doubleOutput.body.key)), "40");
+  assert(
+    doubleOutput !== undefined,
+    "double attempt should journal its output",
+  );
+  assertEquals(
+    await Deno.readTextFile(join(store, doubleOutput.body.key)),
+    "40",
+  );
+});
+
+Deno.test("massive run Python graph: same compiler, runner, and frozen artifact path", async () => {
+  const fixture = await copyFixture("python-linear");
+  const store = await makeStore();
+
+  const result = await runCli([
+    "run",
+    `${basename(fixture)}/workflow.py#graph`,
+    "--input",
+    '{"value":20}',
+    "--store",
+    store,
+    "--project",
+    "acme/python-workflow",
+    "--run-id",
+    "python-linear-run",
+    "--verbose",
+  ], { cwd: dirname(fixture) });
+
+  assertEquals(result.code, 0, result.stderr);
+  assertStringIncludes(result.stdout, "add_one");
+  assertStringIncludes(result.stdout, '{"value":21}');
+
+  const keys = await listStoreKeys(store);
+  const specKey = keys.find((key) => key.endsWith("/workflow-spec.json"));
+  const planKey = keys.find((key) => key.endsWith("/workflow.json"));
+  const outputManifestKey = keys.find((key) =>
+    key.endsWith("output-manifest.json")
+  );
+  assert(specKey !== undefined, "canonical WorkflowSpec should be persisted");
+  assert(planKey !== undefined, "compiled WorkflowPlan should be persisted");
+  assert(
+    outputManifestKey !== undefined,
+    "Python output should be visible through a committed manifest",
+  );
+  assertEquals(keys.some((key) => key.includes("/source.tar")), true);
+
+  const spec = await parseWorkflowSpecText(
+    await Deno.readTextFile(join(store, specKey)),
+  );
+  assertEquals(spec.graph.irVersion, "0.1");
+  assertEquals(spec.sourcePackages["python-main"]?.language, "python");
+
+  const plan = JSON.parse(await Deno.readTextFile(join(store, planKey))) as {
+    graph: { nodes: { kind: string; symbolRef?: string }[] };
+    symbols: {
+      language: string;
+      module: string;
+      export: string;
+      packageId: string;
+      symbolRef: string;
+    }[];
+    environments: { kind: string; container?: { image: string } }[];
+  };
+  assertEquals(plan.symbols, [{
+    export: "add_one",
+    language: "python",
+    module: "workflow",
+    packageId: "python-main",
+    symbolRef: "python-main:workflow#add_one",
+  }]);
+  assertEquals(
+    plan.graph.nodes.find((node) => node.kind === "step")?.symbolRef,
+    "python-main:workflow#add_one",
+  );
+  assertEquals(plan.environments[0]?.kind, "container-plan");
+  assertStringIncludes(
+    plan.environments[0]?.container?.image ?? "",
+    "python-runner@sha256:",
+  );
+
+  const outputManifest = JSON.parse(
+    await Deno.readTextFile(join(store, outputManifestKey)),
+  ) as { kind: string; producer: { nodeId: string; attempt: number } };
+  assertEquals(outputManifest.kind, "DataArtifactManifest");
+  assertEquals(outputManifest.producer.nodeId, "add_one");
+  assertEquals(outputManifest.producer.attempt, 1);
 });
 
 Deno.test("massive run diamond: fan-in result 81 at the frozen result key", async () => {

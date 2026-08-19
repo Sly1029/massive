@@ -10,6 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
+massive-python-frontend = "massive.frontend:main"
 massive-python-runner = "massive.runner:main"
 
 [dependency-groups]

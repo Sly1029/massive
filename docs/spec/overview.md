@@ -50,11 +50,15 @@ validation at its step boundary.
 Workflow authors should not need to understand the full compiler round trip for local development. The CLI should provide a simple command such as:
 
 ```sh
+massive run workflow.py
 massive run workflow.ts
 massive run workflow/
 ```
 
-Workflow entrypoints are explicit exports. For TypeScript v0, a file entrypoint may use a default export or a selected named export such as `workflow.ts#mathWorkflow`. A directory entrypoint should resolve through package configuration rather than recursive inference.
+Workflow entrypoints are explicit exports. A file entrypoint may select a named
+export such as `workflow.py#math_workflow` or `workflow.ts#mathWorkflow`. A
+directory entrypoint should resolve through package configuration rather than
+recursive inference.
 
 Single-file workflows may run locally without `massive.config.ts`. That zero-config mode creates an ephemeral package config with strict defaults. Deployable profiles require explicit package configuration.
 
@@ -78,7 +82,9 @@ For v0, `.proto` schemas define the typed compiled-plan and manifest contracts, 
 ## Goals
 
 - Provide a Python-first workflow SDK with a declarative, functional authoring style inspired by `pydantic-graph`, while retaining a supported TypeScript SDK.
-- Use native graph libraries instead of reimplementing graph algorithms. TypeScript uses Graphology internally. The IR stays language-neutral by design, but TypeScript/JavaScript is the only planned authoring language for now.
+- Use native graph libraries instead of reimplementing graph algorithms. Each
+  frontend may use language-native graph tooling, but the IR stays
+  language-neutral by design.
 - Keep the canonical compiled workflow representation language-neutral with proto-typed JSON artifacts.
 - Treat execution requirements as first-class. A compiled workflow includes graph topology plus environment, resources, secrets, storage, network, and observability contracts.
 - Support local async execution and Argo as the first production backend.

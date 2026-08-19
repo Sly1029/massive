@@ -121,3 +121,36 @@ These author-time checks intentionally cover the Pydantic-generated schema
 forms Massive emits; they do not attempt to solve arbitrary JSON Schema
 satisfiability. Runtime canonicalization remains the authoritative final
 boundary before an artifact is published.
+
+## Frontend emitter
+
+Run a zero-config Python workflow through the same compiler, orchestrator, and
+artifact protocol used by every Massive frontend:
+
+```sh
+massive run path/to/workflow.py --input '{"value": 21}'
+```
+
+When a module exports more than one graph, select it explicitly with
+`workflow.py#graph_export`. The CLI invokes the Python frontend as an isolated
+process, validates its canonical `WorkflowSpec`, compiles it with the Go
+compiler, and invokes each Python step in a separate runner process. Local
+execution does not call the in-memory `GraphBuilder` directly.
+
+The Python frontend emits a portable `WorkflowSpec` from a Python workflow
+file:
+
+```sh
+massive-python-frontend emit path/to/workflow.py[#graph_export]
+```
+
+The command writes only canonical `WorkflowSpec` JSON to stdout. Diagnostics
+are written to stderr and return exit status 2. The `massive run` CLI uses this
+process seam internally; workflow authors normally invoke `massive run`
+instead.
+
+This first frontend slice is zero-config. Its source package root is the entry
+file's parent directory, uses package ID `python-main`, and includes every
+root-level `*.py` file. Nested packages and recursive source layouts are not
+included yet, so keep the workflow and direct helper modules together until an
+explicit Python package configuration surface is added.

@@ -46,11 +46,6 @@ func DefaultRunnerCommand(inputs DefaultRunnerCommandInputs) ([]string, error) {
 
 	if inputs.Language == "python" {
 		return []string{
-			"uv",
-			"run",
-			"--project",
-			filepath.Join(workingDir, "packages", "python"),
-			"--frozen",
 			"massive-python-runner",
 			descriptorPathToken,
 		}, nil

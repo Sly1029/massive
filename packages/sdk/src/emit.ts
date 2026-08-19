@@ -83,17 +83,19 @@ export interface WorkflowSpecEdge {
 
 export interface WorkflowSpecSymbol {
   readonly packageId: string;
-  readonly language: "typescript";
+  readonly language: WorkflowSpecLanguage;
   readonly module: string;
   readonly export: string;
 }
 
 export interface WorkflowSpecSourcePackage {
   readonly packageId: string;
-  readonly language: "typescript";
+  readonly language: WorkflowSpecLanguage;
   readonly packageHash: string;
   readonly files: readonly { readonly path: string; readonly hash: string }[];
 }
+
+export type WorkflowSpecLanguage = "typescript" | "python";
 
 export type WorkflowSpecEnvironment = EnvironmentSpec;
 

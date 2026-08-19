@@ -26,8 +26,14 @@ export {
   computeSpecHash,
   emitWorkflowSpec,
   type EmitWorkflowSpecOptions,
+  type WorkflowSpecLanguage,
   type WorkflowSpec,
 } from "./emit.ts";
+export {
+  parseWorkflowSpec,
+  parseWorkflowSpecText,
+  WorkflowSpecError,
+} from "./workflow-spec.ts";
 export {
   channel,
   type ChannelDefinition,

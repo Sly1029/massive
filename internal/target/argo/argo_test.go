@@ -93,6 +93,32 @@ func TestStaticDAGAcceptsBothPythonAndTypeScriptSymbols(t *testing.T) {
 	}
 }
 
+func TestPythonFrontendFixtureLowersThroughArgoSchema(t *testing.T) {
+	bundle := compileFixture(t, "python-linear")
+	verifiedPlan, err := plan.VerifyCanonicalJSON(bundle.Files[0].Bytes, bundle.Manifest.GetPlanHash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verifiedPlan.GetSymbols()) != 1 || verifiedPlan.GetSymbols()[0].GetLanguage() != "python" || verifiedPlan.GetSymbols()[0].GetModule() != "workflow" {
+		t.Fatalf("compiled bundle plan lost Python symbol identity: %#v", verifiedPlan.GetSymbols())
+	}
+
+	var template map[string]any
+	if err := yaml.Unmarshal(bundle.Files[1].Bytes, &template); err != nil {
+		t.Fatal(err)
+	}
+	templateSpec := template["spec"].(map[string]any)
+	step := templateByName(t, templateSpec["templates"].([]any), "step-add_one")
+	container := step["container"].(map[string]any)
+	if container["image"] != "example.invalid/python-runner@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+		t.Fatalf("generated Python step image = %v", container["image"])
+	}
+	annotations := template["metadata"].(map[string]any)["annotations"].(map[string]any)
+	if annotations["massive.dev/execution-status"] != "structural-only" {
+		t.Fatal("generated Python WorkflowTemplate must preserve the honest execution boundary")
+	}
+}
+
 func TestStaticDAGRejectsUnverifiedOrUnsupportedPlan(t *testing.T) {
 	result := fixturePlan(t, "linear-chain")
 	d := deploymentForPlan(t, result.PlanHash)

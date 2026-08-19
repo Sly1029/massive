@@ -8,7 +8,9 @@ Status: draft
 
 Massive's canonical compiled artifact is a JSON `WorkflowPlan` typed by proto3 schemas. The v0 schema lives at [`../../conformance/schema/workflow-plan.proto`](../../conformance/schema/workflow-plan.proto), with target bundle output described by [`../../conformance/schema/bundle-manifest.proto`](../../conformance/schema/bundle-manifest.proto).
 
-The TypeScript SDK is not the source of truth. It is the first authoring frontend. The schema stays language-neutral so other authoring SDKs remain possible, but TypeScript/JavaScript is the only authoring frontend planned for now.
+Neither language SDK is the source of truth. Python and TypeScript both emit
+the same language-neutral `WorkflowSpec`; the shared schema and Go compiler own
+the portable contract.
 
 For v0, frontend SDKs emit deterministic `WorkflowSpec` JSON that conforms to the shared schema. The Go compiler emits canonical JSON `WorkflowPlan` and manifest artifacts typed by the proto schemas. This avoids making artifact identity depend on any binary wire encoding while the schema is still moving.
 
@@ -37,7 +39,13 @@ Targets may support different feature subsets. Target compilers own compatibilit
 
 `WorkflowSpec` is content-addressed by a `specHash` over its canonical field tree. The hash is not computed over JSON whitespace or any binary wire encoding.
 
-The emitting SDK is responsible for language-specific validation before it writes a `WorkflowSpec`. For TypeScript, that includes resolving module/export symbols against the source package and checking that the authoring-time step declarations can be lowered into portable schemas and contracts. Any future authoring SDK must perform the equivalent language-specific checks before emitting the same portable spec shape. The Go compiler validates the emitted spec as a portable artifact: schema conformance, graph integrity, contract references, datastore references, and backend-specific invariants. It should not need to understand each frontend language's import or reflection rules.
+The emitting SDK is responsible for language-specific validation before it
+writes a `WorkflowSpec`. That includes resolving module/export symbols against
+the source package and checking that authoring-time step declarations can be
+lowered into portable schemas and contracts. The Go compiler validates the
+emitted spec as a portable artifact: schema conformance, graph integrity,
+contract references, datastore references, and backend-specific invariants. It
+does not need to understand Python import rules or TypeScript module loading.
 
 ## Source Packages
 
@@ -46,7 +54,7 @@ their eventual archive artifact. A `WorkflowSpec` references them by package ID
 and content hash. Symbols point at a package ID plus language-specific
 entrypoint metadata.
 
-Example:
+TypeScript example:
 
 ```text
 sourcePackages:
@@ -61,11 +69,17 @@ symbols:
     export: double
 ```
 
-V0 TypeScript workflows will usually have one source package, but the schema must not assume one package per workflow. This keeps future multi-language support, mixed-language workflows, reusable packages, and monorepo package boundaries possible without changing the graph IR.
+V0 workflows will usually have one source package, but the schema does not
+assume one package per workflow. This keeps mixed-language workflows, reusable
+packages, and monorepo package boundaries possible without changing the graph
+IR.
 
 Source packages are not environments. They identify executable source content. Environment specs identify dependency/runtime requirements. Environment materialization may read source package metadata when calculating package or workspace hashes, but dependency environment keys are still derived from environment-relevant inputs, not from resource limits, secret bindings, or target-specific scheduling settings.
 
-Package roots are explicit. A file entrypoint such as `massive run workflow.ts` may infer the package root from the nearest workflow/package config. A directory entrypoint such as `massive run workflow/` should read that directory's workflow/package config. The package root controls:
+Package roots are explicit. A file entrypoint such as
+`massive run workflow.py` or `massive run workflow.ts` may infer its initial
+package root; a directory entrypoint should read that directory's
+workflow/package config. The package root controls:
 
 - workflow entrypoint export,
 - included source files,

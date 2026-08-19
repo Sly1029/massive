@@ -19,6 +19,10 @@ import { sha256Text, stableStringify } from "../../sdk/src/stable.ts";
 import { validateObjectKey } from "../../sdk/src/datastore/key.ts";
 import { RUNNER_EXIT_CODES } from "../../sdk/src/runner/outcomes.ts";
 import { createToolchain, ToolchainMissingError } from "./toolchain.ts";
+import {
+  emitPythonWorkflow,
+  pythonRunnerEnvironment,
+} from "./python-frontend.ts";
 
 // A malformed massive.config.ts shape discovered on the emit fast path. Kept
 // distinct from MassiveError (which maps to resolve-failed) so runWorkflow can
@@ -225,6 +229,19 @@ async function executeRun(req: RunRequest): Promise<RunOutcome> {
 // (and skipping the workflow-module import entirely) when the source package is
 // unchanged. Emit is in-process; the source-package hash is the cache key.
 async function prepare(req: RunRequest, store: Datastore): Promise<Emitted> {
+  if (stripExport(req.entry).endsWith(".py")) {
+    const resolved = await emitPythonWorkflow(req.entry, repoRoot());
+    const specKey = await persistSpec(store, resolved.spec);
+    return {
+      spec: resolved.spec,
+      specKey,
+      specReused: false,
+      project: await resolveProject(req, resolved.packageRoot, undefined),
+      packageRoot: resolved.packageRoot,
+      notes: [],
+    };
+  }
+
   const cfg = await resolveSourceConfig(req.entry);
   const notes: string[] = [];
   let cacheKey: string | undefined;
@@ -271,10 +288,7 @@ async function prepare(req: RunRequest, store: Datastore): Promise<Emitted> {
     source: resolved.source,
     package: resolved.package,
   });
-  const specKey = `specs/${segmentForHash(spec.specHash)}/workflow-spec.json`;
-  await store.put(specKey, JSON.stringify(spec), {
-    contentType: "application/json",
-  });
+  const specKey = await persistSpec(store, spec);
   if (cacheKey !== undefined && identityHash !== undefined) {
     // The pointer records the identity it was emitted for, so a later read can
     // reject a pointer that has been repointed at a different spec.
@@ -296,6 +310,17 @@ async function prepare(req: RunRequest, store: Datastore): Promise<Emitted> {
     packageRoot: resolved.packageRoot,
     notes,
   };
+}
+
+async function persistSpec(
+  store: Datastore,
+  spec: WorkflowSpec,
+): Promise<string> {
+  const specKey = `specs/${segmentForHash(spec.specHash)}/workflow-spec.json`;
+  await store.put(specKey, stableStringify(spec), {
+    contentType: "application/json",
+  });
+  return specKey;
 }
 
 // Reads the cached spec a pointer references, or undefined when the cache entry
@@ -409,9 +434,11 @@ async function runOrchestrator(
     args.push("--run-id", req.runId);
   }
 
+  const runnerEnvironment = await pythonRunnerEnvironment(root, emitted.spec);
   const { code, stdout, stderr } = await new Deno.Command(binary, {
     args,
     cwd: root,
+    ...(runnerEnvironment === undefined ? {} : { env: runnerEnvironment }),
     stdout: "piped",
     stderr: "piped",
   }).output();

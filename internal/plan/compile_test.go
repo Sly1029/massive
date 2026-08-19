@@ -71,6 +71,31 @@ func TestCompileDoesNotInventMaterializedSourceArtifacts(t *testing.T) {
 	}
 }
 
+func TestCompilePreservesPythonFrontendIdentity(t *testing.T) {
+	specData := readFixture(t, "specs", "python-linear", "workflow-spec.json")
+	workflowSpec, err := spec.Parse(specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(workflowSpec, specData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := compiled.Plan.GetGraph().GetIrVersion(); got != "0.1" {
+		t.Fatalf("Graph IR version = %q, want 0.1", got)
+	}
+	if len(compiled.Plan.GetSymbols()) != 1 || compiled.Plan.GetSymbols()[0].GetLanguage() != "python" {
+		t.Fatalf("compiled symbols = %#v, want one Python symbol", compiled.Plan.GetSymbols())
+	}
+	if len(compiled.Plan.GetSourcePackages()) != 1 || compiled.Plan.GetSourcePackages()[0].GetLanguage() != "python" {
+		t.Fatalf("compiled source packages = %#v, want one Python package", compiled.Plan.GetSourcePackages())
+	}
+	if len(compiled.Plan.GetEnvironments()) != 1 || compiled.Plan.GetEnvironments()[0].GetContainer().GetImage() == "" {
+		t.Fatalf("compiled environments = %#v, want runnable container plan", compiled.Plan.GetEnvironments())
+	}
+}
+
 func readFixture(t *testing.T, fixtureKind, name, file string) []byte {
 	t.Helper()
 
