@@ -178,6 +178,53 @@ Deno.test("massive run Python graph: same compiler, runner, and frozen artifact 
   assertEquals(outputManifest.producer.attempt, 1);
 });
 
+Deno.test("massive run Python decision: selects one typed branch and journals the route", async () => {
+  const fixture = await copyFixture("python-decision");
+  const store = await makeStore();
+
+  const result = await runCli([
+    "run",
+    join(fixture, "workflow.py"),
+    "--input",
+    '{"score":91}',
+    "--store",
+    store,
+    "--project",
+    "acme/python-decision",
+    "--run-id",
+    "python-decision-run",
+    "--json",
+  ]);
+
+  assertEquals(result.code, 0, result.stderr);
+  const outcome = JSON.parse(result.stdout) as {
+    result: { message: string };
+    steps: { nodeId: string; status: string }[];
+  };
+  assertEquals(outcome.result, { message: "approved:91" });
+  assertEquals(outcome.steps, [
+    { nodeId: "classify", status: "succeeded" },
+    { nodeId: "approve", status: "succeeded" },
+    { nodeId: "reject", status: "skipped" },
+  ]);
+
+  const manifestPath = await findRunArtifact(
+    store,
+    "python-decision-run",
+    "run-manifest.json",
+  );
+  assert(manifestPath !== undefined, "decision run manifest should exist");
+  const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+    schemaVersion: number;
+    encoding: string;
+    decisions: { nodeId: string; selectedCase: string }[];
+  };
+  assertEquals(manifest.decisions, [{
+    nodeId: "route",
+    selectedCase: "approved",
+  }]);
+});
+
 Deno.test("massive run diamond: fan-in result 81 at the frozen result key", async () => {
   const fixture = await copyFixture("diamond");
   const store = await makeStore();
