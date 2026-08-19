@@ -48,6 +48,7 @@ func TestVerifyCanonicalJSONRequiresEveryIdentityVersion(t *testing.T) {
 	}{
 		{name: "plan schema", path: []string{"schemaVersion"}, want: "schemaVersion must be present"},
 		{name: "plan hash recipe", path: []string{"hashing", "recipeVersion"}, want: "hashing descriptor must be present and complete"},
+		{name: "spec hash recipe", path: []string{"specHashing", "recipeVersion"}, want: "specHash hashing descriptor must be present and complete"},
 		{name: "graph IR", path: []string{"graph", "irVersion"}, want: "graph.irVersion must be present"},
 		{name: "compiler", path: []string{"provenance", "compilerVersion"}, want: "provenance.compilerVersion must be present"},
 		{name: "source package hash recipe", path: []string{"sourcePackages", "0", "hashing", "recipeVersion"}, want: "sourcePackages[0] hashing descriptor must be present and complete"},
@@ -60,6 +61,31 @@ func TestVerifyCanonicalJSONRequiresEveryIdentityVersion(t *testing.T) {
 				t.Fatalf("VerifyCanonicalJSON() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestVerifyCanonicalJSONRejectsUnsupportedHashRecipeValues(t *testing.T) {
+	data := readFixture(t, "specs", "passthrough", "workflow-spec.json")
+	workflowSpec, err := spec.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(workflowSpec, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := bytes.Replace(
+		compiled.CanonicalJSON,
+		[]byte(`"recipe":"workflow-plan"`),
+		[]byte(`"recipe":"source-package"`),
+		1,
+	)
+	if bytes.Equal(mutated, compiled.CanonicalJSON) {
+		t.Fatal("test did not alter the plan hash recipe")
+	}
+	_, err = VerifyCanonicalJSON(mutated, compiled.PlanHash)
+	if err == nil || !strings.Contains(err.Error(), "workflow-plan@1") {
+		t.Fatalf("VerifyCanonicalJSON() error = %v, want unsupported recipe rejection", err)
 	}
 }
 

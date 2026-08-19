@@ -31,3 +31,23 @@ func TestDigestMatchesSharedVersionedRecipeVector(t *testing.T) {
 		t.Fatalf("Digest() = %q, want %q", got, strings.TrimSpace(string(expected)))
 	}
 }
+
+func TestDigestRejectsNoncanonicalFileManifests(t *testing.T) {
+	validHash := "sha256:" + strings.Repeat("a", 64)
+	for _, test := range []struct {
+		name  string
+		files []File
+	}{
+		{name: "unsorted", files: []File{{Path: "b.py", Hash: validHash}, {Path: "a.py", Hash: validHash}}},
+		{name: "duplicate", files: []File{{Path: "a.py", Hash: validHash}, {Path: "a.py", Hash: validHash}}},
+		{name: "dot prefix", files: []File{{Path: "./a.py", Hash: validHash}}},
+		{name: "double slash", files: []File{{Path: "src//a.py", Hash: validHash}}},
+		{name: "backslash", files: []File{{Path: `src\a.py`, Hash: validHash}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := Digest(test.files); err == nil {
+				t.Fatal("Digest() accepted a noncanonical file manifest")
+			}
+		})
+	}
+}

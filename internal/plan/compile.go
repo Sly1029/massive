@@ -59,6 +59,7 @@ func Compile(workflowSpec *spec.WorkflowSpec, sourceJSON []byte) (*CompileResult
 	plan := &planpb.WorkflowPlan{
 		SchemaVersion:  uint32Ptr(0),
 		Hashing:        hashingSpec("workflow-plan"),
+		SpecHashing:    hashingSpecFromWorkflow(workflowSpec.Hashing),
 		SpecHash:       stringPtr(specHash),
 		Graph:          compileGraph(workflowSpec, schedule, schemaHashes, contractHashes),
 		Schemas:        schemaEntries,

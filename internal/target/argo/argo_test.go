@@ -65,8 +65,8 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 
 func TestStaticDAGAcceptsBothPythonAndTypeScriptSymbols(t *testing.T) {
 	goldens := map[string]string{
-		"typescript": "sha256:4145f74f71d42300f6e1bd923103685cb59d3cdad82a865b2707c2dc596ae9b9",
-		"python":     "sha256:c4ab454e9db1c773c8774b313990e9710893543958478bb1fc945a283c1c7e43",
+		"typescript": "sha256:3cee1c59ca55dcc2752775ff264e754bce66500640aa6f51918c56575b183b38",
+		"python":     "sha256:7c6efa2f8472cd055c954a4d434c79cb84853f80f3ea99380e5760607a25c379",
 	}
 	for _, language := range []string{"typescript", "python"} {
 		t.Run(language, func(t *testing.T) {

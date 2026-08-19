@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal, cast
+from pathlib import PurePosixPath
+from typing import Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .canonical import JsonValue, canonical_json, sha256_ref
+from .canonical import JsonValue, canonical_json, sha256_ref, utf16_sort_key
 
 
 class HashingSpec(BaseModel):
@@ -35,10 +36,32 @@ class SourcePackageFileHash(BaseModel):
 class SourcePackageHashInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    files: list[SourcePackageFileHash]
+    files: tuple[SourcePackageFileHash, ...]
     hashing: HashingSpec = SOURCE_PACKAGE_HASHING
     kind: Literal["SourcePackageHashInput"] = "SourcePackageHashInput"
     schema_version: Literal[0] = Field(default=0, alias="schemaVersion")
+
+    @model_validator(mode="after")
+    def validate_canonical_files(self) -> Self:
+        for index, file in enumerate(self.files):
+            normalized = PurePosixPath(file.path).as_posix()
+            segments = file.path.split("/")
+            if (
+                not file.path
+                or "\\" in file.path
+                or file.path.startswith("/")
+                or any(segment in {"", ".", ".."} for segment in segments)
+                or normalized != file.path
+                or file.path == "."
+            ):
+                raise ValueError(
+                    f"source package file {index} path is not a normalized relative path"
+                )
+            if index > 0 and utf16_sort_key(self.files[index - 1].path) >= utf16_sort_key(file.path):
+                raise ValueError(
+                    "source package files must have unique paths in UTF-16 code-unit order"
+                )
+        return self
 
     def digest(self) -> str:
         value = cast(JsonValue, self.model_dump(mode="json", by_alias=True))

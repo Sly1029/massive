@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from massive import canonical_json
-from massive.canonical import sha256_ref
+import pytest
+from pydantic import ValidationError
+
+from massive.hashing import SourcePackageHashInput
 from massive.source_package import source_package
 
 
@@ -12,9 +14,9 @@ def test_source_package_hash_consumes_the_versioned_shared_recipe_vector() -> No
     repository = Path(__file__).resolve().parents[3]
     fixture = repository / "conformance/fixtures/hashing/source-package-v1.json"
     expected = fixture.with_suffix(".sha256").read_text().strip()
-    value: object = json.loads(fixture.read_text())
+    value = SourcePackageHashInput.model_validate(json.loads(fixture.read_text()))
 
-    assert sha256_ref(canonical_json(value)) == expected
+    assert value.digest() == expected
 
 
 def test_source_package_orders_paths_by_utf16_code_units(tmp_path: Path) -> None:
@@ -28,3 +30,20 @@ def test_source_package_orders_paths_by_utf16_code_units(tmp_path: Path) -> None
     ).manifest()
 
     assert [file["path"] for file in files] == ["\U0001f600.py", "\ue000.py"]
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        ["b.py", "a.py"],
+        ["a.py", "a.py"],
+        ["./a.py"],
+        ["src//a.py"],
+        ["src/../a.py"],
+    ],
+)
+def test_source_package_identity_rejects_noncanonical_paths(paths: list[str]) -> None:
+    with pytest.raises(ValidationError, match="normalized relative path|UTF-16"):
+        SourcePackageHashInput.model_validate(
+            {"files": [{"path": path, "hash": "sha256:" + "a" * 64} for path in paths]}
+        )

@@ -112,6 +112,9 @@ func TestCompilePreservesPythonFrontendIdentity(t *testing.T) {
 	if got := compiled.Plan.GetHashing(); got.GetRecipe() != "workflow-plan" || got.GetRecipeVersion() != 1 {
 		t.Fatalf("compiled plan hashing = %#v, want workflow-plan@1", got)
 	}
+	if got := compiled.Plan.GetSpecHashing(); got.GetRecipe() != "workflow-spec" || got.GetRecipeVersion() != 1 {
+		t.Fatalf("compiled spec hashing = %#v, want workflow-spec@1", got)
+	}
 	if got := compiled.Plan.GetSourcePackages()[0].GetHashing(); got.GetRecipe() != "source-package" || got.GetRecipeVersion() != 1 {
 		t.Fatalf("compiled source hashing = %#v, want source-package@1", got)
 	}

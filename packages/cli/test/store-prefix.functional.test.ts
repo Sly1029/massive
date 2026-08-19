@@ -62,7 +62,17 @@ Deno.test("storage prefix flag and environment isolate bytes without changing wo
 });
 
 Deno.test("invalid storage prefixes fail before creating storage", async () => {
-  for (const prefix of ["../escape", "/absolute", "a//b", ""]) {
+  for (
+    const prefix of [
+      "../escape",
+      "/absolute",
+      "a//b",
+      "",
+      " ",
+      " leading",
+      "line\nbreak",
+    ]
+  ) {
     const store = join(await makeStore(), "uncreated-store");
     const result = await runCli([
       "run",

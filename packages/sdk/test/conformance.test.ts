@@ -278,6 +278,7 @@ type WorkflowSpecFixture = {
 
 type WorkflowPlanFixture = {
   hashing: HashingFixture;
+  specHashing: HashingFixture;
   graph: {
 	    irVersion: string;
     workflowName: string;
@@ -312,6 +313,7 @@ function assertSpecPlanStructuralConsistency(spec: unknown, plan: unknown, caseI
     recipe: "workflow-plan",
     recipeVersion: 1,
   });
+  assertEquals(typedPlan.specHashing, typedSpec.hashing);
   assertEquals(
     typedPlan.sourcePackages.map((sourcePackage) => sourcePackage.hashing),
     Object.values(typedSpec.sourcePackages).map((sourcePackage) => sourcePackage.hashing),

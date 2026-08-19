@@ -149,6 +149,28 @@ package manifest:
 - each included file's content hash;
 - the source-package hash descriptor and its recipe version;
 
+Recipe `source-package@1` hashes this exact canonical field tree:
+
+```json
+{
+  "files": [{"path":"src/workflow.py","hash":"sha256:<hex>"}],
+  "hashing": {
+    "algorithm":"sha256",
+    "canonicalization":"canonical-json-v0",
+    "recipe":"source-package",
+    "recipeVersion":1
+  },
+  "kind":"SourcePackageHashInput",
+  "schemaVersion":0
+}
+```
+
+`files` is non-empty and strictly ordered by normalized relative `path` using
+UTF-16 code-unit order. Paths are unique, use forward slashes, have no empty,
+`.` or `..` segments, and are already normalized (for example `./a.py` and
+`src//a.py` are invalid rather than aliases). A consumer must reject a
+noncanonical manifest instead of sorting it after publication.
+
 Broad implicit packaging is out of scope for v0. A changed included file changes
 the package hash. A changed excluded file does not. Package IDs, local absolute
 root paths, symbols, and datastore write locations are outside
@@ -205,3 +227,8 @@ The versioned source-package recipe vector is:
 
 - input: `conformance/fixtures/hashing/source-package-v1.json`
 - expected key: `conformance/fixtures/hashing/source-package-v1.sha256`
+
+Introducing these required recipes is an intentional cache-boundary break.
+The new source-package identity changes emit-cache keys, so old cached specs
+are unreachable and new specs are emitted. Consumers reject pre-recipe plans;
+there is no compatibility reader or dual write.

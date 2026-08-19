@@ -37,6 +37,18 @@ interface Parsed {
 
 const encoder = new TextEncoder();
 const storePrefixSchema = z.string().min(1).superRefine((prefix, context) => {
+  if (
+    prefix.trim() !== prefix ||
+    Array.from(prefix).some((character) => {
+      const codePoint = character.codePointAt(0)!;
+      return codePoint < 0x20 || codePoint === 0x7f;
+    })
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "must not contain control or leading/trailing whitespace",
+    });
+  }
   if (prefix.startsWith("/") || prefix.includes("\\")) {
     context.addIssue({
       code: "custom",

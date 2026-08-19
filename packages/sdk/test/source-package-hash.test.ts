@@ -1,13 +1,15 @@
-import { assertEquals } from "jsr:@std/assert";
-import { sha256RefText } from "../src/stable.ts";
+import { assertEquals, assertThrows } from "jsr:@std/assert";
+import { sourcePackageDigest } from "../src/source-package.ts";
 
 Deno.test("source package hash consumes the versioned shared recipe vector", async () => {
-  const input = (await Deno.readTextFile(
-    new URL(
-      "../../../conformance/fixtures/hashing/source-package-v1.json",
-      import.meta.url,
+  const input = JSON.parse(
+    await Deno.readTextFile(
+      new URL(
+        "../../../conformance/fixtures/hashing/source-package-v1.json",
+        import.meta.url,
+      ),
     ),
-  )).trimEnd();
+  ) as { files: { path: string; hash: string }[] };
   const expected = (await Deno.readTextFile(
     new URL(
       "../../../conformance/fixtures/hashing/source-package-v1.sha256",
@@ -15,7 +17,21 @@ Deno.test("source package hash consumes the versioned shared recipe vector", asy
     ),
   )).trim();
   assertEquals(
-    sha256RefText(input),
+    sourcePackageDigest(input.files),
     expected,
   );
+});
+
+Deno.test("source package identity rejects noncanonical file manifests", () => {
+  const hash = `sha256:${"a".repeat(64)}`;
+  for (
+    const files of [
+      [{ path: "b.py", hash }, { path: "a.py", hash }],
+    [{ path: "a.py", hash }, { path: "a.py", hash }],
+    [{ path: "./a.py", hash }],
+    [{ path: "src/../a.py", hash }],
+    ]
+  ) {
+    assertThrows(() => sourcePackageDigest(files));
+  }
 });

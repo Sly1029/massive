@@ -626,6 +626,15 @@ func patchSpecSource(t *testing.T, specData []byte, sourceDir string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+	recomputed, err := spec.RecomputedSpecHash(patched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc["specHash"] = recomputed
+	patched, err = json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return patched
 }
 

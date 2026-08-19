@@ -1,5 +1,5 @@
 import { readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { MassiveError, SourcePackagePathError } from "./errors.ts";
 import {
   compareCodeUnits,
@@ -19,6 +19,35 @@ export interface SourcePackage {
   readonly include: string[];
   readonly files: { readonly path: string; readonly hash: string }[];
   readonly sourcePackageHash: string;
+}
+
+export function sourcePackageDigest(
+  files: readonly { readonly path: string; readonly hash: string }[],
+): string {
+  for (const [index, file] of files.entries()) {
+    if (
+      file.path === "" || file.path.includes("\\") ||
+      file.path.startsWith("/") || posix.normalize(file.path) !== file.path ||
+      file.path === "."
+    ) {
+      throw new SourcePackagePathError(
+        `source package file ${index} path is not a normalized relative path: ${file.path}`,
+      );
+    }
+    if (
+      index > 0 && compareCodeUnits(files[index - 1]!.path, file.path) >= 0
+    ) {
+      throw new SourcePackagePathError(
+        "source package files must have unique paths in UTF-16 code-unit order",
+      );
+    }
+  }
+  return sha256RefText(stableStringify({
+    files,
+    hashing: SOURCE_PACKAGE_HASHING,
+    kind: "SourcePackageHashInput",
+    schemaVersion: 0,
+  }));
 }
 
 export async function hashSourcePackage(
@@ -87,12 +116,7 @@ export async function hashSourcePackage(
     });
   }
 
-  const sourcePackageHash = sha256RefText(stableStringify({
-    files: entries,
-    hashing: SOURCE_PACKAGE_HASHING,
-    kind: "SourcePackageHashInput",
-    schemaVersion: 0,
-  }));
+  const sourcePackageHash = sourcePackageDigest(entries);
   return {
     root,
     include: [...source.include],

@@ -23,6 +23,8 @@ message ArtifactRef {
 }
 
 message HashingSpec {
+  // Required by the canonical JSON contract. Proto optional presence lets a
+  // consumer distinguish an absent value from an explicitly encoded zero.
   optional string algorithm = 1;
   optional string canonicalization = 2;
   optional string recipe = 3;
@@ -43,6 +45,9 @@ message WorkflowPlan {
   repeated ArtifactRef datastore_manifests = 11;
   optional CompilerProvenance provenance = 12;
   optional HashingSpec hashing = 13;
+  // Recipe for spec_hash and provenance.source_spec_hash. Consumers must not
+  // infer this foreign digest's coverage from the plan's own hash recipe.
+  optional HashingSpec spec_hashing = 14;
 }
 
 message GraphIR {

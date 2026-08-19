@@ -164,8 +164,11 @@ type WorkflowPlan struct {
 	DatastoreManifests []*ArtifactRef             `protobuf:"bytes,11,rep,name=datastore_manifests,json=datastoreManifests,proto3" json:"datastore_manifests,omitempty"`
 	Provenance         *CompilerProvenance        `protobuf:"bytes,12,opt,name=provenance,proto3,oneof" json:"provenance,omitempty"`
 	Hashing            *HashingSpec               `protobuf:"bytes,13,opt,name=hashing,proto3,oneof" json:"hashing,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Recipe for spec_hash and provenance.source_spec_hash. Consumers must not
+	// infer this foreign digest's coverage from the plan's own hash recipe.
+	SpecHashing   *HashingSpec `protobuf:"bytes,14,opt,name=spec_hashing,json=specHashing,proto3,oneof" json:"spec_hashing,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *WorkflowPlan) Reset() {
@@ -285,6 +288,13 @@ func (x *WorkflowPlan) GetProvenance() *CompilerProvenance {
 func (x *WorkflowPlan) GetHashing() *HashingSpec {
 	if x != nil {
 		return x.Hashing
+	}
+	return nil
+}
+
+func (x *WorkflowPlan) GetSpecHashing() *HashingSpec {
+	if x != nil {
+		return x.SpecHashing
 	}
 	return nil
 }
@@ -1451,7 +1461,7 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"_algorithmB\x13\n" +
 	"\x11_canonicalizationB\t\n" +
 	"\a_recipeB\x11\n" +
-	"\x0f_recipe_version\"\xe0\x06\n" +
+	"\x0f_recipe_version\"\xb7\a\n" +
 	"\fWorkflowPlan\x12*\n" +
 	"\x0eschema_version\x18\x01 \x01(\rH\x00R\rschemaVersion\x88\x01\x01\x12 \n" +
 	"\tplan_hash\x18\x02 \x01(\tH\x01R\bplanHash\x88\x01\x01\x12 \n" +
@@ -1468,7 +1478,8 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\n" +
 	"provenance\x18\f \x01(\v2#.massive.plan.v0.CompilerProvenanceH\x04R\n" +
 	"provenance\x88\x01\x01\x12;\n" +
-	"\ahashing\x18\r \x01(\v2\x1c.massive.plan.v0.HashingSpecH\x05R\ahashing\x88\x01\x01B\x11\n" +
+	"\ahashing\x18\r \x01(\v2\x1c.massive.plan.v0.HashingSpecH\x05R\ahashing\x88\x01\x01\x12D\n" +
+	"\fspec_hashing\x18\x0e \x01(\v2\x1c.massive.plan.v0.HashingSpecH\x06R\vspecHashing\x88\x01\x01B\x11\n" +
 	"\x0f_schema_versionB\f\n" +
 	"\n" +
 	"_plan_hashB\f\n" +
@@ -1477,7 +1488,8 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\x06_graphB\r\n" +
 	"\v_provenanceB\n" +
 	"\n" +
-	"\b_hashing\"\xb1\x03\n" +
+	"\b_hashingB\x0f\n" +
+	"\r_spec_hashing\"\xb1\x03\n" +
 	"\aGraphIR\x12(\n" +
 	"\rworkflow_name\x18\x01 \x01(\tH\x00R\fworkflowName\x88\x01\x01\x12&\n" +
 	"\finput_schema\x18\x02 \x01(\tH\x01R\vinputSchema\x88\x01\x01\x12(\n" +
@@ -1686,25 +1698,26 @@ var file_workflow_plan_proto_depIdxs = []int32{
 	0,  // 7: massive.plan.v0.WorkflowPlan.datastore_manifests:type_name -> massive.plan.v0.ArtifactRef
 	18, // 8: massive.plan.v0.WorkflowPlan.provenance:type_name -> massive.plan.v0.CompilerProvenance
 	1,  // 9: massive.plan.v0.WorkflowPlan.hashing:type_name -> massive.plan.v0.HashingSpec
-	4,  // 10: massive.plan.v0.GraphIR.nodes:type_name -> massive.plan.v0.GraphNode
-	5,  // 11: massive.plan.v0.GraphIR.edges:type_name -> massive.plan.v0.GraphEdge
-	6,  // 12: massive.plan.v0.GraphNode.cases:type_name -> massive.plan.v0.DecisionCase
-	7,  // 13: massive.plan.v0.GraphNode.select_inputs:type_name -> massive.plan.v0.SelectInput
-	0,  // 14: massive.plan.v0.SourcePackageRef.manifest:type_name -> massive.plan.v0.ArtifactRef
-	0,  // 15: massive.plan.v0.SourcePackageRef.source_archive:type_name -> massive.plan.v0.ArtifactRef
-	1,  // 16: massive.plan.v0.SourcePackageRef.hashing:type_name -> massive.plan.v0.HashingSpec
-	0,  // 17: massive.plan.v0.MaterializedEnvironment.local:type_name -> massive.plan.v0.ArtifactRef
-	12, // 18: massive.plan.v0.MaterializedEnvironment.container:type_name -> massive.plan.v0.ContainerRuntime
-	0,  // 19: massive.plan.v0.ContainerRuntime.source_fetch:type_name -> massive.plan.v0.ArtifactRef
-	14, // 20: massive.plan.v0.ExecutionContract.resources:type_name -> massive.plan.v0.ResourceRequirements
-	15, // 21: massive.plan.v0.ExecutionContract.secrets:type_name -> massive.plan.v0.SecretRef
-	16, // 22: massive.plan.v0.ExecutionContract.network:type_name -> massive.plan.v0.NetworkPolicy
-	0,  // 23: massive.plan.v0.TargetPlan.bundle_manifest:type_name -> massive.plan.v0.ArtifactRef
-	24, // [24:24] is the sub-list for method output_type
-	24, // [24:24] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	1,  // 10: massive.plan.v0.WorkflowPlan.spec_hashing:type_name -> massive.plan.v0.HashingSpec
+	4,  // 11: massive.plan.v0.GraphIR.nodes:type_name -> massive.plan.v0.GraphNode
+	5,  // 12: massive.plan.v0.GraphIR.edges:type_name -> massive.plan.v0.GraphEdge
+	6,  // 13: massive.plan.v0.GraphNode.cases:type_name -> massive.plan.v0.DecisionCase
+	7,  // 14: massive.plan.v0.GraphNode.select_inputs:type_name -> massive.plan.v0.SelectInput
+	0,  // 15: massive.plan.v0.SourcePackageRef.manifest:type_name -> massive.plan.v0.ArtifactRef
+	0,  // 16: massive.plan.v0.SourcePackageRef.source_archive:type_name -> massive.plan.v0.ArtifactRef
+	1,  // 17: massive.plan.v0.SourcePackageRef.hashing:type_name -> massive.plan.v0.HashingSpec
+	0,  // 18: massive.plan.v0.MaterializedEnvironment.local:type_name -> massive.plan.v0.ArtifactRef
+	12, // 19: massive.plan.v0.MaterializedEnvironment.container:type_name -> massive.plan.v0.ContainerRuntime
+	0,  // 20: massive.plan.v0.ContainerRuntime.source_fetch:type_name -> massive.plan.v0.ArtifactRef
+	14, // 21: massive.plan.v0.ExecutionContract.resources:type_name -> massive.plan.v0.ResourceRequirements
+	15, // 22: massive.plan.v0.ExecutionContract.secrets:type_name -> massive.plan.v0.SecretRef
+	16, // 23: massive.plan.v0.ExecutionContract.network:type_name -> massive.plan.v0.NetworkPolicy
+	0,  // 24: massive.plan.v0.TargetPlan.bundle_manifest:type_name -> massive.plan.v0.ArtifactRef
+	25, // [25:25] is the sub-list for method output_type
+	25, // [25:25] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_workflow_plan_proto_init() }

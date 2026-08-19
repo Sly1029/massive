@@ -42,6 +42,12 @@
     "recipe": "workflow-plan",
     "recipeVersion": 1
   },
+  "specHashing": {
+    "algorithm": "sha256",
+    "canonicalization": "canonical-json-v0",
+    "recipe": "workflow-spec",
+    "recipeVersion": 1
+  },
   "schemas": [
     {
       "canonicalJson": "{\"type\":\"number\"}",

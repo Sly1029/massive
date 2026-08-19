@@ -26,7 +26,9 @@ For the CLI, `--store-prefix <key>` takes precedence over
 artifact body hash. For example, prefix `tenants/acme` maps logical key
 `blobs/sha256/<digest>` to physical path
 `tenants/acme/blobs/sha256/<digest>`. The prefix obeys the same key syntax and
-is configuration, never part of a manifest reference.
+the CLI additionally rejects control and leading/trailing whitespace. It is
+configuration, never part of a manifest reference. An empty environment value
+means no prefix; an explicitly supplied empty flag is invalid.
 
 ## Digest references and path segments
 

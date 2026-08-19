@@ -3,6 +3,8 @@ package sourceidentity
 import (
 	"encoding/json"
 	"fmt"
+	"path"
+	"strings"
 
 	"github.com/Sly1029/massive/internal/canonical"
 )
@@ -29,6 +31,14 @@ type hashInput struct {
 // Digest returns the source-package-v1 identity over ordered normalized paths
 // and their exact byte hashes.
 func Digest(files []File) (string, error) {
+	for index, file := range files {
+		if file.Path == "" || strings.Contains(file.Path, "\\") || strings.HasPrefix(file.Path, "/") || path.Clean(file.Path) != file.Path || file.Path == "." {
+			return "", fmt.Errorf("source package file %d path %q is not a normalized relative path", index, file.Path)
+		}
+		if index > 0 && !canonical.LessUTF16(files[index-1].Path, file.Path) {
+			return "", fmt.Errorf("source package files must have unique paths in UTF-16 code-unit order")
+		}
+	}
 	data, err := json.Marshal(hashInput{
 		Files: files,
 		Hashing: hashingSpec{

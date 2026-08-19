@@ -29,7 +29,7 @@ class SourcePackage:
             for path, file in sorted(files.items(), key=lambda item: utf16_sort_key(item[0]))
         ]
         entries = [file.model_dump(mode="json") for file in identity_files]
-        return entries, SourcePackageHashInput(files=identity_files).digest()
+        return entries, SourcePackageHashInput(files=tuple(identity_files)).digest()
 
 
 def source_package(*, root: Path, include: list[str], package_id: str) -> SourcePackage:

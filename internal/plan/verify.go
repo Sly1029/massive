@@ -57,6 +57,9 @@ func validateVersionedIdentity(plan *planpb.WorkflowPlan) error {
 	if err := validateHashingSpec(plan.GetHashing(), "workflow-plan", "workflow plan"); err != nil {
 		return err
 	}
+	if err := validateHashingSpec(plan.GetSpecHashing(), "workflow-spec", "workflow plan specHash"); err != nil {
+		return err
+	}
 	if plan.Graph == nil || plan.Graph.IrVersion == nil || plan.Graph.GetIrVersion() == "" {
 		return fmt.Errorf("workflow plan graph.irVersion must be present")
 	}

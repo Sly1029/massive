@@ -25,6 +25,13 @@ Deno.test("parseWorkflowSpecText accepts canonical WorkflowSpec emitted by Pytho
   }
   assertEquals(spec.symbols[step.symbolRef]?.language, "python");
   assertEquals(spec.sourcePackages["python-main"]?.language, "python");
+  assertEquals(spec.hashing.recipe, "workflow-spec");
+  assertEquals(spec.hashing.recipeVersion, 1);
+  assertEquals(
+    spec.sourcePackages["python-main"]?.hashing.recipe,
+    "source-package",
+  );
+  assertEquals(computeSpecHash(spec), spec.specHash);
 });
 
 Deno.test("parseWorkflowSpec accepts data-only Graph IR 0.2 routing", async () => {
