@@ -8,11 +8,12 @@ import (
 )
 
 const (
-	StatusPending   = "pending"
-	StatusRunning   = "running"
-	StatusSucceeded = "succeeded"
-	StatusFailed    = "failed"
-	StatusSkipped   = "skipped"
+	StatusPending    = "pending"
+	StatusRunning    = "running"
+	StatusSucceeded  = "succeeded"
+	StatusFailed     = "failed"
+	StatusSkipped    = "skipped"
+	StatusNotStarted = "not-started"
 )
 
 // SourceArchiveContentType identifies the portable, deterministic USTAR source
@@ -101,7 +102,8 @@ type StepInvoker interface {
 }
 
 type StepInvocationBatch struct {
-	Steps []StepInvocation
+	Steps          []StepInvocation
+	MaxConcurrency int
 }
 
 type StepInvocation struct {
@@ -111,6 +113,7 @@ type StepInvocation struct {
 type StepInvocationOutcome struct {
 	NodeID     string
 	Attempt    int
+	Scope      *ExecutionScope
 	Status     string
 	ExitCode   int
 	Diagnostic string

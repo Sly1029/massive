@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
@@ -24,6 +26,7 @@ const (
 	NodeKindStep     = "step"
 	NodeKindDecision = "decision"
 	NodeKindSelect   = "select"
+	NodeKindMap      = "map"
 	NodeKindEnd      = "end"
 )
 
@@ -56,17 +59,20 @@ type Graph struct {
 }
 
 type GraphNode struct {
-	ID           string         `json:"id"`
-	Kind         string         `json:"kind"`
-	InputSchema  string         `json:"inputSchema,omitempty"`
-	OutputSchema string         `json:"outputSchema,omitempty"`
-	SymbolRef    string         `json:"symbolRef,omitempty"`
-	ContractRef  string         `json:"contractRef,omitempty"`
-	MergeInputs  []string       `json:"mergeInputs,omitempty"`
-	Selector     string         `json:"selector,omitempty"`
-	Cases        []DecisionCase `json:"cases,omitempty"`
-	DecisionRef  string         `json:"decisionRef,omitempty"`
-	SelectInputs []SelectInput  `json:"selectInputs,omitempty"`
+	ID               string         `json:"id"`
+	Kind             string         `json:"kind"`
+	InputSchema      string         `json:"inputSchema,omitempty"`
+	OutputSchema     string         `json:"outputSchema,omitempty"`
+	SymbolRef        string         `json:"symbolRef,omitempty"`
+	ContractRef      string         `json:"contractRef,omitempty"`
+	MergeInputs      []string       `json:"mergeInputs,omitempty"`
+	Selector         string         `json:"selector,omitempty"`
+	Cases            []DecisionCase `json:"cases,omitempty"`
+	DecisionRef      string         `json:"decisionRef,omitempty"`
+	SelectInputs     []SelectInput  `json:"selectInputs,omitempty"`
+	ItemInputSchema  string         `json:"itemInputSchema,omitempty"`
+	ItemOutputSchema string         `json:"itemOutputSchema,omitempty"`
+	MaxConcurrency   uint32         `json:"maxConcurrency,omitempty"`
 }
 
 type GraphEdge struct {
@@ -425,8 +431,10 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".contractRef", Ref: node.ContractRef, Message: "contract reference does not exist"})
 		}
 		for mergeIndex, sourceID := range node.MergeInputs {
-			if source, exists := nodeByID[sourceID]; !exists || source.Kind != NodeKindStep {
-				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("%s.mergeInputs[%d]", path, mergeIndex), Ref: sourceID, Message: "merge input step does not exist"})
+			source, exists := nodeByID[sourceID]
+			_, valueProducer := outputSchemaOfValueProducer(source)
+			if !exists || !valueProducer {
+				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("%s.mergeInputs[%d]", path, mergeIndex), Ref: sourceID, Message: "merge input value producer does not exist"})
 				continue
 			}
 			if !upstream[node.ID][sourceID] {
@@ -457,6 +465,7 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		}
 	}
 
+	diagnostics = append(diagnostics, validateMapSemantics(parsed, nodeByID, inbound, outbound)...)
 	diagnostics = append(diagnostics, validateDecisionAndSelectSemantics(parsed, nodeByID, nodeIndexes)...)
 
 	if _, exists := parsed.Schemas[parsed.Workflow.InputSchema]; !exists {
@@ -498,7 +507,7 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 	var diagnostics []Diagnostic
 	if parsed.Graph.IRVersion == "0.1" {
 		for index, node := range parsed.Graph.Nodes {
-			if node.Kind == NodeKindDecision || node.Kind == NodeKindSelect {
+			if node.Kind == NodeKindDecision || node.Kind == NodeKindSelect || node.Kind == NodeKindMap {
 				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].kind", index), Ref: node.Kind, Message: "graph IR 0.1 permits only static start, step, and end nodes"})
 			}
 		}
@@ -578,10 +587,10 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			continue
 		}
 		target, targetExists := nodeByID[edge.To]
-		if targetExists && target.Kind != NodeKindStep {
-			diagnostics = append(diagnostics, Diagnostic{Path: path + ".to", Ref: edge.To, Message: "conditional edge target must be a step node"})
+		if targetExists && target.Kind != NodeKindStep && target.Kind != NodeKindMap {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".to", Ref: edge.To, Message: "conditional edge target must be a step node or map node"})
 		}
-		if targetExists && target.Kind == NodeKindStep && target.InputSchema != decisionCaseSchemas[edge.From][edge.Case] {
+		if targetExists && (target.Kind == NodeKindStep || target.Kind == NodeKindMap) && target.InputSchema != decisionCaseSchemas[edge.From][edge.Case] {
 			targetIndex := nodeIndexes[edge.To]
 			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].inputSchema", targetIndex), Ref: edge.To, Message: "conditional target input schema must equal decision case schema"})
 		}
@@ -644,8 +653,8 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			}
 			selectedSources[input.Source] = true
 			source, sourceExists := nodeByID[input.Source]
-			if !sourceExists || (source.Kind != NodeKindStep && source.Kind != NodeKindSelect) {
-				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select input source must reference a value-producing step or select node"})
+			if !sourceExists || (source.Kind != NodeKindStep && source.Kind != NodeKindSelect && source.Kind != NodeKindMap) {
+				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select input source must reference a value-producing step, select, or map node"})
 			} else if source.OutputSchema != node.OutputSchema {
 				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select source output schema must equal select output schema"})
 			}
@@ -696,10 +705,409 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 }
 
 func outputSchemaOfValueProducer(node GraphNode) (string, bool) {
-	if node.Kind != NodeKindStep && node.Kind != NodeKindSelect {
+	if node.Kind != NodeKindStep && node.Kind != NodeKindSelect && node.Kind != NodeKindMap {
 		return "", false
 	}
 	return node.OutputSchema, true
+}
+
+func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, inbound, outbound map[string][]string) []Diagnostic {
+	var diagnostics []Diagnostic
+	for index, node := range parsed.Graph.Nodes {
+		if node.Kind != NodeKindMap {
+			continue
+		}
+		path := fmt.Sprintf("$.graph.nodes[%d]", index)
+		for _, field := range []struct {
+			name string
+			ref  string
+		}{
+			{name: "inputSchema", ref: node.InputSchema},
+			{name: "itemInputSchema", ref: node.ItemInputSchema},
+			{name: "itemOutputSchema", ref: node.ItemOutputSchema},
+			{name: "outputSchema", ref: node.OutputSchema},
+		} {
+			if _, exists := parsed.Schemas[field.ref]; !exists {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + "." + field.name, Ref: field.ref, Message: "map schema reference does not exist"})
+			}
+		}
+		if _, exists := parsed.Symbols[node.SymbolRef]; !exists {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".symbolRef", Ref: node.SymbolRef, Message: "symbol reference does not exist"})
+		}
+		if _, exists := parsed.Contracts[node.ContractRef]; !exists {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".contractRef", Ref: node.ContractRef, Message: "contract reference does not exist"})
+		}
+		if node.MaxConcurrency == 0 {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".maxConcurrency", Ref: node.ID, Message: "map maxConcurrency must be positive"})
+		}
+		_, inputSchemaExists := parsed.Schemas[node.InputSchema]
+		_, itemInputSchemaExists := parsed.Schemas[node.ItemInputSchema]
+		if inputSchemaExists && itemInputSchemaExists && !arraySchemaItemsExactlyMatch(parsed.Schemas[node.InputSchema], parsed.Schemas[node.ItemInputSchema]) {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.InputSchema, Message: "map inputSchema must be an array whose items exactly equal itemInputSchema"})
+		}
+		_, outputSchemaExists := parsed.Schemas[node.OutputSchema]
+		_, itemOutputSchemaExists := parsed.Schemas[node.ItemOutputSchema]
+		if outputSchemaExists && itemOutputSchemaExists && !arraySchemaItemsExactlyMatch(parsed.Schemas[node.OutputSchema], parsed.Schemas[node.ItemOutputSchema]) {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: node.OutputSchema, Message: "map outputSchema must be an array whose items exactly equal itemOutputSchema"})
+		}
+		if len(inbound[node.ID]) != 1 {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.ID, Message: "map requires exactly one predecessor"})
+		} else if source, exists := nodeByID[inbound[node.ID][0]]; !exists {
+			continue
+		} else if source.Kind == NodeKindDecision && conditionalEdgeCase(parsed.Graph.Edges, source.ID, node.ID) != "" {
+			// Decision validation proves the selected case schema exactly matches
+			// this map's inputSchema; maps may therefore live in a branch.
+		} else if sourceSchema, producesValue := graphValueOutputSchema(source, parsed.Workflow.InputSchema); !producesValue {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: source.ID, Message: "map predecessor must produce a value"})
+		} else if sourceSchema != node.InputSchema {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: source.ID, Message: "map inputSchema must exactly equal its predecessor output schema"})
+		}
+		for _, targetID := range outbound[node.ID] {
+			target := nodeByID[targetID]
+			if target.Kind == NodeKindSelect {
+				continue // selectInputs validates each declared source contract.
+			}
+			targetSchema, consumesValue := graphValueInputSchema(target, parsed.Workflow.OutputSchema)
+			if !consumesValue {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: targetID, Message: "map output must target a value consumer"})
+				continue
+			}
+			if targetSchema != node.OutputSchema {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: targetID, Message: "map outputSchema must exactly equal each downstream input schema"})
+			}
+		}
+	}
+	return diagnostics
+}
+
+func conditionalEdgeCase(edges []GraphEdge, from, to string) string {
+	for _, edge := range edges {
+		if edge.From == from && edge.To == to {
+			return edge.Case
+		}
+	}
+	return ""
+}
+
+func graphValueOutputSchema(node GraphNode, workflowInputSchema string) (string, bool) {
+	if node.Kind == NodeKindStart {
+		return workflowInputSchema, true
+	}
+	return outputSchemaOfValueProducer(node)
+}
+
+func graphValueInputSchema(node GraphNode, workflowOutputSchema string) (string, bool) {
+	if node.Kind == NodeKindEnd {
+		return workflowOutputSchema, true
+	}
+	if node.Kind == NodeKindStep || node.Kind == NodeKindDecision || node.Kind == NodeKindMap {
+		return node.InputSchema, true
+	}
+	return "", false
+}
+
+func arraySchemaItemsExactlyMatch(arraySchema, itemSchema json.RawMessage) bool {
+	if !isUsableJSONSchema(arraySchema) || !isUsableJSONSchema(itemSchema) {
+		return false
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(arraySchema, &object); err != nil {
+		return false
+	}
+	var kind string
+	if err := json.Unmarshal(object["type"], &kind); err != nil || kind != "array" || len(object["items"]) == 0 {
+		return false
+	}
+	items, ok := standaloneArrayItemSchema(arraySchema, object["items"])
+	if !ok {
+		return false
+	}
+	canonicalItems, err := canonical.CanonicalizeJSON(items)
+	if err != nil {
+		return false
+	}
+	canonicalItemSchema, err := canonical.CanonicalizeJSON(itemSchema)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(canonicalItems, canonicalItemSchema)
+}
+
+// standaloneArrayItemSchema compares Pydantic's list[T] schema with its
+// separately emitted T schema in one definition scope. For non-recursive
+// models Pydantic inlines T at the standalone root and carries only T's
+// transitive dependencies in $defs. Recursive models retain a root $ref and
+// include T itself. Reconstruct exactly that document shape; do not attempt
+// general JSON Schema equivalence.
+func standaloneArrayItemSchema(document, items json.RawMessage) (json.RawMessage, bool) {
+	var referenceOnly map[string]json.RawMessage
+	if err := json.Unmarshal(items, &referenceOnly); err != nil || len(referenceOnly) != 1 {
+		return items, true
+	}
+	referenceJSON, hasReference := referenceOnly["$ref"]
+	if !hasReference {
+		return items, true
+	}
+	var reference string
+	if err := json.Unmarshal(referenceJSON, &reference); err != nil {
+		return nil, false
+	}
+	rootName, ok := localDefinitionName(reference, true)
+	if !ok {
+		return resolveLocalJSONReference(document, items)
+	}
+
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(document, &root); err != nil {
+		return nil, false
+	}
+	var definitions map[string]json.RawMessage
+	if err := json.Unmarshal(root["$defs"], &definitions); err != nil {
+		return nil, false
+	}
+	rootSchema, exists := definitions[rootName]
+	if !exists {
+		return nil, false
+	}
+	closure, recursive, ok := localDefinitionClosure(rootName, rootSchema, definitions)
+	if !ok {
+		return nil, false
+	}
+
+	var standalone any
+	if recursive {
+		closure[rootName] = rootSchema
+		standalone = map[string]any{"$defs": closure, "$ref": reference}
+	} else {
+		var rootObject map[string]any
+		if err := json.Unmarshal(rootSchema, &rootObject); err != nil {
+			return nil, false
+		}
+		if len(closure) > 0 {
+			rootObject["$defs"] = closure
+		}
+		standalone = rootObject
+	}
+	encoded, err := json.Marshal(standalone)
+	if err != nil {
+		return nil, false
+	}
+	return encoded, true
+}
+
+func localDefinitionClosure(rootName string, rootSchema json.RawMessage, definitions map[string]json.RawMessage) (map[string]json.RawMessage, bool, bool) {
+	references, ok := localDefinitionReferences(rootSchema)
+	if !ok {
+		return nil, false, false
+	}
+	closure := make(map[string]json.RawMessage)
+	queued := sortedKeys(references)
+	recursive := false
+	for len(queued) > 0 {
+		name := queued[0]
+		queued = queued[1:]
+		if name == rootName {
+			recursive = true
+			continue
+		}
+		if _, seen := closure[name]; seen {
+			continue
+		}
+		definition, exists := definitions[name]
+		if !exists {
+			return nil, false, false
+		}
+		closure[name] = definition
+		dependencies, ok := localDefinitionReferences(definition)
+		if !ok {
+			return nil, false, false
+		}
+		for _, dependency := range sortedKeys(dependencies) {
+			if dependency == rootName {
+				recursive = true
+				continue
+			}
+			if _, seen := closure[dependency]; !seen {
+				queued = append(queued, dependency)
+			}
+		}
+		sort.Slice(queued, func(i, j int) bool { return canonical.LessUTF16(queued[i], queued[j]) })
+	}
+	return closure, recursive, true
+}
+
+func localDefinitionReferences(schema json.RawMessage) (map[string]bool, bool) {
+	var value any
+	if err := json.Unmarshal(schema, &value); err != nil {
+		return nil, false
+	}
+	references := make(map[string]bool)
+	var visit func(any) bool
+	visit = func(current any) bool {
+		switch typed := current.(type) {
+		case []any:
+			for _, item := range typed {
+				if !visit(item) {
+					return false
+				}
+			}
+		case map[string]any:
+			for key, child := range typed {
+				if key == "$ref" {
+					reference, isString := child.(string)
+					if !isString {
+						return false
+					}
+					name, local := localDefinitionName(reference, false)
+					if !local {
+						return false
+					}
+					references[name] = true
+				}
+				if !visit(child) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	if !visit(value) {
+		return nil, false
+	}
+	return references, true
+}
+
+func localDefinitionName(reference string, requireDefinitionRoot bool) (string, bool) {
+	parsed, err := url.Parse(reference)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.Path != "" || parsed.RawQuery != "" || !strings.HasPrefix(parsed.Fragment, "/") {
+		return "", false
+	}
+	encodedTokens := strings.Split(parsed.Fragment[1:], "/")
+	if len(encodedTokens) < 2 || (requireDefinitionRoot && len(encodedTokens) != 2) {
+		return "", false
+	}
+	definitionToken, ok := decodeJSONPointerToken(encodedTokens[0])
+	if !ok || definitionToken != "$defs" {
+		return "", false
+	}
+	name, ok := decodeJSONPointerToken(encodedTokens[1])
+	return name, ok && name != ""
+}
+
+func isUsableJSONSchema(schema json.RawMessage) bool {
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(schema))
+	if err != nil {
+		return false
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("map-boundary.schema.json", document); err != nil {
+		return false
+	}
+	_, err = compiler.Compile("map-boundary.schema.json")
+	return err == nil
+}
+
+// resolveLocalJSONReference follows reference-only local JSON Pointer values
+// within one top-level array schema. It intentionally does not try to prove
+// arbitrary JSON Schema equivalence: after dereferencing, callers still
+// compare the canonical JSON fragments exactly.
+func resolveLocalJSONReference(document, value json.RawMessage) (json.RawMessage, bool) {
+	resolved := value
+	seen := make(map[string]bool)
+	for {
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(resolved, &object); err != nil {
+			return resolved, true
+		}
+		referenceValue, hasReference := object["$ref"]
+		if !hasReference || len(object) != 1 {
+			return resolved, true
+		}
+		var reference string
+		if err := json.Unmarshal(referenceValue, &reference); err != nil || seen[reference] {
+			return nil, false
+		}
+		seen[reference] = true
+		target, ok := resolveLocalJSONPointer(document, reference)
+		if !ok {
+			return nil, false
+		}
+		resolved = target
+	}
+}
+
+func resolveLocalJSONPointer(document json.RawMessage, reference string) (json.RawMessage, bool) {
+	parsed, err := url.Parse(reference)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.Path != "" || parsed.RawQuery != "" {
+		return nil, false
+	}
+	current := document
+	if parsed.Fragment == "" {
+		return current, true
+	}
+	if !strings.HasPrefix(parsed.Fragment, "/") {
+		return nil, false
+	}
+	for _, encodedToken := range strings.Split(parsed.Fragment[1:], "/") {
+		token, ok := decodeJSONPointerToken(encodedToken)
+		if !ok {
+			return nil, false
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(current, &object); err == nil {
+			next, exists := object[token]
+			if !exists {
+				return nil, false
+			}
+			current = next
+			continue
+		}
+		var array []json.RawMessage
+		if err := json.Unmarshal(current, &array); err != nil || !isJSONPointerArrayIndex(token) {
+			return nil, false
+		}
+		index, err := strconv.Atoi(token)
+		if err != nil || index < 0 || index >= len(array) {
+			return nil, false
+		}
+		current = array[index]
+	}
+	return current, true
+}
+
+func isJSONPointerArrayIndex(token string) bool {
+	if token == "" || (len(token) > 1 && token[0] == '0') {
+		return false
+	}
+	for index := range len(token) {
+		if token[index] < '0' || token[index] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func decodeJSONPointerToken(encoded string) (string, bool) {
+	var decoded strings.Builder
+	for index := 0; index < len(encoded); index++ {
+		if encoded[index] != '~' {
+			decoded.WriteByte(encoded[index])
+			continue
+		}
+		if index+1 >= len(encoded) {
+			return "", false
+		}
+		index++
+		switch encoded[index] {
+		case '0':
+			decoded.WriteByte('~')
+		case '1':
+			decoded.WriteByte('/')
+		default:
+			return "", false
+		}
+	}
+	return decoded.String(), true
 }
 
 // validateExclusiveDecisionBranches keeps 0.2's activation model local: a

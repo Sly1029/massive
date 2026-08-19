@@ -1,4 +1,5 @@
 import {
+  assert,
   assertEquals,
   assertRejects,
   assertStringIncludes,
@@ -125,7 +126,7 @@ Deno.test("run-manifest reader refuses retired and future transports before nest
   for (
     const protocol of [
       { schemaVersion: 1, encoding: "json-v1" },
-      { schemaVersion: 3, encoding: "json-v3" },
+      { schemaVersion: 4, encoding: "json-v4" },
     ]
   ) {
     await t.step(`${protocol.encoding}`, async () => {
@@ -166,7 +167,7 @@ Deno.test("massive inspect reports an actionable error for retired and future ma
   for (
     const protocol of [
       { schemaVersion: 1, encoding: "json-v1" },
-      { schemaVersion: 3, encoding: "json-v3" },
+      { schemaVersion: 4, encoding: "json-v4" },
     ]
   ) {
     await t.step(`${protocol.encoding}`, async () => {
@@ -213,23 +214,23 @@ Deno.test("massive inspect reports an actionable error for retired and future ma
   }
 });
 
-Deno.test("massive inspect reports an actionable error for malformed v2 nested data", async () => {
+Deno.test("massive inspect reports an actionable error for malformed v3 nested data", async () => {
   const store = await makeStore();
-  const runId = "run-inspect-malformed-v2";
+  const runId = "run-inspect-malformed-v3";
   const key =
     `projects/sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/runs/${runId}/run-manifest.json`;
   const manifestPath = join(store, key);
   await Deno.mkdir(dirname(manifestPath), { recursive: true });
 
-  // This is a persisted v2 envelope, but its nested output reference is not a
+  // This is a persisted v3 envelope, but its nested output reference is not a
   // reference. inspect must report a manifest error instead of throwing while
   // traversing the untrusted nested data.
   await Deno.writeTextFile(
     manifestPath,
     JSON.stringify({
       kind: "RunManifest",
-      schemaVersion: 2,
-      encoding: "json-v2",
+      schemaVersion: 3,
+      encoding: "json-v3",
       planHash: "sha256:" + "a".repeat(64),
       projectKey: "sha256-" + "c".repeat(64),
       runId,
@@ -257,7 +258,6 @@ Deno.test("massive inspect reports an actionable error for malformed v2 nested d
             },
             schema: "sha256:" + "d".repeat(64),
           },
-          diagnostic: "",
         }],
       }],
     }),
@@ -314,8 +314,8 @@ Deno.test("run-manifest reader rejects impossible decision states", async (t) =>
         path,
         JSON.stringify({
           kind: "RunManifest",
-          schemaVersion: 2,
-          encoding: "json-v2",
+          schemaVersion: 3,
+          encoding: "json-v3",
           planHash: "sha256:" + "a".repeat(64),
           projectKey: "sha256-" + "e".repeat(64),
           runId: "invalid-decision",
@@ -345,8 +345,8 @@ Deno.test("run-manifest reader accepts Go pending and pre-input failure shapes",
     path,
     JSON.stringify({
       kind: "RunManifest",
-      schemaVersion: 2,
-      encoding: "json-v2",
+      schemaVersion: 3,
+      encoding: "json-v3",
       planHash: "sha256:" + "a".repeat(64),
       projectKey:
         "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
@@ -376,6 +376,213 @@ Deno.test("run-manifest reader accepts Go pending and pre-input failure shapes",
 
   assertEquals(manifest.steps[0]?.attempts, []);
   assertEquals(manifest.steps[1]?.attempts[0]?.input.key, "");
+});
+
+Deno.test("run-manifest reader rejects impossible map item states", async () => {
+  const store = await makeStore();
+  const key =
+    "projects/sha256-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/runs/invalid-map/run-manifest.json";
+  const path = join(store, key);
+  await Deno.mkdir(dirname(path), { recursive: true });
+  const input = {
+    key: "inputs/items.json",
+    hash: "sha256:" + "a".repeat(64),
+    contentType: "application/json",
+    schema: "sha256:" + "b".repeat(64),
+  };
+  await Deno.writeTextFile(
+    path,
+    JSON.stringify({
+      kind: "RunManifest",
+      schemaVersion: 3,
+      encoding: "json-v3",
+      planHash: "sha256:" + "c".repeat(64),
+      projectKey: "sha256-" + "f".repeat(64),
+      runId: "invalid-map",
+      status: "failed",
+      decisions: [],
+      steps: [{
+        nodeId: "map-items",
+        status: "failed",
+        attempts: [{
+          attempt: 1,
+          status: "failed",
+          input,
+          diagnostic: "item failure",
+        }],
+        items: [{
+          index: 1,
+          status: "failed",
+          attempts: [{
+            attempt: 1,
+            status: "failed",
+            input,
+            diagnostic: "item failure",
+          }],
+        }],
+      }],
+    }),
+  );
+
+  const error = await assertRejects(
+    () => readRunManifestAt(datastore.local({ path: store }), key),
+    Error,
+  );
+  assertStringIncludes(error.message, "map item indexes must be dense");
+});
+
+Deno.test("run-manifest reader rejects a failed map with a nonterminal item", async () => {
+  const store = await makeStore();
+  const key =
+    "projects/sha256-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/runs/nonterminal-map/run-manifest.json";
+  const path = join(store, key);
+  await Deno.mkdir(dirname(path), { recursive: true });
+  const input = {
+    key: "inputs/items.json",
+    hash: "sha256:" + "a".repeat(64),
+    contentType: "application/json",
+    schema: "sha256:" + "b".repeat(64),
+  };
+  await Deno.writeTextFile(
+    path,
+    JSON.stringify({
+      kind: "RunManifest",
+      schemaVersion: 3,
+      encoding: "json-v3",
+      planHash: "sha256:" + "c".repeat(64),
+      projectKey: "sha256-" + "f".repeat(64),
+      runId: "nonterminal-map",
+      status: "failed",
+      decisions: [],
+      steps: [{
+        nodeId: "map-items",
+        status: "failed",
+        attempts: [{
+          attempt: 1,
+          status: "failed",
+          input,
+          diagnostic: "item failure",
+        }],
+        items: [{
+          index: 0,
+          status: "running",
+          attempts: [{ attempt: 1, status: "running", input }],
+        }],
+      }],
+    }),
+  );
+
+  const error = await assertRejects(
+    () => readRunManifestAt(datastore.local({ path: store }), key),
+    Error,
+  );
+  assertStringIncludes(
+    error.message,
+    "failed map requires every item to be terminal",
+  );
+});
+
+Deno.test("run-manifest reader accepts terminal map items that never started", async () => {
+  const store = await makeStore();
+  const key =
+    "projects/sha256-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/runs/not-started-map/run-manifest.json";
+  const path = join(store, key);
+  await Deno.mkdir(dirname(path), { recursive: true });
+  const input = {
+    key: "inputs/items.json",
+    hash: "sha256:" + "a".repeat(64),
+    contentType: "application/json",
+    schema: "sha256:" + "b".repeat(64),
+  };
+  await Deno.writeTextFile(
+    path,
+    JSON.stringify({
+      kind: "RunManifest",
+      schemaVersion: 3,
+      encoding: "json-v3",
+      planHash: "sha256:" + "c".repeat(64),
+      projectKey: "sha256-" + "f".repeat(64),
+      runId: "not-started-map",
+      status: "failed",
+      decisions: [],
+      steps: [{
+        nodeId: "map-items",
+        status: "failed",
+        attempts: [{
+          attempt: 1,
+          status: "failed",
+          input,
+          diagnostic: "map invocation infrastructure failed",
+        }],
+        items: [{
+          index: 0,
+          status: "not-started",
+          attempts: [],
+          diagnostic: "map item was not started because the map failed",
+        }],
+      }],
+    }),
+  );
+
+  const manifest = await readRunManifestAt(
+    datastore.local({ path: store }),
+    key,
+  );
+  const mapStep = manifest.steps[0];
+  assert(mapStep !== undefined && "items" in mapStep);
+  assertEquals(mapStep.items[0], {
+    index: 0,
+    status: "not-started",
+    attempts: [],
+    diagnostic: "map item was not started because the map failed",
+  });
+});
+
+Deno.test("run-manifest reader rejects not-started items under a running map", async () => {
+  const store = await makeStore();
+  const key =
+    "projects/sha256-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/runs/running-not-started-map/run-manifest.json";
+  const path = join(store, key);
+  await Deno.mkdir(dirname(path), { recursive: true });
+  const input = {
+    key: "inputs/items.json",
+    hash: "sha256:" + "a".repeat(64),
+    contentType: "application/json",
+    schema: "sha256:" + "b".repeat(64),
+  };
+  await Deno.writeTextFile(
+    path,
+    JSON.stringify({
+      kind: "RunManifest",
+      schemaVersion: 3,
+      encoding: "json-v3",
+      planHash: "sha256:" + "c".repeat(64),
+      projectKey: "sha256-" + "f".repeat(64),
+      runId: "running-not-started-map",
+      status: "running",
+      decisions: [],
+      steps: [{
+        nodeId: "map-items",
+        status: "running",
+        attempts: [{ attempt: 1, status: "running", input }],
+        items: [{
+          index: 0,
+          status: "not-started",
+          attempts: [],
+          diagnostic: "map item was not started because the map failed",
+        }],
+      }],
+    }),
+  );
+
+  const error = await assertRejects(
+    () => readRunManifestAt(datastore.local({ path: store }), key),
+    Error,
+  );
+  assertStringIncludes(
+    error.message,
+    "not-started map items require a failed map",
+  );
 });
 
 Deno.test("massive inspect rejects an unsafe run id before touching the filesystem", async () => {

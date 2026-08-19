@@ -9,9 +9,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+
+	"github.com/Sly1029/massive/internal/artifact"
+	"github.com/Sly1029/massive/internal/datastore"
 )
 
-const descriptorPathToken = "{descriptor}"
+const (
+	descriptorPathToken             = "{descriptor}"
+	defaultLocalProcessConcurrency  = 32
+	stepInvocationStatusCancelled   = "cancelled"
+	stepInvocationStatusInfraFailed = "infrastructure-failed"
+)
 
 type DefaultRunnerCommandInputs struct {
 	Language      string
@@ -71,11 +80,36 @@ type ProcessStepInvoker struct {
 	CommandTemplate []string
 	WorkingDir      string
 	DescriptorDir   string
+	// ProcessLimit is the executor-owned ceiling applied after a workflow's
+	// maxConcurrency. Zero uses a conservative local default.
+	ProcessLimit int
 }
 
 func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocationBatch) ([]StepInvocationOutcome, error) {
 	if len(batch.Steps) == 0 {
 		return nil, nil
+	}
+	for _, step := range batch.Steps {
+		if err := validateDescriptorFileIdentity(step.Descriptor); err != nil {
+			return nil, err
+		}
+		manifestKey, err := datastore.ParseKey(step.Descriptor.Output.ManifestKey)
+		if err != nil {
+			return nil, fmt.Errorf("invalid descriptor output manifest key: %w", err)
+		}
+		if err := artifact.ValidateDestination(
+			artifact.Destination{ManifestKey: manifestKey, Schema: step.Descriptor.Output.Schema},
+			artifact.Producer{
+				ProjectKey: step.Descriptor.ProjectKey,
+				PlanHash:   step.Descriptor.PlanHash,
+				RunID:      step.Descriptor.RunID,
+				NodeID:     step.Descriptor.NodeID,
+				Attempt:    step.Descriptor.Attempt,
+				Scope:      step.Descriptor.Scope,
+			},
+		); err != nil {
+			return nil, fmt.Errorf("invalid descriptor output destination: %w", err)
+		}
 	}
 
 	descriptorDir := i.DescriptorDir
@@ -94,33 +128,112 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 		defer cleanup()
 	}
 
-	outcomes := make([]StepInvocationOutcome, 0, len(batch.Steps))
-	for _, step := range batch.Steps {
-		outcome, err := i.invokeOne(ctx, descriptorDir, step.Descriptor)
-		if err != nil {
-			return nil, err
-		}
-		outcomes = append(outcomes, outcome)
+	maxConcurrency := batch.MaxConcurrency
+	if maxConcurrency <= 0 || maxConcurrency > len(batch.Steps) {
+		maxConcurrency = len(batch.Steps)
 	}
-	return outcomes, nil
+	processLimit := i.ProcessLimit
+	if processLimit <= 0 {
+		processLimit = defaultLocalProcessConcurrency
+	}
+	if maxConcurrency > processLimit {
+		maxConcurrency = processLimit
+	}
+	batchContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	outcomes := make([]StepInvocationOutcome, len(batch.Steps))
+	started := make([]bool, len(batch.Steps))
+	jobs := make(chan int)
+	var group sync.WaitGroup
+	var firstError error
+	var firstErrorOnce sync.Once
+	for range maxConcurrency {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for {
+				select {
+				case <-batchContext.Done():
+					return
+				case index, ok := <-jobs:
+					if !ok {
+						return
+					}
+					if batchContext.Err() != nil {
+						return
+					}
+					started[index] = true
+					outcome, err := i.invokeOne(batchContext, descriptorDir, batch.Steps[index].Descriptor)
+					outcomes[index] = outcome
+					if err != nil {
+						firstErrorOnce.Do(func() {
+							firstError = err
+							cancel()
+						})
+					}
+				}
+			}
+		}()
+	}
+	dispatching := true
+	for index := range batch.Steps {
+		select {
+		case jobs <- index:
+		case <-batchContext.Done():
+			dispatching = false
+		}
+		if !dispatching {
+			break
+		}
+	}
+	close(jobs)
+	group.Wait()
+	completed := make([]StepInvocationOutcome, 0, len(batch.Steps))
+	for index, wasStarted := range started {
+		if wasStarted {
+			completed = append(completed, outcomes[index])
+		}
+	}
+	if firstError != nil {
+		return completed, firstError
+	}
+	if err := ctx.Err(); err != nil {
+		return completed, err
+	}
+	return completed, nil
 }
 
 func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string, descriptor StepInvocationDescriptor) (StepInvocationOutcome, error) {
+	infrastructureFailure := func(err error) (StepInvocationOutcome, error) {
+		return StepInvocationOutcome{
+			NodeID:   descriptor.NodeID,
+			Attempt:  descriptor.Attempt,
+			Scope:    descriptor.Scope,
+			Status:   stepInvocationStatusInfraFailed,
+			ExitCode: 1,
+		}, err
+	}
 	descriptorBytes, err := marshalCanonicalJSON(descriptor)
 	if err != nil {
-		return StepInvocationOutcome{}, fmt.Errorf("marshal descriptor for %s: %w", descriptor.NodeID, err)
+		return infrastructureFailure(fmt.Errorf("marshal descriptor for %s: %w", descriptor.NodeID, err))
 	}
 
-	descriptorPath := filepath.Join(descriptorDir, descriptor.RunID+"-"+descriptor.NodeID+"-"+fmt.Sprint(descriptor.Attempt)+".json")
+	descriptorPath, err := descriptorFilePath(descriptorDir, descriptor)
+	if err != nil {
+		return infrastructureFailure(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(descriptorPath), 0o755); err != nil {
+		return infrastructureFailure(fmt.Errorf("create descriptor scope directory: %w", err))
+	}
 	if err := os.WriteFile(descriptorPath, descriptorBytes, 0o644); err != nil {
-		return StepInvocationOutcome{}, fmt.Errorf("write descriptor %q: %w", descriptorPath, err)
+		return infrastructureFailure(fmt.Errorf("write descriptor %q: %w", descriptorPath, err))
 	}
 
 	var argv []string
 	if len(i.CommandTemplate) == 0 {
 		localDatastore, ok := descriptor.Datastore.(LocalDatastoreDescriptor)
 		if !ok {
-			return StepInvocationOutcome{}, fmt.Errorf("build runner command for %s: local process invoker requires a local datastore descriptor, got %T", descriptor.NodeID, descriptor.Datastore)
+			return infrastructureFailure(fmt.Errorf("build runner command for %s: local process invoker requires a local datastore descriptor, got %T", descriptor.NodeID, descriptor.Datastore))
 		}
 		inputs := DefaultRunnerCommandInputs{
 			Language:      descriptor.Symbol.Language,
@@ -130,7 +243,7 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		}
 		argv, err = DefaultRunnerCommand(inputs)
 		if err != nil {
-			return StepInvocationOutcome{}, fmt.Errorf("build runner command for %s: %w", descriptor.NodeID, err)
+			return infrastructureFailure(fmt.Errorf("build runner command for %s: %w", descriptor.NodeID, err))
 		}
 		argv = substituteDescriptorPath(argv, descriptorPath)
 	} else {
@@ -149,24 +262,62 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		return StepInvocationOutcome{
 			NodeID:     descriptor.NodeID,
 			Attempt:    descriptor.Attempt,
+			Scope:      descriptor.Scope,
 			Status:     StatusSucceeded,
 			ExitCode:   0,
 			Diagnostic: diagnostic,
 		}, nil
 	}
+	if contextError := ctx.Err(); contextError != nil {
+		return StepInvocationOutcome{
+			NodeID:   descriptor.NodeID,
+			Attempt:  descriptor.Attempt,
+			Scope:    descriptor.Scope,
+			Status:   stepInvocationStatusCancelled,
+			ExitCode: -1,
+		}, contextError
+	}
 
 	var exitError *exec.ExitError
 	if !errors.As(err, &exitError) {
-		return StepInvocationOutcome{}, fmt.Errorf("invoke runner for %s: %w", descriptor.NodeID, err)
+		return infrastructureFailure(fmt.Errorf("invoke runner for %s: %w", descriptor.NodeID, err))
 	}
 
 	return StepInvocationOutcome{
 		NodeID:     descriptor.NodeID,
 		Attempt:    descriptor.Attempt,
+		Scope:      descriptor.Scope,
 		Status:     StatusFailed,
 		ExitCode:   exitError.ExitCode(),
 		Diagnostic: diagnostic,
 	}, nil
+}
+
+func descriptorFilePath(descriptorDir string, descriptor StepInvocationDescriptor) (string, error) {
+	if err := validateDescriptorFileIdentity(descriptor); err != nil {
+		return "", err
+	}
+	parts := []string{descriptorDir, descriptor.RunID, descriptor.NodeID}
+	if descriptor.Scope != nil {
+		parts = append(parts, "scopes")
+		for _, frame := range descriptor.Scope.Frames {
+			parts = append(parts, "maps", frame.MapID, "items", fmt.Sprint(frame.Index))
+		}
+	}
+	parts = append(parts, fmt.Sprint(descriptor.Attempt)+".json")
+	return filepath.Join(parts...), nil
+}
+
+func validateDescriptorFileIdentity(descriptor StepInvocationDescriptor) error {
+	if !validSafePathSegment(descriptor.RunID) || !validSafePathSegment(descriptor.NodeID) || descriptor.Attempt < 1 || int64(descriptor.Attempt) > artifact.MaxJSONSafeInteger {
+		return fmt.Errorf("invalid descriptor identity for filename")
+	}
+	if descriptor.Scope != nil {
+		if err := artifact.ValidateExecutionScope(descriptor.Scope); err != nil {
+			return fmt.Errorf("invalid descriptor scope: %w", err)
+		}
+	}
+	return nil
 }
 
 func substituteDescriptorPath(command []string, descriptorPath string) []string {

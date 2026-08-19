@@ -1,7 +1,7 @@
 {
   "kind": "StepInvocationDescriptor",
-  "schemaVersion": 1,
-  "encoding": "json-v1",
+  "schemaVersion": 2,
+  "encoding": "json-v2",
   "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "projectKey": "sha256-9999999999999999999999999999999999999999999999999999999999999999",
   "runId": "run-linear-chain-0001",

@@ -135,6 +135,59 @@ unsupported-graph-semantic diagnostic; it does not emit a template with altered
 branch semantics. Argo lowering will be enabled only when it can preserve these
 same exhaustive, skip, and select guarantees.
 
+## Finite maps
+
+Map a concrete list produced by an earlier node with one decorated step. The
+returned handle is the ordered `list[Result]`, including the empty-list case;
+there is no separate gather or collect call.
+
+```python
+class Batch(BaseModel):
+    values: list[Request]
+
+
+map_graph = GraphBuilder(
+    name="increment-batch",
+    input_type=Batch,
+    output_type=list[Result],
+    defaults=graph.defaults,
+)
+
+
+@map_graph.step()
+def unpack(context: StepContext[None, Batch]) -> list[Request]:
+    return context.inputs.values
+
+
+@map_graph.step()
+def increment_item(context: StepContext[None, Request]) -> Result:
+    return Result(value=context.inputs.value + 1)
+
+
+requests = map_graph.add(unpack)
+results = map_graph.map(requests, increment_item, id="increment-items", concurrency=20)
+map_graph.edge_from(map_graph.start).to(requests)
+map_graph.edge_from(results).to(map_graph.end)
+```
+
+`map()` accepts only a direct, concrete `list[T]` source and requires the mapper
+input to be exactly `T`. Its mapper is registered by `map()`, rather than with
+`add()`. The result preserves source order and represents an empty input as an
+empty `list[Result]`; it may feed ordinary downstream nodes, including a later
+map as sequential composition. `concurrency` defaults to 20 and must be a
+strict integer from 1 through 4,294,967,295. It is an upper bound: a target may
+apply a lower executor capacity. The local process executor currently caps a
+map at 32 simultaneous child processes.
+
+Emission produces one Graph IR 0.3 `map` node with its input, item-input,
+item-output, and collected-output schemas, mapper symbol and contract, and
+`maxConcurrency`. The emitted map contract is the execution boundary; no local
+in-memory map behavior is part of the authoring API.
+
+Finite maps execute through `massive run`'s local compiled path today. The Argo
+target rejects Graph IR 0.3 map nodes with an explicit unsupported-semantic
+diagnostic; it does not generate a template that changes map behavior.
+
 ## Artifact handling
 
 Authors do not read or write object-store keys in normal step code. The runner

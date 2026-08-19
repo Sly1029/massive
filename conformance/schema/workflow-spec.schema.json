@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://massive.dev/conformance/schema/workflow-spec.schema.json",
   "title": "Massive WorkflowSpec",
-  "description": "V0 WorkflowSpec transports Graph IR 0.1 static DAGs and Graph IR 0.2 data-only exhaustive decisions/selects. Graph IR has a separate explicit 0.x version from this transport schema version. Channels, maps, broadcasts, gathers, and reducers remain intentionally post-M2.",
+  "description": "V0 WorkflowSpec transports Graph IR 0.1 static DAGs, Graph IR 0.2 data-only exhaustive decisions/selects, and Graph IR 0.3 finite maps. Graph IR has a separate explicit 0.x version from this transport schema version. Channels, broadcasts, gathers, and reducers remain intentionally post-M2.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -36,7 +36,8 @@
     "graph": {
       "oneOf": [
         { "$ref": "#/$defs/graphV01" },
-        { "$ref": "#/$defs/graphV02" }
+        { "$ref": "#/$defs/graphV02" },
+        { "$ref": "#/$defs/graphV03" }
       ]
     },
     "schemas": {
@@ -95,7 +96,7 @@
         "irVersion": {
           "allOf": [
             { "type": "string", "pattern": "^0\\.[0-9]+$" },
-            { "not": { "const": "0.2" } }
+            { "not": { "enum": ["0.2", "0.3"] } }
           ]
         },
         "start": { "$ref": "#/$defs/safePathSegment" },
@@ -130,6 +131,25 @@
         }
       }
     },
+    "graphV03": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["irVersion", "start", "end", "nodes", "edges"],
+      "properties": {
+        "irVersion": { "const": "0.3" },
+        "start": { "$ref": "#/$defs/safePathSegment" },
+        "end": { "$ref": "#/$defs/safePathSegment" },
+        "nodes": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/nodeV03" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/edgeV02" }
+        }
+      }
+    },
     "node": {
       "oneOf": [
         { "$ref": "#/$defs/startNode" },
@@ -144,6 +164,16 @@
         { "$ref": "#/$defs/stepNode" },
         { "$ref": "#/$defs/decisionNode" },
         { "$ref": "#/$defs/selectNode" }
+      ]
+    },
+    "nodeV03": {
+      "oneOf": [
+        { "$ref": "#/$defs/startNode" },
+        { "$ref": "#/$defs/endNode" },
+        { "$ref": "#/$defs/stepNode" },
+        { "$ref": "#/$defs/decisionNode" },
+        { "$ref": "#/$defs/selectNode" },
+        { "$ref": "#/$defs/mapNode" }
       ]
     },
     "startNode": {
@@ -180,6 +210,22 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/safePathSegment" }
         }
+      }
+    },
+    "mapNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "inputSchema", "itemInputSchema", "itemOutputSchema", "outputSchema", "symbolRef", "contractRef", "maxConcurrency"],
+      "properties": {
+        "id": { "$ref": "#/$defs/safePathSegment" },
+        "kind": { "const": "map" },
+        "inputSchema": { "$ref": "#/$defs/hashRef" },
+        "itemInputSchema": { "$ref": "#/$defs/hashRef" },
+        "itemOutputSchema": { "$ref": "#/$defs/hashRef" },
+        "outputSchema": { "$ref": "#/$defs/hashRef" },
+        "symbolRef": { "$ref": "#/$defs/id" },
+        "contractRef": { "$ref": "#/$defs/hashRef" },
+        "maxConcurrency": { "type": "integer", "minimum": 1, "maximum": 4294967295 }
       }
     },
     "decisionNode": {

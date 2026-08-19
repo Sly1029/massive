@@ -19,6 +19,7 @@ func TestParseAcceptsValidFixtures(t *testing.T) {
 		{name: "diamond", path: fixturePath("diamond")},
 		{name: "python-linear", path: fixturePath("python-linear")},
 		{name: "exhaustive-decision", path: fixturePath("exhaustive-decision")},
+		{name: "finite-map", path: fixturePath("finite-map")},
 	}
 
 	for _, test := range tests {
@@ -104,7 +105,7 @@ func TestParseReportsCycle(t *testing.T) {
 
 func TestParseReportsUnsupportedGraphIRVersion(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
-		root["graph"].(map[string]any)["irVersion"] = "0.3"
+		root["graph"].(map[string]any)["irVersion"] = "0.4"
 	})
 
 	_, err := Parse(data)
@@ -113,8 +114,193 @@ func TestParseReportsUnsupportedGraphIRVersion(t *testing.T) {
 	}
 
 	diagnostics := diagnosticsFromError(t, err)
-	if diagnostics[0].Path != "$.graph.irVersion" || diagnostics[0].Ref != "0.3" || !strings.Contains(diagnostics[0].Message, "compiler supports >=0.1 <0.3") {
+	if diagnostics[0].Path != "$.graph.irVersion" || diagnostics[0].Ref != "0.4" || !strings.Contains(diagnostics[0].Message, "compiler supports >=0.1 <0.4") {
 		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
+func TestParseRejectsMapWhoseArrayContractsDoNotExactlyMatchItems(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		root["schemas"].(map[string]any)["sha256:1111111111111111111111111111111111111111111111111111111111111111"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid map schema contract")
+	}
+	if diagnostics := diagnosticsFromError(t, err); !strings.Contains(diagnostics[0].Message, "items exactly equal itemInputSchema") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
+func TestParseRejectsMapConcurrencyOutsidePlanUint32Contract(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		nodes := root["graph"].(map[string]any)["nodes"].([]any)
+		nodes[1].(map[string]any)["maxConcurrency"] = float64(1 << 32)
+	})
+
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected maxConcurrency above uint32 to be rejected")
+	}
+}
+
+func TestParseResolvesEscapedLocalJSONPointerInMapArrayItems(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		root["schemas"].(map[string]any)[inputList] = map[string]any{
+			"type":  "array",
+			"items": map[string]any{"$ref": "#/$defs/Item~1model~0v1"},
+			"$defs": map[string]any{"Item/model~v1": map[string]any{"type": "integer"}},
+		}
+	})
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("parse map with escaped local JSON Pointer: %v", err)
+	}
+}
+
+func TestParseComparesNestedPydanticListItemsInAStandaloneDefinitionScope(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		itemInput := "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+		child := map[string]any{
+			"properties": map[string]any{"value": map[string]any{"type": "integer"}},
+			"required":   []any{"value"}, "title": "Child", "type": "object",
+		}
+		item := map[string]any{
+			"properties": map[string]any{"child": map[string]any{"$ref": "#/$defs/Child"}},
+			"required":   []any{"child"}, "title": "Item", "type": "object",
+		}
+		root["schemas"].(map[string]any)[inputList] = map[string]any{
+			"$defs": map[string]any{"Child": child, "Item": item},
+			"items": map[string]any{"$ref": "#/$defs/Item"}, "type": "array",
+		}
+		root["schemas"].(map[string]any)[itemInput] = map[string]any{
+			"$defs":      map[string]any{"Child": child},
+			"properties": map[string]any{"child": map[string]any{"$ref": "#/$defs/Child"}},
+			"required":   []any{"child"}, "title": "Item", "type": "object",
+		}
+	})
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("parse nested Pydantic map schemas: %v", err)
+	}
+}
+
+func TestParseRejectsDanglingMapItemSchemaReferences(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		itemInput := "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+		item := map[string]any{
+			"properties": map[string]any{"child": map[string]any{"$ref": "#/$defs/Child"}},
+			"required":   []any{"child"}, "type": "object",
+		}
+		root["schemas"].(map[string]any)[inputList] = map[string]any{
+			"$defs": map[string]any{"Child": map[string]any{"type": "integer"}, "Item": item},
+			"items": map[string]any{"$ref": "#/$defs/Item"}, "type": "array",
+		}
+		root["schemas"].(map[string]any)[itemInput] = item
+	})
+	if _, err := Parse(data); err == nil {
+		t.Fatal("accepted a standalone item schema with a dangling local reference")
+	}
+}
+
+func TestResolveLocalJSONPointerRejectsSignedArrayIndexes(t *testing.T) {
+	document := json.RawMessage(`{"values":["zero","one"]}`)
+	if _, ok := resolveLocalJSONPointer(document, "#/values/+1"); ok {
+		t.Fatal("accepted a signed RFC 6901 array index")
+	}
+}
+
+func TestParseForbidsMapFieldsBeforeGraphIR03(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		root["graph"].(map[string]any)["irVersion"] = "0.2"
+	})
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected Graph IR 0.2 to reject map fields")
+	}
+}
+
+func TestParseAllowsMapOutputFanout(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		outputList := "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+		contractRef := "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+		graph := root["graph"].(map[string]any)
+		graph["nodes"] = append(graph["nodes"].([]any),
+			map[string]any{"id": "left", "kind": "step", "inputSchema": outputList, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef},
+			map[string]any{"id": "right", "kind": "step", "inputSchema": outputList, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef},
+			map[string]any{"id": "merge", "kind": "step", "inputSchema": outputList, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef, "mergeInputs": []any{"left", "right"}},
+		)
+		graph["edges"] = []any{
+			map[string]any{"from": "__start", "to": "map-items"},
+			map[string]any{"from": "map-items", "to": "left"},
+			map[string]any{"from": "map-items", "to": "right"},
+			map[string]any{"from": "left", "to": "merge"},
+			map[string]any{"from": "right", "to": "merge"},
+			map[string]any{"from": "merge", "to": "__end"},
+		}
+	})
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("parse map output fanout: %v", err)
+	}
+}
+
+func TestParseAllowsMapOutputAsAnOrderedMergeInput(t *testing.T) {
+	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+		outputList := "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+		contractRef := "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+		graph := root["graph"].(map[string]any)
+		graph["nodes"] = append(graph["nodes"].([]any),
+			map[string]any{"id": "right", "kind": "step", "inputSchema": outputList, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef},
+			map[string]any{"id": "merge", "kind": "step", "inputSchema": outputList, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef, "mergeInputs": []any{"map-items", "right"}},
+		)
+		graph["edges"] = []any{
+			map[string]any{"from": "__start", "to": "map-items"},
+			map[string]any{"from": "map-items", "to": "right"},
+			map[string]any{"from": "map-items", "to": "merge"},
+			map[string]any{"from": "right", "to": "merge"},
+			map[string]any{"from": "merge", "to": "__end"},
+		}
+	})
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("parse map output as merge input: %v", err)
+	}
+}
+
+func TestParseAllowsMapInDecisionBranch(t *testing.T) {
+	data := mutateFixture(t, "exhaustive-decision", func(root map[string]any) {
+		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		itemInput := "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+		itemOutput := "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+		outputList := "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+		root["workflow"].(map[string]any)["inputSchema"] = inputList
+		root["workflow"].(map[string]any)["outputSchema"] = outputList
+		graph := root["graph"].(map[string]any)
+		graph["irVersion"] = "0.3"
+		nodes := graph["nodes"].([]any)
+		nodes[2].(map[string]any)["inputSchema"] = inputList
+		nodes[2].(map[string]any)["outputSchema"] = inputList
+		decision := nodes[3].(map[string]any)
+		decision["inputSchema"] = inputList
+		for _, value := range decision["cases"].([]any) {
+			value.(map[string]any)["schema"] = inputList
+		}
+		nodes[4] = map[string]any{"id": "accept", "kind": "map", "inputSchema": inputList, "itemInputSchema": itemInput, "itemOutputSchema": itemOutput, "outputSchema": outputList, "symbolRef": "exhaustive-decision/accept", "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888", "maxConcurrency": 2}
+		reject := nodes[5].(map[string]any)
+		reject["inputSchema"] = inputList
+		reject["outputSchema"] = outputList
+		choose := nodes[6].(map[string]any)
+		choose["outputSchema"] = outputList
+		choose["selectInputs"].([]any)[0].(map[string]any)["source"] = "accept"
+		root["schemas"] = map[string]any{
+			inputList:  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}},
+			itemInput:  map[string]any{"type": "integer"},
+			itemOutput: map[string]any{"type": "string"},
+			outputList: map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		}
+	})
+
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("parse map in decision branch: %v", err)
 	}
 }
 

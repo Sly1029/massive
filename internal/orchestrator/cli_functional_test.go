@@ -189,7 +189,7 @@ func TestOrchestratorCLIDiamondFanInRealRunner(t *testing.T) {
 	assertResultArtifact(t, storeRoot, projectKey, runID, `81`)
 	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
 	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, compiled)
-	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge").String(), `[21,60]`)
+	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge", nil).String(), `[21,60]`)
 }
 
 func TestOrchestratorCLIMultiStageFanInRealRunner(t *testing.T) {
@@ -212,9 +212,9 @@ func TestOrchestratorCLIMultiStageFanInRealRunner(t *testing.T) {
 	compiled := compileTestdataFixture(t, "multi-stage-merge")
 	// split=20; a1=21,a2=22,b1=23,b2=24; merge-a=43,merge-b=47; merge-final=90.
 	assertResultArtifact(t, storeRoot, projectKey, runID, `90`)
-	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-a").String(), `[21,22]`)
-	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-b").String(), `[23,24]`)
-	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-final").String(), `[43,47]`)
+	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-a", nil).String(), `[21,22]`)
+	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-b", nil).String(), `[23,24]`)
+	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge-final", nil).String(), `[43,47]`)
 	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
 	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, compiled)
 }
@@ -239,7 +239,7 @@ func TestOrchestratorCLIUnevenFanInRealRunner(t *testing.T) {
 	compiled := compileTestdataFixture(t, "uneven-fan-in")
 	// split=20; short=21; long=40; long-tail=140; merge([21,140])=161.
 	assertResultArtifact(t, storeRoot, projectKey, runID, `161`)
-	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge").String(), `[21,140]`)
+	assertStoredJSON(t, storeRoot, runInputKey(projectKey, runID, "merge", nil).String(), `[21,140]`)
 	assertStepOutputs(t, storeRoot, projectKey, runID, compiled)
 	assertRunManifestSucceeded(t, storeRoot, projectKey, runID, compiled)
 }
@@ -721,7 +721,7 @@ func assertStepOutputs(t *testing.T, storeRoot string, projectKey string, runID 
 		if node.GetKind() != "step" {
 			continue
 		}
-		key := runOutputManifestKey(projectKey, runID, node.GetId(), 1)
+		key := runOutputManifestKey(projectKey, runID, node.GetId(), nil, 1)
 		object := getObject(t, storeRoot, key.String())
 		if canonical.DigestBytes(object.Body) == "" {
 			t.Fatalf("empty digest for %s", key)
@@ -736,8 +736,8 @@ func assertRunManifestSucceeded(t *testing.T, storeRoot string, projectKey strin
 	t.Helper()
 
 	manifest := readRunManifest(t, storeRoot, projectKey, runID)
-	if manifest.SchemaVersion != 2 || manifest.Encoding != "json-v2" {
-		t.Fatalf("run-manifest protocol = (%d, %q), want v2/json-v2", manifest.SchemaVersion, manifest.Encoding)
+	if manifest.SchemaVersion != 3 || manifest.Encoding != "json-v3" {
+		t.Fatalf("run-manifest protocol = (%d, %q), want v3/json-v3", manifest.SchemaVersion, manifest.Encoding)
 	}
 	if manifest.Status != StatusSucceeded {
 		t.Fatalf("manifest status = %s, want succeeded", manifest.Status)

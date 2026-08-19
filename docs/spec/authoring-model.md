@@ -12,24 +12,30 @@ Both authoring APIs are functional and declarative. The Python `GraphBuilder`
 is the primary v2 surface; this document retains the TypeScript forms and the
 portable semantics they share.
 
+The current TypeScript builder emits static Graph IR 0.1 workflows. It can
+parse shared 0.2/0.3 specs and its runner executes scoped map-item descriptors,
+but decision and finite-map authoring are currently Python-only surfaces.
+
 This document describes the intended author-facing model, including features
 beyond the first portable compiler wedge. `WorkflowSpec` transport schema v0
-carries Graph IR 0.1 static DAGs and Graph IR 0.2 exhaustive, data-only
-decisions and selects. Channels, foreach/map, broadcast/gather, and
-reducer-backed joins remain future portable-schema work even where this
-document sketches their eventual shape.
+carries Graph IR 0.1 static DAGs, Graph IR 0.2 exhaustive data-only decisions
+and selects, and Graph IR 0.3 finite single-step maps with ordered collection.
+Channels, multi-step map bodies, broadcast/gather, and reducer-backed joins
+remain future portable-schema work even where this document sketches their
+eventual shape.
 
 Authors define:
 
 - a workflow,
 - typed steps,
 - declarative edges,
-- optional exhaustive decisions and typed selects,
+- optional exhaustive decisions, typed selects, and finite maps,
 - execution contracts on workflow defaults and step overrides.
 
-Named state channels, foreach/map operations, broadcasts, gathers, and
+Named state channels, multi-step or streaming maps, broadcasts, gathers, and
 reducers are deferred surfaces rather than current portable authoring
-features.
+features. The current Python finite-map surface is documented in its SDK
+README.
 
 Graphology is an internal implementation detail. Authors do not manipulate Graphology directly in the common path, but the SDK uses Graphology for graph construction, validation, analysis, rendering, and IR export.
 

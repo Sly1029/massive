@@ -3,11 +3,12 @@ from __future__ import annotations
 import inspect
 import sys
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import ModuleType
 from typing import (
+    Annotated,
     Any,
     Generic,
     TypeVar,
@@ -18,7 +19,8 @@ from typing import (
     overload,
 )
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, TypeAdapter, model_validator
+from typing_extensions import TypeForm
 
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import DepsT, InputT, StepContext
@@ -27,6 +29,8 @@ from .identity import SAFE_PATH_SEGMENT, SafePathSegment
 from .source_package import SourcePackage
 
 OutputT = TypeVar("OutputT")
+ItemT = TypeVar("ItemT")
+ResultT = TypeVar("ResultT")
 WorkflowInputT = TypeVar("WorkflowInputT")
 WorkflowOutputT = TypeVar("WorkflowOutputT")
 CaseT = TypeVar("CaseT", bound=BaseModel)
@@ -38,6 +42,12 @@ _END = "__end"
 # schema so graph evolution remains an explicit compiler contract.
 GRAPH_IR_VERSION = "0.1"
 _DECISION_GRAPH_IR_VERSION = "0.2"
+_MAP_GRAPH_IR_VERSION = "0.3"
+DEFAULT_MAP_CONCURRENCY = 20
+MAX_MAP_CONCURRENCY = 2**32 - 1
+_MAP_CONCURRENCY: TypeAdapter[int] = TypeAdapter[int](
+    Annotated[StrictInt, Field(ge=1, le=MAX_MAP_CONCURRENCY)]
+)
 
 
 class SchemaPurpose(str, Enum):
@@ -61,6 +71,13 @@ class _DecisionIdentity(BaseModel):
         if len(self.id) + len("-select") > 128:
             raise ValueError("must leave room for the derived '-select' node id")
         return self
+
+
+class _MapIdentity(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: SafePathSegment
+    concurrency: Annotated[StrictInt, Field(ge=1, le=MAX_MAP_CONCURRENCY)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +120,15 @@ class _SelectDefinition:
     inputs: dict[str, NodeHandle[Any]]
 
 
+@dataclass(frozen=True, slots=True)
+class _MapDefinition:
+    id: str
+    source: _StartHandle[Any] | NodeHandle[Any]
+    mapper: StepDefinition[Any, Any, Any]
+    handle: NodeHandle[Any]
+    concurrency: int
+
+
 class DecisionHandle(Generic[OutputT]):
     def __init__(self, graph: GraphBuilder[Any, Any, Any], definition: _DecisionDefinition) -> None:
         self._graph = graph
@@ -114,7 +140,7 @@ class DecisionHandle(Generic[OutputT]):
         )
 
     def select(
-        self, output_type: type[SelectT], **inputs: NodeHandle[SelectT]
+        self, output_type: TypeForm[SelectT], **inputs: NodeHandle[SelectT]
     ) -> NodeHandle[SelectT]:
         return self._graph._select_decision(  # pyright: ignore[reportPrivateUsage]
             self._definition.id, output_type, inputs
@@ -124,6 +150,7 @@ class DecisionHandle(Generic[OutputT]):
 @dataclass(frozen=True, slots=True)
 class _StartHandle(Generic[WorkflowInputT]):
     output_type: Any
+    graph_token: object = field(repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,13 +213,19 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         self.output_type = output_type
         self.deps_type = deps_type
         self.defaults = defaults
-        self.start = _StartHandle[WorkflowInputT](output_type=input_type)
+        self._graph_token = object()
+        self.start = _StartHandle[WorkflowInputT](
+            output_type=input_type,
+            graph_token=self._graph_token,
+        )
         self.end = _EndHandle[WorkflowOutputT](input_type=output_type)
         self._nodes: dict[str, tuple[StepDefinition[Any, Any, Any], NodeHandle[Any]]] = {}
+        self._handles: dict[str, NodeHandle[Any]] = {}
         self._edges: set[tuple[str, str]] = set()
         self._conditional_edges: set[tuple[str, str, str]] = set()
         self._decisions: dict[str, _DecisionDefinition] = {}
         self._selects: dict[str, _SelectDefinition] = {}
+        self._maps: dict[str, _MapDefinition] = {}
         self._emitted = False
 
     def step(
@@ -256,6 +289,74 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             output_type=item.output_type,
         )
         self._nodes[node_id] = (item, handle)
+        self._handles[node_id] = cast(NodeHandle[Any], handle)
+        return handle
+
+    @overload
+    def map(
+        self,
+        source: _StartHandle[list[ItemT]],
+        mapper: StepDefinition[DepsT, ItemT, ResultT],
+        *,
+        id: str,
+        concurrency: int = DEFAULT_MAP_CONCURRENCY,
+    ) -> NodeHandle[list[ResultT]]: ...
+
+    @overload
+    def map(
+        self,
+        source: NodeHandle[list[ItemT]],
+        mapper: StepDefinition[DepsT, ItemT, ResultT],
+        *,
+        id: str,
+        concurrency: int = DEFAULT_MAP_CONCURRENCY,
+    ) -> NodeHandle[list[ResultT]]: ...
+
+    def map(
+        self,
+        source: _StartHandle[Any] | NodeHandle[Any],
+        mapper: StepDefinition[Any, Any, ResultT],
+        *,
+        id: str,
+        concurrency: int = DEFAULT_MAP_CONCURRENCY,
+    ) -> NodeHandle[list[ResultT]]:
+        if self._emitted:
+            raise RuntimeError("graph has already been emitted")
+        source_id = _START if isinstance(source, _StartHandle) else source.node_id
+        if isinstance(source, _StartHandle) and source.graph_token is not self._graph_token:
+            raise ValueError(f"map source {source_id!r} belongs to a different graph")
+        if not isinstance(source, _StartHandle) and self._handles.get(source_id) is not source:
+            raise ValueError(f"map source {source_id!r} belongs to a different graph")
+        source_item_schema = _direct_list_item_schema(
+            source.output_type,
+            f"map source {source_id!r}",
+        )
+        if source_item_schema != _normalized_core_schema(mapper.input_type):
+            raise TypeError(
+                f"map source {source_id!r} item type does not match mapper input type"
+            )
+        identity = _MapIdentity(
+            id=id,
+            concurrency=_MAP_CONCURRENCY.validate_python(concurrency),
+        )
+        map_id = identity.id
+        if map_id in self._known_node_ids():
+            raise ValueError(f"duplicate or reserved map id {map_id!r}")
+        output_type = list[mapper.output_type]
+        handle = NodeHandle[list[ResultT]](
+            node_id=map_id,
+            input_type=source.output_type,
+            output_type=output_type,
+        )
+        self._maps[map_id] = _MapDefinition(
+            id=map_id,
+            source=source,
+            mapper=mapper,
+            handle=cast(NodeHandle[Any], handle),
+            concurrency=identity.concurrency,
+        )
+        self._handles[map_id] = cast(NodeHandle[Any], handle)
+        self._add_edge(source_id, map_id)
         return handle
 
     @overload
@@ -314,7 +415,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
     def _select_decision(
         self,
         decision_id: str,
-        output_type: type[SelectT],
+        output_type: TypeForm[SelectT],
         inputs: dict[str, NodeHandle[SelectT]],
     ) -> NodeHandle[SelectT]:
         if self._emitted:
@@ -340,7 +441,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         for tag, source in inputs.items():
             if source.node_id not in self._known_node_ids():
                 raise ValueError("decision select source belongs to a different graph")
-            if source.output_type is not output_type:
+            if _normalized_core_schema(source.output_type) != _normalized_core_schema(output_type):
                 raise TypeError(
                     f"decision {decision_id!r} case {tag!r} output type does not match select output"
                 )
@@ -367,7 +468,14 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         )
         for source in inputs.values():
             self._add_edge(source.node_id, select_id, None)
-        return NodeHandle(node_id=select_id, input_type=output_type, output_type=output_type)
+        output_annotation = cast(Any, output_type)
+        handle: NodeHandle[SelectT] = NodeHandle(
+            node_id=select_id,
+            input_type=output_annotation,
+            output_type=output_annotation,
+        )
+        self._handles[select_id] = handle
+        return handle
 
     def _add_edge(self, source: str, target: str, case: str | None = None) -> None:
         if source not in self._known_node_ids():
@@ -389,7 +497,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         self._edges.add((source, target))
 
     def _known_node_ids(self) -> set[str]:
-        return {_START, _END, *self._nodes, *self._decisions, *self._selects}
+        return {_START, _END, *self._nodes, *self._decisions, *self._selects, *self._maps}
 
     def _is_reachable(self, source: str, target: str) -> bool:
         pending = [source]
@@ -492,12 +600,28 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             raise RuntimeError("graph has already been emitted")
         if self.deps_type is not None:
             raise ValueError("dependency providers are not part of the v0 invocation protocol")
-        if not self._nodes:
+        if not self._nodes and not self._maps:
             raise ValueError("workflow must contain at least one step")
         if not any(source_id == _START for source_id, _ in self._edges):
             raise ValueError("workflow start has no edge")
         if not any(target_id == _END for _, target_id in self._edges):
             raise ValueError("workflow end has no edge")
+
+        for definition in self._maps.values():
+            incoming = [
+                (edge_source, edge_target)
+                for edge_source, edge_target in self._edges
+                if edge_target == definition.id
+            ]
+            outgoing = [
+                (edge_source, edge_target)
+                for edge_source, edge_target in self._edges
+                if edge_source == definition.id
+            ]
+            if len(incoming) != 1:
+                raise ValueError(f"map {definition.id!r} must have exactly one incoming edge")
+            if not outgoing:
+                raise ValueError(f"map {definition.id!r} must have an outgoing edge")
 
         lineages = self._activation_lineages()
         for select in self._selects.values():
@@ -581,6 +705,46 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                     "contractRef": contract_ref(step.contract or self.defaults),
                 }
             )
+        for map_id, definition in sorted(
+            self._maps.items(), key=lambda item: _canonical_sort_key(item[0])
+        ):
+            module = _symbol_module(definition.mapper.function, source.root)
+            symbol_ref = f"{source.package_id}:{module}#{definition.mapper.function.__name__}"
+            symbols[symbol_ref] = {
+                "packageId": source.package_id,
+                "language": "python",
+                "module": module,
+                "export": definition.mapper.function.__name__,
+            }
+            nodes.append(
+                {
+                    "id": map_id,
+                    "kind": "map",
+                    "inputSchema": schema_ref(
+                        definition.source.output_type,
+                        f"map {map_id!r} input schema",
+                        SchemaPurpose.INPUT,
+                    ),
+                    "itemInputSchema": schema_ref(
+                        definition.mapper.input_type,
+                        f"map {map_id!r} item input schema",
+                        SchemaPurpose.INPUT,
+                    ),
+                    "itemOutputSchema": schema_ref(
+                        definition.mapper.output_type,
+                        f"map {map_id!r} item output schema",
+                        SchemaPurpose.OUTPUT,
+                    ),
+                    "outputSchema": schema_ref(
+                        definition.handle.output_type,
+                        f"map {map_id!r} output schema",
+                        SchemaPurpose.OUTPUT,
+                    ),
+                    "symbolRef": symbol_ref,
+                    "contractRef": contract_ref(definition.mapper.contract or self.defaults),
+                    "maxConcurrency": definition.concurrency,
+                }
+            )
         for decision_id, decision in sorted(
             self._decisions.items(), key=lambda item: _canonical_sort_key(item[0])
         ):
@@ -645,7 +809,13 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                 if key in edge
             )
         )
-        ir_version = _DECISION_GRAPH_IR_VERSION if self._decisions else GRAPH_IR_VERSION
+        ir_version = (
+            _MAP_GRAPH_IR_VERSION
+            if self._maps
+            else _DECISION_GRAPH_IR_VERSION
+            if self._decisions
+            else GRAPH_IR_VERSION
+        )
         value = cast(
             JsonValue,
             {
@@ -682,6 +852,104 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         emitted = {**cast(dict[str, JsonValue], value), "specHash": spec_hash}
         self._emitted = True
         return WorkflowSpec(value=emitted, spec_hash=spec_hash, graph_version=ir_version)
+
+
+def _direct_list_item_schema(annotation: Any, role: str) -> object:
+    """Return a normalized Pydantic core schema for a direct ``list[T]`` item."""
+    root, definitions = _core_schema_parts(annotation)
+    if root.get("type") != "list":
+        raise TypeError(f"{role} must be a direct concrete list[T]")
+    item_schema = _schema_mapping(root.get("items_schema"))
+    if item_schema is None or item_schema.get("type") == "any":
+        raise TypeError(f"{role} must be a direct concrete list[T]")
+    return _normalize_core_schema_node(item_schema, definitions, set())
+
+
+def _normalized_core_schema(annotation: Any) -> object:
+    root, definitions = _core_schema_parts(annotation)
+    return _normalize_core_schema_node(root, definitions, set())
+
+
+def _core_schema_parts(annotation: Any) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+    adapter: TypeAdapter[object] = TypeAdapter(annotation)
+    core_schema = cast(dict[str, object], adapter.core_schema)
+    definitions: dict[str, dict[str, object]] = {}
+
+    def collect(value: object) -> None:
+        schema = _schema_mapping(value)
+        if schema is not None:
+            if schema.get("type") == "definitions":
+                raw_definitions = _schema_list(schema.get("definitions"))
+                if raw_definitions is not None:
+                    for raw_definition in raw_definitions:
+                        definition = _schema_mapping(raw_definition)
+                        if definition is not None:
+                            reference = definition.get("ref")
+                            if isinstance(reference, str):
+                                definitions[reference] = definition
+            for child in schema.values():
+                collect(child)
+        else:
+            items = _schema_list(value)
+            if items is None:
+                return
+            for child in items:
+                collect(child)
+
+    collect(core_schema)
+    root = core_schema
+    while root.get("type") == "definitions":
+        wrapped = root.get("schema")
+        wrapped_schema = _schema_mapping(wrapped)
+        if wrapped_schema is None:
+            break
+        root = wrapped_schema
+    return root, definitions
+
+
+def _normalize_core_schema_node(
+    value: object,
+    definitions: dict[str, dict[str, object]],
+    resolving: set[str],
+) -> object:
+    schema = _schema_mapping(value)
+    if schema is not None:
+        if schema.get("type") == "definition-ref":
+            reference = schema.get("schema_ref")
+            if isinstance(reference, str) and reference in definitions:
+                if reference in resolving:
+                    return {"type": "recursive-reference"}
+                return _normalize_core_schema_node(
+                    definitions[reference], definitions, {*resolving, reference}
+                )
+        normalized: dict[str, object] = {}
+        for key, child in schema.items():
+            if key in {"definitions", "metadata", "ref"}:
+                continue
+            if (key == "cls" and isinstance(child, type)) or callable(child):
+                normalized[key] = f"{child.__module__}.{child.__qualname__}"
+            else:
+                normalized[key] = _normalize_core_schema_node(child, definitions, resolving)
+        return normalized
+    items = _schema_list(value)
+    if items is not None:
+        return [_normalize_core_schema_node(child, definitions, resolving) for child in items]
+    if isinstance(value, tuple):
+        tuple_items = cast(tuple[object, ...], value)
+        return tuple(_normalize_core_schema_node(child, definitions, resolving) for child in tuple_items)
+    return value
+
+
+def _schema_mapping(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return cast(dict[str, object], value)
+
+
+def _schema_list(value: object) -> list[object] | None:
+    if not isinstance(value, list):
+        return None
+    return cast(list[object], value)
 
 
 def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]]:

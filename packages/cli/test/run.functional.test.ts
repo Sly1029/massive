@@ -81,8 +81,8 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
       }[];
     }[];
   };
-  assertEquals(manifest.schemaVersion, 2);
-  assertEquals(manifest.encoding, "json-v2");
+  assertEquals(manifest.schemaVersion, 3);
+  assertEquals(manifest.encoding, "json-v3");
   assertEquals(manifest.status, "succeeded");
   assertEquals(manifest.steps.map((step) => step.nodeId), [
     "double",
@@ -178,6 +178,237 @@ Deno.test("massive run Python graph: same compiler, runner, and frozen artifact 
   assertEquals(outputManifest.producer.attempt, 1);
 });
 
+Deno.test("massive run Python map: persists scoped items and collects in source order", async (t) => {
+  for (
+    const testCase of [
+      {
+        name: "duplicates and out-of-order completion",
+        runId: "python-map-ordered",
+        input: '{"values":[3,1,3,2]}',
+        expected: [
+          { source: 3, doubled: 6 },
+          { source: 1, doubled: 2 },
+          { source: 3, doubled: 6 },
+          { source: 2, doubled: 4 },
+        ],
+        itemCount: 4,
+      },
+      {
+        name: "empty source",
+        runId: "python-map-empty",
+        input: '{"values":[]}',
+        expected: [],
+        itemCount: 0,
+      },
+    ] as const
+  ) {
+    await t.step(testCase.name, async () => {
+      const fixture = await copyFixture("python-map");
+      const store = await makeStore();
+      const result = await runCli([
+        "run",
+        join(fixture, "workflow.py"),
+        "--input",
+        testCase.input,
+        "--store",
+        store,
+        "--project",
+        "acme/python-map",
+        "--run-id",
+        testCase.runId,
+        "--json",
+      ]);
+
+      assertEquals(result.code, 0, result.stderr);
+      const outcome = JSON.parse(result.stdout) as {
+        result: readonly { source: number; doubled: number }[];
+      };
+      assertEquals(outcome.result, testCase.expected);
+
+      const manifestPath = await findRunArtifact(
+        store,
+        testCase.runId,
+        "run-manifest.json",
+      );
+      assert(manifestPath !== undefined, "map run manifest should exist");
+      const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+        schemaVersion: number;
+        encoding: string;
+        steps: {
+          nodeId: string;
+          status: string;
+          items?: {
+            index: number;
+            status: string;
+            attempts: { output?: { manifest: { key: string } } }[];
+          }[];
+        }[];
+      };
+      assertEquals(manifest.schemaVersion, 3);
+      assertEquals(manifest.encoding, "json-v3");
+
+      const mapStep = manifest.steps.find((step) =>
+        step.nodeId === "inspect-items"
+      );
+      assert(mapStep !== undefined, "map step should be journaled");
+      assertEquals(mapStep.status, "succeeded");
+      assertEquals(
+        mapStep.items?.map((item) => item.index),
+        Array.from({ length: testCase.itemCount }, (_, index) => index),
+      );
+      assertEquals(
+        mapStep.items?.every((item) => item.status === "succeeded"),
+        true,
+      );
+
+      const keys = await listStoreKeys(store);
+      const itemManifests = keys.filter((key) =>
+        key.includes("/steps/inspect-items/scopes/maps/inspect-items/items/") &&
+        key.endsWith("/1/output-manifest.json")
+      );
+      assertEquals(itemManifests.length, testCase.itemCount);
+      for (let index = 0; index < testCase.itemCount; index += 1) {
+        assertEquals(
+          itemManifests.some((key) => key.includes(`/items/${index}/1/`)),
+          true,
+        );
+      }
+
+      const collectedManifest = await findRunArtifact(
+        store,
+        testCase.runId,
+        join("steps", "inspect-items", "1", "output-manifest.json"),
+      );
+      assert(
+        collectedManifest !== undefined,
+        "map collection should publish through the map node output slot",
+      );
+    });
+  }
+});
+
+Deno.test("massive run Python map: preserves item failures without publishing a collection", async () => {
+  const fixture = await copyFixture("python-map");
+  const store = await makeStore();
+  const runId = "python-map-partial-failure";
+  const result = await runCli([
+    "run",
+    join(fixture, "workflow.py"),
+    "--input",
+    '{"values":[1,-1,3]}',
+    "--store",
+    store,
+    "--project",
+    "acme/python-map",
+    "--run-id",
+    runId,
+    "--json",
+  ]);
+
+  assertEquals(result.code, 66, result.stderr);
+  const manifestPath = await findRunArtifact(store, runId, "run-manifest.json");
+  assert(manifestPath !== undefined, "failed map run should have a manifest");
+  const manifestText = await Deno.readTextFile(manifestPath);
+  assert(
+    !manifestText.includes("private-fixture-payload"),
+    "durable map diagnostics must not contain user exception text",
+  );
+  const manifest = JSON.parse(manifestText) as {
+    status: string;
+    steps: {
+      nodeId: string;
+      status: string;
+      attempts: { status: string; output?: unknown }[];
+      items?: {
+        index: number;
+        status: string;
+        attempts: { status: string }[];
+      }[];
+    }[];
+  };
+  const map = manifest.steps.find((step) => step.nodeId === "inspect-items");
+  assert(map !== undefined, "map node should be journaled");
+  assertEquals(manifest.status, "failed");
+  assertEquals(map.status, "failed");
+  assertEquals(map.attempts[0]?.status, "failed");
+  assertEquals(map.attempts[0]?.output, undefined);
+  assertEquals(map.items?.map((item) => [item.index, item.status]), [
+    [0, "succeeded"],
+    [1, "failed"],
+    [2, "succeeded"],
+  ]);
+  assertEquals(
+    await findRunArtifact(
+      store,
+      runId,
+      join("steps", "inspect-items", "1", "output-manifest.json"),
+    ),
+    undefined,
+    "a partial map must not publish its collected output",
+  );
+});
+
+for (
+  const testCase of [
+    {
+      name: "selected branch composes two maps",
+      mode: "mapped",
+      runId: "python-map-branch-selected",
+      expected: [{ value: 5 }, { value: 3 }],
+      mapStatuses: ["succeeded", "succeeded"],
+    },
+    {
+      name: "unselected branch skips both maps",
+      mode: "bypass",
+      runId: "python-map-branch-skipped",
+      expected: [{ value: 2 }, { value: 1 }],
+      mapStatuses: ["skipped", "skipped"],
+    },
+  ] as const
+) {
+  Deno.test(`massive run Python map: ${testCase.name}`, async () => {
+    const fixture = await copyFixture("python-map-branches");
+    const store = await makeStore();
+    const result = await runCli([
+      "run",
+      join(fixture, "workflow.py"),
+      "--input",
+      JSON.stringify({ mode: testCase.mode, values: [2, 1] }),
+      "--store",
+      store,
+      "--project",
+      "acme/python-map-branches",
+      "--run-id",
+      testCase.runId,
+      "--json",
+    ]);
+
+    assertEquals(result.code, 0, result.stderr);
+    const outcome = JSON.parse(result.stdout) as {
+      result: { value: number }[];
+    };
+    assertEquals(outcome.result, [...testCase.expected]);
+    const manifestPath = await findRunArtifact(
+      store,
+      testCase.runId,
+      "run-manifest.json",
+    );
+    assert(manifestPath !== undefined);
+    const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+      steps: { nodeId: string; status: string; items?: unknown[] }[];
+    };
+    const maps = ["double-items", "increment-items"].map((nodeId) =>
+      manifest.steps.find((step) => step.nodeId === nodeId)
+    );
+    assertEquals(maps.map((step) => step?.status), [...testCase.mapStatuses]);
+    if (testCase.mode === "bypass") {
+      assertEquals(maps.map((step) => step?.items), [[], []]);
+    } else {
+      assertEquals(maps.map((step) => step?.items?.length), [2, 2]);
+    }
+  });
+}
+
 Deno.test("massive run Python decision: selects the approved branch and journals the route", async () => {
   const fixture = await copyFixture("python-decision");
   const store = await makeStore();
@@ -225,8 +456,8 @@ Deno.test("massive run Python decision: selects the approved branch and journals
       attempts: { output?: { body: { key: string; hash: string } } }[];
     }[];
   };
-  assertEquals(manifest.schemaVersion, 2);
-  assertEquals(manifest.encoding, "json-v2");
+  assertEquals(manifest.schemaVersion, 3);
+  assertEquals(manifest.encoding, "json-v3");
   assertEquals(manifest.decisions, [{
     nodeId: "route",
     status: "selected",
@@ -419,10 +650,22 @@ Deno.test("massive run Python nested decisions activate only the selected contro
       steps: { nodeId: string; status: string }[];
     };
     assertEquals(outcome.result, { message: testCase.message });
-    assertEquals(Object.fromEntries(outcome.steps.map((step) => [step.nodeId, step.status])), testCase.statuses);
+    assertEquals(
+      Object.fromEntries(
+        outcome.steps.map((step) => [step.nodeId, step.status]),
+      ),
+      testCase.statuses,
+    );
 
-    const manifestPath = await findRunArtifact(store, testCase.runId, "run-manifest.json");
-    assert(manifestPath !== undefined, "nested decision run manifest should exist");
+    const manifestPath = await findRunArtifact(
+      store,
+      testCase.runId,
+      "run-manifest.json",
+    );
+    assert(
+      manifestPath !== undefined,
+      "nested decision run manifest should exist",
+    );
     const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
       decisions: readonly unknown[];
       result?: { key: string; hash: string };
@@ -436,7 +679,10 @@ Deno.test("massive run Python nested decisions activate only the selected contro
     const selectedBody = manifest.steps.find((step) =>
       step.nodeId === testCase.selectedNode
     )?.attempts[0]?.output?.body;
-    assert(selectedBody !== undefined, "selected branch should publish its body");
+    assert(
+      selectedBody !== undefined,
+      "selected branch should publish its body",
+    );
     assert(manifest.result !== undefined, "run should journal a final result");
     assertEquals(
       manifest.result.hash,

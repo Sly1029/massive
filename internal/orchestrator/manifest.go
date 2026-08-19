@@ -14,16 +14,28 @@ type runManifest struct {
 }
 
 // The run-manifest transport is intentionally versioned independently of the
-// graph IR. Schema v2/json-v2 records manifest-last outputs together with
-// durable data-only routing. The local orchestrator currently executes one
-// attempt per step (attempt 1); target retry scheduling and later attempt
-// records are a subsequent slice.
+// graph IR. Schema v3/json-v3 adds source-indexed finite-map item records to
+// the v2 manifest-last output and durable routing journal. The local
+// orchestrator currently executes one attempt per step (attempt 1); target
+// retry scheduling and later attempt records are a subsequent slice.
 
 type manifestStep struct {
 	NodeID     string              `json:"nodeId"`
 	Status     string              `json:"status"`
 	Attempts   []manifestAttempt   `json:"attempts"`
+	Items      *[]manifestMapItem  `json:"items,omitempty"`
 	SkipReason *manifestSkipReason `json:"skipReason,omitempty"`
+}
+
+// manifestMapItem keeps each source-indexed invocation observable even when a
+// sibling fails. A terminal not-started item has no attempts; otherwise its
+// attempts describe the item runner. The containing map step's attempt
+// describes collection into the static map-node output slot.
+type manifestMapItem struct {
+	Index      int               `json:"index"`
+	Status     string            `json:"status"`
+	Attempts   []manifestAttempt `json:"attempts"`
+	Diagnostic string            `json:"diagnostic,omitempty"`
 }
 
 // manifestDecision is the durable decision record. Replays must use this

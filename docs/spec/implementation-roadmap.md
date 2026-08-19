@@ -4,13 +4,19 @@
 > TypeScript-first substrate. Future prioritization is superseded by the delivery
 > sequence in [Workflow Platform v2 Direction](workflow-platform-v2.md).
 
-Status: draft
+Status: archived implementation plan
+
+> This document preserves the original delivery plan and task numbering. Its
+> "Historical Baseline" section is a snapshot, not the current repository
+> inventory. See [overview.md](overview.md),
+> [ir-and-datastore.md](ir-and-datastore.md), and the package READMEs for the
+> implemented surface.
 
 This roadmap turns the architecture in [overview.md](overview.md), [ir-and-datastore.md](ir-and-datastore.md), [argo-backend.md](argo-backend.md), and [environment-materialization.md](environment-materialization.md) into an implementation plan that can be **handed off and parallelized** across multiple agents or engineers.
 
 It is organized so that independent workstreams can proceed at the same time behind frozen contracts, rather than as a single serial slice list. Read this order:
 
-1. [Current State](#current-state) — ground truth of what exists today.
+1. [Historical Baseline](#historical-baseline) — repository snapshot used by this roadmap.
 2. [Target v2 Architecture](#target-v2-architecture) — where we are pushing.
 3. [Parallelization Principle](#parallelization-principle) — how contracts + fixtures unlock concurrency.
 4. [Milestones](#milestones) — the four gates that define "done."
@@ -22,9 +28,11 @@ It is organized so that independent workstreams can proceed at the same time beh
 
 ---
 
-## Current State
+## Historical Baseline
 
-Ground truth as of this revision. The spec docs describe the **target** architecture; most runtime code is still an earlier prototype. Shared contracts in `conformance/` are landing; do not assume the docs describe running software end to end.
+This section records the repository state when the roadmap was written. It is
+retained to explain the dependency graph and milestone numbering; it does not
+describe the current implementation.
 
 **What exists (`packages/sdk`, TypeScript):**
 
@@ -177,7 +185,7 @@ The point of this workstream is to unblock everyone else, so bias toward landing
   - Status: implemented in [`../../conformance/graph-catalog.json`](../../conformance/graph-catalog.json) and [`../../conformance/graph-catalog.md`](../../conformance/graph-catalog.md), checked by `pnpm check:conformance`. Go compiler work in WS-2 must read the same JSON catalog for its matching conformance assertion.
 - **WS-0.2 — `WorkflowSpec` JSON Schema.** Author the shared schema for `WorkflowSpec` per [ir-and-datastore.md](ir-and-datastore.md): `GraphIR`, schema table, symbol table, source package table, environment table, effective execution-contract table, and per-node `contractRef`. Provide it as a JSON Schema (draft 2020-12) under `conformance/schema/workflow-spec.schema.json`.
   - AC: schema validates a hand-authored spec for the passthrough + linear + diamond cases; rejects a spec missing a `contractRef`.
-  - Status: implemented in [`../../conformance/schema/workflow-spec.schema.json`](../../conformance/schema/workflow-spec.schema.json), with validating shape fixtures under [`../../conformance/fixtures/specs`](../../conformance/fixtures/specs) and Ajv-backed checks in `pnpm check:conformance`. The v0 schema covers DAG step nodes and `mergeInputs` fan-in only; channels, branches, foreach/map, and reducers are post-M2 schema work.
+  - Status: implemented in [`../../conformance/schema/workflow-spec.schema.json`](../../conformance/schema/workflow-spec.schema.json), with validating shape fixtures under [`../../conformance/fixtures/specs`](../../conformance/fixtures/specs) and Ajv-backed checks in `pnpm check:conformance`. Graph IR 0.1 covers static DAGs, 0.2 adds exhaustive decisions/selects, and 0.3 adds finite single-step maps. Channels, multi-step map bodies, gather, and reducers remain later schema work.
 - **WS-0.3 — Proto-typed canonical JSON plan schemas.** Define `workflow-plan.proto` (`WorkflowPlan` joining `GraphIR` + `ExecutionContract` + materialization refs + provenance) and `bundle-manifest.proto`, plus a documented canonical JSON encoding of the plan.
   - AC: `protoc` compile succeeds; a protojson round-trip test preserves the JSON field tree.
   - Status: supersedes the earlier Cap'n Proto schema checkpoint. Implemented in [`../../conformance/schema/workflow-plan.proto`](../../conformance/schema/workflow-plan.proto), [`../../conformance/schema/bundle-manifest.proto`](../../conformance/schema/bundle-manifest.proto), and [`../../conformance/schema/workflow-plan-json-projection.md`](../../conformance/schema/workflow-plan-json-projection.md), with real `protoc` compile and protojson checks in `pnpm check:proto`.

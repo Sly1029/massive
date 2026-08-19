@@ -13,6 +13,7 @@ export type StepRun<Input, Output> = (context: {
   readonly context: {
     readonly runId: string;
     readonly stepId: string;
+    readonly idempotencyKey: string;
   };
 }) => Output | Promise<Output>;
 

@@ -646,10 +646,10 @@ function stripExport(specifier: string): string {
 
 // --- Run manifest read (authoritative) -------------------------------------
 
-const RUN_MANIFEST_SCHEMA_VERSION = 2;
-const RUN_MANIFEST_ENCODING = "json-v2";
+const RUN_MANIFEST_SCHEMA_VERSION = 3;
+const RUN_MANIFEST_ENCODING = "json-v3";
 
-// This matches the Go-owned run-manifest v2 transport in
+// This matches the Go-owned run-manifest v3 transport in
 // internal/orchestrator/manifest.go. Keep the complete model here because the
 // CLI reads every layer below directly when rendering `inspect` and `run`.
 const ManifestArtifactRefSchema = z.object({
@@ -672,13 +672,25 @@ const ManifestPublishedArtifactSchema = z.object({
   schema: z.string(),
 }).strict();
 
-const ManifestAttemptSchema = z.object({
-  attempt: z.number().int().positive(),
-  status: z.string(),
-  input: ManifestDataArtifactSchema,
-  output: ManifestPublishedArtifactSchema.optional(),
-  diagnostic: z.string().optional(),
-}).strict();
+const ManifestAttemptSchema = z.discriminatedUnion("status", [
+  z.object({
+    attempt: z.literal(1),
+    status: z.literal("running"),
+    input: ManifestDataArtifactSchema,
+  }).strict(),
+  z.object({
+    attempt: z.literal(1),
+    status: z.literal("succeeded"),
+    input: ManifestDataArtifactSchema,
+    output: ManifestPublishedArtifactSchema,
+  }).strict(),
+  z.object({
+    attempt: z.literal(1),
+    status: z.literal("failed"),
+    input: ManifestDataArtifactSchema,
+    diagnostic: z.string().min(1),
+  }).strict(),
+]);
 
 const ManifestSkipReasonSchema = z.object({
   kind: z.literal("decision-not-selected"),
@@ -686,12 +698,97 @@ const ManifestSkipReasonSchema = z.object({
   case: z.string(),
 }).strict();
 
-const ManifestStepSchema = z.object({
-  nodeId: z.string(),
-  status: z.string(),
-  attempts: z.array(ManifestAttemptSchema),
-  skipReason: ManifestSkipReasonSchema.optional(),
-}).strict();
+const ManifestMapItemSchema = z.discriminatedUnion("status", [
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("pending"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+  }).strict(),
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("not-started"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+    diagnostic: z.string().min(1),
+  }).strict(),
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("running"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("succeeded"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    index: z.number().int().nonnegative(),
+    status: z.literal("failed"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+]);
+
+const ManifestStepSchema = z.discriminatedUnion("status", [
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("pending"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("running"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("succeeded"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("failed"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("skipped"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+    skipReason: ManifestSkipReasonSchema,
+  }).strict(),
+]);
+
+const ManifestMapStepSchema = z.discriminatedUnion("status", [
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("pending"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+    items: z.array(ManifestMapItemSchema),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("running"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+    items: z.array(ManifestMapItemSchema),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("succeeded"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+    items: z.array(ManifestMapItemSchema),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("failed"),
+    attempts: z.array(ManifestAttemptSchema).length(1),
+    items: z.array(ManifestMapItemSchema),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("skipped"),
+    attempts: z.array(ManifestAttemptSchema).length(0),
+    items: z.array(ManifestMapItemSchema),
+    skipReason: ManifestSkipReasonSchema,
+  }).strict(),
+]);
 
 const ManifestDecisionSchema = z.discriminatedUnion("status", [
   z.object({
@@ -711,18 +808,111 @@ const ManifestDecisionSchema = z.discriminatedUnion("status", [
   }).strict(),
 ]);
 
-const ManifestViewSchema = z.object({
+const ManifestCommonSchema = z.object({
   kind: z.literal("RunManifest"),
   schemaVersion: z.literal(RUN_MANIFEST_SCHEMA_VERSION),
   encoding: z.literal(RUN_MANIFEST_ENCODING),
   planHash: z.string(),
   projectKey: z.string(),
   runId: z.string(),
-  status: z.string(),
-  steps: z.array(ManifestStepSchema),
+  steps: z.array(z.union([ManifestStepSchema, ManifestMapStepSchema])),
   decisions: z.array(ManifestDecisionSchema),
   result: ManifestDataArtifactSchema.optional(),
-}).strict();
+});
+
+const ManifestViewSchema = z.discriminatedUnion("status", [
+  ManifestCommonSchema.extend({
+    status: z.literal("running"),
+    result: z.never().optional(),
+  }).strict(),
+  ManifestCommonSchema.extend({
+    status: z.literal("failed"),
+    result: z.never().optional(),
+  }).strict(),
+  ManifestCommonSchema.extend({
+    status: z.literal("succeeded"),
+    result: ManifestDataArtifactSchema,
+  }).strict(),
+]).superRefine((manifest, context) => {
+  for (const [stepIndex, step] of manifest.steps.entries()) {
+    const attempt = step.attempts[0];
+    if (attempt !== undefined && attempt.status !== step.status) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", stepIndex, "attempts", 0, "status"],
+        message: "attempt status must match its step status",
+      });
+    }
+    if (!("items" in step)) continue;
+    if (step.status === "pending" || step.status === "skipped") {
+      if (step.items.length !== 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["steps", stepIndex, "items"],
+          message: "pending or skipped maps cannot have item records",
+        });
+      }
+      continue;
+    }
+    for (const [itemOffset, item] of step.items.entries()) {
+      if (item.index !== itemOffset) {
+        context.addIssue({
+          code: "custom",
+          path: ["steps", stepIndex, "items", itemOffset, "index"],
+          message: "map item indexes must be dense and source ordered",
+        });
+      }
+      const itemAttempt = item.attempts[0];
+      if (itemAttempt !== undefined && itemAttempt.status !== item.status) {
+        context.addIssue({
+          code: "custom",
+          path: [
+            "steps",
+            stepIndex,
+            "items",
+            itemOffset,
+            "attempts",
+            0,
+            "status",
+          ],
+          message: "item attempt status must match its item status",
+        });
+      }
+    }
+    if (
+      step.status !== "failed" &&
+      step.items.some((item) => item.status === "not-started")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", stepIndex, "items"],
+        message: "not-started map items require a failed map",
+      });
+    }
+    if (
+      step.status === "succeeded" &&
+      step.items.some((item) => item.status !== "succeeded")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", stepIndex, "items"],
+        message: "a successful map requires every item to succeed",
+      });
+    }
+    if (
+      step.status === "failed" &&
+      step.items.some((item) =>
+        item.status === "pending" || item.status === "running"
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", stepIndex, "items"],
+        message: "a failed map requires every item to be terminal",
+      });
+    }
+  }
+});
 
 type ManifestView = z.infer<typeof ManifestViewSchema>;
 
@@ -838,12 +1028,14 @@ function buildSteps(
     )?.attempts?.[0];
     const diagnostic = step.diagnostic !== undefined && step.diagnostic !== ""
       ? step.diagnostic
-      : attempt?.diagnostic;
+      : attempt !== undefined && "diagnostic" in attempt
+      ? attempt.diagnostic
+      : undefined;
     const summary: StepSummary = {
       nodeId: step.nodeId,
       status: normalizeStatus(step.status),
       ...(diagnostic === undefined || diagnostic === "" ? {} : { diagnostic }),
-      ...(attempt?.output === undefined
+      ...(attempt === undefined || !("output" in attempt)
         ? {}
         : { outputKey: attempt.output.manifest.key }),
     };

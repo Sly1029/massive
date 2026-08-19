@@ -23,7 +23,7 @@ const (
 	JSONContentType     = "application/json"
 	ManifestContentType = "application/vnd.massive.data-artifact-manifest+json"
 	manifestSchemaRef   = "https://massive.dev/conformance/schema/data-artifact-manifest.schema.json"
-	maxArtifactAttempt  = int64(9007199254740991) // JSON's largest exact integer.
+	MaxJSONSafeInteger  = int64(9007199254740991) // JSON's largest exact integer.
 )
 
 var (
@@ -39,11 +39,25 @@ type Destination struct {
 }
 
 type Producer struct {
-	ProjectKey string `json:"projectKey"`
-	PlanHash   string `json:"planHash"`
-	RunID      string `json:"runId"`
-	NodeID     string `json:"nodeId"`
-	Attempt    int    `json:"attempt"`
+	ProjectKey string          `json:"projectKey"`
+	PlanHash   string          `json:"planHash"`
+	RunID      string          `json:"runId"`
+	NodeID     string          `json:"nodeId"`
+	Attempt    int             `json:"attempt"`
+	Scope      *ExecutionScope `json:"scope,omitempty"`
+}
+
+// ExecutionScope identifies a mapped invocation independently of its static
+// graph node. Frames are ordered outer-to-inner so nested maps have a stable,
+// collision-free output namespace without rewriting node IDs.
+type ExecutionScope struct {
+	Frames []MapItemScopeFrame `json:"frames"`
+}
+
+type MapItemScopeFrame struct {
+	Kind  string `json:"kind"`
+	MapID string `json:"mapId"`
+	Index int    `json:"index"`
 }
 
 type ArtifactRef struct {
@@ -71,7 +85,7 @@ type dataArtifactManifest struct {
 // PublishJSON validates canonical JSON, convergently installs its content body,
 // then conditionally creates the immutable manifest that commits visibility.
 func PublishJSON(ctx context.Context, store datastore.Datastore, destination Destination, producer Producer, body []byte) (PublishedJSON, error) {
-	if err := validateDestination(destination, producer); err != nil {
+	if err := ValidateDestination(destination, producer); err != nil {
 		return PublishedJSON{}, err
 	}
 	if err := validateCanonicalJSON(ctx, store, destination.Schema, body); err != nil {
@@ -86,7 +100,7 @@ func PublishJSON(ctx context.Context, store datastore.Datastore, destination Des
 	bodyRef := ArtifactRef{Key: bodyKey.String(), Hash: bodyHash, Size: len(body), ContentType: JSONContentType}
 	manifest := dataArtifactManifest{
 		Kind:          "DataArtifactManifest",
-		SchemaVersion: 0,
+		SchemaVersion: 1,
 		Encoding:      "canonical-json-v0",
 		Producer:      producer,
 		Schema:        destination.Schema,
@@ -119,7 +133,7 @@ func PublishJSON(ctx context.Context, store datastore.Datastore, destination Des
 // ResolveJSON returns a value only after verifying its immutable manifest,
 // producer, content-addressed body, canonical encoding, and pinned schema.
 func ResolveJSON(ctx context.Context, store datastore.Datastore, destination Destination, producer Producer) (PublishedJSON, []byte, error) {
-	if err := validateDestination(destination, producer); err != nil {
+	if err := ValidateDestination(destination, producer); err != nil {
 		return PublishedJSON{}, nil, err
 	}
 	manifestObject, err := store.Get(ctx, destination.ManifestKey)
@@ -141,7 +155,7 @@ func ResolveJSON(ctx context.Context, store datastore.Datastore, destination Des
 	if err := json.Unmarshal(manifestObject.Body, &manifest); err != nil {
 		return PublishedJSON{}, nil, fmt.Errorf("%w: decode manifest %s: %v", ErrIntegrity, destination.ManifestKey, err)
 	}
-	if manifest.Producer != producer || manifest.Schema != destination.Schema {
+	if !sameProducer(manifest.Producer, producer) || manifest.Schema != destination.Schema {
 		return PublishedJSON{}, nil, fmt.Errorf("%w: manifest %s does not match its expected producer and schema", ErrIntegrity, destination.ManifestKey)
 	}
 	bodyKey, err := blobKey(manifest.Body.Hash)
@@ -166,14 +180,16 @@ func ResolveJSON(ctx context.Context, store datastore.Datastore, destination Des
 	}, bodyObject.Body, nil
 }
 
-func validateDestination(destination Destination, producer Producer) error {
+// ValidateDestination binds a caller-provided manifest key to the complete
+// immutable producer identity before user code can run.
+func ValidateDestination(destination Destination, producer Producer) error {
 	if err := validateProducerIdentity(producer); err != nil {
 		return err
 	}
 	if !isHashRef(destination.Schema) {
 		return fmt.Errorf("%w: schema %q is not a SHA-256 reference", ErrValidation, destination.Schema)
 	}
-	want, err := datastore.ParseKey("projects/" + producer.ProjectKey + "/runs/" + producer.RunID + "/steps/" + producer.NodeID + "/" + strconv.Itoa(producer.Attempt) + "/output-manifest.json")
+	want, err := outputManifestKey(producer)
 	if err != nil {
 		return fmt.Errorf("%w: invalid producer identity: %v", ErrValidation, err)
 	}
@@ -196,10 +212,60 @@ func validateProducerIdentity(producer Producer) error {
 	if !isSafePathSegment(producer.NodeID) {
 		return fmt.Errorf("%w: node ID %q is not a safe path segment", ErrValidation, producer.NodeID)
 	}
-	if producer.Attempt < 1 || int64(producer.Attempt) > maxArtifactAttempt {
+	if producer.Attempt < 1 || int64(producer.Attempt) > MaxJSONSafeInteger {
 		return fmt.Errorf("%w: attempt must be an exact positive JSON integer", ErrValidation)
 	}
+	if err := ValidateExecutionScope(producer.Scope); err != nil {
+		return fmt.Errorf("%w: %v", ErrValidation, err)
+	}
 	return nil
+}
+
+// ValidateExecutionScope is shared by artifact publication and orchestration
+// paths that derive scope-controlled filesystem names before a runner parses
+// the descriptor schema.
+func ValidateExecutionScope(scope *ExecutionScope) error {
+	if scope == nil {
+		return nil
+	}
+	if len(scope.Frames) == 0 {
+		return errors.New("scope must contain at least one frame")
+	}
+	for _, frame := range scope.Frames {
+		if frame.Kind != "map-item" || !isSafePathSegment(frame.MapID) || frame.Index < 0 || int64(frame.Index) > MaxJSONSafeInteger {
+			return errors.New("scope frame must be a map item with a safe map ID and exact nonnegative JSON index")
+		}
+	}
+	return nil
+}
+
+func outputManifestKey(producer Producer) (datastore.Key, error) {
+	key := "projects/" + producer.ProjectKey + "/runs/" + producer.RunID + "/steps/" + producer.NodeID
+	if producer.Scope != nil {
+		key += "/scopes"
+		for _, frame := range producer.Scope.Frames {
+			key += "/maps/" + frame.MapID + "/items/" + strconv.Itoa(frame.Index)
+		}
+	}
+	return datastore.ParseKey(key + "/" + strconv.Itoa(producer.Attempt) + "/output-manifest.json")
+}
+
+func sameProducer(left, right Producer) bool {
+	if left.ProjectKey != right.ProjectKey || left.PlanHash != right.PlanHash || left.RunID != right.RunID || left.NodeID != right.NodeID || left.Attempt != right.Attempt {
+		return false
+	}
+	if left.Scope == nil || right.Scope == nil {
+		return left.Scope == nil && right.Scope == nil
+	}
+	if len(left.Scope.Frames) != len(right.Scope.Frames) {
+		return false
+	}
+	for index, frame := range left.Scope.Frames {
+		if frame != right.Scope.Frames[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func isSafePathSegment(value string) bool {

@@ -50,7 +50,7 @@ export interface WorkflowSpec {
     readonly outputSchema: string;
   };
   readonly graph: {
-    readonly irVersion: "0.1" | "0.2";
+    readonly irVersion: "0.1" | "0.2" | "0.3";
     readonly start: string;
     readonly end: string;
     readonly nodes: readonly WorkflowSpecNode[];
@@ -94,6 +94,17 @@ export type WorkflowSpecNode =
       readonly case: string;
       readonly source: string;
     }[];
+  }
+  | {
+    readonly id: string;
+    readonly kind: "map";
+    readonly inputSchema: string;
+    readonly itemInputSchema: string;
+    readonly itemOutputSchema: string;
+    readonly outputSchema: string;
+    readonly symbolRef: string;
+    readonly contractRef: string;
+    readonly maxConcurrency: number;
   };
 
 export interface WorkflowSpecEdge {

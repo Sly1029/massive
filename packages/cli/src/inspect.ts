@@ -64,13 +64,34 @@ export async function inspectRun(
     if (attempt?.input !== undefined) {
       lines.push(`      input   ${attempt.input.key}  ${attempt.input.hash}`);
     }
-    if (attempt?.output !== undefined) {
+    if (attempt !== undefined && "output" in attempt) {
       lines.push(
         `      output  ${attempt.output.manifest.key}  ${attempt.output.manifest.hash}`,
       );
     }
-    if (attempt?.diagnostic !== undefined && attempt.diagnostic !== "") {
+    if (
+      attempt !== undefined && "diagnostic" in attempt &&
+      attempt.diagnostic !== ""
+    ) {
       lines.push(`      error   ${attempt.diagnostic}`);
+    }
+    if ("items" in step) {
+      lines.push(`      items   ${step.items.length}`);
+      for (const item of step.items) {
+        const itemAttempt = item.attempts[0];
+        lines.push(`      [${item.index}]  ${item.status}`);
+        if (itemAttempt !== undefined && "output" in itemAttempt) {
+          lines.push(
+            `          output  ${itemAttempt.output.manifest.key}  ${itemAttempt.output.manifest.hash}`,
+          );
+        }
+        if (
+          itemAttempt !== undefined && "diagnostic" in itemAttempt &&
+          itemAttempt.diagnostic !== ""
+        ) {
+          lines.push(`          error   ${itemAttempt.diagnostic}`);
+        }
+      }
     }
   }
   if (manifest.result !== undefined) {

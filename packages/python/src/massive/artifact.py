@@ -21,7 +21,13 @@ from .canonical import (
     sha256_ref,
 )
 from .datastore import Datastore, DatastoreConflictError, DatastoreNotFoundError
-from .identity import PositiveAttempt, ProjectKey, SafePathSegment, Sha256Reference
+from .identity import (
+    ExecutionScope,
+    PositiveAttempt,
+    ProjectKey,
+    SafePathSegment,
+    Sha256Reference,
+)
 
 JSON_CONTENT_TYPE = "application/json"
 MANIFEST_CONTENT_TYPE = "application/vnd.massive.data-artifact-manifest+json"
@@ -84,9 +90,12 @@ class Producer(BaseModel):
         validation_alias=AliasChoices("node_id", "nodeId"), serialization_alias="nodeId"
     )
     attempt: PositiveAttempt
+    scope: ExecutionScope | None = None
 
     def identity_json(self) -> dict[str, JsonValue]:
-        return cast(dict[str, JsonValue], self.model_dump(mode="json", by_alias=True))
+        return cast(
+            dict[str, JsonValue], self.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +127,10 @@ class ArtifactRuntime:
     def __init__(self, datastore: Datastore) -> None:
         self._datastore = datastore
 
+    def validate_destination(self, destination: Destination, producer: Producer) -> None:
+        """Validate an immutable producer slot before invoking user code."""
+        _validate_destination(destination, producer)
+
     def publish_json(
         self, destination: Destination, producer: Producer, body: bytes
     ) -> PublishedJSON:
@@ -134,7 +147,7 @@ class ArtifactRuntime:
             dict[str, JsonValue],
             {
                 "kind": "DataArtifactManifest",
-                "schemaVersion": 0,
+                "schemaVersion": 1,
                 "encoding": "canonical-json-v0",
                 "producer": producer.identity_json(),
                 "schema": destination.schema_ref,
@@ -233,7 +246,7 @@ class ArtifactRuntime:
 def _validate_destination(destination: Destination, producer: Producer) -> None:
     expected_key = (
         f"projects/{producer.project_key}/runs/{producer.run_id}/steps/"
-        f"{producer.node_id}/{producer.attempt}/output-manifest.json"
+        f"{producer.node_id}{_scope_key_suffix(producer.scope)}/{producer.attempt}/output-manifest.json"
     )
     if destination.manifest_key != expected_key:
         raise ArtifactValidationError(
@@ -243,6 +256,14 @@ def _validate_destination(destination: Destination, producer: Producer) -> None:
         _blob_key(destination.schema_ref)
     except ArtifactValidationError as error:
         raise ArtifactValidationError("schema reference must be a SHA-256 reference") from error
+
+
+def _scope_key_suffix(scope: ExecutionScope | None) -> str:
+    if scope is None:
+        return ""
+    return "/scopes" + "".join(
+        f"/maps/{frame.map_id}/items/{frame.index}" for frame in scope.frames
+    )
 
 
 def _validate_canonical_json(datastore: Datastore, schema_ref: str, body: bytes) -> None:

@@ -99,7 +99,7 @@ func validateStaticGraph(p *planpb.WorkflowPlan) error {
 		return errors.New("argo target: graph must contain declared start/end sentinel nodes")
 	}
 	for _, n := range g.GetNodes() {
-		if n.GetKind() == "decision" || n.GetKind() == "select" {
+		if n.GetKind() == "decision" || n.GetKind() == "select" || n.GetKind() == "map" {
 			return fmt.Errorf("argo target: graph semantic %q is unsupported; static Argo lowering supports only start, step, and end", n.GetKind())
 		}
 		if n.GetKind() != "start" && n.GetKind() != "step" && n.GetKind() != "end" {

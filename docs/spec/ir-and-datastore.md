@@ -162,12 +162,13 @@ Canonical plans and target bundle manifests must not include wall-clock timestam
 
 ## GraphIR
 
-`WorkflowSpec` transport schema v0 carries Graph IR 0.1 static DAGs and Graph
-IR 0.2 exhaustive, data-only decisions and selects. Every graph also carries
+`WorkflowSpec` transport schema v0 carries Graph IR 0.1 static DAGs, Graph IR
+0.2 exhaustive data-only decisions and selects, and Graph IR 0.3 finite maps.
+Every graph also carries
 `irVersion`; it is the semantic Graph IR version and remains separate from the
 enclosing JSON transport `schemaVersion`. The JSON Schema accepts syntactically
 valid `0.x` versions so future artifacts remain well-formed; the Go compiler is
-the authoritative consumer and supports `>=0.1 <0.3`. Frontends may duplicate
+the authoritative consumer and supports `>=0.1 <0.4`. Frontends may duplicate
 that check for authoring ergonomics, but cannot redefine support.
 
 It includes:
@@ -191,10 +192,11 @@ Graph IR 0.2 additionally includes:
 - select nodes with a decision reference, output schema, and one
   `{case, source}` input per declared case.
 
-A decision has exactly one ordinary value-producing predecessor (`step` or
-`select`), and its input schema must equal that producer's output schema. Its
-conditional edges cover every declared tag exactly once and target step nodes
-whose input schemas equal their case schemas. A select covers the same cases
+A decision has exactly one ordinary value-producing predecessor (`step`,
+`select`, or `map`), and its input schema must equal that producer's output
+schema. Its conditional edges cover every declared tag exactly once and target
+step or map nodes whose input schemas equal their case schemas. A select covers
+the same cases
 exactly once; each source belongs to the corresponding branch, has an ordinary
 edge to the select, and has an output schema equal to the select output schema.
 All equality is exact schema-reference equality. Graph IR 0.1 remains
@@ -207,7 +209,15 @@ the selected case durably before downstream scheduling. Argo lowering
 currently reports a precise unsupported-semantic diagnostic for these nodes
 instead of rejecting the whole IR version.
 
-Channels, foreach/map, broadcast/gather, joins/reducers, and channel
+Graph IR 0.3 additionally includes a finite, value-producing `map` node. It
+references one mapper symbol and execution contract, has exact list/item input
+and output schema references, and records a positive `maxConcurrency`. The
+local runtime invokes one scoped child per already-crystallized source item and
+publishes one deterministic, source-ordered list at the map node's static
+output slot. Empty input publishes `[]`. Argo rejects this semantic explicitly
+until its driver can preserve the same artifact and journal protocol.
+
+Channels, multi-step map bodies, broadcast/gather, joins/reducers, and channel
 publish/read declarations remain absent from the portable schema. Target
 support is explicit and independently validated after portable compilation.
 
@@ -277,11 +287,11 @@ projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.j
 projects/<project-key>/runs/<run-id>/result.json
 ```
 
-The run manifest is independently versioned as `schemaVersion: 2`,
-`encoding: "json-v2"`. It records durable decision selections and marks
-inactive branch steps as `"skipped"` with a structured `skipReason`; there is
-no v1 compatibility reader or dual-write mode. The step invocation descriptor
-below remains the separate v1/json-v1 transport.
+The run manifest is independently versioned as `schemaVersion: 3`,
+`encoding: "json-v3"`. It records durable decision selections, inactive
+branches, and source-indexed finite-map items; there is no compatibility reader
+or dual-write mode. The step invocation descriptor below remains the separate
+v2/json-v2 transport.
 
 The exact path format should be specified in the proto-typed JSON manifest, not hardcoded by backend runners.
 
@@ -319,9 +329,9 @@ For TypeScript v0, the adapter should live with the TypeScript SDK package. That
 
 The step invocation descriptor is the narrow runtime protocol between Go orchestration and language adapters.
 
-V1 serializes this descriptor as JSON for ease of implementation in TypeScript and Python. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so a future transport can reuse the same semantics.
+V2 serializes this descriptor as JSON for ease of implementation in TypeScript and Python. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so a future transport can reuse the same semantics.
 
-The first `json-v1` descriptor release is coupled to the v2 rewrite, so
+The `json-v2` descriptor release is coupled to the v2 rewrite, so
 pre-release tightening of identity-segment validation needs no transport bump.
 The Graph IR remains explicitly unstable at `0.x`; v2 workflows are rewritten
 rather than run through a compatibility mode. After release, an incompatible
@@ -333,7 +343,7 @@ It includes:
 - plan hash,
 - run ID,
 - node ID,
-- attempt number,
+- attempt number and optional ordered execution scope (outer-to-inner map-item frames),
 - symbol reference,
 - source package reference,
 - environment reference,
@@ -341,34 +351,57 @@ It includes:
 - output artifact destinations and schema refs,
 - datastore configuration needed by the adapter.
 
+Language runners expose this identity to step code as the unambiguous
+idempotency key
+`massive-invocation-v1/<runId>/<nodeId>[/scope/maps/<mapId>/items/<index>...]/attempt/<attempt>`.
+Scope frames remain ordered outer-to-inner. Static invocations omit the scope
+portion but retain the required attempt suffix.
+
 Example:
 
 ```json
 {
-  "schemaVersion": 1,
-  "encoding": "json-v1",
+  "kind": "StepInvocationDescriptor",
+  "schemaVersion": 2,
+  "encoding": "json-v2",
   "planHash": "sha256:...",
   "projectKey": "sha256-...",
   "runId": "run-...",
   "nodeId": "double",
   "attempt": 1,
+  "scope": { "frames": [{ "kind": "map-item", "mapId": "fanout", "index": 0 }] },
   "symbol": {
     "packageId": "ts-main",
+    "language": "typescript",
     "module": "./workflow.ts",
     "export": "double"
   },
   "sourcePackage": {
-    "artifact": "packages/.../source.tar",
-    "hash": "sha256:..."
+    "packageId": "ts-main",
+    "language": "typescript",
+    "packageHash": "sha256:...",
+    "sourceArchive": {
+      "key": "packages/.../source.tar",
+      "hash": "sha256:...",
+      "contentType": "application/vnd.massive.source-tar"
+    }
   },
+  "environmentRef": "sha256:...",
   "input": {
-    "artifact": "runs/.../inputs/double.json",
+    "artifact": {
+      "key": "projects/.../runs/.../inputs/double/scopes/maps/fanout/items/0.json",
+      "hash": "sha256:...",
+      "contentType": "application/json"
+    },
     "schema": "sha256:..."
   },
   "output": {
-    "manifestKey": "projects/.../runs/.../steps/double/1/output-manifest.json",
+    "manifestKey": "projects/.../runs/.../steps/double/scopes/maps/fanout/items/0/1/output-manifest.json",
     "schema": "sha256:..."
-  }
+  },
+  "channelReads": [],
+  "channelWrites": [],
+  "datastore": { "kind": "local", "path": "/tmp/massive-store" }
 }
 ```
 

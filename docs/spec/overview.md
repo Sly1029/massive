@@ -112,7 +112,7 @@ Massive has two separate compiler boundary artifacts:
 
 The compiled plan still contains three joined surfaces:
 
-- `GraphIR`: computation topology. For the first v0 wedge this means DAG step nodes, start/end nodes, directed edges, `mergeInputs` fan-in, step symbols, input/output schemas, retry metadata, and artifact edges. Branches, foreach/map, channel declarations, and reducer-backed joins are post-M2 portable-schema work.
+- `GraphIR`: computation topology. Graph IR 0.1 covers static DAG steps, 0.2 adds exhaustive decisions/selects, and 0.3 adds finite single-step maps with bounded concurrency and ordered collection. Multi-step map bodies, channels, broadcast/gather, and reducer-backed joins remain later portable-schema work.
 - `ExecutionContract`: how the computation is allowed to run. Contracts reference environment specs by content hash and include resources, secrets, network intents, storage requirements, observability, and runtime mediation mode.
 - `WorkflowPlan`: the compiled unit that joins `GraphIR`, `ExecutionContract`, symbol tables, materialized artifact references, and provenance.
 

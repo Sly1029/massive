@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import AfterValidator, Field, StrictInt, StrictStr, StringConstraints, TypeAdapter
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    StringConstraints,
+    TypeAdapter,
+)
 
 
 def _not_dot_segment(value: str) -> str:
@@ -27,6 +36,42 @@ type ProjectKey = Annotated[
     StringConstraints(pattern=r"^sha256-[0-9a-f]{64}$"),
 ]
 type PositiveAttempt = Annotated[StrictInt, Field(ge=1, le=(1 << 53) - 1)]
+type ScopeIndex = Annotated[StrictInt, Field(ge=0, le=(1 << 53) - 1)]
+
+
+class MapItemScopeFrame(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["map-item"]
+    map_id: SafePathSegment = Field(validation_alias="mapId", serialization_alias="mapId")
+    index: ScopeIndex
+
+
+class ExecutionScope(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    frames: tuple[MapItemScopeFrame, ...] = Field(min_length=1)
+
+
+class InvocationIdentity(BaseModel):
+    """The collision-free idempotency identity exposed to user step code."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: SafePathSegment = Field(validation_alias="runId", serialization_alias="runId")
+    node_id: SafePathSegment = Field(validation_alias="nodeId", serialization_alias="nodeId")
+    attempt: PositiveAttempt
+    scope: ExecutionScope | None = None
+
+    @property
+    def idempotency_key(self) -> str:
+        parts = ["massive-invocation-v1", self.run_id, self.node_id]
+        if self.scope is not None:
+            parts.append("scope")
+            for frame in self.scope.frames:
+                parts.extend(("maps", frame.map_id, "items", str(frame.index)))
+        parts.extend(("attempt", str(self.attempt)))
+        return "/".join(parts)
 
 SAFE_PATH_SEGMENT: TypeAdapter[str] = TypeAdapter(SafePathSegment)
 SHA256_REFERENCE: TypeAdapter[str] = TypeAdapter(Sha256Reference)

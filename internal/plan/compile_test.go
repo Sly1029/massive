@@ -138,6 +138,39 @@ func TestCompileLowersDataOnlyExhaustiveDecision(t *testing.T) {
 	}
 }
 
+func TestCompileLowersFiniteMapWithExactSchemaContracts(t *testing.T) {
+	specData := readFixture(t, "specs", "finite-map", "workflow-spec.json")
+	workflowSpec, err := spec.Parse(specData)
+	if err != nil {
+		t.Fatalf("parse finite map WorkflowSpec: %v", err)
+	}
+
+	compiled, err := Compile(workflowSpec, specData)
+	if err != nil {
+		t.Fatalf("compile finite map WorkflowSpec: %v", err)
+	}
+
+	var mapNode *planpb.GraphNode
+	for _, node := range compiled.Plan.GetGraph().GetNodes() {
+		if node.GetKind() == "map" {
+			mapNode = node
+			break
+		}
+	}
+	if mapNode == nil {
+		t.Fatalf("compiled graph did not preserve map node: %#v", compiled.Plan.GetGraph().GetNodes())
+	}
+	if mapNode.GetInputSchema() != compiled.Plan.GetGraph().GetInputSchema() || mapNode.GetOutputSchema() != compiled.Plan.GetGraph().GetOutputSchema() {
+		t.Fatalf("compiled map boundary schemas = input %q output %q; want graph schemas %q %q", mapNode.GetInputSchema(), mapNode.GetOutputSchema(), compiled.Plan.GetGraph().GetInputSchema(), compiled.Plan.GetGraph().GetOutputSchema())
+	}
+	if mapNode.GetItemInputSchema() == "" || mapNode.GetItemOutputSchema() == "" || mapNode.GetItemInputSchema() == mapNode.GetInputSchema() || mapNode.GetItemOutputSchema() == mapNode.GetOutputSchema() {
+		t.Fatalf("compiled map item schema contracts = %#v", mapNode)
+	}
+	if mapNode.GetMaxConcurrency() != 3 || mapNode.GetSymbolRef() == "" || mapNode.GetContractRef() == "" {
+		t.Fatalf("compiled map execution contract = %#v", mapNode)
+	}
+}
+
 func readFixture(t *testing.T, fixtureKind, name, file string) []byte {
 	t.Helper()
 

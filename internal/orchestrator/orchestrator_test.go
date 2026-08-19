@@ -126,13 +126,13 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	// Assert their distinct provenance on the un-normalized descriptor.
 	planPackageHash := compiled.Plan.GetSourcePackages()[0].GetPackageHash()
 	descriptor := invoker.descriptors[0]
-	if descriptor.SchemaVersion != 1 || descriptor.Encoding != "json-v1" {
-		t.Fatalf("descriptor protocol = (%d, %q), want v1/json-v1", descriptor.SchemaVersion, descriptor.Encoding)
+	if descriptor.SchemaVersion != 2 || descriptor.Encoding != "json-v2" {
+		t.Fatalf("descriptor protocol = (%d, %q), want v2/json-v2", descriptor.SchemaVersion, descriptor.Encoding)
 	}
 	if descriptor.ProjectKey != NormalizeProjectKey("acme/security-workflows") {
 		t.Fatalf("descriptor projectKey = %q", descriptor.ProjectKey)
 	}
-	if descriptor.Output.ManifestKey != runOutputManifestKey(descriptor.ProjectKey, descriptor.RunID, descriptor.NodeID, descriptor.Attempt).String() {
+	if descriptor.Output.ManifestKey != runOutputManifestKey(descriptor.ProjectKey, descriptor.RunID, descriptor.NodeID, descriptor.Scope, descriptor.Attempt).String() {
 		t.Fatalf("descriptor output manifest key = %q", descriptor.Output.ManifestKey)
 	}
 	runManifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
@@ -416,8 +416,8 @@ func replaceAllFixtureValues(t *testing.T, document []byte, old string, new stri
 
 func TestRunOutputManifestKeyIncludesAttempt(t *testing.T) {
 	projectKey := NormalizeProjectKey("acme/security-workflows")
-	first := runOutputManifestKey(projectKey, "run-key-attempt", "double", 1)
-	second := runOutputManifestKey(projectKey, "run-key-attempt", "double", 2)
+	first := runOutputManifestKey(projectKey, "run-key-attempt", "double", nil, 1)
+	second := runOutputManifestKey(projectKey, "run-key-attempt", "double", nil, 2)
 	if first == second {
 		t.Fatalf("attempt-specific manifest keys collide: %s", first)
 	}
@@ -426,6 +426,116 @@ func TestRunOutputManifestKeyIncludesAttempt(t *testing.T) {
 	}
 	if !strings.Contains(second.String(), "/double/2/output-manifest.json") {
 		t.Fatalf("second attempt key = %q", second)
+	}
+}
+
+func TestRunOutputManifestKeyIncludesOrderedMapScope(t *testing.T) {
+	projectKey := NormalizeProjectKey("acme/security-workflows")
+	scope := &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: "outer", Index: 0}, {Kind: "map-item", MapID: "inner", Index: 3}}}
+	first := runOutputManifestKey(projectKey, "run-map-scope", "double", scope, 1)
+	second := runOutputManifestKey(projectKey, "run-map-scope", "double", &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: "outer", Index: 3}, {Kind: "map-item", MapID: "inner", Index: 0}}}, 1)
+	if first == second {
+		t.Fatalf("ordered map scopes collide: %s", first)
+	}
+	if want := "/scopes/maps/outer/items/0/maps/inner/items/3/1/output-manifest.json"; !strings.Contains(first.String(), want) {
+		t.Fatalf("first scoped key = %q, want %q", first, want)
+	}
+	if got, want := runInputKey(projectKey, "run-map-scope", "double", scope).String(), "projects/"+projectKey+"/runs/run-map-scope/inputs/double/scopes/maps/outer/items/0/maps/inner/items/3.json"; got != want {
+		t.Fatalf("scoped input key = %q, want %q", got, want)
+	}
+}
+
+func TestRunFiniteMapPublishesScopedItemsAndOrderedCollection(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "workflow.ts"), []byte("// executed by the functional datastore invoker\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compiled, manifests := compileConsistentFixture(t, "finite-map", sourceRoot)
+	invoker := &functionalStepInvoker{storeRoot: storeRoot}
+
+	result, err := Run(context.Background(), RunConfig{
+		Plan:              compiled.Plan,
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "examples/finite-map",
+		RunID:             "finite-map-go-writer",
+		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
+		StepInvoker:       invoker,
+	}, []byte(`[2,1,2]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	assertStoredJSON(t, storeRoot, result.ResultKey, `["item:2","item:1","item:2"]`)
+
+	manifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
+	if len(manifest.Steps) != 1 || manifest.Steps[0].Items == nil || len(*manifest.Steps[0].Items) != 3 {
+		t.Fatalf("map journal = %#v, want three item records", manifest.Steps)
+	}
+	for index, item := range *manifest.Steps[0].Items {
+		if item.Status != StatusSucceeded || len(item.Attempts) != 1 || item.Attempts[0].Output == nil {
+			t.Fatalf("item %d = %#v, want one successful publication", index, item)
+		}
+		wantScope := fmt.Sprintf("/scopes/maps/map-items/items/%d/1/output-manifest.json", index)
+		if !strings.Contains(item.Attempts[0].Output.Manifest.Key, wantScope) {
+			t.Fatalf("item %d output key = %q, want scoped suffix %q", index, item.Attempts[0].Output.Manifest.Key, wantScope)
+		}
+	}
+}
+
+func TestRunFiniteMapPersistsNotStartedItemsAfterInvokerFailure(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "workflow.ts"), []byte("// runner intentionally unavailable\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compiled, manifests := compileConsistentFixture(t, "finite-map", sourceRoot)
+
+	result, err := Run(context.Background(), RunConfig{
+		Plan:              compiled.Plan,
+		DatastoreRoot:     storeRoot,
+		ProjectID:         "examples/finite-map-failure",
+		RunID:             "finite-map-invoker-failure",
+		SourcePackageRoot: sourceRoot,
+		SourceManifests:   manifests,
+		StepInvoker: &ProcessStepInvoker{
+			CommandTemplate: []string{"massive-runner-that-does-not-exist"},
+			ProcessLimit:    2,
+		},
+	}, []byte(`[1,2,3,4,5]`))
+	if err == nil {
+		t.Fatal("run succeeded with an unavailable map runner")
+	}
+	if result == nil || result.Status != StatusFailed {
+		t.Fatalf("result = %#v, want durable failed run", result)
+	}
+	manifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
+	items := *manifest.Steps[0].Items
+	failed, notStarted := 0, 0
+	for _, item := range items {
+		switch item.Status {
+		case StatusFailed:
+			failed++
+			if len(item.Attempts) != 1 || item.Attempts[0].Diagnostic != "map item did not complete" {
+				t.Fatalf("started infrastructure failure = %#v", item)
+			}
+		case StatusNotStarted:
+			notStarted++
+			if len(item.Attempts) != 0 {
+				t.Fatalf("not-started item has attempts: %#v", item)
+			}
+		default:
+			t.Fatalf("nonterminal item after failed map: %#v", item)
+		}
+	}
+	if failed == 0 || failed > 2 || notStarted == 0 || failed+notStarted != len(items) {
+		t.Fatalf("terminal item counts = failed:%d not-started:%d total:%d", failed, notStarted, len(items))
+	}
+	if body := string(getObject(t, storeRoot, result.ManifestKey).Body); strings.Contains(body, "runner-failure") {
+		t.Fatalf("infrastructure failure was persisted as an author runner failure: %s", body)
 	}
 }
 
@@ -932,12 +1042,14 @@ func (i *functionalStepInvoker) InvokeSteps(ctx context.Context, batch StepInvoc
 			RunID:      descriptor.RunID,
 			NodeID:     descriptor.NodeID,
 			Attempt:    descriptor.Attempt,
+			Scope:      descriptor.Scope,
 		}, output); err != nil {
 			return nil, err
 		}
 		outcomes = append(outcomes, StepInvocationOutcome{
 			NodeID:  descriptor.NodeID,
 			Attempt: descriptor.Attempt,
+			Scope:   descriptor.Scope,
 			Status:  StatusSucceeded,
 		})
 	}
@@ -964,6 +1076,8 @@ func runFixtureStep(nodeID string, inputBytes []byte) ([]byte, error) {
 		output = input.(map[string]any)["value"]
 	case "reject":
 		output = float64(0)
+	case "map-items":
+		output = fmt.Sprintf("item:%v", input)
 	default:
 		return nil, errors.New("unknown fixture step " + nodeID)
 	}

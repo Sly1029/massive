@@ -77,13 +77,14 @@ export type DatastoreDescriptor =
 
 export interface StepInvocationDescriptor {
   readonly kind: "StepInvocationDescriptor";
-  readonly schemaVersion: 1;
-  readonly encoding: "json-v1";
+  readonly schemaVersion: 2;
+  readonly encoding: "json-v2";
   readonly planHash: HashRef;
   readonly projectKey: string;
   readonly runId: string;
   readonly nodeId: string;
   readonly attempt: number;
+  readonly scope?: ExecutionScope;
   readonly symbol: StepSymbolRef;
   readonly sourcePackage: SourcePackageRef;
   readonly environmentRef: HashRef;
@@ -92,6 +93,16 @@ export interface StepInvocationDescriptor {
   readonly channelReads: readonly ChannelArtifactRef[];
   readonly channelWrites: readonly ChannelArtifactDestination[];
   readonly datastore: DatastoreDescriptor;
+}
+
+export interface MapItemScopeFrame {
+  readonly kind: "map-item";
+  readonly mapId: string;
+  readonly index: number;
+}
+
+export interface ExecutionScope {
+  readonly frames: readonly MapItemScopeFrame[];
 }
 
 let descriptorValidator: Promise<ValidateFunction> | undefined;
@@ -118,6 +129,9 @@ export async function parseStepInvocationDescriptor(
     runId: descriptor.runId,
     nodeId: descriptor.nodeId,
     attempt: descriptor.attempt,
+    ...(descriptor.scope === undefined
+      ? {}
+      : { scope: { frames: descriptor.scope.frames.map((frame) => ({ ...frame })) } }),
     symbol: { ...descriptor.symbol },
     sourcePackage: {
       packageId: descriptor.sourcePackage.packageId,

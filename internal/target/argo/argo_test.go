@@ -145,6 +145,14 @@ func TestStaticDAGRejectsExhaustiveDecisionSemantics(t *testing.T) {
 	}
 }
 
+func TestStaticDAGRejectsFiniteMapSemantics(t *testing.T) {
+	result := fixturePlan(t, "finite-map")
+	_, err := Compile(result.CanonicalJSON, deploymentForPlan(t, result.PlanHash))
+	if err == nil || !strings.Contains(err.Error(), `graph semantic "map" is unsupported`) {
+		t.Fatalf("error=%v, want explicit map semantic diagnostic", err)
+	}
+}
+
 func rehashPlan(t *testing.T, value *planpb.WorkflowPlan) ([]byte, string) {
 	t.Helper()
 	value.PlanHash = nil

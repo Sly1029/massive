@@ -1,5 +1,7 @@
 package orchestrator
 
+import "github.com/Sly1029/massive/internal/artifact"
+
 type StepInvocationDescriptor struct {
 	Kind           string                          `json:"kind"`
 	SchemaVersion  uint32                          `json:"schemaVersion"`
@@ -9,6 +11,7 @@ type StepInvocationDescriptor struct {
 	RunID          string                          `json:"runId"`
 	NodeID         string                          `json:"nodeId"`
 	Attempt        int                             `json:"attempt"`
+	Scope          *ExecutionScope                 `json:"scope,omitempty"`
 	Symbol         StepSymbolRef                   `json:"symbol"`
 	SourcePackage  SourcePackageRef                `json:"sourcePackage"`
 	EnvironmentRef string                          `json:"environmentRef"`
@@ -18,6 +21,9 @@ type StepInvocationDescriptor struct {
 	ChannelWrites  []ChannelArtifactDestination    `json:"channelWrites"`
 	Datastore      DatastoreDescriptor             `json:"datastore"`
 }
+
+type ExecutionScope = artifact.ExecutionScope
+type MapItemScopeFrame = artifact.MapItemScopeFrame
 
 type StepSymbolRef struct {
 	PackageID string `json:"packageId"`

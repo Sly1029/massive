@@ -35,6 +35,20 @@ export async function executeStep(
 ): Promise<StepOutcome> {
   try {
     const store = await datastoreForDescriptor(descriptor);
+    const destination = {
+      manifestKey: Key.parse(descriptor.output.manifestKey),
+      schema: descriptor.output.schema,
+    } as const;
+    const producer = {
+      projectKey: descriptor.projectKey,
+      planHash: descriptor.planHash,
+      runId: descriptor.runId,
+      nodeId: descriptor.nodeId,
+      attempt: descriptor.attempt,
+      ...(descriptor.scope === undefined ? {} : { scope: descriptor.scope }),
+    } as const;
+    const artifactRuntime = new ArtifactRuntime(store);
+    artifactRuntime.validateDestination(destination, producer);
     const inputSchema = await readSchema(store, descriptor.input.schema);
     const outputSchema = await readSchema(store, descriptor.output.schema);
     const input = await readCanonicalJsonArtifact(
@@ -55,6 +69,7 @@ export async function executeStep(
           context: {
             runId: descriptor.runId,
             stepId: descriptor.nodeId,
+            idempotencyKey: invocationIdempotencyKey(descriptor),
           },
         });
       } catch (error) {
@@ -64,18 +79,9 @@ export async function executeStep(
 
       validateJson(outputSchema, output, "output");
 
-      const published = await new ArtifactRuntime(store).publishJson(
-        {
-          manifestKey: Key.parse(descriptor.output.manifestKey),
-          schema: descriptor.output.schema,
-        },
-        {
-          projectKey: descriptor.projectKey,
-          planHash: descriptor.planHash,
-          runId: descriptor.runId,
-          nodeId: descriptor.nodeId,
-          attempt: descriptor.attempt,
-        },
+      const published = await artifactRuntime.publishJson(
+        destination,
+        producer,
         stableStringify(output),
       );
 
@@ -117,6 +123,20 @@ export async function executeStep(
     // non-user error path rather than misreporting exit 66.
     throw error;
   }
+}
+
+function invocationIdempotencyKey(
+  descriptor: StepInvocationDescriptor,
+): string {
+  const parts = ["massive-invocation-v1", descriptor.runId, descriptor.nodeId];
+  if (descriptor.scope !== undefined) {
+    parts.push("scope");
+    for (const frame of descriptor.scope.frames) {
+      parts.push("maps", frame.mapId, "items", String(frame.index));
+    }
+  }
+  parts.push("attempt", String(descriptor.attempt));
+  return parts.join("/");
 }
 
 async function datastoreForDescriptor(

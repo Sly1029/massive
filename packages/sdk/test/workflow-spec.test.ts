@@ -57,6 +57,34 @@ Deno.test("parseWorkflowSpec accepts data-only Graph IR 0.2 routing", async () =
   assertEquals(select.decisionRef, "route");
 });
 
+Deno.test("parseWorkflowSpec preserves the Graph IR 0.3 map contract", async () => {
+  const fixture = JSON.parse(
+    await Deno.readTextFile(
+      new URL(
+        "../../../conformance/fixtures/specs/finite-map/workflow-spec.json",
+        import.meta.url,
+      ),
+    ),
+  ) as Omit<WorkflowSpec, "specHash"> & { specHash?: string };
+  const value: WorkflowSpec = {
+    ...fixture,
+    specHash: computeSpecHash(fixture),
+  };
+
+  const spec = await parseWorkflowSpec(value);
+  const map = spec.graph.nodes.find((node) => node.kind === "map");
+  assertEquals(spec.graph.irVersion, "0.3");
+  assertEquals(map?.kind, "map");
+  if (map?.kind !== "map") {
+    throw new Error("fixture should preserve its finite map node");
+  }
+  assertEquals(map.maxConcurrency, 3);
+  assertEquals(
+    map.itemInputSchema,
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  );
+});
+
 Deno.test("parseWorkflowSpecText rejects malformed nested WorkflowSpec fields", async () => {
   const text = await emitPythonWorkflowSpec();
   const malformed = text.replace('"language":"python"', '"language":"ruby"');
