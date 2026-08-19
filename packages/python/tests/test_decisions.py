@@ -45,6 +45,14 @@ class PrivateUse(BaseModel):
 UnicodeRoute = Annotated[Astral | PrivateUse, Field(discriminator="kind")]
 
 
+class MultiTagged(BaseModel):
+    kind: Literal["approved", "manual-review"]
+    value: int
+
+
+MultiTagRoute = Annotated[MultiTagged | Rejected, Field(discriminator="kind")]
+
+
 def classify(context: StepContext[None, Request]) -> Route:
     return Approved(kind="approved", value=context.inputs.value)
 
@@ -55,6 +63,10 @@ def classify_without_discriminator(context: StepContext[None, Request]) -> Appro
 
 def classify_unicode(context: StepContext[None, Request]) -> UnicodeRoute:
     return Astral(kind="\U00010000")
+
+
+def classify_multi_tag(context: StepContext[None, Request]) -> MultiTagRoute:
+    return MultiTagged(kind="approved", value=context.inputs.value)
 
 
 def approve(context: StepContext[None, Approved]) -> Result:
@@ -133,6 +145,25 @@ def test_decision_rejects_nonportable_or_ambiguous_authoring_forms() -> None:
 
     with pytest.raises(ValidationError, match="derived '-select'"):
         graph.decision(classified, on="kind", id="x" * 122)
+
+
+def test_decision_rejects_a_model_with_multiple_discriminator_tags() -> None:
+    graph = GraphBuilder(
+        name="multi-tag-decision",
+        input_type=Request,
+        output_type=Result,
+        defaults=_defaults(),
+    )
+    classified = graph.add(graph.step()(classify_multi_tag))
+
+    with pytest.raises(
+        TypeError,
+        match=(
+            "decision case MultiTagged declares multiple discriminator tags "
+            "'approved', 'manual-review'; split it into one Pydantic model per tag"
+        ),
+    ):
+        graph.decision(classified, on="kind", id="multi-tag-route")
 
 
 def test_decision_requires_exactly_one_connected_case_and_matching_selected_outputs() -> None:

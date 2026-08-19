@@ -592,6 +592,26 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
 def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]]:
     """Read a Pydantic tagged-union's declared cases from its core schema."""
     core_schema = cast(dict[str, object], TypeAdapter(annotation).core_schema)
+    definitions: dict[str, type[BaseModel]] = {}
+    if core_schema.get("type") == "definitions":
+        raw_definitions = core_schema.get("definitions")
+        if isinstance(raw_definitions, list):
+            for raw_definition in cast(list[object], raw_definitions):
+                if not isinstance(raw_definition, dict):
+                    continue
+                definition = cast(dict[str, object], raw_definition)
+                reference = definition.get("ref")
+                model = definition.get("cls")
+                if (
+                    isinstance(reference, str)
+                    and isinstance(model, type)
+                    and issubclass(model, BaseModel)
+                ):
+                    definitions[reference] = model
+        raw_root_schema = core_schema.get("schema")
+        if isinstance(raw_root_schema, dict):
+            core_schema = cast(dict[str, object], raw_root_schema)
+
     if core_schema.get("type") != "tagged-union":
         raise TypeError(
             "decision input must be a Pydantic discriminated union with string Literal tags"
@@ -604,18 +624,34 @@ def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]
     choices = cast(dict[object, object], raw_choices)
 
     cases: dict[str, type[BaseModel]] = {}
+    tags_by_model: dict[type[BaseModel], list[str]] = {}
     for raw_tag, raw_choice in choices.items():
         if not isinstance(raw_tag, str):
             raise TypeError("decision tags must be string Literal values")
         if not isinstance(raw_choice, dict):
             raise TypeError("decision cases must be direct Pydantic model alternatives")
         choice = cast(dict[str, object], raw_choice)
-        if choice.get("type") != "model":
+        choice_type = choice.get("type")
+        if choice_type == "model":
+            model = choice.get("cls")
+        elif choice_type == "definition-ref":
+            reference = choice.get("schema_ref")
+            model = definitions.get(reference) if isinstance(reference, str) else None
+        else:
             raise TypeError("decision cases must be direct Pydantic model alternatives")
-        model = choice.get("cls")
         if not isinstance(model, type) or not issubclass(model, BaseModel):
             raise TypeError("decision cases must be Pydantic models")
         cases[raw_tag] = model
+        tags_by_model.setdefault(model, []).append(raw_tag)
+
+    for model, tags in tags_by_model.items():
+        if len(tags) > 1:
+            ordered_tags = sorted(tags, key=_canonical_sort_key)
+            rendered_tags = ", ".join(repr(tag) for tag in ordered_tags)
+            raise TypeError(
+                f"decision case {model.__name__} declares multiple discriminator tags "
+                f"{rendered_tags}; split it into one Pydantic model per tag"
+            )
     return cases
 
 
