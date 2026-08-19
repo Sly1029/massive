@@ -178,6 +178,115 @@ Deno.test("massive run Python graph: same compiler, runner, and frozen artifact 
   assertEquals(outputManifest.producer.attempt, 1);
 });
 
+Deno.test("massive run Python map: persists scoped items and collects in source order", async (t) => {
+  for (
+    const testCase of [
+      {
+        name: "duplicates and out-of-order completion",
+        runId: "python-map-ordered",
+        input: '{"values":[3,1,3,2]}',
+        expected: [
+          { source: 3, doubled: 6 },
+          { source: 1, doubled: 2 },
+          { source: 3, doubled: 6 },
+          { source: 2, doubled: 4 },
+        ],
+        itemCount: 4,
+      },
+      {
+        name: "empty source",
+        runId: "python-map-empty",
+        input: '{"values":[]}',
+        expected: [],
+        itemCount: 0,
+      },
+    ] as const
+  ) {
+    await t.step(testCase.name, async () => {
+      const fixture = await copyFixture("python-map");
+      const store = await makeStore();
+      const result = await runCli([
+        "run",
+        join(fixture, "workflow.py"),
+        "--input",
+        testCase.input,
+        "--store",
+        store,
+        "--project",
+        "acme/python-map",
+        "--run-id",
+        testCase.runId,
+        "--json",
+      ]);
+
+      assertEquals(result.code, 0, result.stderr);
+      const outcome = JSON.parse(result.stdout) as {
+        result: readonly { source: number; doubled: number }[];
+      };
+      assertEquals(outcome.result, testCase.expected);
+
+      const manifestPath = await findRunArtifact(
+        store,
+        testCase.runId,
+        "run-manifest.json",
+      );
+      assert(manifestPath !== undefined, "map run manifest should exist");
+      const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+        schemaVersion: number;
+        encoding: string;
+        steps: {
+          nodeId: string;
+          status: string;
+          items?: {
+            index: number;
+            status: string;
+            attempts: { output?: { manifest: { key: string } } }[];
+          }[];
+        }[];
+      };
+      assertEquals(manifest.schemaVersion, 3);
+      assertEquals(manifest.encoding, "json-v3");
+
+      const mapStep = manifest.steps.find((step) =>
+        step.nodeId === "inspect-items"
+      );
+      assert(mapStep !== undefined, "map step should be journaled");
+      assertEquals(mapStep.status, "succeeded");
+      assertEquals(
+        mapStep.items?.map((item) => item.index),
+        Array.from({ length: testCase.itemCount }, (_, index) => index),
+      );
+      assertEquals(
+        mapStep.items?.every((item) => item.status === "succeeded"),
+        true,
+      );
+
+      const keys = await listStoreKeys(store);
+      const itemManifests = keys.filter((key) =>
+        key.includes("/steps/inspect-items/scopes/maps/inspect-items/items/") &&
+        key.endsWith("/1/output-manifest.json")
+      );
+      assertEquals(itemManifests.length, testCase.itemCount);
+      for (let index = 0; index < testCase.itemCount; index += 1) {
+        assertEquals(
+          itemManifests.some((key) => key.includes(`/items/${index}/1/`)),
+          true,
+        );
+      }
+
+      const collectedManifest = await findRunArtifact(
+        store,
+        testCase.runId,
+        join("steps", "inspect-items", "1", "output-manifest.json"),
+      );
+      assert(
+        collectedManifest !== undefined,
+        "map collection should publish through the map node output slot",
+      );
+    });
+  }
+});
+
 Deno.test("massive run Python decision: selects the approved branch and journals the route", async () => {
   const fixture = await copyFixture("python-decision");
   const store = await makeStore();
@@ -419,10 +528,22 @@ Deno.test("massive run Python nested decisions activate only the selected contro
       steps: { nodeId: string; status: string }[];
     };
     assertEquals(outcome.result, { message: testCase.message });
-    assertEquals(Object.fromEntries(outcome.steps.map((step) => [step.nodeId, step.status])), testCase.statuses);
+    assertEquals(
+      Object.fromEntries(
+        outcome.steps.map((step) => [step.nodeId, step.status]),
+      ),
+      testCase.statuses,
+    );
 
-    const manifestPath = await findRunArtifact(store, testCase.runId, "run-manifest.json");
-    assert(manifestPath !== undefined, "nested decision run manifest should exist");
+    const manifestPath = await findRunArtifact(
+      store,
+      testCase.runId,
+      "run-manifest.json",
+    );
+    assert(
+      manifestPath !== undefined,
+      "nested decision run manifest should exist",
+    );
     const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
       decisions: readonly unknown[];
       result?: { key: string; hash: string };
@@ -436,7 +557,10 @@ Deno.test("massive run Python nested decisions activate only the selected contro
     const selectedBody = manifest.steps.find((step) =>
       step.nodeId === testCase.selectedNode
     )?.attempts[0]?.output?.body;
-    assert(selectedBody !== undefined, "selected branch should publish its body");
+    assert(
+      selectedBody !== undefined,
+      "selected branch should publish its body",
+    );
     assert(manifest.result !== undefined, "run should journal a final result");
     assertEquals(
       manifest.result.hash,
