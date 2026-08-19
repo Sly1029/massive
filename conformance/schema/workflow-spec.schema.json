@@ -9,6 +9,7 @@
     "kind",
     "schemaVersion",
     "encoding",
+    "hashing",
     "specHash",
     "workflow",
     "graph",
@@ -22,6 +23,7 @@
     "kind": { "const": "WorkflowSpec" },
     "schemaVersion": { "const": 0 },
     "encoding": { "const": "json-v0" },
+    "hashing": { "$ref": "#/$defs/workflowSpecHashing" },
     "specHash": { "$ref": "#/$defs/hashRef" },
     "workflow": {
       "type": "object",
@@ -87,6 +89,28 @@
     "hashRef": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "workflowSpecHashing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "canonicalization", "recipe", "recipeVersion"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "canonicalization": { "const": "canonical-json-v0" },
+        "recipe": { "const": "workflow-spec" },
+        "recipeVersion": { "const": 1 }
+      }
+    },
+    "sourcePackageHashing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "canonicalization", "recipe", "recipeVersion"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "canonicalization": { "const": "canonical-json-v0" },
+        "recipe": { "const": "source-package" },
+        "recipeVersion": { "const": 1 }
+      }
     },
     "graphV01": {
       "type": "object",
@@ -317,11 +341,12 @@
     "sourcePackage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["packageId", "language", "packageHash", "files"],
+      "required": ["packageId", "language", "packageHash", "hashing", "files"],
       "properties": {
         "packageId": { "$ref": "#/$defs/id" },
         "language": { "enum": ["typescript", "python"] },
         "packageHash": { "$ref": "#/$defs/hashRef" },
+        "hashing": { "$ref": "#/$defs/sourcePackageHashing" },
         "files": {
           "type": "array",
           "items": {

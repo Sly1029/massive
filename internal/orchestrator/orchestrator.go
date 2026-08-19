@@ -21,6 +21,7 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/mapexec"
+	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/google/uuid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -668,19 +669,14 @@ func forceRemoveAll(root string) error {
 	return os.RemoveAll(root)
 }
 
-// recomputeSourcePackageHash reproduces the SDK source-package hash: the
-// sha256 of the canonical JSON of the {path, hash} entries array. See
-// hashSourcePackage in packages/sdk/src/compile.ts and hashing.md.
+// recomputeSourcePackageHash reproduces the versioned SDK source-package
+// identity over normalized paths and exact file byte hashes.
 func recomputeSourcePackageHash(files []SourcePackageFile) (string, error) {
-	entries := make([]any, 0, len(files))
+	entries := make([]sourceidentity.File, 0, len(files))
 	for _, file := range files {
-		entries = append(entries, map[string]any{"path": file.Path, "hash": file.Hash})
+		entries = append(entries, sourceidentity.File{Path: file.Path, Hash: file.Hash})
 	}
-	data, err := json.Marshal(entries)
-	if err != nil {
-		return "", fmt.Errorf("marshal source package entries: %w", err)
-	}
-	return canonical.DigestJSON(data)
+	return sourceidentity.Digest(entries)
 }
 
 func descriptorForStep(config RunConfig, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex) (StepInvocationDescriptor, error) {

@@ -935,20 +935,13 @@ func TestPackageHashValidationRejectsUnsafeRefs(t *testing.T) {
 }
 
 func TestSourcePackageHashGoldenVector(t *testing.T) {
-	// Non-circular golden vector: a fixed manifest with literal file hashes and
-	// the expected package hash computed once from the TS hashSourcePackage
-	// construction (packages/sdk/src/compile.ts) and hard-coded here and in
-	// packages/sdk/test/source-package-hash.test.ts. The e2e tests derive the
-	// package hash via this same Go function, so this constant is what keeps the
-	// Go and TS constructions honest against each other.
-	// TODO: promote this vector into conformance/fixtures/hashing once the
-	// frozen contract fixtures are opened for additions.
+	// This exact vector is shared by the TS and Python SDK tests.
 	files := []SourcePackageFile{
 		{Path: "src/a.ts", Hash: "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
 		{Path: "src/b.ts", Hash: "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
 		{Path: "src/nested/c.ts", Hash: "sha256:3333333333333333333333333333333333333333333333333333333333333333"},
 	}
-	const want = "sha256:88780f05b7195a396acac9aa6ddbea16445f275dfc10f32c94972beb59a711cb"
+	const want = "sha256:b97f57dea910876547455f8a0b29753230df8f7810970b800a0a718d4be9d14d"
 
 	got, err := recomputeSourcePackageHash(files)
 	if err != nil {

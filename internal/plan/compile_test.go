@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -54,6 +55,22 @@ func TestCompileFixturesMatchGoldenPlans(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsWorkflowSpecWhoseEmbeddedHashDoesNotMatchContent(t *testing.T) {
+	original := readFixture(t, "specs", "linear-chain", "workflow-spec.json")
+	tampered := bytes.Replace(original, []byte(`"name": "linear-chain"`), []byte(`"name": "linear-chains"`), 1)
+	if bytes.Equal(tampered, original) {
+		t.Fatal("test did not alter workflow spec bytes")
+	}
+	workflowSpec, err := spec.Parse(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Compile(workflowSpec, tampered)
+	if err == nil || !strings.Contains(err.Error(), "does not match canonical content") {
+		t.Fatalf("Compile() error = %v, want embedded hash mismatch", err)
+	}
+}
+
 func TestCompileDoesNotInventMaterializedSourceArtifacts(t *testing.T) {
 	specData := readFixture(t, "specs", "passthrough", "workflow-spec.json")
 	workflowSpec, err := spec.Parse(specData)
@@ -91,6 +108,12 @@ func TestCompilePreservesPythonFrontendIdentity(t *testing.T) {
 	}
 	if len(compiled.Plan.GetSourcePackages()) != 1 || compiled.Plan.GetSourcePackages()[0].GetLanguage() != "python" {
 		t.Fatalf("compiled source packages = %#v, want one Python package", compiled.Plan.GetSourcePackages())
+	}
+	if got := compiled.Plan.GetHashing(); got.GetRecipe() != "workflow-plan" || got.GetRecipeVersion() != 1 {
+		t.Fatalf("compiled plan hashing = %#v, want workflow-plan@1", got)
+	}
+	if got := compiled.Plan.GetSourcePackages()[0].GetHashing(); got.GetRecipe() != "source-package" || got.GetRecipeVersion() != 1 {
+		t.Fatalf("compiled source hashing = %#v, want source-package@1", got)
 	}
 	if len(compiled.Plan.GetEnvironments()) != 1 || compiled.Plan.GetEnvironments()[0].GetContainer().GetImage() == "" {
 		t.Fatalf("compiled environments = %#v, want runnable container plan", compiled.Plan.GetEnvironments())
@@ -244,6 +267,15 @@ func decisionSpecData(t *testing.T) []byte {
 		map[string]any{"from": "choose", "to": "__end"},
 	}
 	data, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := spec.RecomputedSpecHash(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root["specHash"] = hash
+	data, err = json.Marshal(root)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -668,6 +668,22 @@ func TestParseRejectsSourcePackageMapKeyMismatch(t *testing.T) {
 	}
 }
 
+func TestParseRejectsSourcePackageHashThatDoesNotMatchVersionedManifest(t *testing.T) {
+	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+		packages := root["sourcePackages"].(map[string]any)
+		packages["ts-main"].(map[string]any)["packageHash"] = "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid spec")
+	}
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.sourcePackages.ts-main.packageHash" || !strings.Contains(diagnostics[0].Message, "versioned file manifest") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
 func TestParseRejectsMutableContainerRecipeImage(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
 		environments := root["environments"].(map[string]any)

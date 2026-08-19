@@ -64,6 +64,12 @@
     "sourceSpecHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
   "schemaVersion": 0,
+  "hashing": {
+    "algorithm": "sha256",
+    "canonicalization": "canonical-json-v0",
+    "recipe": "workflow-plan",
+    "recipeVersion": 1
+  },
   "schemas": [
     {
       "canonicalJson": "{\"type\":\"number\"}",
@@ -78,6 +84,12 @@
     {
       "language": "typescript",
       "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "hashing": {
+        "algorithm": "sha256",
+        "canonicalization": "canonical-json-v0",
+        "recipe": "source-package",
+        "recipeVersion": 1
+      },
       "packageId": "ts-main"
     }
   ],

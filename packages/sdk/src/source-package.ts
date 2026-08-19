@@ -7,6 +7,7 @@ import {
   sha256RefText,
   stableStringify,
 } from "./stable.ts";
+import { SOURCE_PACKAGE_HASHING } from "./hashing.ts";
 
 export interface SourceSpec {
   readonly root: string;
@@ -86,7 +87,12 @@ export async function hashSourcePackage(
     });
   }
 
-  const sourcePackageHash = sha256RefText(stableStringify(entries));
+  const sourcePackageHash = sha256RefText(stableStringify({
+    files: entries,
+    hashing: SOURCE_PACKAGE_HASHING,
+    kind: "SourcePackageHashInput",
+    schemaVersion: 0,
+  }));
   return {
     root,
     include: [...source.include],

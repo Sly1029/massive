@@ -12,6 +12,8 @@ The artifact body is a deterministic JSON rendering of the typed plan field tree
 - digest fields render as `sha256:<hex>` strings,
 - `ArtifactRef` renders as `{ "key", "hash", "contentType" }`,
 - `GraphIR.irVersion` is the explicit semantic graph contract version and is distinct from the enclosing transport `schemaVersion`,
+- `hashing` is required and identifies the exact plan-hash recipe; source
+  package references carry their required source-package recipe independently,
 - `SchemaEntry.canonicalJson` is sorted-key canonical JSON for the lowered portable schema value,
 - wall-clock fields, including compile time and bundle emission time, are not part of the canonical JSON artifacts and must not appear in the plan,
 - scalar fields use explicit presence (`optional` in the `.proto`): a set field always appears, including zero values such as `"schemaVersion": 0`,
@@ -32,6 +34,12 @@ Shape:
 ```json
 {
   "schemaVersion": 0,
+  "hashing": {
+    "algorithm": "sha256",
+    "canonicalization": "canonical-json-v0",
+    "recipe": "workflow-plan",
+    "recipeVersion": 1
+  },
   "planHash": "sha256:<hex>",
   "specHash": "sha256:<hex>",
   "graph": {

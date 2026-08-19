@@ -16,6 +16,11 @@ import { validateGraphShape } from "./graph-validate.ts";
 import { lowerPortableSchema } from "./schema.ts";
 import { hashSourcePackage, type SourceSpec } from "./source-package.ts";
 import {
+  type HashingSpec,
+  SOURCE_PACKAGE_HASHING,
+  WORKFLOW_SPEC_HASHING,
+} from "./hashing.ts";
+import {
   compareCodeUnits,
   type JsonValue,
   sha256RefText,
@@ -43,6 +48,7 @@ export interface WorkflowSpec {
   readonly kind: "WorkflowSpec";
   readonly schemaVersion: 0;
   readonly encoding: "json-v0";
+  readonly hashing: HashingSpec<"workflow-spec">;
   readonly specHash: string;
   readonly workflow: {
     readonly name: string;
@@ -124,6 +130,7 @@ export interface WorkflowSpecSourcePackage {
   readonly packageId: string;
   readonly language: WorkflowSpecLanguage;
   readonly packageHash: string;
+  readonly hashing: HashingSpec<"source-package">;
   readonly files: readonly { readonly path: string; readonly hash: string }[];
 }
 
@@ -226,6 +233,7 @@ export async function emitWorkflowSpec<Input, Output>(
     kind: "WorkflowSpec" as const,
     schemaVersion: 0 as const,
     encoding: "json-v0" as const,
+    hashing: WORKFLOW_SPEC_HASHING,
     workflow: {
       name: builder.name,
       inputSchema: workflowInput,
@@ -251,6 +259,7 @@ export async function emitWorkflowSpec<Input, Output>(
         packageId,
         language: "typescript" as const,
         packageHash: source.sourcePackageHash,
+        hashing: SOURCE_PACKAGE_HASHING,
         files: source.files,
       },
     },

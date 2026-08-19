@@ -61,6 +61,11 @@ sourcePackages:
   ts-main:
     language: typescript
     packageHash: sha256:...
+    hashing:
+      algorithm: sha256
+      canonicalization: canonical-json-v0
+      recipe: source-package
+      recipeVersion: 1
 
 symbols:
   math/double:
@@ -89,6 +94,12 @@ workflow/package config. The package root controls:
 - optional deployment profiles, lowered separately from `WorkflowSpec`.
 
 The compiler should avoid broad implicit packaging. For v0, packaging should be driven by explicit include patterns plus required manifests and lockfiles. Future SDKs may add dependency-graph-assisted suggestions, but the emitted source package manifest must list exact files and content hashes.
+
+Source identity is the versioned canonical manifest of normalized relative
+paths and exact file-byte hashes. It deliberately is not an AST identity: AST
+parsers are versioned implementation details, code can observe source and line
+information, and packages include resources that have no AST. Checkout paths
+and datastore locations remain outside the identity.
 
 `WorkflowSpec` records source identity, not a predicted artifact location. A
 source archive becomes an artifact only after deterministic packaging commits
@@ -262,6 +273,12 @@ datastore.s3({
 S3-compatible stores, such as R2 or MinIO, should be supportable through endpoint configuration.
 
 The default local datastore root is user-level: `~/.massive/store`. This avoids creating project-local `.massive` directories during normal development. Project-local datastore paths are still useful for tests, temporary isolation, and explicit user configuration.
+
+The CLI accepts `--store-prefix <relative-key>` or
+`MASSIVE_STORE_PREFIX=<relative-key>` (`--store-prefix` wins). The validated
+prefix is applied ahead of every logical datastore key and therefore isolates
+physical storage without changing workflow, plan, or artifact content
+identity.
 
 ## No Metadata Database In V0
 

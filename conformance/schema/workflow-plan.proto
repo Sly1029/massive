@@ -22,6 +22,13 @@ message ArtifactRef {
   optional string content_type = 3;
 }
 
+message HashingSpec {
+  optional string algorithm = 1;
+  optional string canonicalization = 2;
+  optional string recipe = 3;
+  optional uint32 recipe_version = 4;
+}
+
 message WorkflowPlan {
   optional uint32 schema_version = 1;
   optional string plan_hash = 2;
@@ -35,6 +42,7 @@ message WorkflowPlan {
   repeated TargetPlan targets = 10;
   repeated ArtifactRef datastore_manifests = 11;
   optional CompilerProvenance provenance = 12;
+  optional HashingSpec hashing = 13;
 }
 
 message GraphIR {
@@ -111,6 +119,7 @@ message SourcePackageRef {
   // remote target lowering.
   optional ArtifactRef manifest = 4;
   optional ArtifactRef source_archive = 5;
+  optional HashingSpec hashing = 6;
 }
 
 message MaterializedEnvironment {

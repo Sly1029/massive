@@ -2,7 +2,13 @@
   "kind": "WorkflowSpec",
   "schemaVersion": 0,
   "encoding": "json-v0",
-  "specHash": "sha256:44417a88e404d3e4d71e3f3a02da5b742ce8e12f47c53a9c2e9f38c6ab400e14",
+  "hashing": {
+    "algorithm": "sha256",
+    "canonicalization": "canonical-json-v0",
+    "recipe": "workflow-spec",
+    "recipeVersion": 1
+  },
+  "specHash": "sha256:5cee880f2f7767f0e8ff84d18d45b81be9b84a957b25ff49bbbd047cf761eca3",
   "workflow": {
     "name": "exhaustive-decision",
     "inputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670",
@@ -128,7 +134,13 @@
     "ts-main": {
       "packageId": "ts-main",
       "language": "typescript",
-      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "packageHash": "sha256:0ec03733f4bf566d30620befc143f4f33748c1ec0d780dfd91ab47dc5c5c764f",
+      "hashing": {
+        "algorithm": "sha256",
+        "canonicalization": "canonical-json-v0",
+        "recipe": "source-package",
+        "recipeVersion": 1
+      },
       "files": [
         {
           "path": "workflow.ts",

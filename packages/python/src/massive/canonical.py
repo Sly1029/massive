@@ -33,6 +33,12 @@ def sha256_ref(value: str | bytes) -> str:
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
+def utf16_sort_key(value: str) -> bytes:
+    """Return the byte key whose ordering matches canonical JSON object keys."""
+    _assert_well_formed_unicode(value)
+    return value.encode("utf-16-be")
+
+
 def _encode(value: JsonValue) -> str:
     if value is None:
         return "null"
@@ -52,7 +58,7 @@ def _encode(value: JsonValue) -> str:
     if isinstance(value, list):
         return "[" + ",".join(_encode(item) for item in value) + "]"
     encoded: list[str] = []
-    for key in sorted(value, key=lambda item: item.encode("utf-16-be")):
+    for key in sorted(value, key=utf16_sort_key):
         _assert_well_formed_unicode(key)
         encoded.append(f"{_encode(key)}:{_encode(value[key])}")
     return "{" + ",".join(encoded) + "}"

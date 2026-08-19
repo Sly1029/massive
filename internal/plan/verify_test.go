@@ -2,9 +2,11 @@ package plan
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/spec"
 )
 
@@ -26,6 +28,68 @@ func TestVerifyCanonicalJSONAcceptsCompilerOutput(t *testing.T) {
 	if verified.GetPlanHash() != compiled.PlanHash {
 		t.Fatalf("verified plan hash = %q, want %q", verified.GetPlanHash(), compiled.PlanHash)
 	}
+}
+
+func TestVerifyCanonicalJSONRequiresEveryIdentityVersion(t *testing.T) {
+	data := readFixture(t, "specs", "passthrough", "workflow-spec.json")
+	workflowSpec, err := spec.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(workflowSpec, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		path []string
+		want string
+	}{
+		{name: "plan schema", path: []string{"schemaVersion"}, want: "schemaVersion must be present"},
+		{name: "plan hash recipe", path: []string{"hashing", "recipeVersion"}, want: "hashing descriptor must be present and complete"},
+		{name: "graph IR", path: []string{"graph", "irVersion"}, want: "graph.irVersion must be present"},
+		{name: "compiler", path: []string{"provenance", "compilerVersion"}, want: "provenance.compilerVersion must be present"},
+		{name: "source package hash recipe", path: []string{"sourcePackages", "0", "hashing", "recipeVersion"}, want: "sourcePackages[0] hashing descriptor must be present and complete"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mutated := deleteCanonicalJSONField(t, compiled.CanonicalJSON, test.path)
+			_, err := VerifyCanonicalJSON(mutated, compiled.PlanHash)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("VerifyCanonicalJSON() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func deleteCanonicalJSONField(t *testing.T, data []byte, path []string) []byte {
+	t.Helper()
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		t.Fatal(err)
+	}
+	current := value
+	for _, segment := range path[:len(path)-1] {
+		switch typed := current.(type) {
+		case map[string]any:
+			current = typed[segment]
+		case []any:
+			current = typed[0]
+		default:
+			t.Fatalf("path %v cannot traverse %T", path, current)
+		}
+	}
+	delete(current.(map[string]any), path[len(path)-1])
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := canonical.CanonicalizeJSON(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func TestVerifyCanonicalJSONRejectsNonCanonicalBytes(t *testing.T) {

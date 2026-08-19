@@ -66,6 +66,22 @@ manifests, JSON artifacts, and hash coverage must not include wall-clock
 timestamps. If audit timing is needed, it belongs in side metadata outside the
 hashed artifact.
 
+## Versioned hash recipes
+
+Every persisted workflow identity declares the recipe that produced it. A
+`WorkflowSpec`, `WorkflowPlan`, and source-package entry therefore carry a
+required descriptor of this form:
+
+```json
+{"algorithm":"sha256","canonicalization":"canonical-json-v0","recipe":"source-package","recipeVersion":1}
+```
+
+The recipe is part of the hashed field tree. Consumers reject an absent,
+partial, or unsupported descriptor rather than guessing which historical
+coverage rule produced a digest. `schemaVersion`, Graph `irVersion`, compiler
+version, and hash `recipeVersion` are independent: changing one does not
+silently reinterpret another.
+
 ## Hash Coverage
 
 Self-exclusion rule: when an artifact records its own digest as a member of
@@ -131,11 +147,20 @@ package manifest:
 - exact included file list;
 - each included file's normalized relative path;
 - each included file's content hash;
+- the source-package hash descriptor and its recipe version;
 
 Broad implicit packaging is out of scope for v0. A changed included file changes
 the package hash. A changed excluded file does not. Package IDs, local absolute
 root paths, symbols, and datastore write locations are outside
 the source package content hash.
+
+The source recipe hashes exact file bytes through their SHA-256 values. It does
+not hash a Python or TypeScript AST: parser versions are not a stable wire
+contract, source text and line information can affect runtime behavior, and a
+package may include non-code resources. This intentionally prefers a
+defensible identity over a higher cache hit rate. Renaming a file or changing
+any included byte changes the package hash; moving an otherwise identical
+checkout does not.
 
 ### Environment Key
 
@@ -175,3 +200,8 @@ The shared conformance vector is:
 Implementations must parse the input JSON into a field tree, canonicalize it
 with the rules above, hash the canonical UTF-8 bytes, prefix the lowercase digest
 with `sha256:`, and compare it to the expected key.
+
+The versioned source-package recipe vector is:
+
+- input: `conformance/fixtures/hashing/source-package-v1.json`
+- expected key: `conformance/fixtures/hashing/source-package-v1.sha256`

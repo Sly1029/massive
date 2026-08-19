@@ -1,5 +1,10 @@
 export { defineWorkflowPackage, type WorkflowPackageConfig } from "./config.ts";
 export {
+  type HashingSpec,
+  SOURCE_PACKAGE_HASHING,
+  WORKFLOW_SPEC_HASHING,
+} from "./hashing.ts";
+export {
   computeDeploymentHash,
   deployment,
   type DeploymentProfile,
@@ -26,8 +31,8 @@ export {
   computeSpecHash,
   emitWorkflowSpec,
   type EmitWorkflowSpecOptions,
-  type WorkflowSpecLanguage,
   type WorkflowSpec,
+  type WorkflowSpecLanguage,
 } from "./emit.ts";
 export {
   parseWorkflowSpec,
