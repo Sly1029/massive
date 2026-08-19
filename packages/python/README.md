@@ -124,7 +124,10 @@ not invoked. `select()` then exposes the selected branch result as an ordinary
 without launching another step, copying its body, or uploading it again.
 Declaration order does not affect the emitted graph: authors may create the
 select before or after adding the case edges, and `emit()` validates the final
-topology. Sync and async classification or branch steps may be mixed freely.
+topology. Decisions may be nested inside a case; if the outer case is inactive,
+the nested classifier, decision, branches, and select are all skipped as one
+control region. Sync and async classification or branch steps may be mixed
+freely.
 
 Exhaustive decisions execute through `massive run`'s local compiled path today.
 The Argo target deliberately rejects decision/select plans with an explicit

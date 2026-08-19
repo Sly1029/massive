@@ -215,10 +215,13 @@ projects/<project-key>/runs/<run-id>/result.json
 
 `run-manifest.json` is the v2 (`schemaVersion: 2`, `encoding: "json-v2"`) run
 manifest the orchestrator records when it creates a run: plan hash, run status,
-per-step attempt/artifact records, and durable decision selections. A decision
-record has `nodeId` and `selectedCase`. The orchestrator persists that selection
-before it schedules downstream nodes, and a resume or replay must use the
-journaled selection rather than run the classifier again.
+per-step attempt/artifact records, and durable decision outcomes. A selected
+decision record has `nodeId`, `status: "selected"`, and `selectedCase`. A failed
+record has `status: "failed"` and a safe diagnostic; an inactive nested decision
+has `status: "skipped"` and the same structured `skipReason` used by steps. The
+orchestrator persists a successful selection before it schedules downstream
+nodes, and a future resume or replay must use the journaled selection rather
+than run the classifier again.
 
 An unselected branch step has status `"skipped"`, no attempts, and a
 `skipReason` with `kind: "decision-not-selected"`, the `decisionId`, and the
