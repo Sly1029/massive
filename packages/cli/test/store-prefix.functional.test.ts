@@ -60,6 +60,8 @@ Deno.test("storage prefix flag and environment isolate bytes without changing wo
   };
   assert(typeof environmentOutcome.keys.specHash === "string");
   assert(environmentOutcome.keys.specHash !== "");
+  assert(typeof environmentOutcome.keys.planHash === "string");
+  assert(environmentOutcome.keys.planHash !== "");
   assertEquals(flagOutcome.keys.specHash, environmentOutcome.keys.specHash);
   assertEquals(flagOutcome.keys.planHash, environmentOutcome.keys.planHash);
 });
