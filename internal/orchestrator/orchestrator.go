@@ -825,7 +825,7 @@ func routeDecision(node *planpb.GraphNode, index executionIndex, outputs map[str
 		}
 		return tag, input, nil
 	}
-	return "", nodeOutput{}, fmt.Errorf("decision %q selector %q has unknown case %q", node.GetId(), node.GetSelector(), tag)
+	return "", nodeOutput{}, fmt.Errorf("decision %q selector %q selected an undeclared case", node.GetId(), node.GetSelector())
 }
 
 // selectOutput aliases the chosen branch's DataArtifactRef and body. It must

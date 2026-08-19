@@ -168,6 +168,17 @@ author then creates a decision over that persisted output and explicitly wires
 every case:
 
 ```py
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
+
+from massive import StepContext
+
+
+class Input(BaseModel):
+    value: int
+
+
 class Approved(BaseModel):
     kind: Literal["approved"]
     value: int
@@ -176,10 +187,32 @@ class Rejected(BaseModel):
     kind: Literal["rejected"]
     reason: str
 
-@step
-async def classify(value: Input) -> Approved | Rejected: ...
+Route = Annotated[Approved | Rejected, Field(discriminator="kind")]
+
+
+class Result(BaseModel):
+    value: int
+
+
+@graph.step()
+async def classify(context: StepContext[None, Input]) -> Route:
+    if context.inputs.value >= 0:
+        return Approved(kind="approved", value=context.inputs.value)
+    return Rejected(kind="rejected", reason="negative value")
+
+
+@graph.step()
+def approve(context: StepContext[None, Approved]) -> Result:
+    return Result(value=context.inputs.value)
+
+
+@graph.step()
+def reject(context: StepContext[None, Rejected]) -> Result:
+    return Result(value=0)
 
 classified = graph.add(classify)
+approved = graph.add(approve)
+rejected = graph.add(reject)
 route = graph.decision(classified, on="kind", id="review-route")
 
 approved_input = route.case(Approved)

@@ -680,28 +680,36 @@ const ManifestAttemptSchema = z.object({
   diagnostic: z.string().optional(),
 }).strict();
 
+const ManifestSkipReasonSchema = z.object({
+  kind: z.literal("decision-not-selected"),
+  decisionId: z.string(),
+  case: z.string(),
+}).strict();
+
 const ManifestStepSchema = z.object({
   nodeId: z.string(),
   status: z.string(),
   attempts: z.array(ManifestAttemptSchema),
-  skipReason: z.object({
-    kind: z.literal("decision-not-selected"),
-    decisionId: z.string(),
-    case: z.string(),
-  }).strict().optional(),
+  skipReason: ManifestSkipReasonSchema.optional(),
 }).strict();
 
-const ManifestDecisionSchema = z.object({
-  nodeId: z.string(),
-  status: z.enum(["selected", "failed", "skipped"]),
-  selectedCase: z.string().optional(),
-  diagnostic: z.string().optional(),
-  skipReason: z.object({
-    kind: z.literal("decision-not-selected"),
-    decisionId: z.string(),
-    case: z.string(),
-  }).strict().optional(),
-}).strict();
+const ManifestDecisionSchema = z.discriminatedUnion("status", [
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("selected"),
+    selectedCase: z.string(),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("failed"),
+    diagnostic: z.string(),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("skipped"),
+    skipReason: ManifestSkipReasonSchema,
+  }).strict(),
+]);
 
 const ManifestViewSchema = z.object({
   kind: z.literal("RunManifest"),

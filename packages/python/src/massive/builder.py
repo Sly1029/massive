@@ -498,7 +498,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                     "inputSchema": schema_ref(
                         decision.source.output_type,
                         f"decision {decision_id!r} input schema",
-                        SchemaPurpose.INPUT,
+                        SchemaPurpose.OUTPUT,
                     ),
                     "selector": decision.selector,
                     "cases": [

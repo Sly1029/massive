@@ -441,7 +441,7 @@ func TestOrchestratorCLIDecisionRoutingFailuresAreDurablyJournaled(t *testing.T)
 	}{
 		{name: "missing selector", input: "1", diagnostic: `selector "kind" is missing`},
 		{name: "non-string selector", input: "2", diagnostic: `selector "kind" must be a string`},
-		{name: "unknown tag", input: "3", diagnostic: `unknown case "unknown"`},
+		{name: "unknown tag", input: "3", diagnostic: "selected an undeclared case"},
 		{name: "selected case schema violation", input: "4", diagnostic: `selected case "accepted" does not satisfy its schema`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -449,7 +449,7 @@ func TestOrchestratorCLIDecisionRoutingFailuresAreDurablyJournaled(t *testing.T)
 export function classify(args: { readonly input: number }): Record<string, unknown> {
   if (args.input === 1) return {};
   if (args.input === 2) return { kind: 42 };
-  if (args.input === 3) return { kind: "unknown" };
+  if (args.input === 3) return { kind: "customer-secret-tag" };
   return { kind: "accepted" };
 }
 
@@ -477,6 +477,9 @@ export function reject(args: { readonly input: number }): number {
 			if !strings.Contains(result.stderr, test.diagnostic) {
 				t.Fatalf("stderr = %q, want route diagnostic %q", result.stderr, test.diagnostic)
 			}
+			if strings.Contains(result.stderr, "customer-secret-tag") {
+				t.Fatalf("stderr exposed the undeclared selector value: %q", result.stderr)
+			}
 
 			manifest := readRunManifest(t, storeRoot, NormalizeProjectKey("acme/decision-routing"), runID)
 			if manifest.Status != StatusFailed {
@@ -488,6 +491,9 @@ export function reject(args: { readonly input: number }): number {
 			decision := manifest.Decisions[0]
 			if decision.NodeID != "route" || decision.Status != StatusFailed || !strings.Contains(decision.Diagnostic, test.diagnostic) {
 				t.Fatalf("decision record = %#v, want failed route with %q", decision, test.diagnostic)
+			}
+			if strings.Contains(decision.Diagnostic, "customer-secret-tag") {
+				t.Fatalf("decision record exposed the undeclared selector value: %#v", decision)
 			}
 			if len(manifest.Steps) == 0 || manifest.Steps[0].NodeID != "classify" || manifest.Steps[0].Status != StatusSucceeded {
 				t.Fatalf("steps = %#v, want classifier to have completed before route failure", manifest.Steps)
