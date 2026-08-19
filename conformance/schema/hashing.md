@@ -69,8 +69,8 @@ hashed artifact.
 ## Versioned hash recipes
 
 Every persisted workflow identity declares the recipe that produced it. A
-`WorkflowSpec`, `WorkflowPlan`, and source-package entry therefore carry a
-required descriptor of this form:
+`WorkflowSpec`, `WorkflowPlan`, `DeploymentSpec`, and source-package entry
+therefore carry a required descriptor of this form:
 
 ```json
 {"algorithm":"sha256","canonicalization":"canonical-json-v0","recipe":"source-package","recipeVersion":1}
@@ -86,10 +86,11 @@ silently reinterpret another.
 
 Self-exclusion rule: when an artifact records its own digest as a member of
 its field tree (`specHash` in a `WorkflowSpec`, `planHash` in a
-`WorkflowPlan`, `deploymentHash` in a `DeploymentSpec`), that member is excluded from its own coverage. Compute the
-digest over the field tree with the self-referencing member absent, then
-record the result in that member. All other digest members (for example
-`specHash` inside a plan) are covered normally.
+`WorkflowPlan`, `deploymentHash` in a `DeploymentSpec`), that member is
+excluded from its own coverage. Compute the digest over the field tree with
+the self-referencing member absent, then record the result in that member. All
+other digest members (for example `specHash` inside a plan) are covered
+normally.
 
 ### `specHash`
 
@@ -104,6 +105,7 @@ record the result in that member. All other digest members (for example
 - environment table;
 - effective execution-contract table;
 - per-node execution-contract references;
+- the workflow-spec hash descriptor and its recipe version;
 
 `specHash` does not cover source JSON whitespace, storage path names, datastore
 write time, compile time, run IDs, or any other wall-clock timestamp.
@@ -120,7 +122,8 @@ write time, compile time, run IDs, or any other wall-clock timestamp.
 - compiler identity and version;
 - environment materialization references;
 - datastore manifest references;
-- mediation provider identity.
+- mediation provider identity;
+- the workflow-plan hash descriptor and the foreign `specHash` descriptor.
 
 ### `deploymentHash`
 
@@ -128,7 +131,8 @@ write time, compile time, run IDs, or any other wall-clock timestamp.
 
 - the referenced `planHash`;
 - the profile name and opaque artifact-store binding;
-- target kind and its target-specific settings.
+- target kind and its target-specific settings;
+- the deployment-spec hash descriptor and its recipe version.
 
 It must not cover raw credentials, secret values, connection URLs, wall-clock
 timestamps, or mutable deployment state. Changing a deployment profile changes

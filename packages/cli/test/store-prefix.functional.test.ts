@@ -53,15 +53,15 @@ Deno.test("storage prefix flag and environment isolate bytes without changing wo
   assertEquals(rootEntries.sort(), ["tenants"]);
 
   const environmentOutcome = JSON.parse(fromEnvironment.stdout) as {
-    specHash: string;
-    planHash: string;
+    keys: { specHash: string; planHash: string };
   };
   const flagOutcome = JSON.parse(fromFlag.stdout) as {
-    specHash: string;
-    planHash: string;
+    keys: { specHash: string; planHash: string };
   };
-  assertEquals(flagOutcome.specHash, environmentOutcome.specHash);
-  assertEquals(flagOutcome.planHash, environmentOutcome.planHash);
+  assert(typeof environmentOutcome.keys.specHash === "string");
+  assert(environmentOutcome.keys.specHash !== "");
+  assertEquals(flagOutcome.keys.specHash, environmentOutcome.keys.specHash);
+  assertEquals(flagOutcome.keys.planHash, environmentOutcome.keys.planHash);
 });
 
 Deno.test("invalid storage prefixes fail before creating storage", async () => {
@@ -74,6 +74,8 @@ Deno.test("invalid storage prefixes fail before creating storage", async () => {
       " ",
       " leading",
       "line\nbreak",
+      "C:/absolute",
+      "control\u0085key",
     ]
   ) {
     const store = join(await makeStore(), "uncreated-store");

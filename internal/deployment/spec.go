@@ -19,9 +19,17 @@ type Spec struct {
 	Kind           string  `json:"kind"`
 	SchemaVersion  uint32  `json:"schemaVersion"`
 	Encoding       string  `json:"encoding"`
+	Hashing        Hashing `json:"hashing"`
 	DeploymentHash string  `json:"deploymentHash"`
 	PlanHash       string  `json:"planHash"`
 	Profile        Profile `json:"profile"`
+}
+
+type Hashing struct {
+	Algorithm        string `json:"algorithm"`
+	Canonicalization string `json:"canonicalization"`
+	Recipe           string `json:"recipe"`
+	RecipeVersion    uint32 `json:"recipeVersion"`
 }
 
 type Profile struct {

@@ -1,5 +1,6 @@
 export { defineWorkflowPackage, type WorkflowPackageConfig } from "./config.ts";
 export {
+  DEPLOYMENT_SPEC_HASHING,
   type HashingSpec,
   SOURCE_PACKAGE_HASHING,
   WORKFLOW_SPEC_HASHING,

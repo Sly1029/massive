@@ -89,6 +89,7 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	}
 	deploymentValue := map[string]any{
 		"kind": "DeploymentSpec", "schemaVersion": 0, "encoding": "json-v0",
+		"hashing":  map[string]any{"algorithm": "sha256", "canonicalization": "canonical-json-v0", "recipe": "deployment-spec", "recipeVersion": 1},
 		"planHash": parsedPlan.GetPlanHash(),
 		"profile": map[string]any{
 			"name": "argo-test", "artifactStoreBinding": "test-artifacts",

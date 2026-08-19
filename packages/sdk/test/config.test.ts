@@ -49,6 +49,12 @@ Deno.test("deployment profiles lower separately from a package workflow spec", a
       workflowPackage.deploymentProfiles![1],
     );
     assertEquals(local.planHash, argo.planHash);
+    assertEquals(local.hashing, {
+      algorithm: "sha256",
+      canonicalization: "canonical-json-v0",
+      recipe: "deployment-spec",
+      recipeVersion: 1,
+    });
     assertEquals(local.profile, {
       name: "local",
       artifactStoreBinding: "local-artifacts",

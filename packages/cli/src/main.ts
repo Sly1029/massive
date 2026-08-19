@@ -36,20 +36,22 @@ interface Parsed {
 }
 
 const encoder = new TextEncoder();
+const controlCharacter = /\p{Cc}/u;
+const windowsAbsolutePath = /^[A-Za-z]:\//;
 const storePrefixSchema = z.string().min(1).superRefine((prefix, context) => {
   if (
     prefix.trim() !== prefix ||
-    Array.from(prefix).some((character) => {
-      const codePoint = character.codePointAt(0)!;
-      return codePoint < 0x20 || codePoint === 0x7f;
-    })
+    controlCharacter.test(prefix)
   ) {
     context.addIssue({
       code: "custom",
       message: "must not contain control or leading/trailing whitespace",
     });
   }
-  if (prefix.startsWith("/") || prefix.includes("\\")) {
+  if (
+    prefix.startsWith("/") || prefix.includes("\\") ||
+    windowsAbsolutePath.test(prefix)
+  ) {
     context.addIssue({
       code: "custom",
       message: "must be a relative forward-slash path",
