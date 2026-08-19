@@ -50,7 +50,7 @@ export interface WorkflowSpec {
     readonly outputSchema: string;
   };
   readonly graph: {
-    readonly irVersion: "0.1";
+    readonly irVersion: "0.1" | "0.2";
     readonly start: string;
     readonly end: string;
     readonly nodes: readonly WorkflowSpecNode[];
@@ -74,11 +74,32 @@ export type WorkflowSpecNode =
     readonly symbolRef: string;
     readonly contractRef: string;
     readonly mergeInputs?: readonly string[];
+  }
+  | {
+    readonly id: string;
+    readonly kind: "decision";
+    readonly inputSchema: string;
+    readonly selector: string;
+    readonly cases: readonly {
+      readonly tag: string;
+      readonly schema: string;
+    }[];
+  }
+  | {
+    readonly id: string;
+    readonly kind: "select";
+    readonly decisionRef: string;
+    readonly outputSchema: string;
+    readonly selectInputs: readonly {
+      readonly case: string;
+      readonly source: string;
+    }[];
   };
 
 export interface WorkflowSpecEdge {
   readonly from: string;
   readonly to: string;
+  readonly case?: string;
 }
 
 export interface WorkflowSpecSymbol {
@@ -108,7 +129,8 @@ export interface WorkflowSpecExecutionContract {
 
 const DEFAULT_CONTRACT = contract({
   env: env.container({
-    image: "ghcr.io/massive-dev/typescript-runner@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    image:
+      "ghcr.io/massive-dev/typescript-runner@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   }),
   network: net.denyAll(),
 });

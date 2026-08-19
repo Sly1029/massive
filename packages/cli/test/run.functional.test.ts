@@ -81,8 +81,8 @@ Deno.test("massive run linear-chain: exit 0, per-step output, real frozen artifa
       }[];
     }[];
   };
-  assertEquals(manifest.schemaVersion, 1);
-  assertEquals(manifest.encoding, "json-v1");
+  assertEquals(manifest.schemaVersion, 2);
+  assertEquals(manifest.encoding, "json-v2");
   assertEquals(manifest.status, "succeeded");
   assertEquals(manifest.steps.map((step) => step.nodeId), [
     "double",
@@ -176,6 +176,291 @@ Deno.test("massive run Python graph: same compiler, runner, and frozen artifact 
   assertEquals(outputManifest.kind, "DataArtifactManifest");
   assertEquals(outputManifest.producer.nodeId, "add_one");
   assertEquals(outputManifest.producer.attempt, 1);
+});
+
+Deno.test("massive run Python decision: selects the approved branch and journals the route", async () => {
+  const fixture = await copyFixture("python-decision");
+  const store = await makeStore();
+
+  const result = await runCli([
+    "run",
+    join(fixture, "workflow.py"),
+    "--input",
+    '{"score":91}',
+    "--store",
+    store,
+    "--project",
+    "acme/python-decision",
+    "--run-id",
+    "python-decision-run",
+    "--json",
+  ]);
+
+  assertEquals(result.code, 0, result.stderr);
+  const outcome = JSON.parse(result.stdout) as {
+    result: { message: string };
+    steps: { nodeId: string; status: string }[];
+  };
+  assertEquals(outcome.result, { message: "approved:91" });
+  assertEquals(outcome.steps, [
+    { nodeId: "classify", status: "succeeded" },
+    { nodeId: "approve", status: "succeeded" },
+    { nodeId: "reject", status: "skipped" },
+  ]);
+
+  const manifestPath = await findRunArtifact(
+    store,
+    "python-decision-run",
+    "run-manifest.json",
+  );
+  assert(manifestPath !== undefined, "decision run manifest should exist");
+  const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+    schemaVersion: number;
+    encoding: string;
+    decisions: { nodeId: string; status: string; selectedCase?: string }[];
+    steps: {
+      nodeId: string;
+      status: string;
+      skipReason?: { kind: string; decisionId: string; case: string };
+      attempts: { output?: { body: { key: string; hash: string } } }[];
+    }[];
+  };
+  assertEquals(manifest.schemaVersion, 2);
+  assertEquals(manifest.encoding, "json-v2");
+  assertEquals(manifest.decisions, [{
+    nodeId: "route",
+    status: "selected",
+    selectedCase: "approved",
+  }]);
+  assertEquals(
+    manifest.steps.find((step) => step.nodeId === "reject")?.skipReason,
+    {
+      kind: "decision-not-selected",
+      decisionId: "route",
+      case: "rejected",
+    },
+  );
+  const approvedBody = manifest.steps.find((step) => step.nodeId === "approve")
+    ?.attempts[0]?.output?.body;
+  assert(
+    approvedBody !== undefined,
+    "selected branch should publish one output body",
+  );
+  assertEquals(
+    await Deno.readTextFile(join(store, approvedBody.key)),
+    '{"message":"approved:91"}',
+  );
+  const keys = await listStoreKeys(store);
+  assertEquals(
+    keys.some((key) => key.includes("/steps/route-select/")),
+    false,
+    "select must alias the selected body rather than publish a synthetic step output",
+  );
+});
+
+Deno.test("massive run Python decision: selects the rejected branch and skips approval", async () => {
+  const fixture = await copyFixture("python-decision");
+  const store = await makeStore();
+
+  const result = await runCli([
+    "run",
+    join(fixture, "workflow.py"),
+    "--input",
+    '{"score":10}',
+    "--store",
+    store,
+    "--project",
+    "acme/python-decision",
+    "--run-id",
+    "python-decision-rejected",
+    "--json",
+  ]);
+
+  assertEquals(result.code, 0, result.stderr);
+  const outcome = JSON.parse(result.stdout) as {
+    result: { message: string };
+    steps: { nodeId: string; status: string }[];
+  };
+  assertEquals(outcome.result, { message: "rejected:score below threshold" });
+  assertEquals(outcome.steps, [
+    { nodeId: "classify", status: "succeeded" },
+    { nodeId: "approve", status: "skipped" },
+    { nodeId: "reject", status: "succeeded" },
+  ]);
+
+  const manifestPath = await findRunArtifact(
+    store,
+    "python-decision-rejected",
+    "run-manifest.json",
+  );
+  assert(manifestPath !== undefined, "decision run manifest should exist");
+  const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+    decisions: { nodeId: string; status: string; selectedCase?: string }[];
+    steps: {
+      nodeId: string;
+      skipReason?: { kind: string; decisionId: string; case: string };
+      attempts: { output?: { body: { key: string } } }[];
+    }[];
+  };
+  assertEquals(manifest.decisions, [{
+    nodeId: "route",
+    status: "selected",
+    selectedCase: "rejected",
+  }]);
+  assertEquals(
+    manifest.steps.find((step) => step.nodeId === "approve")?.skipReason,
+    {
+      kind: "decision-not-selected",
+      decisionId: "route",
+      case: "approved",
+    },
+  );
+  const rejectedBody = manifest.steps.find((step) => step.nodeId === "reject")
+    ?.attempts[0]?.output?.body;
+  assert(
+    rejectedBody !== undefined,
+    "selected branch should publish one output body",
+  );
+  assertEquals(
+    await Deno.readTextFile(join(store, rejectedBody.key)),
+    '{"message":"rejected:score below threshold"}',
+  );
+  const keys = await listStoreKeys(store);
+  assertEquals(
+    keys.some((key) => key.includes("/steps/route-select/")),
+    false,
+    "select must alias the selected body rather than publish a synthetic step output",
+  );
+});
+
+Deno.test("massive run Python nested decisions activate only the selected control region", async () => {
+  const cases = [
+    {
+      input: '{"score":95}',
+      runId: "python-nested-fast",
+      message: "fast:95",
+      selectedNode: "fast",
+      selected: [
+        { nodeId: "outer-route", status: "selected", selectedCase: "approved" },
+        { nodeId: "inner-route", status: "selected", selectedCase: "fast" },
+      ],
+      statuses: {
+        classify_outer: "succeeded",
+        review: "succeeded",
+        fast: "succeeded",
+        manual: "skipped",
+        reject: "skipped",
+      },
+    },
+    {
+      input: '{"score":75}',
+      runId: "python-nested-manual",
+      message: "manual:75",
+      selectedNode: "manual",
+      selected: [
+        { nodeId: "outer-route", status: "selected", selectedCase: "approved" },
+        { nodeId: "inner-route", status: "selected", selectedCase: "manual" },
+      ],
+      statuses: {
+        classify_outer: "succeeded",
+        review: "succeeded",
+        fast: "skipped",
+        manual: "succeeded",
+        reject: "skipped",
+      },
+    },
+    {
+      input: '{"score":10}',
+      runId: "python-nested-rejected",
+      message: "rejected:score below threshold",
+      selectedNode: "reject",
+      selected: [
+        { nodeId: "outer-route", status: "selected", selectedCase: "rejected" },
+        {
+          nodeId: "inner-route",
+          status: "skipped",
+          skipReason: {
+            kind: "decision-not-selected",
+            decisionId: "outer-route",
+            case: "approved",
+          },
+        },
+      ],
+      statuses: {
+        classify_outer: "succeeded",
+        review: "skipped",
+        fast: "skipped",
+        manual: "skipped",
+        reject: "succeeded",
+      },
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    const fixture = await copyFixture("python-nested-decision");
+    const store = await makeStore();
+    const result = await runCli([
+      "run",
+      join(fixture, "workflow.py"),
+      "--input",
+      testCase.input,
+      "--store",
+      store,
+      "--project",
+      "acme/python-nested-decision",
+      "--run-id",
+      testCase.runId,
+      "--json",
+    ]);
+
+    assertEquals(result.code, 0, result.stderr);
+    const outcome = JSON.parse(result.stdout) as {
+      result: { message: string };
+      steps: { nodeId: string; status: string }[];
+    };
+    assertEquals(outcome.result, { message: testCase.message });
+    assertEquals(Object.fromEntries(outcome.steps.map((step) => [step.nodeId, step.status])), testCase.statuses);
+
+    const manifestPath = await findRunArtifact(store, testCase.runId, "run-manifest.json");
+    assert(manifestPath !== undefined, "nested decision run manifest should exist");
+    const manifest = JSON.parse(await Deno.readTextFile(manifestPath)) as {
+      decisions: readonly unknown[];
+      result?: { key: string; hash: string };
+      steps: {
+        nodeId: string;
+        attempts: { output?: { body: { key: string; hash: string } } }[];
+      }[];
+    };
+    assertEquals(manifest.decisions, testCase.selected);
+
+    const selectedBody = manifest.steps.find((step) =>
+      step.nodeId === testCase.selectedNode
+    )?.attempts[0]?.output?.body;
+    assert(selectedBody !== undefined, "selected branch should publish its body");
+    assert(manifest.result !== undefined, "run should journal a final result");
+    assertEquals(
+      manifest.result.hash,
+      selectedBody.hash,
+      "the final result must be the selected branch value",
+    );
+    assertEquals(
+      await Deno.readTextFile(join(store, manifest.result.key)),
+      await Deno.readTextFile(join(store, selectedBody.key)),
+      "the final result body must equal the selected branch body",
+    );
+
+    const keys = await listStoreKeys(store);
+    assertEquals(
+      keys.some((key) => key.includes("/steps/inner-route-select/")),
+      false,
+      "nested select must alias its chosen branch body",
+    );
+    assertEquals(
+      keys.some((key) => key.includes("/steps/outer-route-select/")),
+      false,
+      "outer select must alias its chosen branch body",
+    );
+  }
 });
 
 Deno.test("massive run diamond: fan-in result 81 at the frozen result key", async () => {

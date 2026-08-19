@@ -318,15 +318,19 @@ func (x *GraphIR) GetIrVersion() string {
 type GraphNode struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    *string                `protobuf:"bytes,1,opt,name=id,proto3,oneof" json:"id,omitempty"`
-	// "start", "step", or "end". Fan-in steps list their merged upstream step
-	// ids in merge_inputs; plain steps omit it (empty repeated fields are not
-	// serialized).
-	Kind          *string  `protobuf:"bytes,2,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
-	InputSchema   *string  `protobuf:"bytes,3,opt,name=input_schema,json=inputSchema,proto3,oneof" json:"input_schema,omitempty"`
-	OutputSchema  *string  `protobuf:"bytes,4,opt,name=output_schema,json=outputSchema,proto3,oneof" json:"output_schema,omitempty"`
-	SymbolRef     *string  `protobuf:"bytes,5,opt,name=symbol_ref,json=symbolRef,proto3,oneof" json:"symbol_ref,omitempty"`
-	ContractRef   *string  `protobuf:"bytes,6,opt,name=contract_ref,json=contractRef,proto3,oneof" json:"contract_ref,omitempty"`
-	MergeInputs   []string `protobuf:"bytes,7,rep,name=merge_inputs,json=mergeInputs,proto3" json:"merge_inputs,omitempty"`
+	// "start", "step", "decision", "select", or "end". Fan-in steps list
+	// their merged upstream step ids in merge_inputs; decision/select fields are
+	// data-only route declarations for Graph IR 0.2.
+	Kind          *string         `protobuf:"bytes,2,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
+	InputSchema   *string         `protobuf:"bytes,3,opt,name=input_schema,json=inputSchema,proto3,oneof" json:"input_schema,omitempty"`
+	OutputSchema  *string         `protobuf:"bytes,4,opt,name=output_schema,json=outputSchema,proto3,oneof" json:"output_schema,omitempty"`
+	SymbolRef     *string         `protobuf:"bytes,5,opt,name=symbol_ref,json=symbolRef,proto3,oneof" json:"symbol_ref,omitempty"`
+	ContractRef   *string         `protobuf:"bytes,6,opt,name=contract_ref,json=contractRef,proto3,oneof" json:"contract_ref,omitempty"`
+	MergeInputs   []string        `protobuf:"bytes,7,rep,name=merge_inputs,json=mergeInputs,proto3" json:"merge_inputs,omitempty"`
+	Selector      *string         `protobuf:"bytes,8,opt,name=selector,proto3,oneof" json:"selector,omitempty"`
+	Cases         []*DecisionCase `protobuf:"bytes,9,rep,name=cases,proto3" json:"cases,omitempty"`
+	DecisionRef   *string         `protobuf:"bytes,10,opt,name=decision_ref,json=decisionRef,proto3,oneof" json:"decision_ref,omitempty"`
+	SelectInputs  []*SelectInput  `protobuf:"bytes,11,rep,name=select_inputs,json=selectInputs,proto3" json:"select_inputs,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -410,10 +414,40 @@ func (x *GraphNode) GetMergeInputs() []string {
 	return nil
 }
 
+func (x *GraphNode) GetSelector() string {
+	if x != nil && x.Selector != nil {
+		return *x.Selector
+	}
+	return ""
+}
+
+func (x *GraphNode) GetCases() []*DecisionCase {
+	if x != nil {
+		return x.Cases
+	}
+	return nil
+}
+
+func (x *GraphNode) GetDecisionRef() string {
+	if x != nil && x.DecisionRef != nil {
+		return *x.DecisionRef
+	}
+	return ""
+}
+
+func (x *GraphNode) GetSelectInputs() []*SelectInput {
+	if x != nil {
+		return x.SelectInputs
+	}
+	return nil
+}
+
 type GraphEdge struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	From          *string                `protobuf:"bytes,1,opt,name=from,proto3,oneof" json:"from,omitempty"`
-	To            *string                `protobuf:"bytes,2,opt,name=to,proto3,oneof" json:"to,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	From  *string                `protobuf:"bytes,1,opt,name=from,proto3,oneof" json:"from,omitempty"`
+	To    *string                `protobuf:"bytes,2,opt,name=to,proto3,oneof" json:"to,omitempty"`
+	// Set only for an edge leaving a decision node.
+	Case          *string `protobuf:"bytes,3,opt,name=case,proto3,oneof" json:"case,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -462,6 +496,117 @@ func (x *GraphEdge) GetTo() string {
 	return ""
 }
 
+func (x *GraphEdge) GetCase() string {
+	if x != nil && x.Case != nil {
+		return *x.Case
+	}
+	return ""
+}
+
+type DecisionCase struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tag           *string                `protobuf:"bytes,1,opt,name=tag,proto3,oneof" json:"tag,omitempty"`
+	Schema        *string                `protobuf:"bytes,2,opt,name=schema,proto3,oneof" json:"schema,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DecisionCase) Reset() {
+	*x = DecisionCase{}
+	mi := &file_workflow_plan_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DecisionCase) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DecisionCase) ProtoMessage() {}
+
+func (x *DecisionCase) ProtoReflect() protoreflect.Message {
+	mi := &file_workflow_plan_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DecisionCase.ProtoReflect.Descriptor instead.
+func (*DecisionCase) Descriptor() ([]byte, []int) {
+	return file_workflow_plan_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *DecisionCase) GetTag() string {
+	if x != nil && x.Tag != nil {
+		return *x.Tag
+	}
+	return ""
+}
+
+func (x *DecisionCase) GetSchema() string {
+	if x != nil && x.Schema != nil {
+		return *x.Schema
+	}
+	return ""
+}
+
+type SelectInput struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Case          *string                `protobuf:"bytes,1,opt,name=case,proto3,oneof" json:"case,omitempty"`
+	Source        *string                `protobuf:"bytes,2,opt,name=source,proto3,oneof" json:"source,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SelectInput) Reset() {
+	*x = SelectInput{}
+	mi := &file_workflow_plan_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SelectInput) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SelectInput) ProtoMessage() {}
+
+func (x *SelectInput) ProtoReflect() protoreflect.Message {
+	mi := &file_workflow_plan_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SelectInput.ProtoReflect.Descriptor instead.
+func (*SelectInput) Descriptor() ([]byte, []int) {
+	return file_workflow_plan_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SelectInput) GetCase() string {
+	if x != nil && x.Case != nil {
+		return *x.Case
+	}
+	return ""
+}
+
+func (x *SelectInput) GetSource() string {
+	if x != nil && x.Source != nil {
+		return *x.Source
+	}
+	return ""
+}
+
 type SchemaEntry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Hash          *string                `protobuf:"bytes,1,opt,name=hash,proto3,oneof" json:"hash,omitempty"`
@@ -472,7 +617,7 @@ type SchemaEntry struct {
 
 func (x *SchemaEntry) Reset() {
 	*x = SchemaEntry{}
-	mi := &file_workflow_plan_proto_msgTypes[5]
+	mi := &file_workflow_plan_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -484,7 +629,7 @@ func (x *SchemaEntry) String() string {
 func (*SchemaEntry) ProtoMessage() {}
 
 func (x *SchemaEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[5]
+	mi := &file_workflow_plan_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -497,7 +642,7 @@ func (x *SchemaEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SchemaEntry.ProtoReflect.Descriptor instead.
 func (*SchemaEntry) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{5}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *SchemaEntry) GetHash() string {
@@ -527,7 +672,7 @@ type SymbolEntry struct {
 
 func (x *SymbolEntry) Reset() {
 	*x = SymbolEntry{}
-	mi := &file_workflow_plan_proto_msgTypes[6]
+	mi := &file_workflow_plan_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -539,7 +684,7 @@ func (x *SymbolEntry) String() string {
 func (*SymbolEntry) ProtoMessage() {}
 
 func (x *SymbolEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[6]
+	mi := &file_workflow_plan_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -552,7 +697,7 @@ func (x *SymbolEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SymbolEntry.ProtoReflect.Descriptor instead.
 func (*SymbolEntry) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{6}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SymbolEntry) GetSymbolRef() string {
@@ -606,7 +751,7 @@ type SourcePackageRef struct {
 
 func (x *SourcePackageRef) Reset() {
 	*x = SourcePackageRef{}
-	mi := &file_workflow_plan_proto_msgTypes[7]
+	mi := &file_workflow_plan_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -618,7 +763,7 @@ func (x *SourcePackageRef) String() string {
 func (*SourcePackageRef) ProtoMessage() {}
 
 func (x *SourcePackageRef) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[7]
+	mi := &file_workflow_plan_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -631,7 +776,7 @@ func (x *SourcePackageRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourcePackageRef.ProtoReflect.Descriptor instead.
 func (*SourcePackageRef) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{7}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SourcePackageRef) GetPackageId() string {
@@ -682,7 +827,7 @@ type MaterializedEnvironment struct {
 
 func (x *MaterializedEnvironment) Reset() {
 	*x = MaterializedEnvironment{}
-	mi := &file_workflow_plan_proto_msgTypes[8]
+	mi := &file_workflow_plan_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -694,7 +839,7 @@ func (x *MaterializedEnvironment) String() string {
 func (*MaterializedEnvironment) ProtoMessage() {}
 
 func (x *MaterializedEnvironment) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[8]
+	mi := &file_workflow_plan_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -707,7 +852,7 @@ func (x *MaterializedEnvironment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MaterializedEnvironment.ProtoReflect.Descriptor instead.
 func (*MaterializedEnvironment) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{8}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *MaterializedEnvironment) GetEnvRef() string {
@@ -758,7 +903,7 @@ type ContainerRuntime struct {
 
 func (x *ContainerRuntime) Reset() {
 	*x = ContainerRuntime{}
-	mi := &file_workflow_plan_proto_msgTypes[9]
+	mi := &file_workflow_plan_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -770,7 +915,7 @@ func (x *ContainerRuntime) String() string {
 func (*ContainerRuntime) ProtoMessage() {}
 
 func (x *ContainerRuntime) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[9]
+	mi := &file_workflow_plan_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -783,7 +928,7 @@ func (x *ContainerRuntime) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerRuntime.ProtoReflect.Descriptor instead.
 func (*ContainerRuntime) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{9}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ContainerRuntime) GetImage() string {
@@ -834,7 +979,7 @@ type ExecutionContract struct {
 
 func (x *ExecutionContract) Reset() {
 	*x = ExecutionContract{}
-	mi := &file_workflow_plan_proto_msgTypes[10]
+	mi := &file_workflow_plan_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -846,7 +991,7 @@ func (x *ExecutionContract) String() string {
 func (*ExecutionContract) ProtoMessage() {}
 
 func (x *ExecutionContract) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[10]
+	mi := &file_workflow_plan_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -859,7 +1004,7 @@ func (x *ExecutionContract) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionContract.ProtoReflect.Descriptor instead.
 func (*ExecutionContract) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{10}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ExecutionContract) GetContractRef() string {
@@ -907,7 +1052,7 @@ type ResourceRequirements struct {
 
 func (x *ResourceRequirements) Reset() {
 	*x = ResourceRequirements{}
-	mi := &file_workflow_plan_proto_msgTypes[11]
+	mi := &file_workflow_plan_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -919,7 +1064,7 @@ func (x *ResourceRequirements) String() string {
 func (*ResourceRequirements) ProtoMessage() {}
 
 func (x *ResourceRequirements) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[11]
+	mi := &file_workflow_plan_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -932,7 +1077,7 @@ func (x *ResourceRequirements) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceRequirements.ProtoReflect.Descriptor instead.
 func (*ResourceRequirements) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{11}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ResourceRequirements) GetCpu() string {
@@ -959,7 +1104,7 @@ type SecretRef struct {
 
 func (x *SecretRef) Reset() {
 	*x = SecretRef{}
-	mi := &file_workflow_plan_proto_msgTypes[12]
+	mi := &file_workflow_plan_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -971,7 +1116,7 @@ func (x *SecretRef) String() string {
 func (*SecretRef) ProtoMessage() {}
 
 func (x *SecretRef) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[12]
+	mi := &file_workflow_plan_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -984,7 +1129,7 @@ func (x *SecretRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SecretRef.ProtoReflect.Descriptor instead.
 func (*SecretRef) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{12}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SecretRef) GetName() string {
@@ -1013,7 +1158,7 @@ type NetworkPolicy struct {
 
 func (x *NetworkPolicy) Reset() {
 	*x = NetworkPolicy{}
-	mi := &file_workflow_plan_proto_msgTypes[13]
+	mi := &file_workflow_plan_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1025,7 +1170,7 @@ func (x *NetworkPolicy) String() string {
 func (*NetworkPolicy) ProtoMessage() {}
 
 func (x *NetworkPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[13]
+	mi := &file_workflow_plan_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1038,7 +1183,7 @@ func (x *NetworkPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkPolicy.ProtoReflect.Descriptor instead.
 func (*NetworkPolicy) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{13}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *NetworkPolicy) GetEgress() string {
@@ -1066,7 +1211,7 @@ type TargetPlan struct {
 
 func (x *TargetPlan) Reset() {
 	*x = TargetPlan{}
-	mi := &file_workflow_plan_proto_msgTypes[14]
+	mi := &file_workflow_plan_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1078,7 +1223,7 @@ func (x *TargetPlan) String() string {
 func (*TargetPlan) ProtoMessage() {}
 
 func (x *TargetPlan) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[14]
+	mi := &file_workflow_plan_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1091,7 +1236,7 @@ func (x *TargetPlan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TargetPlan.ProtoReflect.Descriptor instead.
 func (*TargetPlan) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{14}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *TargetPlan) GetKind() string {
@@ -1126,7 +1271,7 @@ type CompilerProvenance struct {
 
 func (x *CompilerProvenance) Reset() {
 	*x = CompilerProvenance{}
-	mi := &file_workflow_plan_proto_msgTypes[15]
+	mi := &file_workflow_plan_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1138,7 +1283,7 @@ func (x *CompilerProvenance) String() string {
 func (*CompilerProvenance) ProtoMessage() {}
 
 func (x *CompilerProvenance) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[15]
+	mi := &file_workflow_plan_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1151,7 +1296,7 @@ func (x *CompilerProvenance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompilerProvenance.ProtoReflect.Descriptor instead.
 func (*CompilerProvenance) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{15}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *CompilerProvenance) GetCompilerName() string {
@@ -1226,7 +1371,7 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\x0e_output_schemaB\r\n" +
 	"\v_start_nodeB\v\n" +
 	"\t_end_nodeB\r\n" +
-	"\v_ir_version\"\xcd\x02\n" +
+	"\v_ir_version\"\xac\x04\n" +
 	"\tGraphNode\x12\x13\n" +
 	"\x02id\x18\x01 \x01(\tH\x00R\x02id\x88\x01\x01\x12\x17\n" +
 	"\x04kind\x18\x02 \x01(\tH\x01R\x04kind\x88\x01\x01\x12&\n" +
@@ -1235,18 +1380,37 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\n" +
 	"symbol_ref\x18\x05 \x01(\tH\x04R\tsymbolRef\x88\x01\x01\x12&\n" +
 	"\fcontract_ref\x18\x06 \x01(\tH\x05R\vcontractRef\x88\x01\x01\x12!\n" +
-	"\fmerge_inputs\x18\a \x03(\tR\vmergeInputsB\x05\n" +
+	"\fmerge_inputs\x18\a \x03(\tR\vmergeInputs\x12\x1f\n" +
+	"\bselector\x18\b \x01(\tH\x06R\bselector\x88\x01\x01\x123\n" +
+	"\x05cases\x18\t \x03(\v2\x1d.massive.plan.v0.DecisionCaseR\x05cases\x12&\n" +
+	"\fdecision_ref\x18\n" +
+	" \x01(\tH\aR\vdecisionRef\x88\x01\x01\x12A\n" +
+	"\rselect_inputs\x18\v \x03(\v2\x1c.massive.plan.v0.SelectInputR\fselectInputsB\x05\n" +
 	"\x03_idB\a\n" +
 	"\x05_kindB\x0f\n" +
 	"\r_input_schemaB\x10\n" +
 	"\x0e_output_schemaB\r\n" +
 	"\v_symbol_refB\x0f\n" +
-	"\r_contract_ref\"I\n" +
+	"\r_contract_refB\v\n" +
+	"\t_selectorB\x0f\n" +
+	"\r_decision_ref\"k\n" +
 	"\tGraphEdge\x12\x17\n" +
 	"\x04from\x18\x01 \x01(\tH\x00R\x04from\x88\x01\x01\x12\x13\n" +
-	"\x02to\x18\x02 \x01(\tH\x01R\x02to\x88\x01\x01B\a\n" +
+	"\x02to\x18\x02 \x01(\tH\x01R\x02to\x88\x01\x01\x12\x17\n" +
+	"\x04case\x18\x03 \x01(\tH\x02R\x04case\x88\x01\x01B\a\n" +
 	"\x05_fromB\x05\n" +
-	"\x03_to\"n\n" +
+	"\x03_toB\a\n" +
+	"\x05_case\"U\n" +
+	"\fDecisionCase\x12\x15\n" +
+	"\x03tag\x18\x01 \x01(\tH\x00R\x03tag\x88\x01\x01\x12\x1b\n" +
+	"\x06schema\x18\x02 \x01(\tH\x01R\x06schema\x88\x01\x01B\x06\n" +
+	"\x04_tagB\t\n" +
+	"\a_schema\"W\n" +
+	"\vSelectInput\x12\x17\n" +
+	"\x04case\x18\x01 \x01(\tH\x00R\x04case\x88\x01\x01\x12\x1b\n" +
+	"\x06source\x18\x02 \x01(\tH\x01R\x06source\x88\x01\x01B\a\n" +
+	"\x05_caseB\t\n" +
+	"\a_source\"n\n" +
 	"\vSchemaEntry\x12\x17\n" +
 	"\x04hash\x18\x01 \x01(\tH\x00R\x04hash\x88\x01\x01\x12*\n" +
 	"\x0ecanonical_json\x18\x02 \x01(\tH\x01R\rcanonicalJson\x88\x01\x01B\a\n" +
@@ -1356,51 +1520,55 @@ func file_workflow_plan_proto_rawDescGZIP() []byte {
 	return file_workflow_plan_proto_rawDescData
 }
 
-var file_workflow_plan_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_workflow_plan_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_workflow_plan_proto_goTypes = []any{
 	(*ArtifactRef)(nil),             // 0: massive.plan.v0.ArtifactRef
 	(*WorkflowPlan)(nil),            // 1: massive.plan.v0.WorkflowPlan
 	(*GraphIR)(nil),                 // 2: massive.plan.v0.GraphIR
 	(*GraphNode)(nil),               // 3: massive.plan.v0.GraphNode
 	(*GraphEdge)(nil),               // 4: massive.plan.v0.GraphEdge
-	(*SchemaEntry)(nil),             // 5: massive.plan.v0.SchemaEntry
-	(*SymbolEntry)(nil),             // 6: massive.plan.v0.SymbolEntry
-	(*SourcePackageRef)(nil),        // 7: massive.plan.v0.SourcePackageRef
-	(*MaterializedEnvironment)(nil), // 8: massive.plan.v0.MaterializedEnvironment
-	(*ContainerRuntime)(nil),        // 9: massive.plan.v0.ContainerRuntime
-	(*ExecutionContract)(nil),       // 10: massive.plan.v0.ExecutionContract
-	(*ResourceRequirements)(nil),    // 11: massive.plan.v0.ResourceRequirements
-	(*SecretRef)(nil),               // 12: massive.plan.v0.SecretRef
-	(*NetworkPolicy)(nil),           // 13: massive.plan.v0.NetworkPolicy
-	(*TargetPlan)(nil),              // 14: massive.plan.v0.TargetPlan
-	(*CompilerProvenance)(nil),      // 15: massive.plan.v0.CompilerProvenance
+	(*DecisionCase)(nil),            // 5: massive.plan.v0.DecisionCase
+	(*SelectInput)(nil),             // 6: massive.plan.v0.SelectInput
+	(*SchemaEntry)(nil),             // 7: massive.plan.v0.SchemaEntry
+	(*SymbolEntry)(nil),             // 8: massive.plan.v0.SymbolEntry
+	(*SourcePackageRef)(nil),        // 9: massive.plan.v0.SourcePackageRef
+	(*MaterializedEnvironment)(nil), // 10: massive.plan.v0.MaterializedEnvironment
+	(*ContainerRuntime)(nil),        // 11: massive.plan.v0.ContainerRuntime
+	(*ExecutionContract)(nil),       // 12: massive.plan.v0.ExecutionContract
+	(*ResourceRequirements)(nil),    // 13: massive.plan.v0.ResourceRequirements
+	(*SecretRef)(nil),               // 14: massive.plan.v0.SecretRef
+	(*NetworkPolicy)(nil),           // 15: massive.plan.v0.NetworkPolicy
+	(*TargetPlan)(nil),              // 16: massive.plan.v0.TargetPlan
+	(*CompilerProvenance)(nil),      // 17: massive.plan.v0.CompilerProvenance
 }
 var file_workflow_plan_proto_depIdxs = []int32{
 	2,  // 0: massive.plan.v0.WorkflowPlan.graph:type_name -> massive.plan.v0.GraphIR
-	5,  // 1: massive.plan.v0.WorkflowPlan.schemas:type_name -> massive.plan.v0.SchemaEntry
-	6,  // 2: massive.plan.v0.WorkflowPlan.symbols:type_name -> massive.plan.v0.SymbolEntry
-	7,  // 3: massive.plan.v0.WorkflowPlan.source_packages:type_name -> massive.plan.v0.SourcePackageRef
-	8,  // 4: massive.plan.v0.WorkflowPlan.environments:type_name -> massive.plan.v0.MaterializedEnvironment
-	10, // 5: massive.plan.v0.WorkflowPlan.contracts:type_name -> massive.plan.v0.ExecutionContract
-	14, // 6: massive.plan.v0.WorkflowPlan.targets:type_name -> massive.plan.v0.TargetPlan
+	7,  // 1: massive.plan.v0.WorkflowPlan.schemas:type_name -> massive.plan.v0.SchemaEntry
+	8,  // 2: massive.plan.v0.WorkflowPlan.symbols:type_name -> massive.plan.v0.SymbolEntry
+	9,  // 3: massive.plan.v0.WorkflowPlan.source_packages:type_name -> massive.plan.v0.SourcePackageRef
+	10, // 4: massive.plan.v0.WorkflowPlan.environments:type_name -> massive.plan.v0.MaterializedEnvironment
+	12, // 5: massive.plan.v0.WorkflowPlan.contracts:type_name -> massive.plan.v0.ExecutionContract
+	16, // 6: massive.plan.v0.WorkflowPlan.targets:type_name -> massive.plan.v0.TargetPlan
 	0,  // 7: massive.plan.v0.WorkflowPlan.datastore_manifests:type_name -> massive.plan.v0.ArtifactRef
-	15, // 8: massive.plan.v0.WorkflowPlan.provenance:type_name -> massive.plan.v0.CompilerProvenance
+	17, // 8: massive.plan.v0.WorkflowPlan.provenance:type_name -> massive.plan.v0.CompilerProvenance
 	3,  // 9: massive.plan.v0.GraphIR.nodes:type_name -> massive.plan.v0.GraphNode
 	4,  // 10: massive.plan.v0.GraphIR.edges:type_name -> massive.plan.v0.GraphEdge
-	0,  // 11: massive.plan.v0.SourcePackageRef.manifest:type_name -> massive.plan.v0.ArtifactRef
-	0,  // 12: massive.plan.v0.SourcePackageRef.source_archive:type_name -> massive.plan.v0.ArtifactRef
-	0,  // 13: massive.plan.v0.MaterializedEnvironment.local:type_name -> massive.plan.v0.ArtifactRef
-	9,  // 14: massive.plan.v0.MaterializedEnvironment.container:type_name -> massive.plan.v0.ContainerRuntime
-	0,  // 15: massive.plan.v0.ContainerRuntime.source_fetch:type_name -> massive.plan.v0.ArtifactRef
-	11, // 16: massive.plan.v0.ExecutionContract.resources:type_name -> massive.plan.v0.ResourceRequirements
-	12, // 17: massive.plan.v0.ExecutionContract.secrets:type_name -> massive.plan.v0.SecretRef
-	13, // 18: massive.plan.v0.ExecutionContract.network:type_name -> massive.plan.v0.NetworkPolicy
-	0,  // 19: massive.plan.v0.TargetPlan.bundle_manifest:type_name -> massive.plan.v0.ArtifactRef
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	5,  // 11: massive.plan.v0.GraphNode.cases:type_name -> massive.plan.v0.DecisionCase
+	6,  // 12: massive.plan.v0.GraphNode.select_inputs:type_name -> massive.plan.v0.SelectInput
+	0,  // 13: massive.plan.v0.SourcePackageRef.manifest:type_name -> massive.plan.v0.ArtifactRef
+	0,  // 14: massive.plan.v0.SourcePackageRef.source_archive:type_name -> massive.plan.v0.ArtifactRef
+	0,  // 15: massive.plan.v0.MaterializedEnvironment.local:type_name -> massive.plan.v0.ArtifactRef
+	11, // 16: massive.plan.v0.MaterializedEnvironment.container:type_name -> massive.plan.v0.ContainerRuntime
+	0,  // 17: massive.plan.v0.ContainerRuntime.source_fetch:type_name -> massive.plan.v0.ArtifactRef
+	13, // 18: massive.plan.v0.ExecutionContract.resources:type_name -> massive.plan.v0.ResourceRequirements
+	14, // 19: massive.plan.v0.ExecutionContract.secrets:type_name -> massive.plan.v0.SecretRef
+	15, // 20: massive.plan.v0.ExecutionContract.network:type_name -> massive.plan.v0.NetworkPolicy
+	0,  // 21: massive.plan.v0.TargetPlan.bundle_manifest:type_name -> massive.plan.v0.ArtifactRef
+	22, // [22:22] is the sub-list for method output_type
+	22, // [22:22] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_workflow_plan_proto_init() }
@@ -1424,13 +1592,15 @@ func file_workflow_plan_proto_init() {
 	file_workflow_plan_proto_msgTypes[13].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[14].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[15].OneofWrappers = []any{}
+	file_workflow_plan_proto_msgTypes[16].OneofWrappers = []any{}
+	file_workflow_plan_proto_msgTypes[17].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workflow_plan_proto_rawDesc), len(file_workflow_plan_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

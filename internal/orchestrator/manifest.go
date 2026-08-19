@@ -9,18 +9,39 @@ type runManifest struct {
 	RunID         string                `json:"runId"`
 	Status        string                `json:"status"`
 	Steps         []manifestStep        `json:"steps"`
+	Decisions     []manifestDecision    `json:"decisions"`
 	Result        *manifestDataArtifact `json:"result,omitempty"`
 }
 
 // The run-manifest transport is intentionally versioned independently of the
-// graph IR. Schema v1/json-v1 records manifest-last outputs. The local
-// orchestrator currently executes one attempt per node (attempt 1); target
-// retry scheduling and later attempt records are a subsequent slice.
+// graph IR. Schema v2/json-v2 records manifest-last outputs together with
+// durable data-only routing. The local orchestrator currently executes one
+// attempt per step (attempt 1); target retry scheduling and later attempt
+// records are a subsequent slice.
 
 type manifestStep struct {
-	NodeID   string            `json:"nodeId"`
-	Status   string            `json:"status"`
-	Attempts []manifestAttempt `json:"attempts"`
+	NodeID     string              `json:"nodeId"`
+	Status     string              `json:"status"`
+	Attempts   []manifestAttempt   `json:"attempts"`
+	SkipReason *manifestSkipReason `json:"skipReason,omitempty"`
+}
+
+// manifestDecision is the durable decision record. Replays must use this
+// selection rather than evaluate the classifier body a second time.
+type manifestDecision struct {
+	NodeID       string              `json:"nodeId"`
+	Status       string              `json:"status"`
+	SelectedCase string              `json:"selectedCase,omitempty"`
+	Diagnostic   string              `json:"diagnostic,omitempty"`
+	SkipReason   *manifestSkipReason `json:"skipReason,omitempty"`
+}
+
+// manifestSkipReason makes an inactive branch observable rather than leaving
+// it indistinguishable from a scheduler omission.
+type manifestSkipReason struct {
+	Kind       string `json:"kind"`
+	DecisionID string `json:"decisionId"`
+	Case       string `json:"case"`
 }
 
 type manifestAttempt struct {

@@ -18,6 +18,7 @@ func TestParseAcceptsValidFixtures(t *testing.T) {
 		{name: "linear-chain", path: fixturePath("linear-chain")},
 		{name: "diamond", path: fixturePath("diamond")},
 		{name: "python-linear", path: fixturePath("python-linear")},
+		{name: "exhaustive-decision", path: fixturePath("exhaustive-decision")},
 	}
 
 	for _, test := range tests {
@@ -103,7 +104,7 @@ func TestParseReportsCycle(t *testing.T) {
 
 func TestParseReportsUnsupportedGraphIRVersion(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
-		root["graph"].(map[string]any)["irVersion"] = "0.2"
+		root["graph"].(map[string]any)["irVersion"] = "0.3"
 	})
 
 	_, err := Parse(data)
@@ -112,7 +113,7 @@ func TestParseReportsUnsupportedGraphIRVersion(t *testing.T) {
 	}
 
 	diagnostics := diagnosticsFromError(t, err)
-	if diagnostics[0].Path != "$.graph.irVersion" || diagnostics[0].Ref != "0.2" || !strings.Contains(diagnostics[0].Message, "compiler supports >=0.1 <0.2") {
+	if diagnostics[0].Path != "$.graph.irVersion" || diagnostics[0].Ref != "0.3" || !strings.Contains(diagnostics[0].Message, "compiler supports >=0.1 <0.3") {
 		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
 	}
 }
@@ -239,6 +240,231 @@ func TestParseRejectsMergeInputsThatDoNotMatchInboundEdges(t *testing.T) {
 	}
 }
 
+func TestParseRejectsInvalidExhaustiveDecisionContracts(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(map[string]any)
+		message string
+	}{
+		{
+			name: "duplicate case tag",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				for _, rawNode := range graph["nodes"].([]any) {
+					node := rawNode.(map[string]any)
+					if node["id"] == "route" {
+						node["cases"].([]any)[1].(map[string]any)["tag"] = "accepted"
+					}
+				}
+			},
+			message: "decision case tags must be unique",
+		},
+		{
+			name: "missing branch edge",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				edges := graph["edges"].([]any)
+				graph["edges"] = append(edges[:3:3], edges[4:]...)
+			},
+			message: "each decision case requires exactly one conditional outgoing edge",
+		},
+		{
+			name: "select source does not match inbound edge",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				for _, rawNode := range graph["nodes"].([]any) {
+					node := rawNode.(map[string]any)
+					if node["id"] == "choose" {
+						node["selectInputs"].([]any)[1].(map[string]any)["source"] = "classify"
+					}
+				}
+			},
+			message: "select input sources must exactly match inbound edges",
+		},
+		{
+			name: "select source belongs to a different case branch",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				for _, rawNode := range graph["nodes"].([]any) {
+					node := rawNode.(map[string]any)
+					if node["id"] == "choose" {
+						inputs := node["selectInputs"].([]any)
+						inputs[0].(map[string]any)["source"] = "reject"
+						inputs[1].(map[string]any)["source"] = "accept"
+					}
+				}
+			},
+			message: "select input source must be reachable from its decision case branch",
+		},
+		{
+			name: "case branches converge before their select",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				graph["edges"] = append(graph["edges"].([]any), map[string]any{"from": "accept", "to": "reject"})
+			},
+			message: "cases may converge only through select",
+		},
+		{
+			name: "conditional branches share a target",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				for _, rawEdge := range graph["edges"].([]any) {
+					edge := rawEdge.(map[string]any)
+					if edge["from"] == "route" && edge["case"] == "rejected" {
+						edge["to"] = "accept"
+					}
+				}
+			},
+			message: "conditional branches may not share a target",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse(mutateFixture(t, "exhaustive-decision", test.mutate))
+			if err == nil {
+				t.Fatal("expected invalid spec")
+			}
+			if !containsDiagnostic(diagnosticsFromError(t, err), test.message) {
+				t.Fatalf("diagnostics = %#v, want %q", diagnosticsFromError(t, err), test.message)
+			}
+		})
+	}
+}
+
+func TestParseValidatesNestedSelectActivationLineage(t *testing.T) {
+	if _, err := Parse(nestedDecisionSpec(t, "inner-select")); err != nil {
+		t.Fatalf("nested select should collapse its own decision requirement: %v", err)
+	}
+
+	_, err := Parse(nestedDecisionSpec(t, "inner-accept"))
+	if err == nil {
+		t.Fatal("accepted outer select source that depends on one nested decision case")
+	}
+	for _, diagnostic := range diagnosticsFromError(t, err) {
+		if diagnostic.Path == "$.graph.nodes[6].selectInputs[0].source" && strings.Contains(diagnostic.Message, "unresolved nested decision requirement") {
+			return
+		}
+	}
+	t.Fatalf("diagnostics = %#v, want outer select lineage diagnostic", diagnosticsFromError(t, err))
+}
+
+func nestedDecisionSpec(t *testing.T, outerAcceptedSource string) []byte {
+	t.Helper()
+
+	return mutateFixture(t, "exhaustive-decision", func(root map[string]any) {
+		graph := root["graph"].(map[string]any)
+		integerSchema := root["workflow"].(map[string]any)["outputSchema"].(string)
+		unionSchema := nodeByID(root, "classify")["outputSchema"].(string)
+		acceptedSchema := nodeByID(root, "accept")["inputSchema"].(string)
+		rejectedSchema := nodeByID(root, "reject")["inputSchema"].(string)
+		contractRef := nodeByID(root, "accept")["contractRef"].(string)
+
+		nodeByID(root, "accept")["outputSchema"] = unionSchema
+		choose := nodeByID(root, "choose")
+		choose["selectInputs"].([]any)[0].(map[string]any)["source"] = outerAcceptedSource
+		graph["nodes"] = append(graph["nodes"].([]any),
+			map[string]any{
+				"id": "inner", "kind": "decision", "inputSchema": unionSchema, "selector": "kind",
+				"cases": []any{
+					map[string]any{"tag": "accepted", "schema": acceptedSchema},
+					map[string]any{"tag": "rejected", "schema": rejectedSchema},
+				},
+			},
+			map[string]any{"id": "inner-accept", "kind": "step", "inputSchema": acceptedSchema, "outputSchema": integerSchema, "symbolRef": "exhaustive-decision/accept", "contractRef": contractRef},
+			map[string]any{"id": "inner-reject", "kind": "step", "inputSchema": rejectedSchema, "outputSchema": integerSchema, "symbolRef": "exhaustive-decision/reject", "contractRef": contractRef},
+			map[string]any{
+				"id": "inner-select", "kind": "select", "decisionRef": "inner", "outputSchema": integerSchema,
+				"selectInputs": []any{
+					map[string]any{"case": "accepted", "source": "inner-accept"},
+					map[string]any{"case": "rejected", "source": "inner-reject"},
+				},
+			},
+		)
+		graph["edges"] = []any{
+			map[string]any{"from": "__start", "to": "classify"},
+			map[string]any{"from": "classify", "to": "route"},
+			map[string]any{"from": "route", "to": "accept", "case": "accepted"},
+			map[string]any{"from": "route", "to": "reject", "case": "rejected"},
+			map[string]any{"from": "accept", "to": "inner"},
+			map[string]any{"from": "inner", "to": "inner-accept", "case": "accepted"},
+			map[string]any{"from": "inner", "to": "inner-reject", "case": "rejected"},
+			map[string]any{"from": "inner-accept", "to": "inner-select"},
+			map[string]any{"from": "inner-reject", "to": "inner-select"},
+			map[string]any{"from": outerAcceptedSource, "to": "choose"},
+			map[string]any{"from": "reject", "to": "choose"},
+			map[string]any{"from": "choose", "to": "__end"},
+		}
+	})
+}
+
+func TestParseRejectsDecisionSchemaContractMismatches(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(map[string]any)
+		path    string
+		message string
+	}{
+		{
+			name: "decision input differs from producer output",
+			mutate: func(root map[string]any) {
+				nodeByID(root, "route")["inputSchema"] = hashRefForTest("1")
+			},
+			path:    "$.graph.nodes[3].inputSchema",
+			message: "decision input schema must equal its sole producer output schema",
+		},
+		{
+			name: "decision has multiple inbound values",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				graph["edges"] = append(graph["edges"].([]any), map[string]any{"from": "__start", "to": "route"})
+			},
+			path:    "$.graph.nodes[3].inputSchema",
+			message: "decision requires exactly one inbound value producer",
+		},
+		{
+			name: "conditional target input differs from case",
+			mutate: func(root map[string]any) {
+				nodeByID(root, "accept")["inputSchema"] = hashRefForTest("3")
+			},
+			path:    "$.graph.nodes[4].inputSchema",
+			message: "conditional target input schema must equal decision case schema",
+		},
+		{
+			name: "conditional target is not executable step",
+			mutate: func(root map[string]any) {
+				edges := root["graph"].(map[string]any)["edges"].([]any)
+				edges[2].(map[string]any)["to"] = "choose"
+			},
+			path:    "$.graph.edges[2].to",
+			message: "conditional edge target must be a step node",
+		},
+		{
+			name: "select source output differs from select output",
+			mutate: func(root map[string]any) {
+				nodeByID(root, "accept")["outputSchema"] = hashRefForTest("3")
+			},
+			path:    "$.graph.nodes[6].selectInputs[0].source",
+			message: "select source output schema must equal select output schema",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse(mutateFixture(t, "exhaustive-decision", test.mutate))
+			if err == nil {
+				t.Fatal("expected invalid spec")
+			}
+			for _, diagnostic := range diagnosticsFromError(t, err) {
+				if diagnostic.Path == test.path && strings.Contains(diagnostic.Message, test.message) {
+					return
+				}
+			}
+			t.Fatalf("diagnostics = %#v, want path %q containing %q", diagnosticsFromError(t, err), test.path, test.message)
+		})
+	}
+}
+
 func TestParseRejectsSourcePackageMapKeyMismatch(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
 		packages := root["sourcePackages"].(map[string]any)
@@ -305,6 +531,20 @@ func mutateFixture(t *testing.T, name string, mutate func(map[string]any)) []byt
 	return output
 }
 
+func nodeByID(root map[string]any, id string) map[string]any {
+	for _, rawNode := range root["graph"].(map[string]any)["nodes"].([]any) {
+		node := rawNode.(map[string]any)
+		if node["id"] == id {
+			return node
+		}
+	}
+	panic("fixture node not found: " + id)
+}
+
+func hashRefForTest(character string) string {
+	return "sha256:" + strings.Repeat(character, 64)
+}
+
 func diagnosticsFromError(t *testing.T, err error) []Diagnostic {
 	t.Helper()
 
@@ -316,4 +556,13 @@ func diagnosticsFromError(t *testing.T, err error) []Diagnostic {
 		t.Fatal("expected diagnostics")
 	}
 	return diagnostics.Diagnostics
+}
+
+func containsDiagnostic(diagnostics []Diagnostic, message string) bool {
+	for _, diagnostic := range diagnostics {
+		if strings.Contains(diagnostic.Message, message) {
+			return true
+		}
+	}
+	return false
 }

@@ -121,11 +121,11 @@ Deno.test("massive inspect reports a past run without re-executing", async () =>
   assertEquals(after, before, "inspect must not create datastore artifacts");
 });
 
-Deno.test("run-manifest reader refuses v0 and future transports before nested fields", async (t) => {
+Deno.test("run-manifest reader refuses retired and future transports before nested fields", async (t) => {
   for (
     const protocol of [
-      { schemaVersion: 0, encoding: "json-v0" },
-      { schemaVersion: 2, encoding: "json-v2" },
+      { schemaVersion: 1, encoding: "json-v1" },
+      { schemaVersion: 3, encoding: "json-v3" },
     ]
   ) {
     await t.step(`${protocol.encoding}`, async () => {
@@ -162,11 +162,11 @@ Deno.test("run-manifest reader refuses v0 and future transports before nested fi
   }
 });
 
-Deno.test("massive inspect reports an actionable error for v0 and future manifests", async (t) => {
+Deno.test("massive inspect reports an actionable error for retired and future manifests", async (t) => {
   for (
     const protocol of [
-      { schemaVersion: 0, encoding: "json-v0" },
-      { schemaVersion: 2, encoding: "json-v2" },
+      { schemaVersion: 1, encoding: "json-v1" },
+      { schemaVersion: 3, encoding: "json-v3" },
     ]
   ) {
     await t.step(`${protocol.encoding}`, async () => {
@@ -213,27 +213,28 @@ Deno.test("massive inspect reports an actionable error for v0 and future manifes
   }
 });
 
-Deno.test("massive inspect reports an actionable error for malformed v1 nested data", async () => {
+Deno.test("massive inspect reports an actionable error for malformed v2 nested data", async () => {
   const store = await makeStore();
-  const runId = "run-inspect-malformed-v1";
+  const runId = "run-inspect-malformed-v2";
   const key =
     `projects/sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/runs/${runId}/run-manifest.json`;
   const manifestPath = join(store, key);
   await Deno.mkdir(dirname(manifestPath), { recursive: true });
 
-  // This is a persisted v1 envelope, but its nested output reference is not a
+  // This is a persisted v2 envelope, but its nested output reference is not a
   // reference. inspect must report a manifest error instead of throwing while
   // traversing the untrusted nested data.
   await Deno.writeTextFile(
     manifestPath,
     JSON.stringify({
       kind: "RunManifest",
-      schemaVersion: 1,
-      encoding: "json-v1",
+      schemaVersion: 2,
+      encoding: "json-v2",
       planHash: "sha256:" + "a".repeat(64),
       projectKey: "sha256-" + "c".repeat(64),
       runId,
       status: "succeeded",
+      decisions: [],
       steps: [{
         nodeId: "step",
         status: "succeeded",
@@ -277,6 +278,63 @@ Deno.test("massive inspect reports an actionable error for malformed v1 nested d
   assertStringIncludes(inspect.stderr, "next");
 });
 
+Deno.test("run-manifest reader rejects impossible decision states", async (t) => {
+  const invalidDecisions = [
+    {
+      name: "selected without case",
+      value: { nodeId: "route", status: "selected" },
+    },
+    {
+      name: "failed without diagnostic",
+      value: { nodeId: "route", status: "failed" },
+    },
+    {
+      name: "skipped without reason",
+      value: { nodeId: "route", status: "skipped" },
+    },
+    {
+      name: "selected with failure fields",
+      value: {
+        nodeId: "route",
+        status: "selected",
+        selectedCase: "approved",
+        diagnostic: "must not coexist",
+      },
+    },
+  ] as const;
+
+  for (const invalid of invalidDecisions) {
+    await t.step(invalid.name, async () => {
+      const store = await makeStore();
+      const key =
+        "projects/sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/runs/invalid-decision/run-manifest.json";
+      const path = join(store, key);
+      await Deno.mkdir(dirname(path), { recursive: true });
+      await Deno.writeTextFile(
+        path,
+        JSON.stringify({
+          kind: "RunManifest",
+          schemaVersion: 2,
+          encoding: "json-v2",
+          planHash: "sha256:" + "a".repeat(64),
+          projectKey: "sha256-" + "e".repeat(64),
+          runId: "invalid-decision",
+          status: "failed",
+          decisions: [invalid.value],
+          steps: [],
+        }),
+      );
+
+      const error = await assertRejects(
+        () => readRunManifestAt(datastore.local({ path: store }), key),
+        Error,
+      );
+      assertStringIncludes(error.message, "invalid run manifest");
+      assertStringIncludes(error.message, "decisions.0");
+    });
+  }
+});
+
 Deno.test("run-manifest reader accepts Go pending and pre-input failure shapes", async () => {
   const store = await makeStore();
   const key =
@@ -287,13 +345,14 @@ Deno.test("run-manifest reader accepts Go pending and pre-input failure shapes",
     path,
     JSON.stringify({
       kind: "RunManifest",
-      schemaVersion: 1,
-      encoding: "json-v1",
+      schemaVersion: 2,
+      encoding: "json-v2",
       planHash: "sha256:" + "a".repeat(64),
       projectKey:
         "sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       runId: "run-in-progress",
       status: "failed",
+      decisions: [],
       steps: [
         { nodeId: "pending", status: "pending", attempts: [] },
         {

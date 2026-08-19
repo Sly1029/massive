@@ -93,7 +93,7 @@ export interface Emitted {
 
 export interface StepSummary {
   readonly nodeId: string;
-  readonly status: "succeeded" | "failed" | "pending";
+  readonly status: "succeeded" | "failed" | "pending" | "skipped";
   readonly diagnostic?: string;
   readonly outputKey?: string;
 }
@@ -646,10 +646,10 @@ function stripExport(specifier: string): string {
 
 // --- Run manifest read (authoritative) -------------------------------------
 
-const RUN_MANIFEST_SCHEMA_VERSION = 1;
-const RUN_MANIFEST_ENCODING = "json-v1";
+const RUN_MANIFEST_SCHEMA_VERSION = 2;
+const RUN_MANIFEST_ENCODING = "json-v2";
 
-// This matches the Go-owned run-manifest v1 transport in
+// This matches the Go-owned run-manifest v2 transport in
 // internal/orchestrator/manifest.go. Keep the complete model here because the
 // CLI reads every layer below directly when rendering `inspect` and `run`.
 const ManifestArtifactRefSchema = z.object({
@@ -680,11 +680,36 @@ const ManifestAttemptSchema = z.object({
   diagnostic: z.string().optional(),
 }).strict();
 
+const ManifestSkipReasonSchema = z.object({
+  kind: z.literal("decision-not-selected"),
+  decisionId: z.string(),
+  case: z.string(),
+}).strict();
+
 const ManifestStepSchema = z.object({
   nodeId: z.string(),
   status: z.string(),
   attempts: z.array(ManifestAttemptSchema),
+  skipReason: ManifestSkipReasonSchema.optional(),
 }).strict();
+
+const ManifestDecisionSchema = z.discriminatedUnion("status", [
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("selected"),
+    selectedCase: z.string(),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("failed"),
+    diagnostic: z.string(),
+  }).strict(),
+  z.object({
+    nodeId: z.string(),
+    status: z.literal("skipped"),
+    skipReason: ManifestSkipReasonSchema,
+  }).strict(),
+]);
 
 const ManifestViewSchema = z.object({
   kind: z.literal("RunManifest"),
@@ -695,6 +720,7 @@ const ManifestViewSchema = z.object({
   runId: z.string(),
   status: z.string(),
   steps: z.array(ManifestStepSchema),
+  decisions: z.array(ManifestDecisionSchema),
   result: ManifestDataArtifactSchema.optional(),
 }).strict();
 
@@ -826,7 +852,9 @@ function buildSteps(
 }
 
 function normalizeStatus(status: string): StepSummary["status"] {
-  return status === "succeeded" || status === "failed" ? status : "pending";
+  return status === "succeeded" || status === "failed" || status === "skipped"
+    ? status
+    : "pending";
 }
 
 // --- orchestrator --json parsing -------------------------------------------

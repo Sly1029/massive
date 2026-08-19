@@ -52,20 +52,36 @@ message GraphIR {
 
 message GraphNode {
   optional string id = 1;
-  // "start", "step", or "end". Fan-in steps list their merged upstream step
-  // ids in merge_inputs; plain steps omit it (empty repeated fields are not
-  // serialized).
+  // "start", "step", "decision", "select", or "end". Fan-in steps list
+  // their merged upstream step ids in merge_inputs; decision/select fields are
+  // data-only route declarations for Graph IR 0.2.
   optional string kind = 2;
   optional string input_schema = 3;
   optional string output_schema = 4;
   optional string symbol_ref = 5;
   optional string contract_ref = 6;
   repeated string merge_inputs = 7;
+  optional string selector = 8;
+  repeated DecisionCase cases = 9;
+  optional string decision_ref = 10;
+  repeated SelectInput select_inputs = 11;
 }
 
 message GraphEdge {
   optional string from = 1;
   optional string to = 2;
+  // Set only for an edge leaving a decision node.
+  optional string case = 3;
+}
+
+message DecisionCase {
+  optional string tag = 1;
+  optional string schema = 2;
+}
+
+message SelectInput {
+  optional string case = 1;
+  optional string source = 2;
 }
 
 message SchemaEntry {

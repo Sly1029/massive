@@ -18,6 +18,15 @@ The artifact body is a deterministic JSON rendering of the typed plan field tree
 - repeated fields appear only when non-empty; empty lists are omitted (a step node with no fan-in has no `mergeInputs` member). This matches `protojson`'s default marshaling, so the canonical writer is plain `protojson.Marshal` of a fully populated message,
 - plans must not contain dangling references: every step node's `contractRef` resolves to an entry in `contracts`, and every contract's `environmentRef` resolves to an entry in `environments`.
 
+Graph IR `0.2` adds only data-only exhaustive routing records. A `decision`
+node carries its input schema, string `selector`, and ordered
+`cases[{tag,schema}]`; a conditional edge carries `case`; and a `select` node
+carries `decisionRef`, an output schema, and ordered
+`selectInputs[{case,source}]`. The compiler preserves those declarations in the
+typed plan without serializing predicates, transforms, or Python/TypeScript
+callables. A target that cannot execute these semantics must reject the plan
+with a semantic capability diagnostic rather than treating it as a static DAG.
+
 Shape:
 
 ```json
@@ -50,10 +59,31 @@ Shape:
         "symbolRef": "linear-chain/merge",
         "contractRef": "sha256:<hex>",
         "mergeInputs": ["left", "right"]
+      },
+      {
+        "id": "route",
+        "kind": "decision",
+        "inputSchema": "sha256:<hex>",
+        "selector": "kind",
+        "cases": [
+          { "tag": "accepted", "schema": "sha256:<hex>" },
+          { "tag": "rejected", "schema": "sha256:<hex>" }
+        ]
+      },
+      {
+        "id": "choose",
+        "kind": "select",
+        "decisionRef": "route",
+        "outputSchema": "sha256:<hex>",
+        "selectInputs": [
+          { "case": "accepted", "source": "accept" },
+          { "case": "rejected", "source": "reject" }
+        ]
       }
     ],
     "edges": [
-      { "from": "__start", "to": "double" }
+      { "from": "__start", "to": "double" },
+      { "from": "route", "to": "accept", "case": "accepted" }
     ]
   },
   "schemas": [

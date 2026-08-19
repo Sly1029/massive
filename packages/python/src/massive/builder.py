@@ -18,7 +18,7 @@ from typing import (
     overload,
 )
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
 
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import DepsT, InputT, StepContext
@@ -29,12 +29,15 @@ from .source_package import SourcePackage
 OutputT = TypeVar("OutputT")
 WorkflowInputT = TypeVar("WorkflowInputT")
 WorkflowOutputT = TypeVar("WorkflowOutputT")
+CaseT = TypeVar("CaseT", bound=BaseModel)
+SelectT = TypeVar("SelectT")
 
 _START = "__start"
 _END = "__end"
 # Graph IR versioning is independent from the outer WorkflowSpec transport
 # schema so graph evolution remains an explicit compiler contract.
 GRAPH_IR_VERSION = "0.1"
+_DECISION_GRAPH_IR_VERSION = "0.2"
 
 
 class SchemaPurpose(str, Enum):
@@ -46,6 +49,18 @@ class _WorkflowIdentity(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: SafePathSegment
+
+
+class _DecisionIdentity(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: SafePathSegment
+
+    @model_validator(mode="after")
+    def _reserve_select_suffix(self) -> _DecisionIdentity:
+        if len(self.id) + len("-select") > 128:
+            raise ValueError("must leave room for the derived '-select' node id")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +80,48 @@ class NodeHandle(Generic[OutputT]):
 
 
 @dataclass(frozen=True, slots=True)
+class CaseHandle(NodeHandle[CaseT], Generic[CaseT]):
+    decision_id: str
+    tag: str
+
+
+@dataclass(slots=True)
+class _DecisionDefinition:
+    id: str
+    source: NodeHandle[Any]
+    selector: str
+    cases: dict[str, type[BaseModel]]
+    claimed_cases: set[str]
+    branch_roots: dict[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class _SelectDefinition:
+    id: str
+    decision_id: str
+    output_type: Any
+    inputs: dict[str, NodeHandle[Any]]
+
+
+class DecisionHandle(Generic[OutputT]):
+    def __init__(self, graph: GraphBuilder[Any, Any, Any], definition: _DecisionDefinition) -> None:
+        self._graph = graph
+        self._definition = definition
+
+    def case(self, case_type: type[CaseT]) -> CaseHandle[CaseT]:
+        return self._graph._claim_decision_case(  # pyright: ignore[reportPrivateUsage]
+            self._definition.id, case_type
+        )
+
+    def select(
+        self, output_type: type[SelectT], **inputs: NodeHandle[SelectT]
+    ) -> NodeHandle[SelectT]:
+        return self._graph._select_decision(  # pyright: ignore[reportPrivateUsage]
+            self._definition.id, output_type, inputs
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class _StartHandle(Generic[WorkflowInputT]):
     output_type: Any
 
@@ -75,10 +132,17 @@ class _EndHandle(Generic[WorkflowOutputT]):
 
 
 class EdgePath(Generic[OutputT]):
-    def __init__(self, add_edge: Callable[[str, str], None], source: str, output_type: Any) -> None:
+    def __init__(
+        self,
+        add_edge: Callable[[str, str, str | None], None],
+        source: str,
+        output_type: Any,
+        case: str | None = None,
+    ) -> None:
         self._add_edge = add_edge
         self._source = source
         self._output_type = output_type
+        self._case = case
 
     @overload
     def to(self, target: NodeHandle[Any]) -> EdgePath[Any]: ...
@@ -91,7 +155,7 @@ class EdgePath(Generic[OutputT]):
         if self._output_type != expected:
             raise TypeError(f"edge from {self._source!r} has incompatible input type")
         target_id = target.node_id if isinstance(target, NodeHandle) else _END
-        self._add_edge(self._source, target_id)
+        self._add_edge(self._source, target_id, self._case)
         if isinstance(target, NodeHandle):
             return EdgePath(self._add_edge, target_id, target.output_type)
         return None
@@ -126,6 +190,9 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         self.end = _EndHandle[WorkflowOutputT](input_type=output_type)
         self._nodes: dict[str, tuple[StepDefinition[Any, Any, Any], NodeHandle[Any]]] = {}
         self._edges: set[tuple[str, str]] = set()
+        self._conditional_edges: set[tuple[str, str, str]] = set()
+        self._decisions: dict[str, _DecisionDefinition] = {}
+        self._selects: dict[str, _SelectDefinition] = {}
         self._emitted = False
 
     def step(
@@ -139,7 +206,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         ) -> StepDefinition[DepsT, InputT, OutputT]:
             if "<locals>" in function.__qualname__ or function.__name__ == "<lambda>":
                 raise TypeError("workflow steps must be top-level named functions")
-            hints = get_type_hints(function)
+            hints = get_type_hints(function, include_extras=True)
             parameters = list(inspect.signature(function).parameters)
             if len(parameters) != 1 or parameters[0] not in hints:
                 raise TypeError("a workflow step requires one annotated StepContext parameter")
@@ -181,7 +248,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
         node_id = SAFE_PATH_SEGMENT.validate_python(id or item.function.__name__)
-        if node_id in {_START, _END} or node_id in self._nodes:
+        if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved step id {node_id!r}")
         handle = NodeHandle[OutputT](
             node_id=node_id,
@@ -199,16 +266,226 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
 
     def edge_from(self, source: _StartHandle[Any] | NodeHandle[Any]) -> EdgePath[Any]:
         node_id = _START if isinstance(source, _StartHandle) else source.node_id
-        if node_id != _START and node_id not in self._nodes:
+        if node_id != _START and node_id not in self._known_node_ids():
             raise ValueError("edge source belongs to a different graph")
-        return EdgePath(self._add_edge, node_id, source.output_type)
+        case = source.tag if isinstance(source, CaseHandle) else None
+        return EdgePath(self._add_edge, node_id, source.output_type, case)
 
-    def _add_edge(self, source: str, target: str) -> None:
-        if source not in {_START, *self._nodes}:
+    def decision(self, source: NodeHandle[OutputT], *, on: str, id: str) -> DecisionHandle[OutputT]:
+        if self._emitted:
+            raise RuntimeError("graph has already been emitted")
+        if source.node_id not in self._known_node_ids():
+            raise ValueError("decision source belongs to a different graph")
+        identity = _DecisionIdentity(id=id)
+        if identity.id in self._known_node_ids():
+            raise ValueError(f"duplicate or reserved decision id {identity.id!r}")
+        cases = _decision_cases(source.output_type, on)
+        definition = _DecisionDefinition(
+            id=identity.id,
+            source=source,
+            selector=on,
+            cases=cases,
+            claimed_cases=set(),
+            branch_roots={},
+        )
+        self._decisions[identity.id] = definition
+        self._add_edge(source.node_id, identity.id, None)
+        return DecisionHandle(self, definition)
+
+    def _claim_decision_case(self, decision_id: str, case_type: type[CaseT]) -> CaseHandle[CaseT]:
+        if self._emitted:
+            raise RuntimeError("graph has already been emitted")
+        definition = self._decisions[decision_id]
+        matching_tags = [tag for tag, model in definition.cases.items() if model is case_type]
+        if not matching_tags:
+            raise TypeError(f"{case_type.__name__} is not a case for decision {decision_id!r}")
+        tag = matching_tags[0]
+        if tag in definition.claimed_cases:
+            raise ValueError(f"decision {decision_id!r} case {tag!r} is already connected")
+        definition.claimed_cases.add(tag)
+        return CaseHandle(
+            node_id=decision_id,
+            input_type=case_type,
+            output_type=case_type,
+            decision_id=decision_id,
+            tag=tag,
+        )
+
+    def _select_decision(
+        self,
+        decision_id: str,
+        output_type: type[SelectT],
+        inputs: dict[str, NodeHandle[SelectT]],
+    ) -> NodeHandle[SelectT]:
+        if self._emitted:
+            raise RuntimeError("graph has already been emitted")
+        definition = self._decisions[decision_id]
+        expected_tags = set(definition.cases)
+        if definition.claimed_cases != expected_tags:
+            missing = sorted(expected_tags - definition.claimed_cases, key=_canonical_sort_key)
+            raise ValueError(
+                f"decision {decision_id!r} has unconnected cases: {', '.join(missing)}"
+            )
+        if set(inputs) != expected_tags:
+            missing = sorted(expected_tags - set(inputs), key=_canonical_sort_key)
+            extra = sorted(set(inputs) - expected_tags, key=_canonical_sort_key)
+            details = [
+                *(f"missing {tag!r}" for tag in missing),
+                *(f"unknown {tag!r}" for tag in extra),
+            ]
+            raise ValueError(
+                f"decision {decision_id!r} select cases must match exactly: {', '.join(details)}"
+            )
+        lineages = self._activation_lineages()
+        for tag, source in inputs.items():
+            if source.node_id not in self._known_node_ids():
+                raise ValueError("decision select source belongs to a different graph")
+            if source.output_type is not output_type:
+                raise TypeError(
+                    f"decision {decision_id!r} case {tag!r} output type does not match select output"
+                )
+            root = definition.branch_roots.get(tag)
+            if root is not None and not self._is_reachable(root, source.node_id):
+                raise ValueError(
+                    f"decision {decision_id!r} case {tag!r} select source is not in that branch"
+                )
+            if root is not None:
+                self._validate_select_source_lineage(
+                    definition,
+                    tag,
+                    source,
+                    lineages,
+                )
+        select_id = f"{decision_id}-select"
+        if select_id in self._known_node_ids():
+            raise ValueError(f"duplicate derived select id {select_id!r}")
+        self._selects[select_id] = _SelectDefinition(
+            id=select_id,
+            decision_id=decision_id,
+            output_type=output_type,
+            inputs=cast(dict[str, NodeHandle[Any]], inputs),
+        )
+        for source in inputs.values():
+            self._add_edge(source.node_id, select_id, None)
+        return NodeHandle(node_id=select_id, input_type=output_type, output_type=output_type)
+
+    def _add_edge(self, source: str, target: str, case: str | None = None) -> None:
+        if source not in self._known_node_ids():
             raise ValueError(f"unknown edge source {source!r}")
-        if target not in {_END, *self._nodes}:
+        if target not in self._known_node_ids():
             raise ValueError(f"unknown edge target {target!r}")
+        if case is not None:
+            definition = self._decisions.get(source)
+            if definition is None or case not in definition.cases:
+                raise ValueError(f"unknown conditional decision edge {source!r}:{case!r}")
+            existing_root = definition.branch_roots.get(case)
+            if existing_root is not None:
+                raise ValueError(
+                    f"decision {source!r} case {case!r} already has branch root {existing_root!r}"
+                )
+            definition.branch_roots[case] = target
+            self._conditional_edges.add((source, target, case))
+            return
         self._edges.add((source, target))
+
+    def _known_node_ids(self) -> set[str]:
+        return {_START, _END, *self._nodes, *self._decisions, *self._selects}
+
+    def _is_reachable(self, source: str, target: str) -> bool:
+        pending = [source]
+        seen: set[str] = set()
+        adjacency: dict[str, list[str]] = {}
+        for edge_source, edge_target in self._edges:
+            adjacency.setdefault(edge_source, []).append(edge_target)
+        for edge_source, edge_target, _ in self._conditional_edges:
+            adjacency.setdefault(edge_source, []).append(edge_target)
+        while pending:
+            current = pending.pop()
+            if current == target:
+                return True
+            if current in seen:
+                continue
+            seen.add(current)
+            pending.extend(adjacency.get(current, ()))
+        return False
+
+    def _activation_lineages(self) -> dict[str, dict[str, str]]:
+        inbound: dict[str, list[tuple[str, str | None]]] = {}
+        for source, target in self._edges:
+            inbound.setdefault(target, []).append((source, None))
+        for source, target, tag in self._conditional_edges:
+            inbound.setdefault(target, []).append((source, tag))
+
+        pending = self._known_node_ids()
+        lineages: dict[str, dict[str, str]] = {}
+        while pending:
+            progressed = False
+            for node_id in sorted(pending, key=_canonical_sort_key):
+                select = self._selects.get(node_id)
+                if select is not None:
+                    enclosing = lineages.get(select.decision_id)
+                    if enclosing is None:
+                        continue
+                    lineages[node_id] = dict(enclosing)
+                    pending.remove(node_id)
+                    progressed = True
+                    break
+
+                dependencies = inbound.get(node_id, [])
+                if any(source not in lineages for source, _ in dependencies):
+                    continue
+                lineage: dict[str, str] = {}
+                for source, case in dependencies:
+                    for decision_id, tag in lineages[source].items():
+                        existing = lineage.get(decision_id)
+                        if existing is not None and existing != tag:
+                            raise ValueError(
+                                f"node {node_id!r} requires incompatible cases of decision "
+                                f"{decision_id!r}"
+                            )
+                        lineage[decision_id] = tag
+                    if case is not None:
+                        lineage[source] = case
+                lineages[node_id] = lineage
+                pending.remove(node_id)
+                progressed = True
+                break
+            if not progressed:
+                break
+        return lineages
+
+    def _validate_select_source_lineage(
+        self,
+        definition: _DecisionDefinition,
+        tag: str,
+        source: NodeHandle[Any],
+        lineages: dict[str, dict[str, str]],
+    ) -> None:
+        enclosing = lineages.get(definition.id)
+        actual = lineages.get(source.node_id)
+        if enclosing is None or actual is None:
+            return
+        expected = {**enclosing, definition.id: tag}
+        if actual == expected:
+            return
+        extras = [
+            f"{decision_id}={actual_tag!r}"
+            for decision_id, actual_tag in sorted(
+                actual.items(), key=lambda item: _canonical_sort_key(item[0])
+            )
+            if expected.get(decision_id) != actual_tag
+        ]
+        if extras:
+            raise ValueError(
+                f"decision {definition.id!r} case {tag!r} select source "
+                f"{source.node_id!r} has unresolved nested decision requirement "
+                f"{', '.join(extras)}; select nested decision outputs before using them "
+                "in an enclosing select"
+            )
+        raise ValueError(
+            f"decision {definition.id!r} case {tag!r} select source "
+            f"{source.node_id!r} is not active for the whole decision case"
+        )
 
     def emit(self, *, source: SourcePackage) -> WorkflowSpec:
         if self._emitted:
@@ -221,6 +498,24 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             raise ValueError("workflow start has no edge")
         if not any(target_id == _END for _, target_id in self._edges):
             raise ValueError("workflow end has no edge")
+
+        lineages = self._activation_lineages()
+        for select in self._selects.values():
+            decision = self._decisions[select.decision_id]
+            for tag, selected_source in select.inputs.items():
+                root = decision.branch_roots.get(tag)
+                if root is None:
+                    raise ValueError(f"decision {decision.id!r} case {tag!r} has no branch edge")
+                if not self._is_reachable(root, selected_source.node_id):
+                    raise ValueError(
+                        f"decision {decision.id!r} case {tag!r} select source is not in that branch"
+                    )
+                self._validate_select_source_lineage(
+                    decision,
+                    tag,
+                    selected_source,
+                    lineages,
+                )
 
         source_files, package_hash = source.manifest()
         schema_table: dict[str, JsonValue] = {}
@@ -286,7 +581,71 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                     "contractRef": contract_ref(step.contract or self.defaults),
                 }
             )
+        for decision_id, decision in sorted(
+            self._decisions.items(), key=lambda item: _canonical_sort_key(item[0])
+        ):
+            nodes.append(
+                {
+                    "id": decision_id,
+                    "kind": "decision",
+                    "inputSchema": schema_ref(
+                        decision.source.output_type,
+                        f"decision {decision_id!r} input schema",
+                        SchemaPurpose.OUTPUT,
+                    ),
+                    "selector": decision.selector,
+                    "cases": [
+                        {
+                            "tag": tag,
+                            "schema": schema_ref(
+                                case_type,
+                                f"decision {decision_id!r} case {tag!r} schema",
+                                SchemaPurpose.INPUT,
+                            ),
+                        }
+                        for tag, case_type in sorted(
+                            decision.cases.items(), key=lambda item: _canonical_sort_key(item[0])
+                        )
+                    ],
+                }
+            )
+        for select_id, select in sorted(
+            self._selects.items(), key=lambda item: _canonical_sort_key(item[0])
+        ):
+            nodes.append(
+                {
+                    "id": select_id,
+                    "kind": "select",
+                    "decisionRef": select.decision_id,
+                    "outputSchema": schema_ref(
+                        select.output_type,
+                        f"select {select_id!r} output schema",
+                        SchemaPurpose.OUTPUT,
+                    ),
+                    "selectInputs": [
+                        {"case": tag, "source": source.node_id}
+                        for tag, source in sorted(
+                            select.inputs.items(), key=lambda item: _canonical_sort_key(item[0])
+                        )
+                    ],
+                }
+            )
         nodes.append({"id": _END, "kind": "end"})
+        edges: list[dict[str, JsonValue]] = [
+            {"from": edge_source, "to": edge_target} for edge_source, edge_target in self._edges
+        ]
+        edges.extend(
+            {"from": edge_source, "to": edge_target, "case": case}
+            for edge_source, edge_target, case in self._conditional_edges
+        )
+        edges.sort(
+            key=lambda edge: tuple(
+                _canonical_sort_key(cast(str, edge[key]))
+                for key in ("from", "to", "case")
+                if key in edge
+            )
+        )
+        ir_version = _DECISION_GRAPH_IR_VERSION if self._decisions else GRAPH_IR_VERSION
         value = cast(
             JsonValue,
             {
@@ -299,11 +658,11 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                     "outputSchema": output_schema,
                 },
                 "graph": {
-                    "irVersion": GRAPH_IR_VERSION,
+                    "irVersion": ir_version,
                     "start": _START,
                     "end": _END,
                     "nodes": nodes,
-                    "edges": [{"from": edge[0], "to": edge[1]} for edge in sorted(self._edges)],
+                    "edges": edges,
                 },
                 "schemas": schema_table,
                 "symbols": symbols,
@@ -322,7 +681,77 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         spec_hash = sha256_ref(canonical_json(value))
         emitted = {**cast(dict[str, JsonValue], value), "specHash": spec_hash}
         self._emitted = True
-        return WorkflowSpec(value=emitted, spec_hash=spec_hash)
+        return WorkflowSpec(value=emitted, spec_hash=spec_hash, graph_version=ir_version)
+
+
+def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]]:
+    """Read a Pydantic tagged-union's declared cases from its core schema."""
+    core_schema = cast(dict[str, object], TypeAdapter(annotation).core_schema)
+    definitions: dict[str, type[BaseModel]] = {}
+    if core_schema.get("type") == "definitions":
+        raw_definitions = core_schema.get("definitions")
+        if isinstance(raw_definitions, list):
+            for raw_definition in cast(list[object], raw_definitions):
+                if not isinstance(raw_definition, dict):
+                    continue
+                definition = cast(dict[str, object], raw_definition)
+                reference = definition.get("ref")
+                model = definition.get("cls")
+                if (
+                    isinstance(reference, str)
+                    and isinstance(model, type)
+                    and issubclass(model, BaseModel)
+                ):
+                    definitions[reference] = model
+        raw_root_schema = core_schema.get("schema")
+        if isinstance(raw_root_schema, dict):
+            core_schema = cast(dict[str, object], raw_root_schema)
+
+    if core_schema.get("type") != "tagged-union":
+        raise TypeError(
+            "decision input must be a Pydantic discriminated union with string Literal tags"
+        )
+    if core_schema.get("discriminator") != selector:
+        raise TypeError(f"decision selector {selector!r} does not match the Pydantic discriminator")
+    raw_choices = core_schema.get("choices")
+    if not isinstance(raw_choices, dict) or not raw_choices:
+        raise TypeError("Pydantic discriminated union must declare one or more cases")
+    choices = cast(dict[object, object], raw_choices)
+
+    cases: dict[str, type[BaseModel]] = {}
+    tags_by_model: dict[type[BaseModel], list[str]] = {}
+    for raw_tag, raw_choice in choices.items():
+        if not isinstance(raw_tag, str):
+            raise TypeError("decision tags must be string Literal values")
+        if not isinstance(raw_choice, dict):
+            raise TypeError("decision cases must be direct Pydantic model alternatives")
+        choice = cast(dict[str, object], raw_choice)
+        choice_type = choice.get("type")
+        if choice_type == "model":
+            model = choice.get("cls")
+        elif choice_type == "definition-ref":
+            reference = choice.get("schema_ref")
+            model = definitions.get(reference) if isinstance(reference, str) else None
+        else:
+            raise TypeError("decision cases must be direct Pydantic model alternatives")
+        if not isinstance(model, type) or not issubclass(model, BaseModel):
+            raise TypeError("decision cases must be Pydantic models")
+        cases[raw_tag] = model
+        tags_by_model.setdefault(model, []).append(raw_tag)
+
+    for model, tags in tags_by_model.items():
+        if len(tags) > 1:
+            ordered_tags = sorted(tags, key=_canonical_sort_key)
+            rendered_tags = ", ".join(repr(tag) for tag in ordered_tags)
+            raise TypeError(
+                f"decision case {model.__name__} declares multiple discriminator tags "
+                f"{rendered_tags}; split it into one Pydantic model per tag"
+            )
+    return cases
+
+
+def _canonical_sort_key(value: str) -> bytes:
+    return value.encode("utf-16-be")
 
 
 def _symbol_module(function: Callable[..., Any], root: Path) -> str:
@@ -399,9 +828,7 @@ def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
                 "an Any value. Use an explicit integer, string, object, or collection schema."
             )
         type_value = value.get("type")
-        if type_value == "number" or (
-            isinstance(type_value, list) and "number" in type_value
-        ):
+        if type_value == "number" or (isinstance(type_value, list) and "number" in type_value):
             raise ValueError(
                 f"{role} uses JSON Schema type 'number' at {path}; "
                 "canonical-json-v0 is integer-only. Use an integer field or "
