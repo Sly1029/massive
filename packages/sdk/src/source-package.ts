@@ -24,14 +24,25 @@ export interface SourcePackage {
 export function sourcePackageDigest(
   files: readonly { readonly path: string; readonly hash: string }[],
 ): string {
+  if (files.length === 0) {
+    throw new SourcePackagePathError("source package files must not be empty");
+  }
   for (const [index, file] of files.entries()) {
+    const segments = file.path.split("/");
     if (
       file.path === "" || file.path.includes("\\") ||
       file.path.startsWith("/") || posix.normalize(file.path) !== file.path ||
-      file.path === "."
+      segments.some((segment) =>
+        segment === "" || segment === "." || segment === ".."
+      )
     ) {
       throw new SourcePackagePathError(
         `source package file ${index} path is not a normalized relative path: ${file.path}`,
+      );
+    }
+    if (!/^sha256:[0-9a-f]{64}$/.test(file.hash)) {
+      throw new SourcePackagePathError(
+        `source package file ${index} hash must be sha256:<64 lowercase hex>`,
       );
     }
     if (

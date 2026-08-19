@@ -1,6 +1,7 @@
 package sourceidentity
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -31,9 +32,16 @@ type hashInput struct {
 // Digest returns the source-package-v1 identity over ordered normalized paths
 // and their exact byte hashes.
 func Digest(files []File) (string, error) {
+	if len(files) == 0 {
+		return "", fmt.Errorf("source package files must not be empty")
+	}
 	for index, file := range files {
-		if file.Path == "" || strings.Contains(file.Path, "\\") || strings.HasPrefix(file.Path, "/") || path.Clean(file.Path) != file.Path || file.Path == "." {
+		segments := strings.Split(file.Path, "/")
+		if file.Path == "" || strings.Contains(file.Path, "\\") || strings.HasPrefix(file.Path, "/") || path.Clean(file.Path) != file.Path || hasInvalidSegment(segments) {
 			return "", fmt.Errorf("source package file %d path %q is not a normalized relative path", index, file.Path)
+		}
+		if !validSHA256Ref(file.Hash) {
+			return "", fmt.Errorf("source package file %d hash must be sha256:<64 lowercase hex>", index)
 		}
 		if index > 0 && !canonical.LessUTF16(files[index-1].Path, file.Path) {
 			return "", fmt.Errorf("source package files must have unique paths in UTF-16 code-unit order")
@@ -54,4 +62,22 @@ func Digest(files []File) (string, error) {
 		return "", fmt.Errorf("marshal source package hash input: %w", err)
 	}
 	return canonical.DigestJSON(data)
+}
+
+func hasInvalidSegment(segments []string) bool {
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func validSHA256Ref(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	hexValue := strings.TrimPrefix(value, "sha256:")
+	decoded, err := hex.DecodeString(hexValue)
+	return err == nil && len(decoded) == 32 && strings.ToLower(hexValue) == hexValue
 }

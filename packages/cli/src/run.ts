@@ -435,10 +435,17 @@ async function runOrchestrator(
   }
 
   const runnerEnvironment = await pythonRunnerEnvironment(root, emitted.spec);
+  // The TS CLI already resolved its prefix into req.storeRoot. Clear the
+  // user-facing env for the child so the low-level Go CLI does not apply it a
+  // second time; direct Go CLI users still get the same env behavior.
+  const orchestratorEnvironment = {
+    ...(runnerEnvironment ?? {}),
+    MASSIVE_STORE_PREFIX: "",
+  };
   const { code, stdout, stderr } = await new Deno.Command(binary, {
     args,
     cwd: root,
-    ...(runnerEnvironment === undefined ? {} : { env: runnerEnvironment }),
+    env: orchestratorEnvironment,
     stdout: "piped",
     stderr: "piped",
   }).output();

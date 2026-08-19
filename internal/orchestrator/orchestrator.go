@@ -626,7 +626,12 @@ func populateSnapshot(sourceRoot string, dir string, files []SourcePackageFile) 
 // dir with content that hashes to its recorded digest.
 func snapshotMatchesManifest(dir string, files []SourcePackageFile) bool {
 	for _, file := range files {
-		content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(file.Path)))
+		candidate := filepath.Join(dir, filepath.FromSlash(file.Path))
+		contained, err := pathWithin(dir, candidate)
+		if err != nil || !contained {
+			return false
+		}
+		content, err := os.ReadFile(candidate)
 		if err != nil {
 			return false
 		}

@@ -117,6 +117,19 @@ Deno.test("parseWorkflowSpecText rejects a WorkflowSpec whose hash does not matc
   );
 });
 
+Deno.test("parseWorkflowSpec rejects a source package hash that contradicts its manifest", async () => {
+  const value = JSON.parse(await emitPythonWorkflowSpec()) as WorkflowSpec;
+  (value.sourcePackages["python-main"] as { packageHash: string })
+    .packageHash = `sha256:${"0".repeat(64)}`;
+  (value as { specHash: string }).specHash = computeSpecHash(value);
+
+  await assertRejects(
+    () => parseWorkflowSpec(value),
+    WorkflowSpecError,
+    "packageHash mismatch",
+  );
+});
+
 Deno.test("parseWorkflowSpecText rejects noncanonical JSON bytes", async () => {
   const text = await emitPythonWorkflowSpec();
 

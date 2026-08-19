@@ -278,7 +278,9 @@ The CLI accepts `--store-prefix <relative-key>` or
 `MASSIVE_STORE_PREFIX=<relative-key>` (`--store-prefix` wins). The validated
 prefix is applied ahead of every logical datastore key and therefore isolates
 physical storage without changing workflow, plan, or artifact content
-identity.
+identity. The user-facing TypeScript CLI and the low-level Go orchestrator CLI
+apply the same precedence and validation rules; the TypeScript handoff passes
+an already-resolved root so the child does not apply the environment twice.
 
 ## No Metadata Database In V0
 

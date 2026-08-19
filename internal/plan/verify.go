@@ -54,6 +54,9 @@ func validateVersionedIdentity(plan *planpb.WorkflowPlan) error {
 	if plan.SchemaVersion == nil || plan.GetSchemaVersion() != 0 {
 		return fmt.Errorf("workflow plan schemaVersion must be present and equal 0")
 	}
+	if plan.SpecHash == nil || plan.GetSpecHash() == "" {
+		return fmt.Errorf("workflow plan specHash must be present")
+	}
 	if err := validateHashingSpec(plan.GetHashing(), "workflow-plan", "workflow plan"); err != nil {
 		return err
 	}
@@ -63,8 +66,11 @@ func validateVersionedIdentity(plan *planpb.WorkflowPlan) error {
 	if plan.Graph == nil || plan.Graph.IrVersion == nil || plan.Graph.GetIrVersion() == "" {
 		return fmt.Errorf("workflow plan graph.irVersion must be present")
 	}
-	if plan.Provenance == nil || plan.Provenance.CompilerVersion == nil || plan.Provenance.GetCompilerVersion() == "" {
-		return fmt.Errorf("workflow plan provenance.compilerVersion must be present")
+	if plan.Provenance == nil || plan.Provenance.CompilerName == nil || plan.Provenance.GetCompilerName() == "" || plan.Provenance.CompilerVersion == nil || plan.Provenance.GetCompilerVersion() == "" || plan.Provenance.SourceSpecHash == nil {
+		return fmt.Errorf("workflow plan provenance compiler name, version, and source spec hash must be present")
+	}
+	if plan.Provenance.GetSourceSpecHash() != plan.GetSpecHash() {
+		return fmt.Errorf("workflow plan provenance sourceSpecHash must equal specHash")
 	}
 	for index, sourcePackage := range plan.SourcePackages {
 		if err := validateHashingSpec(sourcePackage.GetHashing(), "source-package", fmt.Sprintf("workflow plan sourcePackages[%d]", index)); err != nil {

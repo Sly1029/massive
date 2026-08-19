@@ -38,12 +38,23 @@ def test_source_package_orders_paths_by_utf16_code_units(tmp_path: Path) -> None
         ["b.py", "a.py"],
         ["a.py", "a.py"],
         ["./a.py"],
+        ["../a.py"],
         ["src//a.py"],
         ["src/../a.py"],
+        ["src/"],
     ],
 )
 def test_source_package_identity_rejects_noncanonical_paths(paths: list[str]) -> None:
     with pytest.raises(ValidationError, match="normalized relative path|UTF-16"):
         SourcePackageHashInput.model_validate(
             {"files": [{"path": path, "hash": "sha256:" + "a" * 64} for path in paths]}
+        )
+
+
+def test_source_package_identity_rejects_empty_files_and_invalid_hashes() -> None:
+    with pytest.raises(ValidationError):
+        SourcePackageHashInput(files=())
+    with pytest.raises(ValidationError, match="pattern"):
+        SourcePackageHashInput.model_validate(
+            {"files": [{"path": "a.py", "hash": "sha256:not-a-digest"}]}
         )

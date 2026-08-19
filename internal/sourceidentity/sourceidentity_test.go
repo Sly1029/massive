@@ -41,8 +41,12 @@ func TestDigestRejectsNoncanonicalFileManifests(t *testing.T) {
 		{name: "unsorted", files: []File{{Path: "b.py", Hash: validHash}, {Path: "a.py", Hash: validHash}}},
 		{name: "duplicate", files: []File{{Path: "a.py", Hash: validHash}, {Path: "a.py", Hash: validHash}}},
 		{name: "dot prefix", files: []File{{Path: "./a.py", Hash: validHash}}},
+		{name: "leading parent", files: []File{{Path: "../a.py", Hash: validHash}}},
 		{name: "double slash", files: []File{{Path: "src//a.py", Hash: validHash}}},
+		{name: "trailing slash", files: []File{{Path: "src/", Hash: validHash}}},
 		{name: "backslash", files: []File{{Path: `src\a.py`, Hash: validHash}}},
+		{name: "invalid hash", files: []File{{Path: "a.py", Hash: "sha256:not-a-digest"}}},
+		{name: "empty", files: nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := Digest(test.files); err == nil {

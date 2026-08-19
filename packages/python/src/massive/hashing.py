@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Literal, Self, cast
+from typing import Annotated, Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from .canonical import JsonValue, canonical_json, sha256_ref, utf16_sort_key
 
@@ -26,17 +26,20 @@ WORKFLOW_SPEC_HASHING = HashingSpec(recipe="workflow-spec")
 SOURCE_PACKAGE_HASHING = HashingSpec(recipe="source-package")
 
 
+SHA256Ref = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
+
+
 class SourcePackageFileHash(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     path: str
-    hash: str
+    hash: SHA256Ref
 
 
 class SourcePackageHashInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    files: tuple[SourcePackageFileHash, ...]
+    files: tuple[SourcePackageFileHash, ...] = Field(min_length=1)
     hashing: HashingSpec = SOURCE_PACKAGE_HASHING
     kind: Literal["SourcePackageHashInput"] = "SourcePackageHashInput"
     schema_version: Literal[0] = Field(default=0, alias="schemaVersion")

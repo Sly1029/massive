@@ -952,6 +952,21 @@ func TestSourcePackageHashGoldenVector(t *testing.T) {
 	}
 }
 
+func TestSnapshotManifestCannotReadOutsideSnapshotRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(filepath.Dir(root), "outside-source.py")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := []SourcePackageFile{{
+		Path: "../outside-source.py",
+		Hash: canonical.DigestBytes([]byte("secret")),
+	}}
+	if snapshotMatchesManifest(root, files) {
+		t.Fatal("snapshot manifest accepted an out-of-root file")
+	}
+}
+
 func TestRunFailsAtSelectWhenACompiledPlanBypassesLineageValidation(t *testing.T) {
 	sourceRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(sourceRoot, "workflow.ts"), []byte("// exercised through the functional datastore invoker\n"), 0o644); err != nil {

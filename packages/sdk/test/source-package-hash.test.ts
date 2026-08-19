@@ -27,9 +27,13 @@ Deno.test("source package identity rejects noncanonical file manifests", () => {
   for (
     const files of [
       [{ path: "b.py", hash }, { path: "a.py", hash }],
-    [{ path: "a.py", hash }, { path: "a.py", hash }],
-    [{ path: "./a.py", hash }],
-    [{ path: "src/../a.py", hash }],
+      [{ path: "a.py", hash }, { path: "a.py", hash }],
+      [{ path: "./a.py", hash }],
+      [{ path: "../a.py", hash }],
+      [{ path: "src/../a.py", hash }],
+      [{ path: "src/", hash }],
+      [{ path: "a.py", hash: "sha256:not-a-digest" }],
+      [],
     ]
   ) {
     assertThrows(() => sourcePackageDigest(files));

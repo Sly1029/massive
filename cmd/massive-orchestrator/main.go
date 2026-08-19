@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/orchestrator"
@@ -62,6 +63,7 @@ func run(args []string) (bool, error) {
 	flags.SetOutput(os.Stderr)
 	specPath := flags.String("spec", "", "workflow spec JSON file")
 	storePath := flags.String("store", "", "local datastore root")
+	storePrefix := flags.String("store-prefix", "", "validated relative prefix under the local datastore root")
 	projectID := flags.String("project", "", "project id")
 	runID := flags.String("run-id", "", "run id")
 	input := flags.String("input", "", "workflow input JSON")
@@ -78,6 +80,16 @@ func run(args []string) (bool, error) {
 	if *input == "" {
 		return *jsonOutput, fmt.Errorf("run requires --input")
 	}
+	storePrefixSet := false
+	flags.Visit(func(flagValue *flag.Flag) {
+		if flagValue.Name == "store-prefix" {
+			storePrefixSet = true
+		}
+	})
+	storeRoot, err := resolveStoreRoot(*storePath, *storePrefix, storePrefixSet)
+	if err != nil {
+		return *jsonOutput, err
+	}
 
 	specData, err := os.ReadFile(*specPath)
 	if err != nil {
@@ -92,13 +104,6 @@ func run(args []string) (bool, error) {
 		return *jsonOutput, fmt.Errorf("compile workflow plan: %w", err)
 	}
 
-	storeRoot := *storePath
-	if storeRoot == "" {
-		storeRoot, err = defaultStoreRoot()
-		if err != nil {
-			return *jsonOutput, err
-		}
-	}
 	project := *projectID
 	if project == "" {
 		project, err = projectFromGitOrigin()
@@ -266,6 +271,32 @@ func defaultStoreRoot() (string, error) {
 		return "", fmt.Errorf("resolve home directory for default store: %w", err)
 	}
 	return filepath.Join(home, ".massive", "store"), nil
+}
+
+func resolveStoreRoot(storePath string, flagPrefix string, flagPrefixSet bool) (string, error) {
+	root := storePath
+	var err error
+	if root == "" {
+		root, err = defaultStoreRoot()
+		if err != nil {
+			return "", err
+		}
+	}
+	prefix := os.Getenv("MASSIVE_STORE_PREFIX")
+	if flagPrefixSet {
+		prefix = flagPrefix
+	}
+	if prefix == "" && !flagPrefixSet {
+		return root, nil
+	}
+	if strings.TrimSpace(prefix) != prefix || strings.IndexFunc(prefix, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("invalid storage prefix %q: must not contain control or leading/trailing whitespace", prefix)
+	}
+	key, err := datastore.ParseKey(prefix)
+	if err != nil {
+		return "", fmt.Errorf("invalid storage prefix %q: %w", prefix, err)
+	}
+	return filepath.Join(root, filepath.FromSlash(key.String())), nil
 }
 
 func projectFromGitOrigin() (string, error) {

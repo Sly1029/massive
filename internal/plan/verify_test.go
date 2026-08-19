@@ -50,7 +50,8 @@ func TestVerifyCanonicalJSONRequiresEveryIdentityVersion(t *testing.T) {
 		{name: "plan hash recipe", path: []string{"hashing", "recipeVersion"}, want: "hashing descriptor must be present and complete"},
 		{name: "spec hash recipe", path: []string{"specHashing", "recipeVersion"}, want: "specHash hashing descriptor must be present and complete"},
 		{name: "graph IR", path: []string{"graph", "irVersion"}, want: "graph.irVersion must be present"},
-		{name: "compiler", path: []string{"provenance", "compilerVersion"}, want: "provenance.compilerVersion must be present"},
+		{name: "spec hash", path: []string{"specHash"}, want: "specHash must be present"},
+		{name: "compiler", path: []string{"provenance", "compilerVersion"}, want: "provenance compiler name, version, and source spec hash must be present"},
 		{name: "source package hash recipe", path: []string{"sourcePackages", "0", "hashing", "recipeVersion"}, want: "sourcePackages[0] hashing descriptor must be present and complete"},
 	}
 	for _, test := range tests {

@@ -48,6 +48,9 @@ Deno.test("storage prefix flag and environment isolate bytes without changing wo
   assert(await exists(join(store, "tenants", "flag", "projects")));
   assertEquals(await exists(join(store, "tenants", "ignored")), false);
   assertEquals(await exists(join(store, "projects")), false);
+  const rootEntries: string[] = [];
+  for await (const entry of Deno.readDir(store)) rootEntries.push(entry.name);
+  assertEquals(rootEntries.sort(), ["tenants"]);
 
   const environmentOutcome = JSON.parse(fromEnvironment.stdout) as {
     specHash: string;
