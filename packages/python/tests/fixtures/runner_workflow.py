@@ -26,6 +26,10 @@ class DecimalResult(BaseModel):
     value: Decimal
 
 
+class InvocationResult(BaseModel):
+    idempotency_key: str
+
+
 graph = GraphBuilder(
     name="runner-fixture",
     input_type=Request,
@@ -47,6 +51,16 @@ def double(context: StepContext[None, Request]) -> Result:
 @graph.step()
 async def increment(context: StepContext[None, Request]) -> Result:
     return Result(value=context.inputs.value + 1)
+
+
+@graph.step()
+def capture_sync_invocation(context: StepContext[None, Request]) -> InvocationResult:
+    return InvocationResult(idempotency_key=context.invocation.idempotency_key)
+
+
+@graph.step()
+async def capture_async_invocation(context: StepContext[None, Request]) -> InvocationResult:
+    return InvocationResult(idempotency_key=context.invocation.idempotency_key)
 
 
 @graph.step()

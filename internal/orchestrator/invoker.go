@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Sly1029/massive/internal/artifact"
 )
 
 const descriptorPathToken = "{descriptor}"
@@ -76,6 +78,11 @@ type ProcessStepInvoker struct {
 func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocationBatch) ([]StepInvocationOutcome, error) {
 	if len(batch.Steps) == 0 {
 		return nil, nil
+	}
+	for _, step := range batch.Steps {
+		if err := validateDescriptorFileIdentity(step.Descriptor); err != nil {
+			return nil, err
+		}
 	}
 
 	descriptorDir := i.DescriptorDir
@@ -176,24 +183,30 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 }
 
 func descriptorFilePath(descriptorDir string, descriptor StepInvocationDescriptor) (string, error) {
-	if !validSafePathSegment(descriptor.RunID) || !validSafePathSegment(descriptor.NodeID) || descriptor.Attempt < 1 {
-		return "", fmt.Errorf("invalid descriptor identity for filename")
+	if err := validateDescriptorFileIdentity(descriptor); err != nil {
+		return "", err
 	}
 	parts := []string{descriptorDir, descriptor.RunID, descriptor.NodeID}
 	if descriptor.Scope != nil {
-		if len(descriptor.Scope.Frames) == 0 {
-			return "", fmt.Errorf("invalid empty descriptor scope")
-		}
 		parts = append(parts, "scopes")
 		for _, frame := range descriptor.Scope.Frames {
-			if frame.Kind != "map-item" || !validSafePathSegment(frame.MapID) || frame.Index < 0 {
-				return "", fmt.Errorf("invalid descriptor scope frame")
-			}
 			parts = append(parts, "maps", frame.MapID, "items", fmt.Sprint(frame.Index))
 		}
 	}
 	parts = append(parts, fmt.Sprint(descriptor.Attempt)+".json")
 	return filepath.Join(parts...), nil
+}
+
+func validateDescriptorFileIdentity(descriptor StepInvocationDescriptor) error {
+	if !validSafePathSegment(descriptor.RunID) || !validSafePathSegment(descriptor.NodeID) || descriptor.Attempt < 1 || int64(descriptor.Attempt) > artifact.MaxJSONSafeInteger {
+		return fmt.Errorf("invalid descriptor identity for filename")
+	}
+	if descriptor.Scope != nil {
+		if err := artifact.ValidateExecutionScope(descriptor.Scope); err != nil {
+			return fmt.Errorf("invalid descriptor scope: %w", err)
+		}
+	}
+	return nil
 }
 
 func substituteDescriptorPath(command []string, descriptorPath string) []string {

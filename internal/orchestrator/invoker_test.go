@@ -1,10 +1,13 @@
 package orchestrator
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Sly1029/massive/internal/artifact"
 )
 
 func TestDefaultRunnerCommandScopesDenoPermissions(t *testing.T) {
@@ -109,6 +112,29 @@ func TestDescriptorFilePathIncludesEveryOrderedScopeFrame(t *testing.T) {
 	want := filepath.Join(root, "run-1", "task", "scopes", "maps", "outer", "items", "0", "maps", "inner", "items", "4", "1.json")
 	if path != want {
 		t.Fatalf("scoped descriptor path = %q, want %q", path, want)
+	}
+}
+
+func TestProcessStepInvokerRejectsUnsafeScopeIdentityBeforeWritingDescriptors(t *testing.T) {
+	for name, descriptor := range map[string]StepInvocationDescriptor{
+		"scope index above JSON safe integer": {
+			RunID: "run-1", NodeID: "task", Attempt: 1,
+			Scope: &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: "fanout", Index: int(artifact.MaxJSONSafeInteger + 1)}}},
+		},
+		"attempt above JSON safe integer": {
+			RunID: "run-1", NodeID: "task", Attempt: int(artifact.MaxJSONSafeInteger + 1),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			descriptorDir := filepath.Join(t.TempDir(), "descriptors")
+			_, err := (ProcessStepInvoker{DescriptorDir: descriptorDir, CommandTemplate: []string{"must-not-run"}}).InvokeSteps(t.Context(), StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor}}})
+			if err == nil {
+				t.Fatal("InvokeSteps accepted unsafe descriptor identity")
+			}
+			if _, err := os.Stat(descriptorDir); !os.IsNotExist(err) {
+				t.Fatalf("unsafe descriptor created directory %q: %v", descriptorDir, err)
+			}
+		})
 	}
 }
 

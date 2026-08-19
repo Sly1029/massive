@@ -341,6 +341,12 @@ It includes:
 - output artifact destinations and schema refs,
 - datastore configuration needed by the adapter.
 
+Python runners expose this identity to step code as the unambiguous
+idempotency key
+`massive-invocation-v1/<runId>/<nodeId>[/scope/maps/<mapId>/items/<index>...]/attempt/<attempt>`.
+Scope frames remain ordered outer-to-inner. Static invocations omit the scope
+portion but retain the required attempt suffix.
+
 Example:
 
 ```json

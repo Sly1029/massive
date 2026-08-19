@@ -52,6 +52,90 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
 
 
 @pytest.mark.parametrize(
+    ("export", "scope", "attempt", "expected_key"),
+    [
+        (
+            "capture_sync_invocation",
+            {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 0}]},
+            1,
+            "massive-invocation-v1/python-runner-test/capture_sync_invocation/scope/maps/fanout/items/0/attempt/1",
+        ),
+        (
+            "capture_sync_invocation",
+            {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 1}]},
+            1,
+            "massive-invocation-v1/python-runner-test/capture_sync_invocation/scope/maps/fanout/items/1/attempt/1",
+        ),
+        (
+            "capture_async_invocation",
+            {
+                "frames": [
+                    {"kind": "map-item", "mapId": "outer", "index": 0},
+                    {"kind": "map-item", "mapId": "inner", "index": 3},
+                ]
+            },
+            2,
+            "massive-invocation-v1/python-runner-test/capture_async_invocation/scope/maps/outer/items/0/maps/inner/items/3/attempt/2",
+        ),
+        (
+            "capture_async_invocation",
+            {
+                "frames": [
+                    {"kind": "map-item", "mapId": "inner", "index": 3},
+                    {"kind": "map-item", "mapId": "outer", "index": 0},
+                ]
+            },
+            2,
+            "massive-invocation-v1/python-runner-test/capture_async_invocation/scope/maps/inner/items/3/maps/outer/items/0/attempt/2",
+        ),
+    ],
+)
+def test_runner_exposes_collision_free_scoped_idempotency_keys(
+    tmp_path: Path, export: str, scope: dict[str, object], attempt: int, expected_key: str
+) -> None:
+    output_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["idempotency_key"],
+        "properties": {"idempotency_key": {"type": "string"}},
+    }
+    descriptor_path, descriptor, store = _descriptor(
+        tmp_path, export=export, output_schema=output_schema
+    )
+    descriptor["scope"] = scope
+    descriptor["attempt"] = attempt
+    scope_path = "/scopes" + "".join(
+        f"/maps/{frame['mapId']}/items/{frame['index']}" for frame in scope["frames"]
+    )
+    descriptor["output"]["manifestKey"] = (
+        f"projects/{PROJECT_KEY}/runs/python-runner-test/steps/{export}{scope_path}/"
+        f"{attempt}/output-manifest.json"
+    )
+    descriptor_path.write_text(canonical_json(cast(JsonValue, descriptor)))
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 0, result.stderr
+    publication, body = ArtifactRuntime(LocalDatastore(store)).resolve_json(
+        Destination(
+            manifest_key=descriptor["output"]["manifestKey"], schema_ref=descriptor["output"]["schema"]
+        ),
+        Producer.model_validate(
+            {
+                "projectKey": descriptor["projectKey"],
+                "planHash": descriptor["planHash"],
+                "runId": descriptor["runId"],
+                "nodeId": descriptor["nodeId"],
+                "attempt": descriptor["attempt"],
+                "scope": descriptor["scope"],
+            }
+        ),
+    )
+    assert publication.manifest.key == descriptor["output"]["manifestKey"]
+    assert body == canonical_json({"idempotency_key": expected_key}).encode()
+
+
+@pytest.mark.parametrize(
     ("export", "input_value", "expected_exit"),
     [
         ("double", {"value": "not-an-integer"}, 65),
@@ -257,7 +341,11 @@ def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path) -> None:
 
 
 def _descriptor(
-    tmp_path: Path, *, export: str, input_value: dict[str, object] | None = None
+    tmp_path: Path,
+    *,
+    export: str,
+    input_value: dict[str, object] | None = None,
+    output_schema: dict[str, JsonValue] | None = None,
 ) -> tuple[Path, dict[str, Any], Path]:
     source_root = Path(__file__).parent / "fixtures"
     store = tmp_path / "store"
@@ -269,6 +357,8 @@ def _descriptor(
     }
     schema_text = canonical_json(schema)
     schema_hash = sha256_ref(schema_text)
+    output_schema_text = canonical_json(output_schema or schema)
+    output_schema_hash = sha256_ref(output_schema_text)
     input_text = canonical_json(cast(JsonValue, input_value or {"value": 21}))
     archive_body = _source_archive(source_root)
     package_hash = "sha256:" + "d" * 64
@@ -308,7 +398,7 @@ def _descriptor(
         },
         "output": {
             "manifestKey": f"projects/{PROJECT_KEY}/runs/python-runner-test/steps/{export}/1/output-manifest.json",
-            "schema": schema_hash,
+            "schema": output_schema_hash,
         },
         "datastore": {"kind": "local", "path": str(store)},
     }
@@ -316,6 +406,7 @@ def _descriptor(
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     archive_path.write_bytes(archive_body)
     _write(store, f"blobs/sha256/{schema_hash.removeprefix('sha256:')}", schema_text)
+    _write(store, f"blobs/sha256/{output_schema_hash.removeprefix('sha256:')}", output_schema_text)
     _write(store, descriptor["input"]["artifact"]["key"], input_text)
     descriptor_path = tmp_path / "descriptor.json"
     descriptor_path.write_text(canonical_json(descriptor))

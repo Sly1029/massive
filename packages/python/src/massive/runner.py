@@ -42,7 +42,7 @@ from .datastore import (
     LocalDatastore,
     S3Datastore,
 )
-from .identity import SHA256_REFERENCE
+from .identity import SHA256_REFERENCE, InvocationIdentity
 from .identity import ExecutionScope as ArtifactExecutionScope
 
 _SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
@@ -209,7 +209,14 @@ def _execute_source(
         invocation=InvocationContext(
             run_id=descriptor["runId"],
             step_id=descriptor["nodeId"],
-            idempotency_key=f"{descriptor['runId']}:{descriptor['nodeId']}",
+            idempotency_key=InvocationIdentity.model_validate(
+                {
+                    "runId": descriptor["runId"],
+                    "nodeId": descriptor["nodeId"],
+                    "attempt": descriptor["attempt"],
+                    **({} if "scope" not in descriptor else {"scope": descriptor["scope"]}),
+                }
+            ).idempotency_key,
         ),
     )
     try:

@@ -23,7 +23,7 @@ const (
 	JSONContentType     = "application/json"
 	ManifestContentType = "application/vnd.massive.data-artifact-manifest+json"
 	manifestSchemaRef   = "https://massive.dev/conformance/schema/data-artifact-manifest.schema.json"
-	maxArtifactAttempt  = int64(9007199254740991) // JSON's largest exact integer.
+	MaxJSONSafeInteger  = int64(9007199254740991) // JSON's largest exact integer.
 )
 
 var (
@@ -210,17 +210,28 @@ func validateProducerIdentity(producer Producer) error {
 	if !isSafePathSegment(producer.NodeID) {
 		return fmt.Errorf("%w: node ID %q is not a safe path segment", ErrValidation, producer.NodeID)
 	}
-	if producer.Attempt < 1 || int64(producer.Attempt) > maxArtifactAttempt {
+	if producer.Attempt < 1 || int64(producer.Attempt) > MaxJSONSafeInteger {
 		return fmt.Errorf("%w: attempt must be an exact positive JSON integer", ErrValidation)
 	}
-	if producer.Scope != nil {
-		if len(producer.Scope.Frames) == 0 {
-			return fmt.Errorf("%w: scope must contain at least one frame", ErrValidation)
-		}
-		for _, frame := range producer.Scope.Frames {
-			if frame.Kind != "map-item" || !isSafePathSegment(frame.MapID) || frame.Index < 0 || int64(frame.Index) > maxArtifactAttempt {
-				return fmt.Errorf("%w: scope frame must be a map item with a safe map ID and exact nonnegative JSON index", ErrValidation)
-			}
+	if err := ValidateExecutionScope(producer.Scope); err != nil {
+		return fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	return nil
+}
+
+// ValidateExecutionScope is shared by artifact publication and orchestration
+// paths that derive scope-controlled filesystem names before a runner parses
+// the descriptor schema.
+func ValidateExecutionScope(scope *ExecutionScope) error {
+	if scope == nil {
+		return nil
+	}
+	if len(scope.Frames) == 0 {
+		return errors.New("scope must contain at least one frame")
+	}
+	for _, frame := range scope.Frames {
+		if frame.Kind != "map-item" || !isSafePathSegment(frame.MapID) || frame.Index < 0 || int64(frame.Index) > MaxJSONSafeInteger {
+			return errors.New("scope frame must be a map item with a safe map ID and exact nonnegative JSON index")
 		}
 	}
 	return nil
