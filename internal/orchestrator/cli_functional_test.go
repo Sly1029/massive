@@ -19,7 +19,7 @@ import (
 )
 
 func TestCompilerCLIFunctional(t *testing.T) {
-	for _, fixture := range []string{"passthrough", "linear-chain", "diamond"} {
+	for _, fixture := range []string{"passthrough", "linear-chain", "diamond", "exhaustive-decision"} {
 		t.Run(fixture, func(t *testing.T) {
 			outDir := t.TempDir()
 			specPath := filepath.Join(repoRootForTest(t), "conformance", "fixtures", "specs", fixture, "workflow-spec.json")

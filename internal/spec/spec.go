@@ -510,6 +510,7 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 	}
 
 	decisionCases := make(map[string]map[string]bool)
+	decisionCaseSchemas := make(map[string]map[string]string)
 	for index, node := range parsed.Graph.Nodes {
 		if node.Kind != NodeKindDecision {
 			continue
@@ -519,6 +520,7 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.InputSchema, Message: "decision input schema reference does not exist"})
 		}
 		tags := make(map[string]bool, len(node.Cases))
+		caseSchemas := make(map[string]string, len(node.Cases))
 		for caseIndex, decisionCase := range node.Cases {
 			casePath := fmt.Sprintf("%s.cases[%d]", path, caseIndex)
 			if tags[decisionCase.Tag] {
@@ -526,11 +528,33 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 				continue
 			}
 			tags[decisionCase.Tag] = true
+			caseSchemas[decisionCase.Tag] = decisionCase.Schema
 			if _, exists := parsed.Schemas[decisionCase.Schema]; !exists {
 				diagnostics = append(diagnostics, Diagnostic{Path: casePath + ".schema", Ref: decisionCase.Schema, Message: "decision case schema reference does not exist"})
 			}
 		}
 		decisionCases[node.ID] = tags
+		decisionCaseSchemas[node.ID] = caseSchemas
+
+		inboundEdges := make([]GraphEdge, 0, 1)
+		for _, edge := range parsed.Graph.Edges {
+			if edge.To == node.ID {
+				inboundEdges = append(inboundEdges, edge)
+			}
+		}
+		if len(inboundEdges) != 1 {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.ID, Message: "decision requires exactly one inbound value producer"})
+			continue
+		}
+		producer, exists := nodeByID[inboundEdges[0].From]
+		producerSchema, valueProducer := outputSchemaOfValueProducer(producer)
+		if !exists || !valueProducer || inboundEdges[0].Case != "" {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: inboundEdges[0].From, Message: "decision requires exactly one inbound value producer (step or select)"})
+			continue
+		}
+		if producerSchema != node.InputSchema {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: inboundEdges[0].From, Message: "decision input schema must equal its sole producer output schema"})
+		}
 	}
 
 	conditionalCounts := make(map[string]map[string]int)
@@ -551,6 +575,14 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 		if !decisionCases[edge.From][edge.Case] {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".case", Ref: edge.Case, Message: "conditional edge case is not declared by its decision"})
 			continue
+		}
+		target, targetExists := nodeByID[edge.To]
+		if targetExists && target.Kind != NodeKindStep {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".to", Ref: edge.To, Message: "conditional edge target must be a step node"})
+		}
+		if targetExists && target.Kind == NodeKindStep && target.InputSchema != decisionCaseSchemas[edge.From][edge.Case] {
+			targetIndex := nodeIndexes[edge.To]
+			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].inputSchema", targetIndex), Ref: edge.To, Message: "conditional target input schema must equal decision case schema"})
 		}
 		if conditionalCounts[edge.From] == nil {
 			conditionalCounts[edge.From] = make(map[string]int)
@@ -604,6 +636,8 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			source, sourceExists := nodeByID[input.Source]
 			if !sourceExists || (source.Kind != NodeKindStep && source.Kind != NodeKindSelect) {
 				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select input source must reference a value-producing step or select node"})
+			} else if source.OutputSchema != node.OutputSchema {
+				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select source output schema must equal select output schema"})
 			}
 			if branchTarget := branchTargets[node.DecisionRef][input.Case]; branchTarget != "" && !graphReachable(branchTarget, input.Source, parsed.Graph.Edges) {
 				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select input source must be reachable from its decision case branch"})
@@ -646,6 +680,13 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 	}
 
 	return diagnostics
+}
+
+func outputSchemaOfValueProducer(node GraphNode) (string, bool) {
+	if node.Kind != NodeKindStep && node.Kind != NodeKindSelect {
+		return "", false
+	}
+	return node.OutputSchema, true
 }
 
 func graphReachable(start string, target string, edges []GraphEdge) bool {

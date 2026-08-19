@@ -202,7 +202,7 @@ Project keys must not embed run IDs, timestamps, branch names, or other transien
 
 ### Run object templates
 
-`<run-id>` is an opaque run identifier chosen by the orchestrator (for example a UUID string). `<step-id>` is the graph node id. `<attempt>` is a positive integer attempt number (the local v1 executor currently uses only `1`). `<channel-name>` is the portable channel name from the graph.
+`<run-id>` is an opaque run identifier chosen by the orchestrator (for example a UUID string). `<step-id>` is the graph node id. `<attempt>` is a positive integer attempt number (the local orchestrator currently uses only `1`).
 
 Templates:
 
@@ -210,18 +210,31 @@ Templates:
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
 projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.json
-projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```
 
-`run-manifest.json` is the v1 (`schemaVersion: 1`, `encoding: "json-v1"`) run
+`run-manifest.json` is the v2 (`schemaVersion: 2`, `encoding: "json-v2"`) run
 manifest the orchestrator records when it creates a run: plan hash, run status,
-and per-step attempt/artifact records. Its output record contains the immutable
-attempt-manifest reference and its content-addressed body reference.
+per-step attempt/artifact records, and durable decision selections. A decision
+record has `nodeId` and `selectedCase`. The orchestrator persists that selection
+before it schedules downstream nodes, and a resume or replay must use the
+journaled selection rather than run the classifier again.
+
+An unselected branch step has status `"skipped"`, no attempts, and a
+`skipReason` with `kind: "decision-not-selected"`, the `decisionId`, and the
+step's `case`. Selected and non-branch steps retain the ordinary attempt record.
+An attempt output contains the immutable output-manifest reference and its
+content-addressed body reference.
+
 `result.json` is the final run result artifact the CLI surfaces as the run's
-output location. Both are canonical JSON. The local v1 executor currently
+output location. Both are canonical JSON. The local orchestrator currently
 records only attempt `1` for each node; retry scheduling is intentionally not
 implemented by this transport slice.
+
+The v2 run-manifest protocol has no v1 compatibility reader or dual-write mode.
+An implementation must reject a v1 run manifest instead of guessing or silently
+upgrading its routing state. The step invocation descriptor is independently
+versioned and remains `schemaVersion: 1`, `encoding: "json-v1"`.
 
 Examples:
 
@@ -229,16 +242,15 @@ Examples:
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/run-manifest.json
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/inputs/double.json
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/steps/double/1/output-manifest.json
-projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/channels/intermediate/value.json
 projects/sha256-7a3f8c2e1b904d5a6e8f0c1d2b3a4e5f60718293a4b5c6d7e8f9012345678ab/runs/550e8400-e29b-41d4-a716-446655440000/result.json
 ```
 
-V1 step outputs are committed by an immutable canonical JSON manifest at the
+Step outputs are committed by an immutable canonical JSON manifest at the
 attempt key; the manifest references a canonical JSON body under
-`blobs/sha256/<digestHex>`. Inputs, channel values, and final result locations
-retain their current run-scoped JSON layout until their own protocol slice is
-migrated. Each artifact record carries its schema hash, content hash, content
-type, datastore key, and producing run/node/attempt when applicable.
+`blobs/sha256/<digestHex>`. Inputs and final result locations retain their
+current run-scoped JSON layout. Each artifact record carries its schema hash,
+content hash, content type, datastore key, and producing run/node/attempt when
+applicable.
 
 This is a breaking v0 step-output rename from `output.json` to
 `output-manifest.json`. There is no compatibility read or dual write: a
@@ -259,7 +271,6 @@ targets/<plan-key>/<target>/bundle-manifest.json
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
 projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.json
-projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```
 

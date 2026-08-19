@@ -162,7 +162,13 @@ Canonical plans and target bundle manifests must not include wall-clock timestam
 
 ## GraphIR
 
-The v0 `WorkflowSpec` graph IR is intentionally narrow: DAG step nodes, start/end nodes, directed edges, and explicit `mergeInputs` fan-in. Every graph also carries `irVersion`; it is the semantic Graph IR version and remains separate from the enclosing JSON transport `schemaVersion`. The JSON Schema accepts syntactically valid `0.x` versions so future artifacts remain well-formed; the Go compiler is the authoritative consumer that enforces its explicitly declared supported range. Frontends may duplicate that check for authoring ergonomics, but cannot redefine support.
+`WorkflowSpec` transport schema v0 carries Graph IR 0.1 static DAGs and Graph
+IR 0.2 exhaustive, data-only decisions and selects. Every graph also carries
+`irVersion`; it is the semantic Graph IR version and remains separate from the
+enclosing JSON transport `schemaVersion`. The JSON Schema accepts syntactically
+valid `0.x` versions so future artifacts remain well-formed; the Go compiler is
+the authoritative consumer and supports `>=0.1 <0.3`. Frontends may duplicate
+that check for authoring ergonomics, but cannot redefine support.
 
 It includes:
 
@@ -177,7 +183,33 @@ It includes:
 - retry metadata,
 - artifact dependencies.
 
-It does not include arbitrary closures. Channels, branch nodes, foreach/map nodes, joins/reducers, and channel publish/read declarations are post-M2 `WorkflowSpec` features. The authoring model may describe those user-facing APIs before they are admitted to the portable v0 schema; frontend SDKs must not emit them into `schemaVersion: 0`.
+Graph IR 0.2 additionally includes:
+
+- decision nodes with an input schema, string selector, and exhaustive
+  `{tag, schema}` cases;
+- conditional edges from a decision, each labeled with one declared case;
+- select nodes with a decision reference, output schema, and one
+  `{case, source}` input per declared case.
+
+A decision has exactly one ordinary value-producing predecessor (`step` or
+`select`), and its input schema must equal that producer's output schema. Its
+conditional edges cover every declared tag exactly once and target step nodes
+whose input schemas equal their case schemas. A select covers the same cases
+exactly once; each source belongs to the corresponding branch, has an ordinary
+edge to the select, and has an output schema equal to the select output schema.
+All equality is exact schema-reference equality. Graph IR 0.1 remains
+static-only, and 0.2-only node and edge fields are rejected in 0.1.
+
+The IR contains no arbitrary closures or callable predicates. Classification
+is an ordinary executable step; the decision only reads its persisted
+discriminant. The local orchestrator supports 0.2 decisions/selects and records
+the selected case durably before downstream scheduling. Argo lowering
+currently reports a precise unsupported-semantic diagnostic for these nodes
+instead of rejecting the whole IR version.
+
+Channels, foreach/map, broadcast/gather, joins/reducers, and channel
+publish/read declarations remain absent from the portable schema. Target
+support is explicit and independently validated after portable compilation.
 
 ## ExecutionContract
 
@@ -242,9 +274,14 @@ targets/<plan-key>/<target>/bundle-manifest.json
 projects/<project-key>/runs/<run-id>/run-manifest.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
 projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.json
-projects/<project-key>/runs/<run-id>/channels/<channel-name>/value.json
 projects/<project-key>/runs/<run-id>/result.json
 ```
+
+The run manifest is independently versioned as `schemaVersion: 2`,
+`encoding: "json-v2"`. It records durable decision selections and marks
+inactive branch steps as `"skipped"` with a structured `skipReason`; there is
+no v1 compatibility reader or dual-write mode. The step invocation descriptor
+below remains the separate v1/json-v1 transport.
 
 The exact path format should be specified in the proto-typed JSON manifest, not hardcoded by backend runners.
 
@@ -302,7 +339,6 @@ It includes:
 - environment reference,
 - input artifact references and schema refs,
 - output artifact destinations and schema refs,
-- channel read/write artifact refs when applicable,
 - datastore configuration needed by the adapter.
 
 Example:
@@ -336,11 +372,11 @@ Example:
 }
 ```
 
-Any future descriptor transport should reuse the same logical fields. Runtime adapters should isolate descriptor parsing from step execution so the JSON transport can be replaced without rewriting symbol loading or step invocation logic. The local v1 executor emits one attempt (`attempt: 1`) per node; retry scheduling is not yet implemented.
+Any future descriptor transport should reuse the same logical fields. Runtime adapters should isolate descriptor parsing from step execution so the JSON transport can be replaced without rewriting symbol loading or step invocation logic. The local orchestrator emits one descriptor attempt (`attempt: 1`) per executed step; retry scheduling is not yet implemented.
 
 ## Runtime Data Artifacts
 
-V0 step inputs, step outputs, channel values, and final run results are stored as canonical JSON data artifacts.
+V0 step inputs, step outputs, and final run results are stored as canonical JSON data artifacts.
 
 Each artifact records:
 

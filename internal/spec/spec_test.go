@@ -311,6 +311,73 @@ func TestParseRejectsInvalidExhaustiveDecisionContracts(t *testing.T) {
 	}
 }
 
+func TestParseRejectsDecisionSchemaContractMismatches(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(map[string]any)
+		path    string
+		message string
+	}{
+		{
+			name: "decision input differs from producer output",
+			mutate: func(root map[string]any) {
+				nodeByID(root, "route")["inputSchema"] = hashRefForTest("1")
+			},
+			path:    "$.graph.nodes[3].inputSchema",
+			message: "decision input schema must equal its sole producer output schema",
+		},
+		{
+			name: "decision has multiple inbound values",
+			mutate: func(root map[string]any) {
+				graph := root["graph"].(map[string]any)
+				graph["edges"] = append(graph["edges"].([]any), map[string]any{"from": "__start", "to": "route"})
+			},
+			path:    "$.graph.nodes[3].inputSchema",
+			message: "decision requires exactly one inbound value producer",
+		},
+		{
+			name: "conditional target input differs from case",
+			mutate: func(root map[string]any) {
+				nodeByID(root, "accept")["inputSchema"] = hashRefForTest("3")
+			},
+			path:    "$.graph.nodes[4].inputSchema",
+			message: "conditional target input schema must equal decision case schema",
+		},
+		{
+			name: "conditional target is not executable step",
+			mutate: func(root map[string]any) {
+				edges := root["graph"].(map[string]any)["edges"].([]any)
+				edges[2].(map[string]any)["to"] = "choose"
+			},
+			path:    "$.graph.edges[2].to",
+			message: "conditional edge target must be a step node",
+		},
+		{
+			name: "select source output differs from select output",
+			mutate: func(root map[string]any) {
+				nodeByID(root, "accept")["outputSchema"] = hashRefForTest("3")
+			},
+			path:    "$.graph.nodes[6].selectInputs[0].source",
+			message: "select source output schema must equal select output schema",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Parse(mutateFixture(t, "exhaustive-decision", test.mutate))
+			if err == nil {
+				t.Fatal("expected invalid spec")
+			}
+			for _, diagnostic := range diagnosticsFromError(t, err) {
+				if diagnostic.Path == test.path && strings.Contains(diagnostic.Message, test.message) {
+					return
+				}
+			}
+			t.Fatalf("diagnostics = %#v, want path %q containing %q", diagnosticsFromError(t, err), test.path, test.message)
+		})
+	}
+}
+
 func TestParseRejectsSourcePackageMapKeyMismatch(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
 		packages := root["sourcePackages"].(map[string]any)
@@ -375,6 +442,20 @@ func mutateFixture(t *testing.T, name string, mutate func(map[string]any)) []byt
 		t.Fatal(err)
 	}
 	return output
+}
+
+func nodeByID(root map[string]any, id string) map[string]any {
+	for _, rawNode := range root["graph"].(map[string]any)["nodes"].([]any) {
+		node := rawNode.(map[string]any)
+		if node["id"] == id {
+			return node
+		}
+	}
+	panic("fixture node not found: " + id)
+}
+
+func hashRefForTest(character string) string {
+	return "sha256:" + strings.Repeat(character, 64)
 }
 
 func diagnosticsFromError(t *testing.T, err error) []Diagnostic {

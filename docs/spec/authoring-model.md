@@ -12,16 +12,24 @@ Both authoring APIs are functional and declarative. The Python `GraphBuilder`
 is the primary v2 surface; this document retains the TypeScript forms and the
 portable semantics they share.
 
-This document describes the intended author-facing model, including features beyond the first portable compiler wedge. The `WorkflowSpec` schema v0 currently admits DAG step nodes, directed edges, and `mergeInputs` fan-in only. Channels, branches, foreach/map, and reducer-backed joins are post-M2 portable-schema work even if the authoring API sketches their eventual shape here.
+This document describes the intended author-facing model, including features
+beyond the first portable compiler wedge. `WorkflowSpec` transport schema v0
+carries Graph IR 0.1 static DAGs and Graph IR 0.2 exhaustive, data-only
+decisions and selects. Channels, foreach/map, broadcast/gather, and
+reducer-backed joins remain future portable-schema work even where this
+document sketches their eventual shape.
 
 Authors define:
 
 - a workflow,
-- optional globally declared state channels,
 - typed steps,
 - declarative edges,
-- optional branches, foreach/map operations, and joins,
+- optional exhaustive decisions and typed selects,
 - execution contracts on workflow defaults and step overrides.
+
+Named state channels, foreach/map operations, broadcasts, gathers, and
+reducers are deferred surfaces rather than current portable authoring
+features.
 
 Graphology is an internal implementation detail. Authors do not manipulate Graphology directly in the common path, but the SDK uses Graphology for graph construction, validation, analysis, rendering, and IR export.
 
@@ -71,7 +79,7 @@ step B receives X as input
 
 This is the default authoring model because it is obvious to human readers. A step returns data, and the next step receives that data.
 
-## Channels
+## Deferred Channels
 
 A channel is named graph state. It is a typed, durable slot in the workflow plan that steps can read from, publish to, branch on, join into, and expose as final output.
 
@@ -152,31 +160,56 @@ const scan = g.step("scan", {
 
 Function projections are local authoring/runtime conveniences. The portable IR should record either serializable projections or named symbols. Arbitrary closures must not be required by backend execution.
 
-## Branches
+## Exhaustive Decisions
 
-Branches should default to discriminant-channel switches. This is portable and statically checkable.
+Graph IR 0.2 represents routing as data. An ordinary typed step returns a
+Pydantic discriminated union whose variants carry string `Literal` tags. The
+author then creates a decision over that persisted output and explicitly wires
+every case:
 
-```ts
-g.branch(scan, {
-  on: "risk",
-  cases: {
-    none: g.path().to(done),
-    low: g.path().to(summarize),
-    high: g.path().to(triage).to(summarize),
-  },
-});
+```py
+class Approved(BaseModel):
+    kind: Literal["approved"]
+    value: int
+
+class Rejected(BaseModel):
+    kind: Literal["rejected"]
+    reason: str
+
+@step
+async def classify(value: Input) -> Approved | Rejected: ...
+
+classified = graph.add(classify)
+route = graph.decision(classified, on="kind", id="review-route")
+
+approved_input = route.case(Approved)
+rejected_input = route.case(Rejected)
+graph.edge_from(approved_input).to(approved)
+graph.edge_from(rejected_input).to(rejected)
+
+selected = route.select(Result, approved=approved, rejected=rejected)
+graph.edge_from(selected).to(graph.end)
 ```
 
-The compiler validates:
+The decision IR contains only a selector, string tags, and schema references;
+it never serializes a predicate or callable. Complex classification remains an
+ordinary named step. There is no default arm: all discriminant variants must
+be represented exactly once.
 
-- the channel exists,
-- the channel schema is a finite discriminant where possible,
-- cases are exhaustive unless an explicit default is provided,
-- branch arms remain acyclic.
+The portable compiler validates that the decision has exactly one value
+producer whose output schema equals the decision input schema; conditional
+edges exactly cover the declared cases; each conditional target is a step
+whose input schema equals that case's schema; and a select covers every case
+with branch-local sources whose output schemas equal the select output schema.
+The whole graph must remain acyclic.
 
-Arbitrary condition functions should be a future escape hatch represented as named symbols, not inline closures in the IR.
+The local orchestrator executes Graph IR 0.2 decisions and persists each
+selected case in the run manifest before scheduling a branch. Argo lowering
+currently rejects decision/select nodes with an explicit unsupported-semantic
+diagnostic. Target capability is therefore explicit rather than implied by
+successful portable compilation.
 
-## Foreach And Joins
+## Deferred Foreach And Joins
 
 Foreach is a dynamic fan-out, not a loop. It is DAG-compatible because it has no back edge.
 
