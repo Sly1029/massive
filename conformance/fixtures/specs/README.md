@@ -2,8 +2,14 @@
 
 These fixtures prove the `WorkflowSpec` JSON Schema accepts and rejects the intended v0 artifact shapes.
 
-Each graph declares `irVersion: "0.1"`. It is the semantic Graph IR version;
-the surrounding `schemaVersion` remains the JSON transport version.
+Most graphs declare `irVersion: "0.1"`; `exhaustive-decision` uses 0.2 and
+`finite-map` uses 0.3. It is the semantic Graph IR version; the surrounding
+`schemaVersion` remains the JSON transport version.
+
+`finite-map` is the portable finite-map contract: a single value-producing
+`map` node carries list input/output schemas, exact item schemas, a runnable
+symbol/contract, and a positive `maxConcurrency`. It does not prescribe a
+runtime implementation.
 
 They are not hash fixtures. Digest values use valid-looking placeholders so schema validation can check field shape, required hash prefixes, and hash length. `WS-0.6` owns canonical hash vectors and must define which fields each digest covers. In particular, `specHash` should cover the `WorkflowSpec` field tree excluding the `specHash` field itself.
 

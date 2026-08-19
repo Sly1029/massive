@@ -52,7 +52,7 @@ message GraphIR {
 
 message GraphNode {
   optional string id = 1;
-  // "start", "step", "decision", "select", or "end". Fan-in steps list
+  // "start", "step", "decision", "select", "map", or "end". Fan-in steps list
   // their merged upstream step ids in merge_inputs; decision/select fields are
   // data-only route declarations for Graph IR 0.2.
   optional string kind = 2;
@@ -65,6 +65,11 @@ message GraphNode {
   repeated DecisionCase cases = 9;
   optional string decision_ref = 10;
   repeated SelectInput select_inputs = 11;
+  // Graph IR 0.3 map fields. A map is a single value-producing node whose
+  // input/output schemas are lists of the corresponding item schemas.
+  optional string item_input_schema = 12;
+  optional string item_output_schema = 13;
+  optional uint32 max_concurrency = 14;
 }
 
 message GraphEdge {

@@ -1,0 +1,76 @@
+{
+  "kind": "WorkflowSpec",
+  "schemaVersion": 0,
+  "encoding": "json-v0",
+  "specHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "workflow": {
+    "name": "finite-map",
+    "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "outputSchema": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "graph": {
+    "irVersion": "0.3",
+    "start": "__start",
+    "end": "__end",
+    "nodes": [
+      { "id": "__start", "kind": "start" },
+      {
+        "id": "map-items",
+        "kind": "map",
+        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "itemInputSchema": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "itemOutputSchema": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "outputSchema": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "symbolRef": "finite-map/format",
+        "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+        "maxConcurrency": 3
+      },
+      { "id": "__end", "kind": "end" }
+    ],
+    "edges": [
+      { "from": "__start", "to": "map-items" },
+      { "from": "map-items", "to": "__end" }
+    ]
+  },
+  "schemas": {
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111": {
+      "type": "array",
+      "items": { "type": "integer" }
+    },
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222": { "type": "integer" },
+    "sha256:3333333333333333333333333333333333333333333333333333333333333333": { "type": "string" },
+    "sha256:4444444444444444444444444444444444444444444444444444444444444444": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "symbols": {
+    "finite-map/format": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "module": "./workflow.ts",
+      "export": "format"
+    }
+  },
+  "sourcePackages": {
+    "ts-main": {
+      "packageId": "ts-main",
+      "language": "typescript",
+      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "files": [{ "path": "workflow.ts", "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }]
+    }
+  },
+  "environments": {
+    "sha256:7777777777777777777777777777777777777777777777777777777777777777": {
+      "kind": "container",
+      "image": "ghcr.io/massive-dev/typescript-runner@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "platform": "linux/amd64"
+    }
+  },
+  "contracts": {
+    "sha256:8888888888888888888888888888888888888888888888888888888888888888": {
+      "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "network": { "egress": "none" }
+    }
+  }
+}

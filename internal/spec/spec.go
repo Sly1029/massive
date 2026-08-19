@@ -24,6 +24,7 @@ const (
 	NodeKindStep     = "step"
 	NodeKindDecision = "decision"
 	NodeKindSelect   = "select"
+	NodeKindMap      = "map"
 	NodeKindEnd      = "end"
 )
 
@@ -56,17 +57,20 @@ type Graph struct {
 }
 
 type GraphNode struct {
-	ID           string         `json:"id"`
-	Kind         string         `json:"kind"`
-	InputSchema  string         `json:"inputSchema,omitempty"`
-	OutputSchema string         `json:"outputSchema,omitempty"`
-	SymbolRef    string         `json:"symbolRef,omitempty"`
-	ContractRef  string         `json:"contractRef,omitempty"`
-	MergeInputs  []string       `json:"mergeInputs,omitempty"`
-	Selector     string         `json:"selector,omitempty"`
-	Cases        []DecisionCase `json:"cases,omitempty"`
-	DecisionRef  string         `json:"decisionRef,omitempty"`
-	SelectInputs []SelectInput  `json:"selectInputs,omitempty"`
+	ID               string         `json:"id"`
+	Kind             string         `json:"kind"`
+	InputSchema      string         `json:"inputSchema,omitempty"`
+	OutputSchema     string         `json:"outputSchema,omitempty"`
+	SymbolRef        string         `json:"symbolRef,omitempty"`
+	ContractRef      string         `json:"contractRef,omitempty"`
+	MergeInputs      []string       `json:"mergeInputs,omitempty"`
+	Selector         string         `json:"selector,omitempty"`
+	Cases            []DecisionCase `json:"cases,omitempty"`
+	DecisionRef      string         `json:"decisionRef,omitempty"`
+	SelectInputs     []SelectInput  `json:"selectInputs,omitempty"`
+	ItemInputSchema  string         `json:"itemInputSchema,omitempty"`
+	ItemOutputSchema string         `json:"itemOutputSchema,omitempty"`
+	MaxConcurrency   uint32         `json:"maxConcurrency,omitempty"`
 }
 
 type GraphEdge struct {
@@ -457,6 +461,7 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		}
 	}
 
+	diagnostics = append(diagnostics, validateMapSemantics(parsed, nodeByID, inbound, outbound)...)
 	diagnostics = append(diagnostics, validateDecisionAndSelectSemantics(parsed, nodeByID, nodeIndexes)...)
 
 	if _, exists := parsed.Schemas[parsed.Workflow.InputSchema]; !exists {
@@ -498,7 +503,7 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 	var diagnostics []Diagnostic
 	if parsed.Graph.IRVersion == "0.1" {
 		for index, node := range parsed.Graph.Nodes {
-			if node.Kind == NodeKindDecision || node.Kind == NodeKindSelect {
+			if node.Kind == NodeKindDecision || node.Kind == NodeKindSelect || node.Kind == NodeKindMap {
 				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].kind", index), Ref: node.Kind, Message: "graph IR 0.1 permits only static start, step, and end nodes"})
 			}
 		}
@@ -578,10 +583,10 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			continue
 		}
 		target, targetExists := nodeByID[edge.To]
-		if targetExists && target.Kind != NodeKindStep {
-			diagnostics = append(diagnostics, Diagnostic{Path: path + ".to", Ref: edge.To, Message: "conditional edge target must be a step node"})
+		if targetExists && target.Kind != NodeKindStep && target.Kind != NodeKindMap {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".to", Ref: edge.To, Message: "conditional edge target must be a step node or map node"})
 		}
-		if targetExists && target.Kind == NodeKindStep && target.InputSchema != decisionCaseSchemas[edge.From][edge.Case] {
+		if targetExists && (target.Kind == NodeKindStep || target.Kind == NodeKindMap) && target.InputSchema != decisionCaseSchemas[edge.From][edge.Case] {
 			targetIndex := nodeIndexes[edge.To]
 			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].inputSchema", targetIndex), Ref: edge.To, Message: "conditional target input schema must equal decision case schema"})
 		}
@@ -644,8 +649,8 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			}
 			selectedSources[input.Source] = true
 			source, sourceExists := nodeByID[input.Source]
-			if !sourceExists || (source.Kind != NodeKindStep && source.Kind != NodeKindSelect) {
-				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select input source must reference a value-producing step or select node"})
+			if !sourceExists || (source.Kind != NodeKindStep && source.Kind != NodeKindSelect && source.Kind != NodeKindMap) {
+				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select input source must reference a value-producing step, select, or map node"})
 			} else if source.OutputSchema != node.OutputSchema {
 				diagnostics = append(diagnostics, Diagnostic{Path: inputPath + ".source", Ref: input.Source, Message: "select source output schema must equal select output schema"})
 			}
@@ -696,10 +701,116 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 }
 
 func outputSchemaOfValueProducer(node GraphNode) (string, bool) {
-	if node.Kind != NodeKindStep && node.Kind != NodeKindSelect {
+	if node.Kind != NodeKindStep && node.Kind != NodeKindSelect && node.Kind != NodeKindMap {
 		return "", false
 	}
 	return node.OutputSchema, true
+}
+
+func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, inbound, outbound map[string][]string) []Diagnostic {
+	var diagnostics []Diagnostic
+	for index, node := range parsed.Graph.Nodes {
+		if node.Kind != NodeKindMap {
+			continue
+		}
+		path := fmt.Sprintf("$.graph.nodes[%d]", index)
+		for field, schemaRef := range map[string]string{
+			"inputSchema": node.InputSchema, "itemInputSchema": node.ItemInputSchema,
+			"itemOutputSchema": node.ItemOutputSchema, "outputSchema": node.OutputSchema,
+		} {
+			if _, exists := parsed.Schemas[schemaRef]; !exists {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + "." + field, Ref: schemaRef, Message: "map schema reference does not exist"})
+			}
+		}
+		if _, exists := parsed.Symbols[node.SymbolRef]; !exists {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".symbolRef", Ref: node.SymbolRef, Message: "symbol reference does not exist"})
+		}
+		if _, exists := parsed.Contracts[node.ContractRef]; !exists {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".contractRef", Ref: node.ContractRef, Message: "contract reference does not exist"})
+		}
+		if node.MaxConcurrency == 0 {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".maxConcurrency", Ref: node.ID, Message: "map maxConcurrency must be positive"})
+		}
+		if !arraySchemaItemsExactlyMatch(parsed.Schemas[node.InputSchema], parsed.Schemas[node.ItemInputSchema]) {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.InputSchema, Message: "map inputSchema must be an array whose items exactly equal itemInputSchema"})
+		}
+		if !arraySchemaItemsExactlyMatch(parsed.Schemas[node.OutputSchema], parsed.Schemas[node.ItemOutputSchema]) {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: node.OutputSchema, Message: "map outputSchema must be an array whose items exactly equal itemOutputSchema"})
+		}
+		if len(inbound[node.ID]) != 1 {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.ID, Message: "map requires exactly one predecessor"})
+		} else if source, exists := nodeByID[inbound[node.ID][0]]; !exists {
+			continue
+		} else if source.Kind == NodeKindDecision && conditionalEdgeCase(parsed.Graph.Edges, source.ID, node.ID) != "" {
+			// Decision validation proves the selected case schema exactly matches
+			// this map's inputSchema; maps may therefore live in a branch.
+		} else if sourceSchema, producesValue := graphValueOutputSchema(source, parsed.Workflow.InputSchema); !producesValue {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: source.ID, Message: "map predecessor must produce a value"})
+		} else if sourceSchema != node.InputSchema {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: source.ID, Message: "map inputSchema must exactly equal its predecessor output schema"})
+		}
+		for _, targetID := range outbound[node.ID] {
+			target := nodeByID[targetID]
+			if target.Kind == NodeKindSelect {
+				continue // selectInputs validates each declared source contract.
+			}
+			targetSchema, consumesValue := graphValueInputSchema(target, parsed.Workflow.OutputSchema)
+			if !consumesValue {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: targetID, Message: "map output must target a value consumer"})
+				continue
+			}
+			if targetSchema != node.OutputSchema {
+				diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: targetID, Message: "map outputSchema must exactly equal each downstream input schema"})
+			}
+		}
+	}
+	return diagnostics
+}
+
+func conditionalEdgeCase(edges []GraphEdge, from, to string) string {
+	for _, edge := range edges {
+		if edge.From == from && edge.To == to {
+			return edge.Case
+		}
+	}
+	return ""
+}
+
+func graphValueOutputSchema(node GraphNode, workflowInputSchema string) (string, bool) {
+	if node.Kind == NodeKindStart {
+		return workflowInputSchema, true
+	}
+	return outputSchemaOfValueProducer(node)
+}
+
+func graphValueInputSchema(node GraphNode, workflowOutputSchema string) (string, bool) {
+	if node.Kind == NodeKindEnd {
+		return workflowOutputSchema, true
+	}
+	if node.Kind == NodeKindStep || node.Kind == NodeKindDecision || node.Kind == NodeKindMap {
+		return node.InputSchema, true
+	}
+	return "", false
+}
+
+func arraySchemaItemsExactlyMatch(arraySchema, itemSchema json.RawMessage) bool {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(arraySchema, &object); err != nil {
+		return false
+	}
+	var kind string
+	if err := json.Unmarshal(object["type"], &kind); err != nil || kind != "array" || len(object["items"]) == 0 {
+		return false
+	}
+	canonicalItems, err := canonical.CanonicalizeJSON(object["items"])
+	if err != nil {
+		return false
+	}
+	canonicalItemSchema, err := canonical.CanonicalizeJSON(itemSchema)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(canonicalItems, canonicalItemSchema)
 }
 
 // validateExclusiveDecisionBranches keeps 0.2's activation model local: a

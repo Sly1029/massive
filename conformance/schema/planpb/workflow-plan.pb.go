@@ -318,21 +318,26 @@ func (x *GraphIR) GetIrVersion() string {
 type GraphNode struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    *string                `protobuf:"bytes,1,opt,name=id,proto3,oneof" json:"id,omitempty"`
-	// "start", "step", "decision", "select", or "end". Fan-in steps list
+	// "start", "step", "decision", "select", "map", or "end". Fan-in steps list
 	// their merged upstream step ids in merge_inputs; decision/select fields are
 	// data-only route declarations for Graph IR 0.2.
-	Kind          *string         `protobuf:"bytes,2,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
-	InputSchema   *string         `protobuf:"bytes,3,opt,name=input_schema,json=inputSchema,proto3,oneof" json:"input_schema,omitempty"`
-	OutputSchema  *string         `protobuf:"bytes,4,opt,name=output_schema,json=outputSchema,proto3,oneof" json:"output_schema,omitempty"`
-	SymbolRef     *string         `protobuf:"bytes,5,opt,name=symbol_ref,json=symbolRef,proto3,oneof" json:"symbol_ref,omitempty"`
-	ContractRef   *string         `protobuf:"bytes,6,opt,name=contract_ref,json=contractRef,proto3,oneof" json:"contract_ref,omitempty"`
-	MergeInputs   []string        `protobuf:"bytes,7,rep,name=merge_inputs,json=mergeInputs,proto3" json:"merge_inputs,omitempty"`
-	Selector      *string         `protobuf:"bytes,8,opt,name=selector,proto3,oneof" json:"selector,omitempty"`
-	Cases         []*DecisionCase `protobuf:"bytes,9,rep,name=cases,proto3" json:"cases,omitempty"`
-	DecisionRef   *string         `protobuf:"bytes,10,opt,name=decision_ref,json=decisionRef,proto3,oneof" json:"decision_ref,omitempty"`
-	SelectInputs  []*SelectInput  `protobuf:"bytes,11,rep,name=select_inputs,json=selectInputs,proto3" json:"select_inputs,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Kind         *string         `protobuf:"bytes,2,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
+	InputSchema  *string         `protobuf:"bytes,3,opt,name=input_schema,json=inputSchema,proto3,oneof" json:"input_schema,omitempty"`
+	OutputSchema *string         `protobuf:"bytes,4,opt,name=output_schema,json=outputSchema,proto3,oneof" json:"output_schema,omitempty"`
+	SymbolRef    *string         `protobuf:"bytes,5,opt,name=symbol_ref,json=symbolRef,proto3,oneof" json:"symbol_ref,omitempty"`
+	ContractRef  *string         `protobuf:"bytes,6,opt,name=contract_ref,json=contractRef,proto3,oneof" json:"contract_ref,omitempty"`
+	MergeInputs  []string        `protobuf:"bytes,7,rep,name=merge_inputs,json=mergeInputs,proto3" json:"merge_inputs,omitempty"`
+	Selector     *string         `protobuf:"bytes,8,opt,name=selector,proto3,oneof" json:"selector,omitempty"`
+	Cases        []*DecisionCase `protobuf:"bytes,9,rep,name=cases,proto3" json:"cases,omitempty"`
+	DecisionRef  *string         `protobuf:"bytes,10,opt,name=decision_ref,json=decisionRef,proto3,oneof" json:"decision_ref,omitempty"`
+	SelectInputs []*SelectInput  `protobuf:"bytes,11,rep,name=select_inputs,json=selectInputs,proto3" json:"select_inputs,omitempty"`
+	// Graph IR 0.3 map fields. A map is a single value-producing node whose
+	// input/output schemas are lists of the corresponding item schemas.
+	ItemInputSchema  *string `protobuf:"bytes,12,opt,name=item_input_schema,json=itemInputSchema,proto3,oneof" json:"item_input_schema,omitempty"`
+	ItemOutputSchema *string `protobuf:"bytes,13,opt,name=item_output_schema,json=itemOutputSchema,proto3,oneof" json:"item_output_schema,omitempty"`
+	MaxConcurrency   *uint32 `protobuf:"varint,14,opt,name=max_concurrency,json=maxConcurrency,proto3,oneof" json:"max_concurrency,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *GraphNode) Reset() {
@@ -440,6 +445,27 @@ func (x *GraphNode) GetSelectInputs() []*SelectInput {
 		return x.SelectInputs
 	}
 	return nil
+}
+
+func (x *GraphNode) GetItemInputSchema() string {
+	if x != nil && x.ItemInputSchema != nil {
+		return *x.ItemInputSchema
+	}
+	return ""
+}
+
+func (x *GraphNode) GetItemOutputSchema() string {
+	if x != nil && x.ItemOutputSchema != nil {
+		return *x.ItemOutputSchema
+	}
+	return ""
+}
+
+func (x *GraphNode) GetMaxConcurrency() uint32 {
+	if x != nil && x.MaxConcurrency != nil {
+		return *x.MaxConcurrency
+	}
+	return 0
 }
 
 type GraphEdge struct {
@@ -1371,7 +1397,7 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\x0e_output_schemaB\r\n" +
 	"\v_start_nodeB\v\n" +
 	"\t_end_nodeB\r\n" +
-	"\v_ir_version\"\xac\x04\n" +
+	"\v_ir_version\"\xff\x05\n" +
 	"\tGraphNode\x12\x13\n" +
 	"\x02id\x18\x01 \x01(\tH\x00R\x02id\x88\x01\x01\x12\x17\n" +
 	"\x04kind\x18\x02 \x01(\tH\x01R\x04kind\x88\x01\x01\x12&\n" +
@@ -1385,7 +1411,11 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\x05cases\x18\t \x03(\v2\x1d.massive.plan.v0.DecisionCaseR\x05cases\x12&\n" +
 	"\fdecision_ref\x18\n" +
 	" \x01(\tH\aR\vdecisionRef\x88\x01\x01\x12A\n" +
-	"\rselect_inputs\x18\v \x03(\v2\x1c.massive.plan.v0.SelectInputR\fselectInputsB\x05\n" +
+	"\rselect_inputs\x18\v \x03(\v2\x1c.massive.plan.v0.SelectInputR\fselectInputs\x12/\n" +
+	"\x11item_input_schema\x18\f \x01(\tH\bR\x0fitemInputSchema\x88\x01\x01\x121\n" +
+	"\x12item_output_schema\x18\r \x01(\tH\tR\x10itemOutputSchema\x88\x01\x01\x12,\n" +
+	"\x0fmax_concurrency\x18\x0e \x01(\rH\n" +
+	"R\x0emaxConcurrency\x88\x01\x01B\x05\n" +
 	"\x03_idB\a\n" +
 	"\x05_kindB\x0f\n" +
 	"\r_input_schemaB\x10\n" +
@@ -1393,7 +1423,10 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\v_symbol_refB\x0f\n" +
 	"\r_contract_refB\v\n" +
 	"\t_selectorB\x0f\n" +
-	"\r_decision_ref\"k\n" +
+	"\r_decision_refB\x14\n" +
+	"\x12_item_input_schemaB\x15\n" +
+	"\x13_item_output_schemaB\x12\n" +
+	"\x10_max_concurrency\"k\n" +
 	"\tGraphEdge\x12\x17\n" +
 	"\x04from\x18\x01 \x01(\tH\x00R\x04from\x88\x01\x01\x12\x13\n" +
 	"\x02to\x18\x02 \x01(\tH\x01R\x02to\x88\x01\x01\x12\x17\n" +

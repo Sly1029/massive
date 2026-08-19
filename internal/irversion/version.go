@@ -16,11 +16,11 @@ type Version struct {
 }
 
 // Current is the Graph IR emitted by this compiler generation.
-const Current = "0.2"
+const Current = "0.3"
 
 // CompilerRange is the range of Graph IR versions accepted by the Go compiler.
 // A later incompatible 0.x graph revision must update this range explicitly.
-const CompilerRange = ">=0.1 <0.3"
+const CompilerRange = ">=0.1 <0.4"
 
 var compilerRange = MustParseRange(CompilerRange)
 

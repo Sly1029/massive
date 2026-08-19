@@ -170,6 +170,15 @@ func compileGraph(workflowSpec *spec.WorkflowSpec, schedule Schedule, schemaHash
 				})
 			}
 		}
+		if node.Kind == spec.NodeKindMap {
+			compiled.InputSchema = stringPtr(schemaHashes[node.InputSchema])
+			compiled.ItemInputSchema = stringPtr(schemaHashes[node.ItemInputSchema])
+			compiled.ItemOutputSchema = stringPtr(schemaHashes[node.ItemOutputSchema])
+			compiled.OutputSchema = stringPtr(schemaHashes[node.OutputSchema])
+			compiled.SymbolRef = stringPtr(node.SymbolRef)
+			compiled.ContractRef = stringPtr(contractHashes[node.ContractRef])
+			compiled.MaxConcurrency = uint32Ptr(node.MaxConcurrency)
+		}
 		nodes = append(nodes, compiled)
 	}
 
