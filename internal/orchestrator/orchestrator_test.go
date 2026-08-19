@@ -36,6 +36,7 @@ func TestExhaustiveDecisionFixtureCasesValidateRepresentativeOutputs(t *testing.
 		"accepted": json.RawMessage(`{"kind":"rejected","value":4}`),
 		"rejected": json.RawMessage(`{"kind":"accepted","reason":"policy"}`),
 	}
+	fractionalAcceptedOutput := json.RawMessage(`{"kind":"accepted","value":4.5}`)
 	var decision spec.GraphNode
 	for _, node := range workflowSpec.Graph.Nodes {
 		if node.Kind == spec.NodeKindDecision {
@@ -64,6 +65,11 @@ func TestExhaustiveDecisionFixtureCasesValidateRepresentativeOutputs(t *testing.
 		}
 		if err := validateJSONAgainstSchema(string(schemaJSON), wrongTagOutputs[decisionCase.Tag]); err == nil {
 			t.Fatalf("decision case %q accepts its shape with the wrong discriminant", decisionCase.Tag)
+		}
+		if decisionCase.Tag == "accepted" {
+			if err := validateJSONAgainstSchema(string(schemaJSON), fractionalAcceptedOutput); err == nil {
+				t.Fatal("accepted decision case permits a fractional canonical-json-v0 value")
+			}
 		}
 		for otherTag, otherValue := range representativeOutputs {
 			if otherTag == decisionCase.Tag {

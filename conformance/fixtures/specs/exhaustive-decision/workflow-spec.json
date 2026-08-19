@@ -2,11 +2,11 @@
   "kind": "WorkflowSpec",
   "schemaVersion": 0,
   "encoding": "json-v0",
-  "specHash": "sha256:5a026270e9f8eae0a9fb66d0d371a5132b73ebf905de45e4c32a29ff8b0b1309",
+  "specHash": "sha256:44417a88e404d3e4d71e3f3a02da5b742ce8e12f47c53a9c2e9f38c6ab400e14",
   "workflow": {
     "name": "exhaustive-decision",
-    "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-    "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    "inputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670",
+    "outputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670"
   },
   "graph": {
     "irVersion": "0.2",
@@ -18,7 +18,7 @@
       {
         "id": "classify",
         "kind": "step",
-        "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "inputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670",
         "outputSchema": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
         "symbolRef": "exhaustive-decision/classify",
         "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
@@ -31,7 +31,7 @@
         "cases": [
           {
             "tag": "accepted",
-            "schema": "sha256:3983d064726b5983fd59b9081bbb233b5ff582dbdf5900ee661e4f7ebeca391c"
+            "schema": "sha256:8fe7dd9757aaf769c1d65a1f6373896fbe0f7ad0561d84f1b15983c9e539c3df"
           },
           {
             "tag": "rejected",
@@ -42,8 +42,8 @@
       {
         "id": "accept",
         "kind": "step",
-        "inputSchema": "sha256:3983d064726b5983fd59b9081bbb233b5ff582dbdf5900ee661e4f7ebeca391c",
-        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "inputSchema": "sha256:8fe7dd9757aaf769c1d65a1f6373896fbe0f7ad0561d84f1b15983c9e539c3df",
+        "outputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670",
         "symbolRef": "exhaustive-decision/accept",
         "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
       },
@@ -51,7 +51,7 @@
         "id": "reject",
         "kind": "step",
         "inputSchema": "sha256:27d74efa9af78ba2b80d31550fbfcee947f1743ceebaa00966e407850af30f8e",
-        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670",
         "symbolRef": "exhaustive-decision/reject",
         "contractRef": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
       },
@@ -59,7 +59,7 @@
         "id": "choose",
         "kind": "select",
         "decisionRef": "route",
-        "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "outputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670",
         "selectInputs": [
           { "case": "accepted", "source": "accept" },
           { "case": "rejected", "source": "reject" }
@@ -77,21 +77,21 @@
     ]
   },
   "schemas": {
-    "sha256:1111111111111111111111111111111111111111111111111111111111111111": {
-      "type": "number"
+    "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670": {
+      "type": "integer"
     },
     "sha256:3333333333333333333333333333333333333333333333333333333333333333": {
       "type": "object",
       "required": ["kind"],
       "properties": { "kind": { "type": "string" } }
     },
-    "sha256:3983d064726b5983fd59b9081bbb233b5ff582dbdf5900ee661e4f7ebeca391c": {
+    "sha256:8fe7dd9757aaf769c1d65a1f6373896fbe0f7ad0561d84f1b15983c9e539c3df": {
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "value"],
       "properties": {
         "kind": { "type": "string", "const": "accepted" },
-        "value": { "type": "number" }
+        "value": { "type": "integer" }
       }
     },
     "sha256:27d74efa9af78ba2b80d31550fbfcee947f1743ceebaa00966e407850af30f8e": {
