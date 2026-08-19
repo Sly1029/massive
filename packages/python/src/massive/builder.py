@@ -27,6 +27,8 @@ from .identity import SAFE_PATH_SEGMENT, SafePathSegment
 from .source_package import SourcePackage
 
 OutputT = TypeVar("OutputT")
+ItemT = TypeVar("ItemT")
+ResultT = TypeVar("ResultT")
 WorkflowInputT = TypeVar("WorkflowInputT")
 WorkflowOutputT = TypeVar("WorkflowOutputT")
 CaseT = TypeVar("CaseT", bound=BaseModel)
@@ -38,6 +40,7 @@ _END = "__end"
 # schema so graph evolution remains an explicit compiler contract.
 GRAPH_IR_VERSION = "0.1"
 _DECISION_GRAPH_IR_VERSION = "0.2"
+_MAP_GRAPH_IR_VERSION = "0.3"
 
 
 class SchemaPurpose(str, Enum):
@@ -101,6 +104,15 @@ class _SelectDefinition:
     decision_id: str
     output_type: Any
     inputs: dict[str, NodeHandle[Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class _MapDefinition:
+    id: str
+    source: _StartHandle[Any] | NodeHandle[Any]
+    mapper: StepDefinition[Any, Any, Any]
+    handle: NodeHandle[Any]
+    concurrency: int
 
 
 class DecisionHandle(Generic[OutputT]):
@@ -193,6 +205,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         self._conditional_edges: set[tuple[str, str, str]] = set()
         self._decisions: dict[str, _DecisionDefinition] = {}
         self._selects: dict[str, _SelectDefinition] = {}
+        self._maps: dict[str, _MapDefinition] = {}
         self._emitted = False
 
     def step(
@@ -256,6 +269,66 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             output_type=item.output_type,
         )
         self._nodes[node_id] = (item, handle)
+        return handle
+
+    @overload
+    def map(
+        self,
+        source: _StartHandle[list[ItemT]],
+        mapper: StepDefinition[DepsT, ItemT, ResultT],
+        *,
+        id: str,
+        concurrency: int = 20,
+    ) -> NodeHandle[list[ResultT]]: ...
+
+    @overload
+    def map(
+        self,
+        source: NodeHandle[list[ItemT]],
+        mapper: StepDefinition[DepsT, ItemT, ResultT],
+        *,
+        id: str,
+        concurrency: int = 20,
+    ) -> NodeHandle[list[ResultT]]: ...
+
+    def map(
+        self,
+        source: _StartHandle[Any] | NodeHandle[Any],
+        mapper: StepDefinition[Any, Any, ResultT],
+        *,
+        id: str,
+        concurrency: int = 20,
+    ) -> NodeHandle[list[ResultT]]:
+        if self._emitted:
+            raise RuntimeError("graph has already been emitted")
+        if not isinstance(concurrency, int) or isinstance(concurrency, bool) or concurrency < 1:
+            raise ValueError("map concurrency must be an integer greater than zero")
+        source_id = _START if isinstance(source, _StartHandle) else source.node_id
+        if source_id != _START and source_id not in self._known_node_ids():
+            raise ValueError("map source belongs to a different graph")
+        if source_id in self._maps:
+            raise ValueError("nested maps are not supported")
+        map_id = SAFE_PATH_SEGMENT.validate_python(id)
+        if map_id in self._known_node_ids():
+            raise ValueError(f"duplicate or reserved map id {map_id!r}")
+        output_type = list[mapper.output_type]
+        handle = NodeHandle[list[ResultT]](
+            node_id=map_id,
+            input_type=source.output_type,
+            output_type=output_type,
+        )
+        self._maps[map_id] = _MapDefinition(
+            id=map_id,
+            source=source,
+            mapper=mapper,
+            handle=cast(NodeHandle[Any], handle),
+            concurrency=concurrency,
+        )
+        self._add_edge(
+            source_id,
+            map_id,
+            source.tag if isinstance(source, CaseHandle) else None,
+        )
         return handle
 
     @overload
@@ -389,7 +462,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         self._edges.add((source, target))
 
     def _known_node_ids(self) -> set[str]:
-        return {_START, _END, *self._nodes, *self._decisions, *self._selects}
+        return {_START, _END, *self._nodes, *self._decisions, *self._selects, *self._maps}
 
     def _is_reachable(self, source: str, target: str) -> bool:
         pending = [source]
@@ -499,6 +572,43 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         if not any(target_id == _END for _, target_id in self._edges):
             raise ValueError("workflow end has no edge")
 
+        for definition in self._maps.values():
+            source_item_schema = _direct_list_item_schema(
+                definition.source.output_type,
+                f"map {definition.id!r} input",
+            )
+            if source_item_schema != TypeAdapter(definition.mapper.input_type).core_schema:
+                raise TypeError(
+                    f"map {definition.id!r} source item type does not match mapper input type"
+                )
+            output_item_schema = _direct_list_item_schema(
+                definition.handle.output_type,
+                f"map {definition.id!r} output",
+            )
+            if output_item_schema != TypeAdapter(definition.mapper.output_type).core_schema:
+                raise TypeError(
+                    f"map {definition.id!r} output item type does not match mapper output type"
+                )
+            incoming = [
+                (edge_source, edge_target)
+                for edge_source, edge_target in self._edges
+                if edge_target == definition.id
+            ]
+            incoming.extend(
+                (edge_source, edge_target)
+                for edge_source, edge_target, _ in self._conditional_edges
+                if edge_target == definition.id
+            )
+            outgoing = [
+                (edge_source, edge_target)
+                for edge_source, edge_target in self._edges
+                if edge_source == definition.id
+            ]
+            if len(incoming) != 1:
+                raise ValueError(f"map {definition.id!r} must have exactly one incoming edge")
+            if len(outgoing) != 1:
+                raise ValueError(f"map {definition.id!r} must have exactly one outgoing edge")
+
         lineages = self._activation_lineages()
         for select in self._selects.values():
             decision = self._decisions[select.decision_id]
@@ -581,6 +691,46 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                     "contractRef": contract_ref(step.contract or self.defaults),
                 }
             )
+        for map_id, definition in sorted(
+            self._maps.items(), key=lambda item: _canonical_sort_key(item[0])
+        ):
+            module = _symbol_module(definition.mapper.function, source.root)
+            symbol_ref = f"{source.package_id}:{module}#{definition.mapper.function.__name__}"
+            symbols[symbol_ref] = {
+                "packageId": source.package_id,
+                "language": "python",
+                "module": module,
+                "export": definition.mapper.function.__name__,
+            }
+            nodes.append(
+                {
+                    "id": map_id,
+                    "kind": "map",
+                    "inputSchema": schema_ref(
+                        definition.source.output_type,
+                        f"map {map_id!r} input schema",
+                        SchemaPurpose.INPUT,
+                    ),
+                    "itemInputSchema": schema_ref(
+                        definition.mapper.input_type,
+                        f"map {map_id!r} item input schema",
+                        SchemaPurpose.INPUT,
+                    ),
+                    "itemOutputSchema": schema_ref(
+                        definition.mapper.output_type,
+                        f"map {map_id!r} item output schema",
+                        SchemaPurpose.OUTPUT,
+                    ),
+                    "outputSchema": schema_ref(
+                        definition.handle.output_type,
+                        f"map {map_id!r} output schema",
+                        SchemaPurpose.OUTPUT,
+                    ),
+                    "symbolRef": symbol_ref,
+                    "contractRef": contract_ref(definition.mapper.contract or self.defaults),
+                    "maxConcurrency": definition.concurrency,
+                }
+            )
         for decision_id, decision in sorted(
             self._decisions.items(), key=lambda item: _canonical_sort_key(item[0])
         ):
@@ -645,7 +795,13 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                 if key in edge
             )
         )
-        ir_version = _DECISION_GRAPH_IR_VERSION if self._decisions else GRAPH_IR_VERSION
+        ir_version = (
+            _MAP_GRAPH_IR_VERSION
+            if self._maps
+            else _DECISION_GRAPH_IR_VERSION
+            if self._decisions
+            else GRAPH_IR_VERSION
+        )
         value = cast(
             JsonValue,
             {
@@ -682,6 +838,17 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         emitted = {**cast(dict[str, JsonValue], value), "specHash": spec_hash}
         self._emitted = True
         return WorkflowSpec(value=emitted, spec_hash=spec_hash, graph_version=ir_version)
+
+
+def _direct_list_item_schema(annotation: Any, role: str) -> dict[str, object]:
+    """Return the Pydantic core schema for a concrete, top-level ``list[T]`` item."""
+    core_schema = TypeAdapter(annotation).core_schema
+    if not isinstance(core_schema, dict) or core_schema.get("type") != "list":
+        raise TypeError(f"{role} must be a direct concrete list[T]")
+    item_schema = core_schema.get("items_schema")
+    if not isinstance(item_schema, dict) or item_schema.get("type") == "any":
+        raise TypeError(f"{role} must be a direct concrete list[T]")
+    return cast(dict[str, object], item_schema)
 
 
 def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]]:

@@ -15,6 +15,10 @@ class Result(BaseModel):
     value: int
 
 
+class BatchRequest(BaseModel):
+    values: list[Request]
+
+
 class Approved(BaseModel):
     kind: Literal["approved"]
     value: int
@@ -54,6 +58,30 @@ async def increment_async(context: StepContext[None, Request]) -> Result:
 sync_node: NodeHandle[Result] = graph.add(increment)
 async_node: NodeHandle[Result] = graph.add(increment_async)
 graph.edge_from(graph.start).to(sync_node).to(async_node).to(graph.end)
+
+
+map_graph: GraphBuilder[None, BatchRequest, list[Result]] = GraphBuilder(
+    name="typed-map",
+    input_type=BatchRequest,
+    output_type=list[Result],
+    defaults=graph.defaults,
+)
+
+
+@map_graph.step()
+def unpack(context: StepContext[None, BatchRequest]) -> list[Request]:
+    return context.inputs.values
+
+
+@map_graph.step()
+def increment_item(context: StepContext[None, Request]) -> Result:
+    return Result(value=context.inputs.value + 1)
+
+
+requests: NodeHandle[list[Request]] = map_graph.add(unpack)
+mapped: NodeHandle[list[Result]] = map_graph.map(requests, increment_item, id="increment-items")
+map_graph.edge_from(map_graph.start).to(requests)
+map_graph.edge_from(mapped).to(map_graph.end)
 
 
 decision_graph: GraphBuilder[None, Request, Result] = GraphBuilder(

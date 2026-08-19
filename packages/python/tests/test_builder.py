@@ -146,6 +146,26 @@ def extra_allowed_result(context: StepContext[None, Request]) -> ExtraAllowedRes
     return ExtraAllowedResult(value=context.inputs.value)
 
 
+def load_requests(context: StepContext[None, Request]) -> list[Request]:
+    return [context.inputs]
+
+
+def increment_request(context: StepContext[None, Request]) -> Result:
+    return Result(value=context.inputs.value + 1)
+
+
+def load_any_requests(context: StepContext[None, Request]) -> list[Any]:
+    return [context.inputs]
+
+
+def result_identity(context: StepContext[None, Result]) -> Result:
+    return context.inputs
+
+
+def list_result_identity(context: StepContext[None, list[Result]]) -> list[Result]:
+    return context.inputs
+
+
 def test_graph_without_dependencies_rejects_a_step_that_declares_them() -> None:
     graph = GraphBuilder(
         name="no-deps",
@@ -179,6 +199,171 @@ def test_end_is_terminal() -> None:
     node = graph.add(graph.step()(identity))
 
     assert graph.edge_from(graph.start).to(node).to(graph.end) is None
+
+
+def test_map_emits_one_ordered_collection_node_with_its_registered_mapper() -> None:
+    graph = GraphBuilder(
+        name="map-requests",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    requests = graph.add(graph.step()(load_requests))
+    mapped = graph.map(requests, graph.step()(increment_request), id="increment-all", concurrency=3)
+    graph.edge_from(graph.start).to(requests)
+    graph.edge_from(mapped).to(graph.end)
+
+    specification = _emit(graph)
+    graph_ir = specification.value["graph"]
+    nodes = {node["id"]: node for node in graph_ir["nodes"]}
+    mapped_node = nodes["increment-all"]
+    schemas = specification.value["schemas"]
+
+    assert graph_ir["irVersion"] == "0.3"
+    assert mapped_node["kind"] == "map"
+    assert mapped_node["maxConcurrency"] == 3
+    assert schemas[mapped_node["inputSchema"]] == {
+        "$defs": {
+            "Request": {
+                "properties": {"value": {"title": "Value", "type": "integer"}},
+                "required": ["value"],
+                "title": "Request",
+                "type": "object",
+            }
+        },
+        "items": {"$ref": "#/$defs/Request"},
+        "type": "array",
+    }
+    assert schemas[mapped_node["itemInputSchema"]] == {
+        "properties": {"value": {"title": "Value", "type": "integer"}},
+        "required": ["value"],
+        "title": "Request",
+        "type": "object",
+    }
+    assert schemas[mapped_node["itemOutputSchema"]] == {
+        "properties": {"value": {"title": "Value", "type": "integer"}},
+        "required": ["value"],
+        "title": "Result",
+        "type": "object",
+    }
+    assert schemas[mapped_node["outputSchema"]] == {
+        "$defs": {
+            "Result": {
+                "properties": {"value": {"title": "Value", "type": "integer"}},
+                "required": ["value"],
+                "title": "Result",
+                "type": "object",
+            }
+        },
+        "items": {"$ref": "#/$defs/Result"},
+        "type": "array",
+    }
+    assert {"from": "load_requests", "to": "increment-all"} in graph_ir["edges"]
+    assert {"from": "increment-all", "to": "__end"} in graph_ir["edges"]
+    assert "increment_request" not in nodes
+
+
+def test_map_emit_requires_a_direct_concrete_list_source() -> None:
+    graph = GraphBuilder(
+        name="map-non-list-source",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(identity))
+    mapped = graph.map(source, graph.step()(increment_request), id="not-a-list")
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(mapped).to(graph.end)
+
+    with pytest.raises(
+        TypeError, match=r"map 'not-a-list' input must be a direct concrete list\[T\]"
+    ):
+        _emit(graph)
+
+
+def test_map_emit_rejects_unconstrained_list_items() -> None:
+    graph = GraphBuilder(
+        name="map-any-source",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(load_any_requests))
+    mapped = graph.map(source, graph.step()(increment_request), id="any-items")
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(mapped).to(graph.end)
+
+    with pytest.raises(
+        TypeError, match=r"map 'any-items' input must be a direct concrete list\[T\]"
+    ):
+        _emit(graph)
+
+
+def test_map_emit_requires_the_source_item_type_to_match_the_mapper_input() -> None:
+    graph = GraphBuilder(
+        name="map-item-mismatch",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(load_requests))
+    mapped = graph.map(source, graph.step()(result_identity), id="wrong-item")
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(mapped).to(graph.end)
+
+    with pytest.raises(TypeError, match="source item type does not match mapper input type"):
+        _emit(graph)
+
+
+def test_map_rejects_a_map_result_as_its_source() -> None:
+    graph = GraphBuilder(
+        name="nested-map",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(load_requests))
+    mapped = graph.map(source, graph.step()(increment_request), id="first-map")
+
+    with pytest.raises(ValueError, match="nested maps are not supported"):
+        graph.map(mapped, graph.step()(result_identity), id="second-map")
+
+
+def test_map_emit_requires_exactly_one_outgoing_edge() -> None:
+    graph = GraphBuilder(
+        name="map-multiple-consumers",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(load_requests))
+    mapped = graph.map(source, graph.step()(increment_request), id="increment-all")
+    additional_consumer = graph.add(graph.step()(list_result_identity))
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(mapped).to(additional_consumer).to(graph.end)
+    graph.edge_from(mapped).to(graph.end)
+
+    with pytest.raises(ValueError, match="map 'increment-all' must have exactly one outgoing edge"):
+        _emit(graph)
+
+
+def test_map_emit_requires_exactly_one_incoming_edge() -> None:
+    graph = GraphBuilder(
+        name="map-multiple-sources",
+        input_type=Request,
+        output_type=list[Result],
+        defaults=_defaults(),
+    )
+    source = graph.add(graph.step()(load_requests), id="first-source")
+    additional_source = graph.add(graph.step()(load_requests), id="second-source")
+    mapped = graph.map(source, graph.step()(increment_request), id="increment-all")
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(graph.start).to(additional_source)
+    graph.edge_from(additional_source).to(mapped)
+    graph.edge_from(mapped).to(graph.end)
+
+    with pytest.raises(ValueError, match="map 'increment-all' must have exactly one incoming edge"):
+        _emit(graph)
 
 
 @pytest.mark.parametrize(

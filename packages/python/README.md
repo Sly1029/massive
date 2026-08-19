@@ -135,6 +135,48 @@ unsupported-graph-semantic diagnostic; it does not emit a template with altered
 branch semantics. Argo lowering will be enabled only when it can preserve these
 same exhaustive, skip, and select guarantees.
 
+## Finite maps
+
+Map a concrete list produced by an earlier node with one decorated step. The
+returned handle is the ordered `list[Result]`, including the empty-list case;
+there is no separate gather or collect call.
+
+```python
+class Batch(BaseModel):
+    values: list[Request]
+
+
+map_graph = GraphBuilder(
+    name="increment-batch",
+    input_type=Batch,
+    output_type=list[Result],
+    defaults=graph.defaults,
+)
+
+
+@map_graph.step()
+def unpack(context: StepContext[None, Batch]) -> list[Request]:
+    return context.inputs.values
+
+
+@map_graph.step()
+def increment_item(context: StepContext[None, Request]) -> Result:
+    return Result(value=context.inputs.value + 1)
+
+
+requests = map_graph.add(unpack)
+results = map_graph.map(requests, increment_item, id="increment-items", concurrency=20)
+map_graph.edge_from(map_graph.start).to(requests)
+map_graph.edge_from(results).to(map_graph.end)
+```
+
+`map()` accepts only a direct, concrete `list[T]` source and requires the mapper
+input to be exactly `T`. Its mapper is registered by `map()`, rather than with
+`add()`, and the map result cannot be mapped again. Emission produces one
+Graph IR 0.3 `map` node with its input, item-input, item-output, and collected
+output schemas plus `maxConcurrency`. Execution support for map nodes is not
+included in this authoring slice.
+
 ## Artifact handling
 
 Authors do not read or write object-store keys in normal step code. The runner
