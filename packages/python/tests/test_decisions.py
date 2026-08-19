@@ -110,6 +110,18 @@ def manual_review(context: StepContext[None, ManualReview]) -> Result:
     return Result(value=context.inputs.value)
 
 
+def approved_items(context: StepContext[None, Approved]) -> list[Approved]:
+    return [context.inputs]
+
+
+def map_approved(context: StepContext[None, Approved]) -> Result:
+    return Result(value=context.inputs.value + 1)
+
+
+def collect_approved_results(context: StepContext[None, list[Result]]) -> Result:
+    return context.inputs[0]
+
+
 def test_emit_serializes_an_exhaustive_pydantic_decision_as_data_only_ir() -> None:
     graph = GraphBuilder(
         name="decision-workflow",
@@ -150,6 +162,35 @@ def test_emit_serializes_an_exhaustive_pydantic_decision_as_data_only_ir() -> No
     assert {"from": "review-route", "to": "reject", "case": "rejected"} in graph_ir["edges"]
     assert {"from": "approve", "to": "review-route-select"} in graph_ir["edges"]
     assert {"from": "reject", "to": "review-route-select"} in graph_ir["edges"]
+
+
+def test_map_can_follow_a_decision_branch_and_select_its_downstream_result() -> None:
+    graph = GraphBuilder(
+        name="decision-map-workflow",
+        input_type=Request,
+        output_type=Result,
+        defaults=_defaults(),
+    )
+    classified = graph.add(graph.step()(classify))
+    approved_source = graph.add(graph.step()(approved_items))
+    approved_map = graph.map(approved_source, graph.step()(map_approved), id="map-approved")
+    approved_result = graph.add(graph.step()(collect_approved_results))
+    rejected_result = graph.add(graph.step()(reject))
+    route = graph.decision(classified, on="kind", id="review-route")
+    approved_input = route.case(Approved)
+    rejected_input = route.case(Rejected)
+    selected = route.select(Result, approved=approved_result, rejected=rejected_result)
+    graph.edge_from(graph.start).to(classified)
+    graph.edge_from(approved_input).to(approved_source)
+    graph.edge_from(approved_map).to(approved_result)
+    graph.edge_from(rejected_input).to(rejected_result)
+    graph.edge_from(selected).to(graph.end)
+
+    graph_ir = _emit(graph).value["graph"]
+
+    assert graph_ir["irVersion"] == "0.3"
+    assert {"from": "approved_items", "to": "map-approved"} in graph_ir["edges"]
+    assert {"from": "map-approved", "to": "collect_approved_results"} in graph_ir["edges"]
 
 
 def test_decision_rejects_nonportable_or_ambiguous_authoring_forms() -> None:
