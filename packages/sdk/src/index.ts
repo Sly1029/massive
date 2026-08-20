@@ -28,6 +28,7 @@ export {
 // which reads environment variables at load and would crash under the runner's
 // scoped (no --allow-env) permissions. S3 access remains a deep import.
 export { type Datastore, datastore } from "./datastore/facade.ts";
+export { validateObjectKey } from "./datastore/key.ts";
 export {
   computeSpecHash,
   emitWorkflowSpec,

@@ -59,7 +59,7 @@ func Compile(workflowSpec *spec.WorkflowSpec, sourceJSON []byte) (*CompileResult
 	plan := &planpb.WorkflowPlan{
 		SchemaVersion:  uint32Ptr(0),
 		Hashing:        hashingSpec("workflow-plan"),
-		SpecHashing:    hashingSpecFromWorkflow(workflowSpec.Hashing),
+		SpecHashing:    hashingSpec("workflow-spec"),
 		SpecHash:       stringPtr(specHash),
 		Graph:          compileGraph(workflowSpec, schedule, schemaHashes, contractHashes),
 		Schemas:        schemaEntries,
@@ -385,7 +385,7 @@ func compileSourcePackages(workflowSpec *spec.WorkflowSpec) ([]*planpb.SourcePac
 			PackageId:   stringPtr(sourcePackage.PackageID),
 			Language:    stringPtr(sourcePackage.Language),
 			PackageHash: stringPtr(sourcePackage.PackageHash),
-			Hashing:     hashingSpecFromWorkflow(sourcePackage.Hashing),
+			Hashing:     hashingSpec("source-package"),
 		})
 	}
 	return entries, nil
@@ -397,15 +397,6 @@ func hashingSpec(recipe string) *planpb.HashingSpec {
 		Canonicalization: stringPtr("canonical-json-v0"),
 		Recipe:           stringPtr(recipe),
 		RecipeVersion:    uint32Ptr(1),
-	}
-}
-
-func hashingSpecFromWorkflow(hashing spec.HashingSpec) *planpb.HashingSpec {
-	return &planpb.HashingSpec{
-		Algorithm:        stringPtr(hashing.Algorithm),
-		Canonicalization: stringPtr(hashing.Canonicalization),
-		Recipe:           stringPtr(hashing.Recipe),
-		RecipeVersion:    uint32Ptr(hashing.RecipeVersion),
 	}
 }
 

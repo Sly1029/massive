@@ -20,8 +20,8 @@ All datastore keys are relative object paths:
 
 Implementations must reject keys that escape the configured datastore root after resolution.
 
-An operator may configure one validated relative prefix ahead of every key.
-For the CLI, `--store-prefix <key>` takes precedence over
+For the CLI's local filesystem store, an operator may configure one validated
+relative prefix ahead of every key. `--store-prefix <key>` takes precedence over
 `MASSIVE_STORE_PREFIX`; neither setting enters `specHash`, `planHash`, or any
 artifact body hash. For example, prefix `tenants/acme` maps logical key
 `blobs/sha256/<digest>` to physical path

@@ -51,13 +51,13 @@ func TestCompileFixturesMatchGoldenPlans(t *testing.T) {
 
 func TestCompileRejectsWorkflowSpecWhoseEmbeddedHashDoesNotMatchContent(t *testing.T) {
 	original := readFixture(t, "specs", "linear-chain", "workflow-spec.json")
+	workflowSpec, err := spec.Parse(original)
+	if err != nil {
+		t.Fatal(err)
+	}
 	tampered := bytes.Replace(original, []byte(`"name": "linear-chain"`), []byte(`"name": "linear-chains"`), 1)
 	if bytes.Equal(tampered, original) {
 		t.Fatal("test did not alter workflow spec bytes")
-	}
-	workflowSpec, err := spec.Parse(tampered)
-	if err != nil {
-		t.Fatal(err)
 	}
 	_, err = Compile(workflowSpec, tampered)
 	if err == nil || !strings.Contains(err.Error(), "does not match canonical content") {

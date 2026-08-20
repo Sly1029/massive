@@ -1,5 +1,9 @@
 import { join } from "node:path";
-import { datastore } from "@massive/sdk";
+import {
+  datastore,
+  DatastoreKeyError,
+  validateObjectKey,
+} from "@massive/sdk";
 import { z } from "zod";
 import {
   EXIT,
@@ -37,7 +41,6 @@ interface Parsed {
 
 const encoder = new TextEncoder();
 const controlCharacter = /\p{Cc}/u;
-const windowsAbsolutePath = /^[A-Za-z]:\//;
 const storePrefixSchema = z.string().min(1).superRefine((prefix, context) => {
   if (
     prefix.trim() !== prefix ||
@@ -48,24 +51,11 @@ const storePrefixSchema = z.string().min(1).superRefine((prefix, context) => {
       message: "must not contain control or leading/trailing whitespace",
     });
   }
-  if (
-    prefix.startsWith("/") || prefix.includes("\\") ||
-    windowsAbsolutePath.test(prefix)
-  ) {
-    context.addIssue({
-      code: "custom",
-      message: "must be a relative forward-slash path",
-    });
-  }
-  if (
-    prefix.split("/").some((segment) =>
-      segment === "" || segment === "." || segment === ".."
-    )
-  ) {
-    context.addIssue({
-      code: "custom",
-      message: "must not contain empty, '.' or '..' path segments",
-    });
+  try {
+    validateObjectKey(prefix);
+  } catch (error) {
+    if (!(error instanceof DatastoreKeyError)) throw error;
+    context.addIssue({ code: "custom", message: error.message });
   }
 });
 

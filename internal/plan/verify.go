@@ -54,8 +54,11 @@ func validateVersionedIdentity(plan *planpb.WorkflowPlan) error {
 	if plan.SchemaVersion == nil || plan.GetSchemaVersion() != 0 {
 		return fmt.Errorf("workflow plan schemaVersion must be present and equal 0")
 	}
-	if plan.SpecHash == nil || plan.GetSpecHash() == "" {
+	if plan.SpecHash == nil {
 		return fmt.Errorf("workflow plan specHash must be present")
+	}
+	if !canonical.IsSHA256Ref(plan.GetSpecHash()) {
+		return fmt.Errorf("workflow plan specHash must be sha256:<64 lowercase hex>")
 	}
 	if err := validateHashingSpec(plan.GetHashing(), "workflow-plan", "workflow plan"); err != nil {
 		return err
@@ -75,6 +78,9 @@ func validateVersionedIdentity(plan *planpb.WorkflowPlan) error {
 	for index, sourcePackage := range plan.SourcePackages {
 		if err := validateHashingSpec(sourcePackage.GetHashing(), "source-package", fmt.Sprintf("workflow plan sourcePackages[%d]", index)); err != nil {
 			return err
+		}
+		if sourcePackage.PackageHash == nil || !canonical.IsSHA256Ref(sourcePackage.GetPackageHash()) {
+			return fmt.Errorf("workflow plan sourcePackages[%d].packageHash must be sha256:<64 lowercase hex>", index)
 		}
 	}
 	return nil

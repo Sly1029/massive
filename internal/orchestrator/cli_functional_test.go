@@ -567,8 +567,8 @@ func writeRunWorkspace(t *testing.T, specData []byte, sourceData []byte) string 
 	}
 	// The compiled plan's source-package hash must match the workflow.ts that
 	// ships next to it, or the orchestrator's integrity check fails the run.
-	// Fixture specs carry placeholder digests, so patch them to the real hashes
-	// of the source written into this workspace.
+	// Patch source identities to the exact bytes written into this workspace;
+	// tests may supply a different workflow.ts than the checked-in fixture.
 	patched := patchSpecSource(t, specData, workspace)
 	if err := os.WriteFile(filepath.Join(workspace, "workflow-spec.json"), patched, 0o644); err != nil {
 		t.Fatal(err)

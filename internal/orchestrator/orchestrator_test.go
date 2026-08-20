@@ -394,12 +394,31 @@ func TestSafePathSegmentContractAgreesAcrossSchemasAndGo(t *testing.T) {
 			}
 
 			workflowSpec := replaceAllFixtureValues(t, workflowSpecFixture, mustJSONString(t, "__start"), mustJSONString(t, testCase.value))
+			workflowSpec = resignWorkflowSpec(t, workflowSpec)
 			_, err = spec.Parse(workflowSpec)
 			if got := err == nil; got != testCase.valid {
 				t.Fatalf("WorkflowSpec schema acceptance = %t, want %t (error: %v)", got, testCase.valid, err)
 			}
 		})
 	}
+}
+
+func resignWorkflowSpec(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := spec.RecomputedSpecHash(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root["specHash"] = hash
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func replaceAllFixtureValues(t *testing.T, document []byte, old string, new string) []byte {

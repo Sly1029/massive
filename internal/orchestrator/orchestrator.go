@@ -32,16 +32,12 @@ const jsonContentType = "application/json"
 // character class is ASCII-only, so Go's byte length has the same boundary.
 const maxSafePathSegmentLength = 128
 
-// sha256RefPattern is the exact canonical digest-ref form. Package hashes are
-// interpolated into filesystem paths and datastore keys, so they are validated
-// against this before any path is derived from them.
 var (
-	sha256RefPattern       = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	safePathSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9_.@:#-]+$`)
 )
 
 func validSHA256Ref(ref string) bool {
-	return sha256RefPattern.MatchString(ref)
+	return canonical.IsSHA256Ref(ref)
 }
 
 func validSafePathSegment(value string) bool {

@@ -1,5 +1,8 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert";
-import { sourcePackageDigest } from "../src/source-package.ts";
+import {
+  parseSourcePackageFiles,
+  sourcePackageDigest,
+} from "../src/source-package.ts";
 
 Deno.test("source package hash consumes the versioned shared recipe vector", async () => {
   const input = JSON.parse(
@@ -17,7 +20,7 @@ Deno.test("source package hash consumes the versioned shared recipe vector", asy
     ),
   )).trim();
   assertEquals(
-    sourcePackageDigest(input.files),
+    sourcePackageDigest(parseSourcePackageFiles(input.files)),
     expected,
   );
 });
@@ -36,6 +39,6 @@ Deno.test("source package identity rejects noncanonical file manifests", () => {
       [],
     ]
   ) {
-    assertThrows(() => sourcePackageDigest(files));
+    assertThrows(() => parseSourcePackageFiles(files));
   }
 });

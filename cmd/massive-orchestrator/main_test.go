@@ -25,7 +25,7 @@ func TestResolveStoreRootAppliesFlagOverEnvironment(t *testing.T) {
 }
 
 func TestRunRejectsInvalidStorePrefixBeforeReadingSpecOrWritingStore(t *testing.T) {
-	for _, prefix := range []string{"../escape", "C:/absolute", "control\u0085key"} {
+	for _, prefix := range []string{"../escape", "C:/absolute", "control\u0085key", "\ufefftenants/acme"} {
 		t.Run(prefix, func(t *testing.T) {
 			store := filepath.Join(t.TempDir(), "uncreated")
 			_, err := run([]string{

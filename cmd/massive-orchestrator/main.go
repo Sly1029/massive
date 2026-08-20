@@ -289,7 +289,7 @@ func resolveStoreRoot(storePath string, flagPrefix string, flagPrefixSet bool) (
 	if prefix == "" && !flagPrefixSet {
 		return root, nil
 	}
-	if strings.TrimSpace(prefix) != prefix || strings.IndexFunc(prefix, unicode.IsControl) >= 0 {
+	if strings.TrimSpace(prefix) != prefix || strings.ContainsRune(prefix, '\ufeff') || strings.IndexFunc(prefix, unicode.IsControl) >= 0 {
 		return "", fmt.Errorf("invalid storage prefix %q: must not contain control or leading/trailing whitespace", prefix)
 	}
 	key, err := datastore.ParseKey(prefix)

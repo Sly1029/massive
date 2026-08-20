@@ -211,6 +211,16 @@ func Parse(data []byte) (*WorkflowSpec, error) {
 	}
 
 	diagnostics := validateSemantics(&parsed)
+	recomputed, err := RecomputedSpecHash(data)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.SpecHash != recomputed {
+		diagnostics = append(diagnostics, Diagnostic{
+			Path: "$.specHash", Ref: parsed.SpecHash,
+			Message: fmt.Sprintf("does not match canonical workflow content; expected %s", recomputed),
+		})
+	}
 	if len(diagnostics) > 0 {
 		return nil, &DiagnosticsError{Diagnostics: diagnostics}
 	}

@@ -90,6 +90,38 @@ func TestVerifyCanonicalJSONRejectsUnsupportedHashRecipeValues(t *testing.T) {
 	}
 }
 
+func TestVerifyCanonicalJSONRejectsMalformedForeignHashReferences(t *testing.T) {
+	data := readFixture(t, "specs", "passthrough", "workflow-spec.json")
+	workflowSpec, err := spec.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(workflowSpec, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "spec hash", mutate: func(root map[string]any) {
+			root["specHash"] = "not-a-digest"
+			root["provenance"].(map[string]any)["sourceSpecHash"] = "not-a-digest"
+		}},
+		{name: "source package hash", mutate: func(root map[string]any) {
+			root["sourcePackages"].([]any)[0].(map[string]any)["packageHash"] = "not-a-digest"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mutated, expectedHash := mutateAndResignPlan(t, compiled.CanonicalJSON, test.mutate)
+			if _, err := VerifyCanonicalJSON(mutated, expectedHash); err == nil || !strings.Contains(err.Error(), "sha256:<64 lowercase hex>") {
+				t.Fatalf("VerifyCanonicalJSON() error = %v, want strict hash reference rejection", err)
+			}
+		})
+	}
+}
+
 func deleteCanonicalJSONField(t *testing.T, data []byte, path []string) []byte {
 	t.Helper()
 	var value any
@@ -117,6 +149,33 @@ func deleteCanonicalJSONField(t *testing.T, data []byte, path []string) []byte {
 		t.Fatal(err)
 	}
 	return result
+}
+
+func mutateAndResignPlan(t *testing.T, data []byte, mutate func(map[string]any)) ([]byte, string) {
+	t.Helper()
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	mutate(root)
+	unsigned, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := canonical.DigestJSONWithRootMemberExcluded(unsigned, "planHash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root["planHash"] = hash
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalJSON, err := canonical.CanonicalizeJSON(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonicalJSON, hash
 }
 
 func TestVerifyCanonicalJSONRejectsNonCanonicalBytes(t *testing.T) {

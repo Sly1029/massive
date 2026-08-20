@@ -1,5 +1,6 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { z } from "zod";
 import { MassiveError, SourcePackagePathError } from "./errors.ts";
 import {
   compareCodeUnits,
@@ -17,42 +18,65 @@ export interface SourceSpec {
 export interface SourcePackage {
   readonly root: string;
   readonly include: string[];
-  readonly files: { readonly path: string; readonly hash: string }[];
+  readonly files: SourcePackageFiles;
   readonly sourcePackageHash: string;
 }
 
-export function sourcePackageDigest(
-  files: readonly { readonly path: string; readonly hash: string }[],
-): string {
-  if (files.length === 0) {
-    throw new SourcePackagePathError("source package files must not be empty");
-  }
-  for (const [index, file] of files.entries()) {
-    const segments = file.path.split("/");
+const sourcePackagePathSchema = z.string().min(1).superRefine(
+  (filePath, context) => {
+    const segments = filePath.split("/");
     if (
-      file.path === "" || file.path.includes("\\") ||
-      file.path.startsWith("/") || posix.normalize(file.path) !== file.path ||
+      filePath.includes("\\") || filePath.startsWith("/") ||
+      posix.normalize(filePath) !== filePath ||
       segments.some((segment) =>
         segment === "" || segment === "." || segment === ".."
       )
     ) {
-      throw new SourcePackagePathError(
-        `source package file ${index} path is not a normalized relative path: ${file.path}`,
-      );
+      context.addIssue({
+        code: "custom",
+        message: "path must be a normalized POSIX-relative path",
+      });
     }
-    if (!/^sha256:[0-9a-f]{64}$/.test(file.hash)) {
-      throw new SourcePackagePathError(
-        `source package file ${index} hash must be sha256:<64 lowercase hex>`,
-      );
+  },
+).brand<"SourcePackagePath">();
+
+const sourcePackageFileSchema = z.object({
+  path: sourcePackagePathSchema,
+  hash: z.string().regex(
+    /^sha256:[0-9a-f]{64}$/,
+    "hash must be sha256:<64 lowercase hex>",
+  ).brand<"SHA256Ref">(),
+}).readonly();
+
+const sourcePackageFilesSchema = z.array(sourcePackageFileSchema).min(1)
+  .superRefine((files, context) => {
+    for (let index = 1; index < files.length; index++) {
+      if (compareCodeUnits(files[index - 1]!.path, files[index]!.path) >= 0) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "path"],
+          message:
+            "source package files must have unique paths in UTF-16 code-unit order",
+        });
+      }
     }
-    if (
-      index > 0 && compareCodeUnits(files[index - 1]!.path, file.path) >= 0
-    ) {
-      throw new SourcePackagePathError(
-        "source package files must have unique paths in UTF-16 code-unit order",
-      );
-    }
+  }).readonly().brand<"SourcePackageFiles">();
+
+export type SourcePackageFiles = z.infer<typeof sourcePackageFilesSchema>;
+
+export function parseSourcePackageFiles(files: unknown): SourcePackageFiles {
+  const parsed = sourcePackageFilesSchema.safeParse(files);
+  if (!parsed.success) {
+    throw new SourcePackagePathError(
+      parsed.error.issues[0]?.message ?? "invalid source package files",
+    );
   }
+  return parsed.data;
+}
+
+export function sourcePackageDigest(
+  files: SourcePackageFiles,
+): string {
   return sha256RefText(stableStringify({
     files,
     hashing: SOURCE_PACKAGE_HASHING,
@@ -127,11 +151,12 @@ export async function hashSourcePackage(
     });
   }
 
-  const sourcePackageHash = sourcePackageDigest(entries);
+  const parsedEntries = parseSourcePackageFiles(entries);
+  const sourcePackageHash = sourcePackageDigest(parsedEntries);
   return {
     root,
     include: [...source.include],
-    files: entries,
+    files: parsedEntries,
     sourcePackageHash,
   };
 }

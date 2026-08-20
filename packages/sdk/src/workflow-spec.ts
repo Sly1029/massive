@@ -7,7 +7,10 @@ import type {
 import { MassiveError } from "./errors.ts";
 import { computeSpecHash, type WorkflowSpec } from "./emit.ts";
 import { stableStringify } from "./stable.ts";
-import { sourcePackageDigest } from "./source-package.ts";
+import {
+  parseSourcePackageFiles,
+  sourcePackageDigest,
+} from "./source-package.ts";
 
 export class WorkflowSpecError extends MassiveError {
   constructor(message: string) {
@@ -44,7 +47,9 @@ async function validateWorkflowSpec(value: unknown): Promise<WorkflowSpec> {
   ) {
     let actualPackageHash: string;
     try {
-      actualPackageHash = sourcePackageDigest(sourcePackage.files);
+      actualPackageHash = sourcePackageDigest(
+        parseSourcePackageFiles(sourcePackage.files),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new WorkflowSpecError(
