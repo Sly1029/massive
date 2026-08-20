@@ -73,6 +73,27 @@ Deno.test("WorkflowSpec emission is deterministic", async () => {
   });
 });
 
+Deno.test("WorkflowSpec and source identities declare their hash recipes", async () => {
+  await withSourcePackage(async (root) => {
+    const spec = await emitWorkflowSpec(graphCases[1]!.build(), {
+      source: { root, include: ["workflow.ts"] },
+    });
+
+    assertEquals(spec.hashing, {
+      algorithm: "sha256",
+      canonicalization: "canonical-json-v0",
+      recipe: "workflow-spec",
+      recipeVersion: 1,
+    });
+    assertEquals(sourcePackage(spec).hashing, {
+      algorithm: "sha256",
+      canonicalization: "canonical-json-v0",
+      recipe: "source-package",
+      recipeVersion: 1,
+    });
+  });
+});
+
 Deno.test("source checkout location does not change WorkflowSpec identity", async () => {
   const root = await Deno.makeTempDir({ prefix: "massive-emit-location-" });
   try {
@@ -187,7 +208,7 @@ Deno.test("contract merge emits effective contract refs and dedupes environments
   });
 });
 
-Deno.test("source package packageHash follows included file content only", async () => {
+Deno.test("source package packageHash follows exact included bytes, not an AST", async () => {
   const root = await Deno.makeTempDir({ prefix: "massive-emit-source-" });
   try {
     await Deno.writeTextFile(
@@ -204,7 +225,7 @@ Deno.test("source package packageHash follows included file content only", async
     });
     await Deno.writeTextFile(
       join(root, "workflow.ts"),
-      "export const version = 2;\n",
+      "// same program, different source bytes\nexport const version = 1;\n",
     );
     const second = await emitWorkflowSpec(graphCases[1]!.build(), {
       source: { root, include: ["workflow.ts"] },
@@ -277,16 +298,18 @@ Deno.test("source package manifest orders files by UTF-16 code units, not locale
     );
     await Deno.writeTextFile(join(root, "B.ts"), "export const b = 1;\n");
     await Deno.writeTextFile(join(root, "a.ts"), "export const a = 1;\n");
+    await Deno.writeTextFile(join(root, "😀.ts"), "export const emoji = 1;\n");
+    await Deno.writeTextFile(join(root, ".ts"), "export const privateUse = 1;\n");
 
     const first = await emitWorkflowSpec(graphCases[1]!.build(), {
       source: { root, include: ["*.ts"] },
     });
 
-    // Code-unit order puts uppercase "B.ts" (0x42) before lowercase "a.ts"
-    // (0x61) and "workflow.ts" (0x77); localeCompare would place "a.ts" first.
+    // The emoji's leading UTF-16 surrogate sorts before U+E000 even though its
+    // Unicode code point is larger. Locale and code-point sorting both differ.
     assertEquals(
       sourcePackage(first).files.map((file) => file.path),
-      ["B.ts", "a.ts", "workflow.ts"],
+      ["B.ts", "a.ts", "workflow.ts", "😀.ts", ".ts"],
     );
 
     const second = await emitWorkflowSpec(graphCases[1]!.build(), {

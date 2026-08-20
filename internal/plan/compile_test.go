@@ -5,15 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
-	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/spec"
 )
-
-var digestPattern = regexp.MustCompile(`sha256:[0-9a-f]{64}`)
 
 func TestCompileFixturesMatchGoldenPlans(t *testing.T) {
 	tests := []struct {
@@ -45,12 +42,26 @@ func TestCompileFixturesMatchGoldenPlans(t *testing.T) {
 			}
 
 			golden := readFixture(t, "plans", test.name, "workflow-plan.json")
-			actualNormalized := normalizePlanJSON(t, first.CanonicalJSON)
-			goldenNormalized := normalizePlanJSON(t, golden)
-			if !bytes.Equal(actualNormalized, goldenNormalized) {
-				t.Fatalf("plan mismatch\nactual:   %s\nexpected: %s", actualNormalized, goldenNormalized)
+			if !bytes.Equal(first.CanonicalJSON, golden) {
+				t.Fatalf("plan mismatch\nactual:   %s\nexpected: %s", first.CanonicalJSON, golden)
 			}
 		})
+	}
+}
+
+func TestCompileRejectsWorkflowSpecWhoseEmbeddedHashDoesNotMatchContent(t *testing.T) {
+	original := readFixture(t, "specs", "linear-chain", "workflow-spec.json")
+	workflowSpec, err := spec.Parse(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := bytes.Replace(original, []byte(`"name": "linear-chain"`), []byte(`"name": "linear-chains"`), 1)
+	if bytes.Equal(tampered, original) {
+		t.Fatal("test did not alter workflow spec bytes")
+	}
+	_, err = Compile(workflowSpec, tampered)
+	if err == nil || !strings.Contains(err.Error(), "does not match canonical content") {
+		t.Fatalf("Compile() error = %v, want embedded hash mismatch", err)
 	}
 }
 
@@ -91,6 +102,15 @@ func TestCompilePreservesPythonFrontendIdentity(t *testing.T) {
 	}
 	if len(compiled.Plan.GetSourcePackages()) != 1 || compiled.Plan.GetSourcePackages()[0].GetLanguage() != "python" {
 		t.Fatalf("compiled source packages = %#v, want one Python package", compiled.Plan.GetSourcePackages())
+	}
+	if got := compiled.Plan.GetHashing(); got.GetRecipe() != "workflow-plan" || got.GetRecipeVersion() != 1 {
+		t.Fatalf("compiled plan hashing = %#v, want workflow-plan@1", got)
+	}
+	if got := compiled.Plan.GetSpecHashing(); got.GetRecipe() != "workflow-spec" || got.GetRecipeVersion() != 1 {
+		t.Fatalf("compiled spec hashing = %#v, want workflow-spec@1", got)
+	}
+	if got := compiled.Plan.GetSourcePackages()[0].GetHashing(); got.GetRecipe() != "source-package" || got.GetRecipeVersion() != 1 {
+		t.Fatalf("compiled source hashing = %#v, want source-package@1", got)
 	}
 	if len(compiled.Plan.GetEnvironments()) != 1 || compiled.Plan.GetEnvironments()[0].GetContainer().GetImage() == "" {
 		t.Fatalf("compiled environments = %#v, want runnable container plan", compiled.Plan.GetEnvironments())
@@ -181,18 +201,6 @@ func readFixture(t *testing.T, fixtureKind, name, file string) []byte {
 	return data
 }
 
-func normalizePlanJSON(t *testing.T, data []byte) []byte {
-	t.Helper()
-
-	normalized := digestPattern.ReplaceAll(data, []byte("sha256:0000000000000000000000000000000000000000000000000000000000000000"))
-	normalized = omitEmptyRepeatedFields(t, normalized)
-	canonicalJSON, err := canonical.CanonicalizeJSON(normalized)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return canonicalJSON
-}
-
 func decisionSpecData(t *testing.T) []byte {
 	t.Helper()
 	var root map[string]any
@@ -247,27 +255,18 @@ func decisionSpecData(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+	hash, err := spec.RecomputedSpecHash(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root["specHash"] = hash
+	data, err = json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return data
 }
 
 func hashRef(character string) string {
 	return "sha256:" + string(bytes.Repeat([]byte(character), 64))
-}
-
-func omitEmptyRepeatedFields(t *testing.T, data []byte) []byte {
-	t.Helper()
-
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		t.Fatal(err)
-	}
-
-	output, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return output
 }

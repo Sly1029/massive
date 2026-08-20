@@ -1,5 +1,11 @@
 export { defineWorkflowPackage, type WorkflowPackageConfig } from "./config.ts";
 export {
+  DEPLOYMENT_SPEC_HASHING,
+  type HashingSpec,
+  SOURCE_PACKAGE_HASHING,
+  WORKFLOW_SPEC_HASHING,
+} from "./hashing.ts";
+export {
   computeDeploymentHash,
   deployment,
   type DeploymentProfile,
@@ -22,12 +28,13 @@ export {
 // which reads environment variables at load and would crash under the runner's
 // scoped (no --allow-env) permissions. S3 access remains a deep import.
 export { type Datastore, datastore } from "./datastore/facade.ts";
+export { validateObjectKey } from "./datastore/key.ts";
 export {
   computeSpecHash,
   emitWorkflowSpec,
   type EmitWorkflowSpecOptions,
-  type WorkflowSpecLanguage,
   type WorkflowSpec,
+  type WorkflowSpecLanguage,
 } from "./emit.ts";
 export {
   parseWorkflowSpec,

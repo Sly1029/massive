@@ -21,6 +21,7 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/mapexec"
+	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/google/uuid"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -31,16 +32,12 @@ const jsonContentType = "application/json"
 // character class is ASCII-only, so Go's byte length has the same boundary.
 const maxSafePathSegmentLength = 128
 
-// sha256RefPattern is the exact canonical digest-ref form. Package hashes are
-// interpolated into filesystem paths and datastore keys, so they are validated
-// against this before any path is derived from them.
 var (
-	sha256RefPattern       = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	safePathSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9_.@:#-]+$`)
 )
 
 func validSHA256Ref(ref string) bool {
-	return sha256RefPattern.MatchString(ref)
+	return canonical.IsSHA256Ref(ref)
 }
 
 func validSafePathSegment(value string) bool {
@@ -625,7 +622,12 @@ func populateSnapshot(sourceRoot string, dir string, files []SourcePackageFile) 
 // dir with content that hashes to its recorded digest.
 func snapshotMatchesManifest(dir string, files []SourcePackageFile) bool {
 	for _, file := range files {
-		content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(file.Path)))
+		candidate := filepath.Join(dir, filepath.FromSlash(file.Path))
+		contained, err := pathWithin(dir, candidate)
+		if err != nil || !contained {
+			return false
+		}
+		content, err := os.ReadFile(candidate)
 		if err != nil {
 			return false
 		}
@@ -668,19 +670,14 @@ func forceRemoveAll(root string) error {
 	return os.RemoveAll(root)
 }
 
-// recomputeSourcePackageHash reproduces the SDK source-package hash: the
-// sha256 of the canonical JSON of the {path, hash} entries array. See
-// hashSourcePackage in packages/sdk/src/compile.ts and hashing.md.
+// recomputeSourcePackageHash reproduces the versioned SDK source-package
+// identity over normalized paths and exact file byte hashes.
 func recomputeSourcePackageHash(files []SourcePackageFile) (string, error) {
-	entries := make([]any, 0, len(files))
+	entries := make([]sourceidentity.File, 0, len(files))
 	for _, file := range files {
-		entries = append(entries, map[string]any{"path": file.Path, "hash": file.Hash})
+		entries = append(entries, sourceidentity.File{Path: file.Path, Hash: file.Hash})
 	}
-	data, err := json.Marshal(entries)
-	if err != nil {
-		return "", fmt.Errorf("marshal source package entries: %w", err)
-	}
-	return canonical.DigestJSON(data)
+	return sourceidentity.Digest(entries)
 }
 
 func descriptorForStep(config RunConfig, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex) (StepInvocationDescriptor, error) {

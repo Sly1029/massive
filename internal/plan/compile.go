@@ -35,6 +35,9 @@ func Compile(workflowSpec *spec.WorkflowSpec, sourceJSON []byte) (*CompileResult
 	if err != nil {
 		return nil, err
 	}
+	if workflowSpec.SpecHash != specHash {
+		return nil, fmt.Errorf("embedded workflow spec hash %q does not match canonical content %q", workflowSpec.SpecHash, specHash)
+	}
 
 	schemaHashes, schemaEntries, err := compileSchemas(workflowSpec)
 	if err != nil {
@@ -53,11 +56,10 @@ func Compile(workflowSpec *spec.WorkflowSpec, sourceJSON []byte) (*CompileResult
 		return nil, err
 	}
 
-	// Fixture specs currently carry placeholder specHash values. The v0
-	// compiler records the recomputed self-excluded value without hard-failing
-	// on mismatch, so frontend rollout can converge without blocking WS-2.
 	plan := &planpb.WorkflowPlan{
 		SchemaVersion:  uint32Ptr(0),
+		Hashing:        hashingSpec("workflow-plan"),
+		SpecHashing:    hashingSpec("workflow-spec"),
 		SpecHash:       stringPtr(specHash),
 		Graph:          compileGraph(workflowSpec, schedule, schemaHashes, contractHashes),
 		Schemas:        schemaEntries,
@@ -383,9 +385,19 @@ func compileSourcePackages(workflowSpec *spec.WorkflowSpec) ([]*planpb.SourcePac
 			PackageId:   stringPtr(sourcePackage.PackageID),
 			Language:    stringPtr(sourcePackage.Language),
 			PackageHash: stringPtr(sourcePackage.PackageHash),
+			Hashing:     hashingSpec("source-package"),
 		})
 	}
 	return entries, nil
+}
+
+func hashingSpec(recipe string) *planpb.HashingSpec {
+	return &planpb.HashingSpec{
+		Algorithm:        stringPtr("sha256"),
+		Canonicalization: stringPtr("canonical-json-v0"),
+		Recipe:           stringPtr(recipe),
+		RecipeVersion:    uint32Ptr(1),
+	}
 }
 
 func hashJSONValue(value any) (string, error) {

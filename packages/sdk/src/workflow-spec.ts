@@ -7,6 +7,10 @@ import type {
 import { MassiveError } from "./errors.ts";
 import { computeSpecHash, type WorkflowSpec } from "./emit.ts";
 import { stableStringify } from "./stable.ts";
+import {
+  parseSourcePackageFiles,
+  sourcePackageDigest,
+} from "./source-package.ts";
 
 export class WorkflowSpecError extends MassiveError {
   constructor(message: string) {
@@ -34,6 +38,33 @@ async function validateWorkflowSpec(value: unknown): Promise<WorkflowSpec> {
     throw new WorkflowSpecError(
       `WorkflowSpec JSON schema violation ${formatAjvError(validate.errors)}`,
     );
+  }
+
+  for (
+    const [packageId, sourcePackage] of Object.entries(
+      value.sourcePackages,
+    )
+  ) {
+    let actualPackageHash: string;
+    try {
+      actualPackageHash = sourcePackageDigest(
+        parseSourcePackageFiles(sourcePackage.files),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new WorkflowSpecError(
+        `WorkflowSpec source package ${
+          JSON.stringify(packageId)
+        } is invalid: ${message}`,
+      );
+    }
+    if (actualPackageHash !== sourcePackage.packageHash) {
+      throw new WorkflowSpecError(
+        `WorkflowSpec source package ${
+          JSON.stringify(packageId)
+        } packageHash mismatch: expected ${sourcePackage.packageHash}, got ${actualPackageHash}`,
+      );
+    }
   }
 
   const actualHash = computeSpecHash(value);

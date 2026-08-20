@@ -65,8 +65,8 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 
 func TestStaticDAGAcceptsBothPythonAndTypeScriptSymbols(t *testing.T) {
 	goldens := map[string]string{
-		"typescript": "sha256:f29d67c5447effb813d991719a94971984adf18b12c067368933718fa40c44a7",
-		"python":     "sha256:aba3c2e0c15b3e2fb82fe511421206f365d7eeffe1241092beaba12a4bde7d98",
+		"typescript": "sha256:6339558310aa379e4877a759a344b5e160c92c7da16a155e69d8c0518eab3ce4",
+		"python":     "sha256:7b777c4c7ac9c507a8a9c18e2baaf7cb5b9050d65e563f5a6299b42de779069f",
 	}
 	for _, language := range []string{"typescript", "python"} {
 		t.Run(language, func(t *testing.T) {
@@ -199,7 +199,7 @@ func fixturePlan(t *testing.T, name string) *plan.CompileResult {
 }
 func deploymentForPlan(t *testing.T, hash string) *deployment.Spec {
 	t.Helper()
-	v := map[string]any{"kind": "DeploymentSpec", "schemaVersion": 0, "encoding": "json-v0", "planHash": hash, "profile": map[string]any{"name": "argo-staging", "artifactStoreBinding": "staging-artifacts", "target": map[string]any{"kind": "argo", "namespace": "workflows", "serviceAccountName": "massive-runner", "workflowTemplateName": "massive-static"}}}
+	v := map[string]any{"kind": "DeploymentSpec", "schemaVersion": 0, "encoding": "json-v0", "hashing": map[string]any{"algorithm": "sha256", "canonicalization": "canonical-json-v0", "recipe": "deployment-spec", "recipeVersion": 1}, "planHash": hash, "profile": map[string]any{"name": "argo-staging", "artifactStoreBinding": "staging-artifacts", "target": map[string]any{"kind": "argo", "namespace": "workflows", "serviceAccountName": "massive-runner", "workflowTemplateName": "massive-static"}}}
 	raw, err := json.Marshal(v)
 	if err != nil {
 		t.Fatal(err)

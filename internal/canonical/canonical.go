@@ -17,6 +17,7 @@ import (
 const maxSafeInteger = 1<<53 - 1
 
 var canonicalIntegerPattern = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
+var sha256RefPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // CanonicalizeJSON parses a JSON field tree and writes the v0 canonical JSON
 // representation from conformance/schema/hashing.md.
@@ -43,6 +44,12 @@ func DigestJSON(data []byte) (string, error) {
 func DigestBytes(data []byte) string {
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// IsSHA256Ref reports whether value is the canonical digest-reference form
+// used by persisted Massive identities.
+func IsSHA256Ref(value string) bool {
+	return sha256RefPattern.MatchString(value)
 }
 
 // DigestJSONWithRootMemberExcluded applies the hashing self-exclusion rule:

@@ -2,6 +2,12 @@
   "kind": "DeploymentSpec",
   "schemaVersion": 0,
   "encoding": "json-v0",
+  "hashing": {
+    "algorithm": "sha256",
+    "canonicalization": "canonical-json-v0",
+    "recipe": "deployment-spec",
+    "recipeVersion": 1
+  },
   "planHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
   "profile": {
     "name": "argo-staging",
@@ -13,5 +19,5 @@
       "workflowTemplateName": "example-workflow"
     }
   },
-  "deploymentHash": "sha256:1f9cbb8ecef62227ea093de2a3b7c28a7383e7e437a5b62bf35763882095a55b"
+  "deploymentHash": "sha256:823bdc2fa6cd197279271df3f179fcd841223c7805f2206ccc5f62a3dff1a501"
 }

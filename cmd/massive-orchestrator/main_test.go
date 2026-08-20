@@ -1,11 +1,46 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Sly1029/massive/internal/spec"
 )
+
+func TestResolveStoreRootAppliesFlagOverEnvironment(t *testing.T) {
+	t.Setenv("MASSIVE_STORE_PREFIX", "environment/prefix")
+	base := t.TempDir()
+	root, err := resolveStoreRoot(base, "flag/prefix", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != filepath.Join(base, "flag", "prefix") {
+		t.Fatalf("resolved store root = %q", root)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("prefix resolution created storage before run: %v", err)
+	}
+}
+
+func TestRunRejectsInvalidStorePrefixBeforeReadingSpecOrWritingStore(t *testing.T) {
+	for _, prefix := range []string{"../escape", "C:/absolute", "control\u0085key", "\ufefftenants/acme"} {
+		t.Run(prefix, func(t *testing.T) {
+			store := filepath.Join(t.TempDir(), "uncreated")
+			_, err := run([]string{
+				"run", "--spec", "missing.json", "--input", "null", "--store", store,
+				"--store-prefix", prefix,
+			})
+			if err == nil || !strings.Contains(err.Error(), "invalid storage prefix") {
+				t.Fatalf("run() error = %v, want invalid prefix", err)
+			}
+			if _, statErr := os.Stat(store); !os.IsNotExist(statErr) {
+				t.Fatalf("invalid prefix created store: %v", statErr)
+			}
+		})
+	}
+}
 
 func TestResolvePackageRootsKeepsLocationsOutOfWorkflowSpec(t *testing.T) {
 	defaultRoot := t.TempDir()

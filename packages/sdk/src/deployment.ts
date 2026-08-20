@@ -1,3 +1,7 @@
+import {
+  DEPLOYMENT_SPEC_HASHING,
+  type HashingSpec,
+} from "./hashing.ts";
 import { sha256RefText, stableStringify } from "./stable.ts";
 
 export type DeploymentTarget =
@@ -19,6 +23,7 @@ export interface DeploymentSpec {
   readonly kind: "DeploymentSpec";
   readonly schemaVersion: 0;
   readonly encoding: "json-v0";
+  readonly hashing: HashingSpec<"deployment-spec">;
   readonly deploymentHash: string;
   readonly planHash: string;
   readonly profile: DeploymentProfile;
@@ -66,6 +71,7 @@ export function emitDeploymentSpec(
     kind: "DeploymentSpec" as const,
     schemaVersion: 0 as const,
     encoding: "json-v0" as const,
+    hashing: DEPLOYMENT_SPEC_HASHING,
     planHash,
     profile,
   };

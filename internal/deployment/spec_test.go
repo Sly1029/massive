@@ -166,6 +166,36 @@ func TestParseRejectsMismatchedDeploymentHash(t *testing.T) {
 	}
 }
 
+func TestParseRequiresSupportedDeploymentHashRecipe(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "missing", mutate: func(value map[string]any) { delete(value, "hashing") }},
+		{name: "future", mutate: func(value map[string]any) {
+			value["hashing"].(map[string]any)["recipeVersion"] = 2
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var value map[string]any
+			if err := json.Unmarshal(deploymentJSON(t, map[string]any{
+				"name": "local", "artifactStoreBinding": "local-artifacts",
+				"target": map[string]any{"kind": "local"},
+			}), &value); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(value)
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Parse(data); err == nil || !strings.Contains(err.Error(), "hashing") {
+				t.Fatalf("Parse() error = %v, want hashing diagnostic", err)
+			}
+		})
+	}
+}
+
 func deploymentJSON(t *testing.T, profile map[string]any) []byte {
 	t.Helper()
 	return deploymentJSONForPlan(t, testPlanHash, profile)
@@ -177,8 +207,12 @@ func deploymentJSONForPlan(t *testing.T, planHash string, profile map[string]any
 		"kind":          "DeploymentSpec",
 		"schemaVersion": 0,
 		"encoding":      "json-v0",
-		"planHash":      planHash,
-		"profile":       profile,
+		"hashing": map[string]any{
+			"algorithm": "sha256", "canonicalization": "canonical-json-v0",
+			"recipe": "deployment-spec", "recipeVersion": 1,
+		},
+		"planHash": planHash,
+		"profile":  profile,
 	}
 	body, err := json.Marshal(value)
 	if err != nil {

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
-from .canonical import JsonValue, canonical_json, sha256_ref
+from .canonical import sha256_ref, utf16_sort_key
+from .hashing import SourcePackageFileHash, SourcePackageHashInput
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,11 +24,12 @@ class SourcePackage:
                 files[resolved.relative_to(root).as_posix()] = resolved
         if not files:
             raise ValueError("source package include did not select any files")
-        entries = [
-            {"path": path, "hash": sha256_ref(file.read_bytes())}
-            for path, file in sorted(files.items())
+        identity_files = [
+            SourcePackageFileHash(path=path, hash=sha256_ref(file.read_bytes()))
+            for path, file in sorted(files.items(), key=lambda item: utf16_sort_key(item[0]))
         ]
-        return entries, sha256_ref(canonical_json(cast(JsonValue, entries)))
+        entries = [file.model_dump(mode="json") for file in identity_files]
+        return entries, SourcePackageHashInput(files=tuple(identity_files)).digest()
 
 
 def source_package(*, root: Path, include: list[str], package_id: str) -> SourcePackage:

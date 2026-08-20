@@ -65,6 +65,59 @@ Deno.test("WorkflowSpec JSON Schema validates v0 graph fixture specs", async () 
   }
 });
 
+Deno.test("WorkflowSpec requires explicit transport, graph, and hash recipe versions", async () => {
+  const validate = await compileWorkflowSpecValidator();
+  const original = (await readJson(
+    "../../../conformance/fixtures/specs/linear-chain/workflow-spec.json",
+  )) as {
+    schemaVersion?: number;
+    hashing: { recipeVersion?: number };
+    graph: { irVersion?: string };
+    sourcePackages: Record<string, { hashing: { recipeVersion?: number } }>;
+  };
+
+  for (const mutate of [
+    (spec: typeof original) => delete spec.schemaVersion,
+    (spec: typeof original) => delete spec.hashing.recipeVersion,
+    (spec: typeof original) => delete spec.graph.irVersion,
+    (spec: typeof original) => delete Object.values(spec.sourcePackages)[0]!.hashing.recipeVersion,
+  ]) {
+    const spec = structuredClone(original);
+    mutate(spec);
+    assertEquals(validate(spec), false, "missing version must be rejected");
+  }
+});
+
+Deno.test("WorkflowSpec source-package file paths are normalized POSIX-relative paths", async () => {
+  const validate = await compileWorkflowSpecValidator();
+  const original = (await readJson(
+    "../../../conformance/fixtures/specs/linear-chain/workflow-spec.json",
+  )) as {
+    sourcePackages: Record<string, { files: { path: string }[] }>;
+  };
+  const validNested = structuredClone(original);
+  Object.values(validNested.sourcePackages)[0]!.files[0]!.path = "src/nested/a.py";
+  assert(validate(validNested), `valid nested path must be accepted: ${JSON.stringify(validate.errors)}`);
+
+  for (
+    const path of [
+      "./a.py",
+      "src//a.py",
+      "src/a.py/",
+      "src\\a.py",
+      "/absolute/a.py",
+      "../a.py",
+      "src/../a.py",
+      ".",
+      "..",
+    ]
+  ) {
+    const spec = structuredClone(original);
+    Object.values(spec.sourcePackages)[0]!.files[0]!.path = path;
+    assertEquals(validate(spec), false, `${JSON.stringify(path)} must be rejected`);
+  }
+});
+
 Deno.test("WorkflowSpec JSON Schema rejects step nodes without contractRef", async () => {
   const validate = await compileWorkflowSpecValidator();
   const spec = await readJson("../../../conformance/fixtures/specs/invalid-missing-contract-ref/workflow-spec.json");
@@ -243,15 +296,19 @@ function formatSourceIds(sourceIds: readonly string[]): string {
 const HASH_REF_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 type WorkflowSpecFixture = {
+  hashing: HashingFixture;
   workflow: { name: string };
   graph: {
 	    irVersion: string;
     nodes: { id: string; kind: string; contractRef?: string }[];
     edges: { from: string; to: string }[];
   };
+  sourcePackages: Record<string, { hashing: HashingFixture }>;
 };
 
 type WorkflowPlanFixture = {
+  hashing: HashingFixture;
+  specHashing: HashingFixture;
   graph: {
 	    irVersion: string;
     workflowName: string;
@@ -260,11 +317,38 @@ type WorkflowPlanFixture = {
   };
   contracts: { contractRef: string; environmentRef: string }[];
   environments: { envRef: string }[];
+  sourcePackages: { hashing: HashingFixture }[];
+};
+
+type HashingFixture = {
+  algorithm: string;
+  canonicalization: string;
+  recipe: string;
+  recipeVersion: number;
 };
 
 function assertSpecPlanStructuralConsistency(spec: unknown, plan: unknown, caseId: string): void {
   const typedSpec = spec as WorkflowSpecFixture;
   const typedPlan = plan as WorkflowPlanFixture;
+
+  assertEquals(typedSpec.hashing, {
+    algorithm: "sha256",
+    canonicalization: "canonical-json-v0",
+    recipe: "workflow-spec",
+    recipeVersion: 1,
+  });
+  assertEquals(typedPlan.hashing, {
+    algorithm: "sha256",
+    canonicalization: "canonical-json-v0",
+    recipe: "workflow-plan",
+    recipeVersion: 1,
+  });
+  assertEquals(typedPlan.specHashing, typedSpec.hashing);
+  assertEquals(
+    typedPlan.sourcePackages.map((sourcePackage) => sourcePackage.hashing),
+    Object.values(typedSpec.sourcePackages).map((sourcePackage) => sourcePackage.hashing),
+    `${caseId} source package hash recipe`,
+  );
 
   assertEquals(typedPlan.graph.workflowName, typedSpec.workflow.name, `${caseId} workflow name`);
   assertEquals(typedPlan.graph.irVersion, typedSpec.graph.irVersion, `${caseId} graph IR version`);

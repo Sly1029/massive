@@ -89,6 +89,7 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	}
 	deploymentValue := map[string]any{
 		"kind": "DeploymentSpec", "schemaVersion": 0, "encoding": "json-v0",
+		"hashing":  map[string]any{"algorithm": "sha256", "canonicalization": "canonical-json-v0", "recipe": "deployment-spec", "recipeVersion": 1},
 		"planHash": parsedPlan.GetPlanHash(),
 		"profile": map[string]any{
 			"name": "argo-test", "artifactStoreBinding": "test-artifacts",
@@ -566,8 +567,8 @@ func writeRunWorkspace(t *testing.T, specData []byte, sourceData []byte) string 
 	}
 	// The compiled plan's source-package hash must match the workflow.ts that
 	// ships next to it, or the orchestrator's integrity check fails the run.
-	// Fixture specs carry placeholder digests, so patch them to the real hashes
-	// of the source written into this workspace.
+	// Patch source identities to the exact bytes written into this workspace;
+	// tests may supply a different workflow.ts than the checked-in fixture.
 	patched := patchSpecSource(t, specData, workspace)
 	if err := os.WriteFile(filepath.Join(workspace, "workflow-spec.json"), patched, 0o644); err != nil {
 		t.Fatal(err)
@@ -623,6 +624,15 @@ func patchSpecSource(t *testing.T, specData []byte, sourceDir string) []byte {
 		pkg["packageHash"] = packageHash
 	}
 	patched, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recomputed, err := spec.RecomputedSpecHash(patched)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc["specHash"] = recomputed
+	patched, err = json.Marshal(doc)
 	if err != nil {
 		t.Fatal(err)
 	}

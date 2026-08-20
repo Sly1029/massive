@@ -1,5 +1,10 @@
 import { join } from "node:path";
-import { datastore } from "@massive/sdk";
+import {
+  datastore,
+  DatastoreKeyError,
+  validateObjectKey,
+} from "@massive/sdk";
+import { z } from "zod";
 import {
   EXIT,
   isValidRunId,
@@ -11,14 +16,15 @@ import { renderOutcome } from "./report.ts";
 import { inspectRun } from "./inspect.ts";
 
 // massive run <entry> [--input <json> | --input-file <path> | -]
-//                     [--store <dir>] [--project <owner/repo>] [--run-id <id>]
+//                     [--store <dir>] [--store-prefix <key>] [--project <owner/repo>] [--run-id <id>]
 //                     [--target local] [--verbose] [--json] [--rebuild]
-// massive inspect <run-id> [--store <dir>] [--project <owner/repo>] [--step <id>]
+// massive inspect <run-id> [--store <dir>] [--store-prefix <key>] [--project <owner/repo>] [--step <id>]
 
 const VALUE_FLAGS = new Set([
   "input",
   "input-file",
   "store",
+  "store-prefix",
   "project",
   "run-id",
   "target",
@@ -34,6 +40,24 @@ interface Parsed {
 }
 
 const encoder = new TextEncoder();
+const controlCharacter = /\p{Cc}/u;
+const storePrefixSchema = z.string().min(1).superRefine((prefix, context) => {
+  if (
+    prefix.trim() !== prefix ||
+    controlCharacter.test(prefix)
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "must not contain control or leading/trailing whitespace",
+    });
+  }
+  try {
+    validateObjectKey(prefix);
+  } catch (error) {
+    if (!(error instanceof DatastoreKeyError)) throw error;
+    context.addIssue({ code: "custom", message: error.message });
+  }
+});
 
 async function main(argv: readonly string[]): Promise<number> {
   const parsed = parseArgs(argv);
@@ -53,6 +77,9 @@ async function runCommand(parsed: Parsed): Promise<number> {
     return usage(`unknown --target "${target}" (expected local or argo)`);
   }
 
+  const root = storeRoot(parsed);
+  if (root instanceof Error) return usage(root.message);
+
   let input: Uint8Array;
   try {
     input = await resolveInput(parsed);
@@ -64,7 +91,7 @@ async function runCommand(parsed: Parsed): Promise<number> {
     entry,
     target: target as TargetId,
     input,
-    storeRoot: storeRoot(parsed),
+    storeRoot: root,
     ...(parsed.values["run-id"] === undefined
       ? {}
       : { runId: parsed.values["run-id"] }),
@@ -97,6 +124,7 @@ async function inspectCommand(parsed: Parsed): Promise<number> {
   }
 
   const root = storeRoot(parsed);
+  if (root instanceof Error) return usage(root.message);
   const result = await inspectRun(
     {
       runId,
@@ -159,11 +187,28 @@ async function resolveInput(parsed: Parsed): Promise<Uint8Array> {
   return encoder.encode(text);
 }
 
-function storeRoot(parsed: Parsed): string {
+function storeRoot(parsed: Parsed): string | Error {
   const explicit = parsed.values.store ?? Deno.env.get("MASSIVE_STORE");
-  if (explicit !== undefined && explicit !== "") return explicit;
-  const home = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? ".";
-  return join(home, ".massive", "store");
+  const base = explicit !== undefined && explicit !== "" ? explicit : join(
+    Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE") ?? ".",
+    ".massive",
+    "store",
+  );
+  const cliPrefix = parsed.values["store-prefix"];
+  const environmentPrefix = Deno.env.get("MASSIVE_STORE_PREFIX");
+  const prefix = cliPrefix ?? environmentPrefix;
+  if (prefix === undefined || (cliPrefix === undefined && prefix === "")) {
+    return base;
+  }
+  const validated = storePrefixSchema.safeParse(prefix);
+  if (!validated.success) {
+    return new Error(
+      `invalid storage prefix ${JSON.stringify(prefix)}: ${
+        validated.error.issues[0]?.message ?? "invalid value"
+      }`,
+    );
+  }
+  return join(base, ...validated.data.split("/"));
 }
 
 function parseArgs(argv: readonly string[]): Parsed | Error {
@@ -202,7 +247,7 @@ function parseArgs(argv: readonly string[]): Parsed | Error {
 function usage(message: string): number {
   Deno.stderr.writeSync(
     encoder.encode(
-      `✗ ${message}\n\n  next  see usage: massive run <entry> [--input <json>] [--store <dir>]\n`,
+      `✗ ${message}\n\n  next  see usage: massive run <entry> [--input <json>] [--store <dir>] [--store-prefix <key>]\n`,
     ),
   );
   return EXIT.usage;

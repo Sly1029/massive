@@ -25,6 +25,13 @@ Deno.test("parseWorkflowSpecText accepts canonical WorkflowSpec emitted by Pytho
   }
   assertEquals(spec.symbols[step.symbolRef]?.language, "python");
   assertEquals(spec.sourcePackages["python-main"]?.language, "python");
+  assertEquals(spec.hashing.recipe, "workflow-spec");
+  assertEquals(spec.hashing.recipeVersion, 1);
+  assertEquals(
+    spec.sourcePackages["python-main"]?.hashing.recipe,
+    "source-package",
+  );
+  assertEquals(computeSpecHash(spec), spec.specHash);
 });
 
 Deno.test("parseWorkflowSpec accepts data-only Graph IR 0.2 routing", async () => {
@@ -107,6 +114,19 @@ Deno.test("parseWorkflowSpecText rejects a WorkflowSpec whose hash does not matc
     () => parseWorkflowSpecText(corruptedHash),
     WorkflowSpecError,
     "specHash mismatch",
+  );
+});
+
+Deno.test("parseWorkflowSpec rejects a source package hash that contradicts its manifest", async () => {
+  const value = JSON.parse(await emitPythonWorkflowSpec()) as WorkflowSpec;
+  (value.sourcePackages["python-main"] as { packageHash: string })
+    .packageHash = `sha256:${"0".repeat(64)}`;
+  (value as { specHash: string }).specHash = computeSpecHash(value);
+
+  await assertRejects(
+    () => parseWorkflowSpec(value),
+    WorkflowSpecError,
+    "packageHash mismatch",
   );
 });
 

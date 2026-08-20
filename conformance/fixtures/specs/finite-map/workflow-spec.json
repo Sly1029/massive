@@ -2,7 +2,13 @@
   "kind": "WorkflowSpec",
   "schemaVersion": 0,
   "encoding": "json-v0",
-  "specHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "hashing": {
+    "algorithm": "sha256",
+    "canonicalization": "canonical-json-v0",
+    "recipe": "workflow-spec",
+    "recipeVersion": 1
+  },
+  "specHash": "sha256:3f45eacf7828f4fe7db6eed9e06c5c5a8fa699000d8fbcac6b1cee6039cde33e",
   "workflow": {
     "name": "finite-map",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -56,7 +62,13 @@
     "ts-main": {
       "packageId": "ts-main",
       "language": "typescript",
-      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "packageHash": "sha256:0ec03733f4bf566d30620befc143f4f33748c1ec0d780dfd91ab47dc5c5c764f",
+      "hashing": {
+        "algorithm": "sha256",
+        "canonicalization": "canonical-json-v0",
+        "recipe": "source-package",
+        "recipeVersion": 1
+      },
       "files": [{ "path": "workflow.ts", "hash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }]
     }
   },

@@ -66,14 +66,31 @@ manifests, JSON artifacts, and hash coverage must not include wall-clock
 timestamps. If audit timing is needed, it belongs in side metadata outside the
 hashed artifact.
 
+## Versioned hash recipes
+
+Every persisted workflow identity declares the recipe that produced it. A
+`WorkflowSpec`, `WorkflowPlan`, `DeploymentSpec`, and source-package entry
+therefore carry a required descriptor of this form:
+
+```json
+{"algorithm":"sha256","canonicalization":"canonical-json-v0","recipe":"source-package","recipeVersion":1}
+```
+
+The recipe is part of the hashed field tree. Consumers reject an absent,
+partial, or unsupported descriptor rather than guessing which historical
+coverage rule produced a digest. `schemaVersion`, Graph `irVersion`, compiler
+version, and hash `recipeVersion` are independent: changing one does not
+silently reinterpret another.
+
 ## Hash Coverage
 
 Self-exclusion rule: when an artifact records its own digest as a member of
 its field tree (`specHash` in a `WorkflowSpec`, `planHash` in a
-`WorkflowPlan`, `deploymentHash` in a `DeploymentSpec`), that member is excluded from its own coverage. Compute the
-digest over the field tree with the self-referencing member absent, then
-record the result in that member. All other digest members (for example
-`specHash` inside a plan) are covered normally.
+`WorkflowPlan`, `deploymentHash` in a `DeploymentSpec`), that member is
+excluded from its own coverage. Compute the digest over the field tree with
+the self-referencing member absent, then record the result in that member. All
+other digest members (for example `specHash` inside a plan) are covered
+normally.
 
 ### `specHash`
 
@@ -88,6 +105,7 @@ record the result in that member. All other digest members (for example
 - environment table;
 - effective execution-contract table;
 - per-node execution-contract references;
+- the workflow-spec hash descriptor and its recipe version;
 
 `specHash` does not cover source JSON whitespace, storage path names, datastore
 write time, compile time, run IDs, or any other wall-clock timestamp.
@@ -104,7 +122,8 @@ write time, compile time, run IDs, or any other wall-clock timestamp.
 - compiler identity and version;
 - environment materialization references;
 - datastore manifest references;
-- mediation provider identity.
+- mediation provider identity;
+- the workflow-plan hash descriptor and the foreign `specHash` descriptor.
 
 ### `deploymentHash`
 
@@ -112,7 +131,8 @@ write time, compile time, run IDs, or any other wall-clock timestamp.
 
 - the referenced `planHash`;
 - the profile name and opaque artifact-store binding;
-- target kind and its target-specific settings.
+- target kind and its target-specific settings;
+- the deployment-spec hash descriptor and its recipe version.
 
 It must not cover raw credentials, secret values, connection URLs, wall-clock
 timestamps, or mutable deployment state. Changing a deployment profile changes
@@ -131,11 +151,42 @@ package manifest:
 - exact included file list;
 - each included file's normalized relative path;
 - each included file's content hash;
+- the source-package hash descriptor and its recipe version;
+
+Recipe `source-package@1` hashes this exact canonical field tree:
+
+```json
+{
+  "files": [{"path":"src/workflow.py","hash":"sha256:<hex>"}],
+  "hashing": {
+    "algorithm":"sha256",
+    "canonicalization":"canonical-json-v0",
+    "recipe":"source-package",
+    "recipeVersion":1
+  },
+  "kind":"SourcePackageHashInput",
+  "schemaVersion":0
+}
+```
+
+`files` is non-empty and strictly ordered by normalized relative `path` using
+UTF-16 code-unit order. Paths are unique, use forward slashes, have no empty,
+`.` or `..` segments, and are already normalized (for example `./a.py` and
+`src//a.py` are invalid rather than aliases). A consumer must reject a
+noncanonical manifest instead of sorting it after publication.
 
 Broad implicit packaging is out of scope for v0. A changed included file changes
 the package hash. A changed excluded file does not. Package IDs, local absolute
 root paths, symbols, and datastore write locations are outside
 the source package content hash.
+
+The source recipe hashes exact file bytes through their SHA-256 values. It does
+not hash a Python or TypeScript AST: parser versions are not a stable wire
+contract, source text and line information can affect runtime behavior, and a
+package may include non-code resources. This intentionally prefers a
+defensible identity over a higher cache hit rate. Renaming a file or changing
+any included byte changes the package hash; moving an otherwise identical
+checkout does not.
 
 ### Environment Key
 
@@ -175,3 +226,13 @@ The shared conformance vector is:
 Implementations must parse the input JSON into a field tree, canonicalize it
 with the rules above, hash the canonical UTF-8 bytes, prefix the lowercase digest
 with `sha256:`, and compare it to the expected key.
+
+The versioned source-package recipe vector is:
+
+- input: `conformance/fixtures/hashing/source-package-v1.json`
+- expected key: `conformance/fixtures/hashing/source-package-v1.sha256`
+
+Introducing these required recipes is an intentional cache-boundary break.
+The new source-package identity changes emit-cache keys, so old cached specs
+are unreachable and new specs are emitted. Consumers reject pre-recipe plans;
+there is no compatibility reader or dual write.

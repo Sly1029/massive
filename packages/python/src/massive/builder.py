@@ -25,6 +25,7 @@ from typing_extensions import TypeForm
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import DepsT, InputT, StepContext
 from .contracts import ExecutionContract
+from .hashing import SOURCE_PACKAGE_HASHING, WORKFLOW_SPEC_HASHING
 from .identity import SAFE_PATH_SEGMENT, SafePathSegment
 from .source_package import SourcePackage
 
@@ -822,6 +823,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                 "kind": "WorkflowSpec",
                 "schemaVersion": 0,
                 "encoding": "json-v0",
+                "hashing": WORKFLOW_SPEC_HASHING.as_json(),
                 "workflow": {
                     "name": self.name,
                     "inputSchema": input_schema,
@@ -841,6 +843,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                         "packageId": source.package_id,
                         "language": "python",
                         "packageHash": package_hash,
+                        "hashing": SOURCE_PACKAGE_HASHING.as_json(),
                         "files": source_files,
                     }
                 },

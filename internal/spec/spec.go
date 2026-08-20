@@ -16,6 +16,7 @@ import (
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/irversion"
+	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -34,6 +35,7 @@ type WorkflowSpec struct {
 	Kind           string                       `json:"kind"`
 	SchemaVersion  uint32                       `json:"schemaVersion"`
 	Encoding       string                       `json:"encoding"`
+	Hashing        HashingSpec                  `json:"hashing"`
 	SpecHash       string                       `json:"specHash"`
 	Workflow       Workflow                     `json:"workflow"`
 	Graph          Graph                        `json:"graph"`
@@ -42,6 +44,13 @@ type WorkflowSpec struct {
 	SourcePackages map[string]SourcePackage     `json:"sourcePackages"`
 	Environments   map[string]Environment       `json:"environments"`
 	Contracts      map[string]ExecutionContract `json:"contracts"`
+}
+
+type HashingSpec struct {
+	Algorithm        string `json:"algorithm"`
+	Canonicalization string `json:"canonicalization"`
+	Recipe           string `json:"recipe"`
+	RecipeVersion    uint32 `json:"recipeVersion"`
 }
 
 type Workflow struct {
@@ -105,6 +114,7 @@ type SourcePackage struct {
 	PackageID   string              `json:"packageId"`
 	Language    string              `json:"language"`
 	PackageHash string              `json:"packageHash"`
+	Hashing     HashingSpec         `json:"hashing"`
 	Files       []SourcePackageFile `json:"files"`
 }
 
@@ -201,6 +211,16 @@ func Parse(data []byte) (*WorkflowSpec, error) {
 	}
 
 	diagnostics := validateSemantics(&parsed)
+	recomputed, err := RecomputedSpecHash(data)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.SpecHash != recomputed {
+		diagnostics = append(diagnostics, Diagnostic{
+			Path: "$.specHash", Ref: parsed.SpecHash,
+			Message: fmt.Sprintf("does not match canonical workflow content; expected %s", recomputed),
+		})
+	}
 	if len(diagnostics) > 0 {
 		return nil, &DiagnosticsError{Diagnostics: diagnostics}
 	}
@@ -492,6 +512,16 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		sourcePackage := parsed.SourcePackages[packageRef]
 		if sourcePackage.PackageID != packageRef {
 			diagnostics = append(diagnostics, Diagnostic{Path: "$.sourcePackages." + packageRef + ".packageId", Ref: sourcePackage.PackageID, Message: "source package id must match map key"})
+		}
+		files := make([]sourceidentity.File, 0, len(sourcePackage.Files))
+		for _, file := range sourcePackage.Files {
+			files = append(files, sourceidentity.File{Path: file.Path, Hash: file.Hash})
+		}
+		recomputed, err := sourceidentity.Digest(files)
+		if err != nil {
+			diagnostics = append(diagnostics, Diagnostic{Path: "$.sourcePackages." + packageRef + ".packageHash", Ref: sourcePackage.PackageHash, Message: err.Error()})
+		} else if recomputed != sourcePackage.PackageHash {
+			diagnostics = append(diagnostics, Diagnostic{Path: "$.sourcePackages." + packageRef + ".packageHash", Ref: sourcePackage.PackageHash, Message: "source package hash does not match the versioned file manifest"})
 		}
 	}
 	for symbolRef, symbol := range parsed.Symbols {

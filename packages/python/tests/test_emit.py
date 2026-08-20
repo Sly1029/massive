@@ -56,6 +56,18 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
     assert len(emitted["graph"]["edges"]) == graph_case["directedEdges"]
     assert graph_case["mergeInputs"] == []
     assert emitted["specHash"] == specification.spec_hash
+    assert emitted["hashing"] == {
+        "algorithm": "sha256",
+        "canonicalization": "canonical-json-v0",
+        "recipe": "workflow-spec",
+        "recipeVersion": 1,
+    }
+    assert emitted["sourcePackages"]["python-main"]["hashing"] == {
+        "algorithm": "sha256",
+        "canonicalization": "canonical-json-v0",
+        "recipe": "source-package",
+        "recipeVersion": 1,
+    }
     assert emitted["symbols"][step["symbolRef"]] == {
         "packageId": "python-main",
         "language": "python",
@@ -63,6 +75,16 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
         "export": "increment",
     }
     compiled = json.loads((tmp_path / "compiled/workflow-plan.json").read_text())
+    assert compiled["hashing"] == {
+        "algorithm": "sha256",
+        "canonicalization": "canonical-json-v0",
+        "recipe": "workflow-plan",
+        "recipeVersion": 1,
+    }
+    assert (
+        compiled["sourcePackages"][0]["hashing"]
+        == emitted["sourcePackages"]["python-main"]["hashing"]
+    )
     assert compiled["graph"]["workflowName"] == "python-emission"
     environment_identity = module.graph.defaults.environment.plan().identity
     assert compiled["environments"] == [
@@ -149,6 +171,18 @@ def test_source_checkout_location_does_not_change_workflow_identity(tmp_path: Pa
     package = cast(dict[str, Any], source_packages["python-main"])
     assert "root" not in package
     assert "include" not in package
+
+
+def test_source_identity_changes_for_comment_only_byte_change(tmp_path: Path) -> None:
+    source = tmp_path / "workflow.py"
+    source.write_text("value = 1\n")
+    first = source_package(root=tmp_path, include=[source.name], package_id="python-main")
+    _, first_hash = first.manifest()
+
+    source.write_text("# same Python AST, different bytes\nvalue = 1\n")
+    _, second_hash = first.manifest()
+
+    assert second_hash != first_hash
 
 
 def test_decision_reuses_the_persisted_output_schema_when_pydantic_modes_differ(

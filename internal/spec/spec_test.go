@@ -145,7 +145,7 @@ func TestParseRejectsMapConcurrencyOutsidePlanUint32Contract(t *testing.T) {
 }
 
 func TestParseResolvesEscapedLocalJSONPointerInMapArrayItems(t *testing.T) {
-	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+	data := mutateValidFixture(t, "finite-map", func(root map[string]any) {
 		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 		root["schemas"].(map[string]any)[inputList] = map[string]any{
 			"type":  "array",
@@ -159,7 +159,7 @@ func TestParseResolvesEscapedLocalJSONPointerInMapArrayItems(t *testing.T) {
 }
 
 func TestParseComparesNestedPydanticListItemsInAStandaloneDefinitionScope(t *testing.T) {
-	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+	data := mutateValidFixture(t, "finite-map", func(root map[string]any) {
 		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 		itemInput := "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 		child := map[string]any{
@@ -221,7 +221,7 @@ func TestParseForbidsMapFieldsBeforeGraphIR03(t *testing.T) {
 }
 
 func TestParseAllowsMapOutputFanout(t *testing.T) {
-	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+	data := mutateValidFixture(t, "finite-map", func(root map[string]any) {
 		outputList := "sha256:4444444444444444444444444444444444444444444444444444444444444444"
 		contractRef := "sha256:8888888888888888888888888888888888888888888888888888888888888888"
 		graph := root["graph"].(map[string]any)
@@ -245,7 +245,7 @@ func TestParseAllowsMapOutputFanout(t *testing.T) {
 }
 
 func TestParseAllowsMapOutputAsAnOrderedMergeInput(t *testing.T) {
-	data := mutateFixture(t, "finite-map", func(root map[string]any) {
+	data := mutateValidFixture(t, "finite-map", func(root map[string]any) {
 		outputList := "sha256:4444444444444444444444444444444444444444444444444444444444444444"
 		contractRef := "sha256:8888888888888888888888888888888888888888888888888888888888888888"
 		graph := root["graph"].(map[string]any)
@@ -267,7 +267,7 @@ func TestParseAllowsMapOutputAsAnOrderedMergeInput(t *testing.T) {
 }
 
 func TestParseAllowsMapInDecisionBranch(t *testing.T) {
-	data := mutateFixture(t, "exhaustive-decision", func(root map[string]any) {
+	data := mutateValidFixture(t, "exhaustive-decision", func(root map[string]any) {
 		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 		itemInput := "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 		itemOutput := "sha256:3333333333333333333333333333333333333333333333333333333333333333"
@@ -330,7 +330,7 @@ func TestParseConstrainsGraphNodeIDsToSafeDatastoreSegments(t *testing.T) {
 
 	for _, nodeID := range []string{"_step", ".hidden"} {
 		t.Run("accepts "+nodeID, func(t *testing.T) {
-			data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+			data := mutateValidFixture(t, "linear-chain", func(root map[string]any) {
 				graph := root["graph"].(map[string]any)
 				nodes := graph["nodes"].([]any)
 				nodes[2].(map[string]any)["id"] = nodeID
@@ -538,7 +538,7 @@ func TestParseValidatesNestedSelectActivationLineage(t *testing.T) {
 func nestedDecisionSpec(t *testing.T, outerAcceptedSource string) []byte {
 	t.Helper()
 
-	return mutateFixture(t, "exhaustive-decision", func(root map[string]any) {
+	return mutateValidFixture(t, "exhaustive-decision", func(root map[string]any) {
 		graph := root["graph"].(map[string]any)
 		integerSchema := root["workflow"].(map[string]any)["outputSchema"].(string)
 		unionSchema := nodeByID(root, "classify")["outputSchema"].(string)
@@ -668,6 +668,53 @@ func TestParseRejectsSourcePackageMapKeyMismatch(t *testing.T) {
 	}
 }
 
+func TestParseRejectsSourcePackageHashThatDoesNotMatchVersionedManifest(t *testing.T) {
+	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+		packages := root["sourcePackages"].(map[string]any)
+		packages["ts-main"].(map[string]any)["packageHash"] = "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid spec")
+	}
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.sourcePackages.ts-main.packageHash" || !strings.Contains(diagnostics[0].Message, "versioned file manifest") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
+func TestParseRejectsWorkflowSpecHashThatDoesNotMatchContent(t *testing.T) {
+	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+		root["workflow"].(map[string]any)["name"] = "tampered-workflow"
+	})
+
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected invalid workflow spec hash")
+	}
+	diagnostics := diagnosticsFromError(t, err)
+	if diagnostics[0].Path != "$.specHash" || !strings.Contains(diagnostics[0].Message, "canonical workflow content") {
+		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
+	}
+}
+
+func TestParseRejectsNonCanonicalSourcePackagePaths(t *testing.T) {
+	for _, path := range []string{"./a.py", "src//a.py", "src/a.py/", `src\a.py`, "/absolute/a.py", "../a.py", "src/../a.py", ".", ".."} {
+		t.Run(path, func(t *testing.T) {
+			data := mutateFixture(t, "linear-chain", func(root map[string]any) {
+				packages := root["sourcePackages"].(map[string]any)
+				files := packages["ts-main"].(map[string]any)["files"].([]any)
+				files[0].(map[string]any)["path"] = path
+			})
+
+			if _, err := Parse(data); err == nil {
+				t.Fatal("expected invalid source package path")
+			}
+		})
+	}
+}
+
 func TestParseRejectsMutableContainerRecipeImage(t *testing.T) {
 	data := mutateFixture(t, "linear-chain", func(root map[string]any) {
 		environments := root["environments"].(map[string]any)
@@ -710,6 +757,29 @@ func mutateFixture(t *testing.T, name string, mutate func(map[string]any)) []byt
 
 	mutate(root)
 
+	output, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return output
+}
+
+func mutateValidFixture(t *testing.T, name string, mutate func(map[string]any)) []byte {
+	t.Helper()
+
+	data := mutateFixture(t, name, mutate)
+	hash, err := RecomputedSpecHash(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var root map[string]any
+	if err := decoder.Decode(&root); err != nil {
+		t.Fatal(err)
+	}
+	root["specHash"] = hash
 	output, err := json.Marshal(root)
 	if err != nil {
 		t.Fatal(err)

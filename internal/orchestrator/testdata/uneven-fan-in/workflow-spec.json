@@ -2,7 +2,13 @@
   "kind": "WorkflowSpec",
   "schemaVersion": 0,
   "encoding": "json-v0",
-  "specHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "hashing": {
+    "algorithm": "sha256",
+    "canonicalization": "canonical-json-v0",
+    "recipe": "workflow-spec",
+    "recipeVersion": 1
+  },
+  "specHash": "sha256:1577eac301d0c113e4f4094cd45c25baec0710cf52d31911240b49f6e4850fca",
   "workflow": {
     "name": "uneven-fan-in",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -114,7 +120,13 @@
     "ts-main": {
       "packageId": "ts-main",
       "language": "typescript",
-      "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "packageHash": "sha256:0ec03733f4bf566d30620befc143f4f33748c1ec0d780dfd91ab47dc5c5c764f",
+      "hashing": {
+        "algorithm": "sha256",
+        "canonicalization": "canonical-json-v0",
+        "recipe": "source-package",
+        "recipeVersion": 1
+      },
       "files": [
         {
           "path": "workflow.ts",
