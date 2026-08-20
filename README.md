@@ -5,3 +5,7 @@ Each workflow is defined in code, currently done with typescript with its compos
 Code is created using LLMs with every line is reviewed. 
 
 Development is done with deno and tsgo
+
+For a guided tour of graph authoring—from a passthrough graph through fan-out,
+fan-in, decisions, maps, and the compiled protobuf plan—see
+[`examples/README.md`](examples/README.md).
