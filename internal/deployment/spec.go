@@ -77,6 +77,41 @@ func ReadFile(path string) (*Spec, error) {
 	return Parse(data)
 }
 
+// New constructs the canonical deployment artifact at the Go-owned target
+// seam. SDKs provide author intent; plan binding and deployment identity are
+// compiler responsibilities.
+func New(planHash string, profile Profile) (*Spec, []byte, error) {
+	value := Spec{
+		Kind: "DeploymentSpec", SchemaVersion: 0, Encoding: "json-v0",
+		Hashing: Hashing{
+			Algorithm: "sha256", Canonicalization: "canonical-json-v0",
+			Recipe: "deployment-spec", RecipeVersion: 1,
+		},
+		PlanHash: planHash, Profile: profile,
+	}
+	withoutHash, err := json.Marshal(value)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal deployment spec: %w", err)
+	}
+	value.DeploymentHash, err = RecomputedHash(withoutHash)
+	if err != nil {
+		return nil, nil, err
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal deployment spec: %w", err)
+	}
+	canonicalJSON, err := canonical.CanonicalizeJSON(raw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("canonicalize deployment spec: %w", err)
+	}
+	parsed, err := Parse(canonicalJSON)
+	if err != nil {
+		return nil, nil, err
+	}
+	return parsed, canonicalJSON, nil
+}
+
 func Parse(data []byte) (*Spec, error) {
 	if err := validateSchema(data); err != nil {
 		return nil, err

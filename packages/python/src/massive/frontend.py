@@ -172,3 +172,7 @@ def _module_is_within(module: ModuleType | None, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
