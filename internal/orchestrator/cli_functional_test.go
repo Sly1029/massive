@@ -115,7 +115,17 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	}
 
 	bundleDir := t.TempDir()
-	bundled := runCommand(t, "go", "run", "./cmd/massive-compiler", "bundle-argo", "--plan", planPath, "--deployment", deploymentPath, "--out", bundleDir)
+	runtimeAssets := t.TempDir()
+	for _, sourcePackage := range parsedPlan.GetSourcePackages() {
+		name, err := SourceArchiveBundleName(sourcePackage.GetPackageHash())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runtimeAssets, name), []byte("verified test source"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundled := runCommand(t, "go", "run", "./cmd/massive-compiler", "bundle-argo", "--plan", planPath, "--deployment", deploymentPath, "--runtime-assets", runtimeAssets, "--out", bundleDir)
 	if bundled.err != nil {
 		t.Fatalf("bundle compiler failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", bundled.stdout, bundled.stderr, bundled.err)
 	}
@@ -123,8 +133,8 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(template, []byte("massive.dev/execution-status: structural-only")) || !bytes.Contains(template, []byte("serviceAccountName: massive-runner")) {
-		t.Fatalf("generated WorkflowTemplate lacks structural status or workload identity:\n%s", template)
+	if !bytes.Contains(template, []byte("massive.dev/execution-status: executable-static")) || !bytes.Contains(template, []byte("serviceAccountName: massive-runner")) {
+		t.Fatalf("generated WorkflowTemplate lacks executable status or workload identity:\n%s", template)
 	}
 	manifestJSON, err := os.ReadFile(filepath.Join(bundleDir, "bundle-manifest.json"))
 	if err != nil {

@@ -1,11 +1,39 @@
-This project is meant to provide a modern architecture for developing workflows across providers. 
+# Massive
 
-Each workflow is defined in code, currently done with typescript with its composite nodes and edges. This is then compiled to a proto schema and given to the universal go backend which compiles the target to a datastore (local, S3, R2) and produces a bundle spec, currently just argo although Cloudflare Workers and Temporal planned 
+Massive is a typed workflow SDK with a Go control plane. Python authors define
+a static graph with Pydantic models; Massive compiles it to a protobuf-owned
+plan and executes that same plan locally or lowers it to Argo Workflows.
 
-Code is created using LLMs with every line is reviewed. 
+The `massive-workflows` platform wheel contains both the Python authoring/runtime
+package and the matching native Go CLI:
 
-Development is done with deno and tsgo
+```sh
+uv add massive-workflows
+uv run massive run workflow.py --input '{"value": 21}'
+```
 
-For a guided tour of graph authoring—from a passthrough graph through fan-out,
-fan-in, decisions, maps, and the compiled protobuf plan—see
-[`examples/README.md`](examples/README.md).
+For Argo, use an immutable runner image containing the same
+`massive-workflows` version, then build and apply the generated runtime assets
+and `WorkflowTemplate`:
+
+```sh
+uv run massive build workflow.py \
+  --output .massive/argo \
+  --namespace workflows \
+  --service-account massive-runner
+
+kubectl apply -f .massive/argo/runtime-configmap.json
+kubectl apply -f .massive/argo/workflow-template.yaml
+argo submit -n workflows --from workflowtemplate/my-workflow \
+  -p 'input={"value":21}' --watch
+```
+
+Version 0.1 supports static graphs on Argo and static graphs, exhaustive
+decisions, and finite maps locally. Argo source transport is intentionally
+small and self-contained for the first release; larger source bundles and
+values will move to the existing artifact-store seam without changing the SDK
+or compiled plan.
+
+See [the Python guide](packages/python/README.md) for the complete authoring and
+deployment walkthrough, or [the graph examples](examples/README.md) for graph
+shapes from passthrough through decisions and maps.

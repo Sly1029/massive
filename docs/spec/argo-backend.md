@@ -1,14 +1,14 @@
 # Argo Backend
 
-Status: draft
+Status: 0.1 executable static wedge
 
-The current implementation is a **static-DAG structural bundle**. It validates
-the generated `WorkflowTemplate` offline against Argo Workflows v3.7.16 and is
-safe to apply to a cluster, but it is not yet an executable remote runtime: a
-cluster-side step driver, committed materialization manifest, and submission
-binding are still required before a run can resolve plan/source/environment
-artifacts. The template is annotated `massive.dev/execution-status:
-structural-only` to make that boundary explicit.
+The current implementation emits an executable static DAG and validates its
+`WorkflowTemplate` offline against Argo Workflows v3.7.16. The bundle mounts an
+immutable ConfigMap containing the verified plan and source archives; every pod
+runs one isolated proto-described step through the same language runner used by
+local execution. Argo output parameters carry canonical JSON values between
+tasks. The template is annotated
+`massive.dev/execution-status: executable-static`.
 
 Argo is the first non-local backend. The Argo compiler emits a deploy bundle, not only a single WorkflowTemplate.
 
@@ -21,12 +21,12 @@ An Argo compile target emits a deployable template bundle, not an ad hoc run obj
 ```text
 dist/argo/<workflow-name>/
   workflow-template.yaml
-  network-policy.yaml
-  service-account.patch.yaml
+  runtime-configmap.json
+  runtime-network-policy.json  # only for egress: none
   massive-plan.json
-  provenance.json
   bundle-manifest.json
-  values.schema.json
+  deployment-spec.json
+  workflow-spec.json
 ```
 
 The exact files vary by target config. The bundle manifest is canonical and
@@ -34,15 +34,16 @@ records the plan, deployment, bundle, and emitted-file body hashes. The current
 command is:
 
 ```sh
-massive-compiler bundle-argo \
-  --plan workflow-plan.json \
-  --deployment deployment-spec.json \
-  --out dist/argo
+massive build workflow.py \
+  --out dist/argo \
+  --namespace workflows \
+  --service-account massive-runner
 ```
 
-`workflow-plan.json` must be the compiler's exact canonical bytes. The compiler
-does not accept prettified or newline-modified plan artifacts at this trust
-boundary.
+The lower-level `massive-compiler bundle-argo` command additionally requires a
+`--runtime-assets` directory. `massive build` is the public path: it verifies
+the authoring source manifest, creates deterministic archives, and binds them
+to the exact canonical plan.
 
 ## Target Config
 
@@ -161,11 +162,19 @@ The full pipeline above is the target architecture, not the first implementation
    Emit canonical YAML, workflow.json, and bundle-manifest.json.
 ```
 
-Presets, plugins, user patches, system mediation, field-level provenance explanations, secret binding, and network policy enforcement are deferred until after the SDK -> spec -> Go -> Argo execution path works end to end.
+Presets, plugins, user patches, field-level provenance explanations, and secret
+binding are deferred. A direct `NetworkPolicy` enforces `egress: none`; secret
+declarations and egress policies that cannot yet be represented fail the build.
 
-The v0 Argo step image contract is the same as the container environment contract: a fixed Massive runtime image contains the step runner, fetches the source package from the datastore, resolves the requested symbol, reads input artifacts, and writes output artifacts.
+The v0 Argo step image contract is the same as the container environment
+contract: an immutable image contains the matching `massive-workflows` release.
+The mounted runtime bundle supplies verified source, and `massive runtime step`
+resolves the requested symbol, validates one canonical JSON input, invokes the
+language runner, and writes one canonical JSON output parameter.
 
-The compiler should not emit a one-off `Workflow` as the primary bundle artifact. Actual submission and execution are left to users or test harnesses. Local cluster tests can submit the generated template through the Argo CLI, for example with `argo submit --from workflowtemplate/<name>`, then wait for completion and inspect datastore artifacts.
+The compiler does not emit a one-off `Workflow`. Apply the ConfigMap, optional
+NetworkPolicy, and WorkflowTemplate, then submit it with
+`argo submit --from workflowtemplate/<name> -p 'input=<json>'`.
 
 The first executable Argo wedge supports `env.container(...)` only. `env.node(...)` should be rejected for Argo with a clear target compatibility diagnostic until Node dependency environment materialization exists for Kubernetes.
 

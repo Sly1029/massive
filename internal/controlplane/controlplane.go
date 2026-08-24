@@ -196,7 +196,19 @@ func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct deployment spec: %w", err)
 	}
-	bundle, err := argo.Compile(compiled.CanonicalJSON, deploymentSpec)
+	archives := make(map[string][]byte, len(request.Frontend.Spec.SourcePackages))
+	for _, sourcePackage := range request.Frontend.Spec.SourcePackages {
+		files := make([]orchestrator.SourcePackageFile, 0, len(sourcePackage.Files))
+		for _, file := range sourcePackage.Files {
+			files = append(files, orchestrator.SourcePackageFile{Path: file.Path, Hash: file.Hash})
+		}
+		archive, err := orchestrator.BuildSourceArchive(request.Frontend.PackageRoot, files)
+		if err != nil {
+			return nil, fmt.Errorf("package Argo source %q: %w", sourcePackage.PackageID, err)
+		}
+		archives[sourcePackage.PackageHash] = archive
+	}
+	bundle, err := argo.Compile(compiled.CanonicalJSON, deploymentSpec, argo.RuntimeAssets{SourceArchives: archives})
 	if err != nil {
 		return nil, err
 	}

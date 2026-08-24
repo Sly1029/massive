@@ -1,13 +1,14 @@
-// Package argo lowers verified static Graph IR into an Argo WorkflowTemplate
-// bundle. It deliberately emits a structurally deployable template, not a
-// claim that the still-unimplemented remote step driver has been executed.
+// Package argo lowers verified static Graph IR and bound runtime assets into an
+// executable Argo WorkflowTemplate bundle.
 package argo
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -38,10 +39,18 @@ type Bundle struct {
 	ManifestJSON []byte
 }
 
+type RuntimeAssets struct {
+	SourceArchives map[string][]byte
+}
+
+const maxEmbeddedRuntimeBytes = 700 * 1024
+
+var argoFieldNamePattern = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`)
+
 // Compile accepts only separately verified deployment configuration and a
 // canonical plan. The artifact store binding is an opaque Argo ConfigMap name:
 // credentials are resolved by its repository configuration and pod identity.
-func Compile(planJSON []byte, deploymentSpec *deployment.Spec) (*Bundle, error) {
+func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAssets) (*Bundle, error) {
 	if deploymentSpec == nil {
 		return nil, errors.New("argo target: deployment spec is required")
 	}
@@ -61,7 +70,10 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec) (*Bundle, error) 
 	if err := validateStaticGraph(p); err != nil {
 		return nil, err
 	}
-	template, err := workflowTemplate(p, deploymentSpec)
+	if err := validateRuntimeAssets(p, planJSON, assets); err != nil {
+		return nil, err
+	}
+	template, runtimeName, needsNetworkPolicy, err := workflowTemplate(p, deploymentSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -76,8 +88,38 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec) (*Bundle, error) 
 	if err != nil {
 		return nil, fmt.Errorf("argo target: render YAML: %w", err)
 	}
-	files := []File{{"massive-plan.json", "application/json", "plan", planJSON}, {"workflow-template.yaml", "application/yaml", "workflow-template", templateYAML}}
+	configMapJSON, err := runtimeConfigMapJSON(p, deploymentSpec, runtimeName, planJSON, assets)
+	if err != nil {
+		return nil, err
+	}
+	files := []File{
+		{"massive-plan.json", "application/json", "plan", planJSON},
+		{"runtime-configmap.json", "application/json", "runtime-config", configMapJSON},
+		{"workflow-template.yaml", "application/yaml", "workflow-template", templateYAML},
+	}
+	if needsNetworkPolicy {
+		networkPolicyJSON, err := runtimeNetworkPolicyJSON(deploymentSpec, runtimeName)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, File{"runtime-network-policy.json", "application/json", "network-policy", networkPolicyJSON})
+	}
 	return buildBundle(p, deploymentSpec, files)
+}
+
+func validateRuntimeAssets(p *planpb.WorkflowPlan, planJSON []byte, assets RuntimeAssets) error {
+	total := len(planJSON)
+	for _, sourcePackage := range p.GetSourcePackages() {
+		archive := assets.SourceArchives[sourcePackage.GetPackageHash()]
+		if len(archive) == 0 {
+			return fmt.Errorf("argo target: verified source archive %s is required", sourcePackage.GetPackageHash())
+		}
+		total += len(archive)
+	}
+	if total > maxEmbeddedRuntimeBytes {
+		return fmt.Errorf("argo target: embedded plan and source archives are %d bytes; 0.1 ConfigMap transport supports at most %d bytes", total, maxEmbeddedRuntimeBytes)
+	}
+	return nil
 }
 
 func validateStaticGraph(p *planpb.WorkflowPlan) error {
@@ -205,15 +247,17 @@ func validateStaticGraph(p *planpb.WorkflowPlan) error {
 	return nil
 }
 
-func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]any, error) {
+func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]any, string, bool, error) {
 	g := p.GetGraph()
 	name := d.Profile.Target.WorkflowTemplateName
 	if name == "" {
 		name = g.GetWorkflowName()
 	}
 	if name == "" {
-		return nil, errors.New("argo target: deployment needs workflowTemplateName or plan workflow name")
+		return nil, "", false, errors.New("argo target: deployment needs workflowTemplateName or plan workflow name")
 	}
+	name = argoFieldName(name)
+	runtimeName := "massive-runtime-" + strings.TrimPrefix(d.DeploymentHash, "sha256:")[:16]
 	contracts := map[string]*planpb.ExecutionContract{}
 	for _, c := range p.GetContracts() {
 		contracts[c.GetContractRef()] = c
@@ -229,11 +273,17 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 		}
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].GetId() < steps[j].GetId() })
+	taskNames := make(map[string]string, len(steps))
+	for _, step := range steps {
+		taskNames[step.GetId()] = argoFieldName(step.GetId())
+	}
 	dependencies := map[string][]string{}
+	inbound := map[string][]string{}
 	for _, step := range steps {
 		dependencies[step.GetId()] = []string{}
 	}
 	for _, edge := range g.GetEdges() {
+		inbound[edge.GetTo()] = append(inbound[edge.GetTo()], edge.GetFrom())
 		if _, ok := dependencies[edge.GetTo()]; ok {
 			if _, fromStep := dependencies[edge.GetFrom()]; fromStep {
 				dependencies[edge.GetTo()] = append(dependencies[edge.GetTo()], edge.GetFrom())
@@ -241,35 +291,57 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 		}
 	}
 	tasks, templates := make([]any, 0, len(steps)), make([]any, 0, len(steps)+1)
+	needsNetworkPolicy := false
 	for _, step := range steps {
 		contract := contracts[step.GetContractRef()]
 		if contract == nil {
-			return nil, fmt.Errorf("argo target: step %q references unknown contract", step.GetId())
+			return nil, "", false, fmt.Errorf("argo target: step %q references unknown contract", step.GetId())
 		}
 		env := envs[contract.GetEnvironmentRef()]
 		if env == nil || env.GetKind() != "container-plan" || env.GetContainer().GetImage() == "" {
-			return nil, fmt.Errorf("argo target: step %q requires a directly runnable container plan with image", step.GetId())
+			return nil, "", false, fmt.Errorf("argo target: step %q requires a directly runnable container plan with image", step.GetId())
+		}
+		if len(contract.GetSecrets()) > 0 {
+			return nil, "", false, fmt.Errorf("argo target: step %q declares secrets; 0.1 has no secret-ref lowering", step.GetId())
 		}
 		deps := dependencies[step.GetId()]
 		sort.Strings(deps)
-		task := map[string]any{"name": step.GetId(), "template": "step-" + step.GetId()}
-		if len(deps) > 0 {
-			task["dependencies"] = deps
+		argoDependencies := make([]string, len(deps))
+		for index, dependency := range deps {
+			argoDependencies[index] = taskNames[dependency]
+		}
+		inputExpression, err := argoInputExpression(step, inbound[step.GetId()], g.GetStartNode(), taskNames)
+		if err != nil {
+			return nil, "", false, err
+		}
+		task := map[string]any{
+			"name": taskNames[step.GetId()], "template": argoFieldName("step-" + step.GetId()),
+			"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": inputExpression}}},
+		}
+		if len(argoDependencies) > 0 {
+			task["dependencies"] = argoDependencies
 		}
 		tasks = append(tasks, task)
-		envVars := []any{map[string]any{"name": "MASSIVE_PLAN_HASH", "value": p.GetPlanHash()}, map[string]any{"name": "MASSIVE_NODE_ID", "value": step.GetId()}, map[string]any{"name": "MASSIVE_ARTIFACT_STORE_BINDING", "value": d.Profile.ArtifactStoreBinding}}
-		args := []string{"--node", step.GetId(), "--plan-hash", p.GetPlanHash()}
-		// Argo dependencies govern readiness only. mergeInputs is ordered runtime
-		// data semantics and must remain separate for the future remote driver.
-		if len(step.GetMergeInputs()) > 0 {
-			args = append(args, "--merge-inputs", strings.Join(step.GetMergeInputs(), ","))
+		args := []string{
+			"runtime", "step",
+			"--plan", "/var/run/massive/massive-plan.json",
+			"--bundle-dir", "/var/run/massive",
+			"--node", step.GetId(),
+			"--input", "{{inputs.parameters.input}}",
+			"--output", "/tmp/massive/result.json",
+			"--project", "argo/" + name,
+			"--run-id", "{{workflow.uid}}",
+			"--store", "/tmp/massive/store",
 		}
 		runtime := env.GetContainer()
 		command := runtime.GetCommand()
 		if len(command) == 0 {
-			command = []string{"massive-runner", "step"}
+			command = []string{"massive"}
 		}
-		container := map[string]any{"image": runtime.GetImage(), "command": command, "args": args, "env": envVars}
+		container := map[string]any{
+			"image": runtime.GetImage(), "command": command, "args": args,
+			"volumeMounts": []any{map[string]any{"name": "massive-runtime", "mountPath": "/var/run/massive", "readOnly": true}},
+		}
 		if runtime.GetWorkingDirectory() != "" {
 			container["workingDir"] = runtime.GetWorkingDirectory()
 		}
@@ -283,10 +355,27 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			}
 			container["resources"] = map[string]any{"requests": q, "limits": q}
 		}
-		stepTemplate := map[string]any{"name": "step-" + step.GetId(), "container": container}
+		stepTemplate := map[string]any{
+			"name":   argoFieldName("step-" + step.GetId()),
+			"inputs": map[string]any{"parameters": []any{map[string]any{"name": "input"}}},
+			"outputs": map[string]any{"parameters": []any{map[string]any{
+				"name": "result", "valueFrom": map[string]any{"path": "/tmp/massive/result.json"},
+			}}},
+			"container": container,
+		}
+		if network := contract.GetNetwork(); network != nil {
+			switch network.GetEgress() {
+			case "none":
+				needsNetworkPolicy = true
+				stepTemplate["metadata"] = map[string]any{"labels": map[string]string{"massive.dev/network-policy": runtimeName}}
+			case "", "any":
+			default:
+				return nil, "", false, fmt.Errorf("argo target: step %q has unsupported egress policy %q", step.GetId(), network.GetEgress())
+			}
+		}
 		platform := strings.Split(runtime.GetPlatform(), "/")
 		if len(platform) != 2 {
-			return nil, fmt.Errorf("argo target: step %q has invalid container platform %q", step.GetId(), runtime.GetPlatform())
+			return nil, "", false, fmt.Errorf("argo target: step %q has invalid container platform %q", step.GetId(), runtime.GetPlatform())
 		}
 		stepTemplate["nodeSelector"] = map[string]string{
 			"kubernetes.io/os":   platform[0],
@@ -294,8 +383,112 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 		}
 		templates = append(templates, stepTemplate)
 	}
-	templates = append([]any{map[string]any{"name": "main", "dag": map[string]any{"tasks": tasks}}}, templates...)
-	return map[string]any{"apiVersion": "argoproj.io/v1alpha1", "kind": "WorkflowTemplate", "metadata": map[string]any{"name": name, "namespace": d.Profile.Target.Namespace, "annotations": map[string]string{"massive.dev/plan-hash": p.GetPlanHash(), "massive.dev/deployment-hash": d.DeploymentHash, "massive.dev/execution-status": "structural-only"}}, "spec": map[string]any{"entrypoint": "main", "serviceAccountName": d.Profile.Target.ServiceAccountName, "artifactRepositoryRef": map[string]any{"configMap": d.Profile.ArtifactStoreBinding, "key": "default-v1"}, "templates": templates}}, nil
+	endInbound := inbound[g.GetEndNode()]
+	if len(endInbound) != 1 {
+		return nil, "", false, errors.New("argo target: end node requires one result source")
+	}
+	resultExpression := "{{tasks." + taskNames[endInbound[0]] + ".outputs.parameters.result}}"
+	if endInbound[0] == g.GetStartNode() {
+		resultExpression = "{{workflow.parameters.input}}"
+	}
+	main := map[string]any{
+		"name": "main",
+		"dag":  map[string]any{"tasks": tasks},
+		"outputs": map[string]any{"parameters": []any{map[string]any{
+			"name": "result", "valueFrom": map[string]any{"parameter": resultExpression},
+		}}},
+	}
+	templates = append([]any{main}, templates...)
+	return map[string]any{
+		"apiVersion": "argoproj.io/v1alpha1", "kind": "WorkflowTemplate",
+		"metadata": map[string]any{
+			"name": name, "namespace": d.Profile.Target.Namespace,
+			"annotations": map[string]string{
+				"massive.dev/plan-hash": p.GetPlanHash(), "massive.dev/deployment-hash": d.DeploymentHash,
+				"massive.dev/execution-status": "executable-static",
+			},
+		},
+		"spec": map[string]any{
+			"entrypoint": "main", "serviceAccountName": d.Profile.Target.ServiceAccountName,
+			"automountServiceAccountToken": false,
+			"arguments":                    map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "null"}}},
+			"volumes":                      []any{map[string]any{"name": "massive-runtime", "configMap": map[string]any{"name": runtimeName}}},
+			"templates":                    templates,
+		},
+	}, runtimeName, needsNetworkPolicy, nil
+}
+
+func argoInputExpression(step *planpb.GraphNode, inbound []string, startNode string, taskNames map[string]string) (string, error) {
+	if len(step.GetMergeInputs()) > 0 {
+		parts := make([]string, 0, len(step.GetMergeInputs()))
+		for _, source := range step.GetMergeInputs() {
+			parts = append(parts, "{{tasks."+taskNames[source]+".outputs.parameters.result}}")
+		}
+		return "[" + strings.Join(parts, ",") + "]", nil
+	}
+	if len(inbound) != 1 {
+		return "", fmt.Errorf("argo target: step %q requires exactly one input source", step.GetId())
+	}
+	if inbound[0] == startNode {
+		return "{{workflow.parameters.input}}", nil
+	}
+	return "{{tasks." + taskNames[inbound[0]] + ".outputs.parameters.result}}", nil
+}
+
+// argoFieldName projects the broader proto node-id space onto names accepted
+// by Argo and Kubernetes. A digest suffix keeps normalized and truncated names
+// stable without changing the semantic node id passed to the runtime.
+func argoFieldName(source string) string {
+	if len(source) <= 63 && argoFieldNamePattern.MatchString(source) {
+		return source
+	}
+	digest := strings.TrimPrefix(canonical.DigestBytes([]byte(source)), "sha256:")[:12]
+	var slug strings.Builder
+	separator := false
+	for _, character := range strings.ToLower(source) {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			slug.WriteRune(character)
+			separator = false
+		} else if slug.Len() > 0 && !separator {
+			slug.WriteByte('-')
+			separator = true
+		}
+	}
+	prefix := strings.Trim(slug.String(), "-")
+	if prefix == "" {
+		prefix = "node"
+	}
+	maximumPrefix := 63 - len(digest) - 1
+	if len(prefix) > maximumPrefix {
+		prefix = strings.TrimRight(prefix[:maximumPrefix], "-")
+	}
+	return prefix + "-" + digest
+}
+
+func runtimeConfigMapJSON(p *planpb.WorkflowPlan, d *deployment.Spec, name string, planJSON []byte, assets RuntimeAssets) ([]byte, error) {
+	binaryData := map[string]string{"massive-plan.json": base64.StdEncoding.EncodeToString(planJSON)}
+	for _, sourcePackage := range p.GetSourcePackages() {
+		filename := "source-sha256-" + strings.TrimPrefix(sourcePackage.GetPackageHash(), "sha256:") + ".tar"
+		binaryData[filename] = base64.StdEncoding.EncodeToString(assets.SourceArchives[sourcePackage.GetPackageHash()])
+	}
+	value := map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata":   map[string]any{"name": name, "namespace": d.Profile.Target.Namespace},
+		"binaryData": binaryData, "immutable": true,
+	}
+	return canonicalJSON(value)
+}
+
+func runtimeNetworkPolicyJSON(d *deployment.Spec, name string) ([]byte, error) {
+	value := map[string]any{
+		"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+		"metadata": map[string]any{"name": name, "namespace": d.Profile.Target.Namespace},
+		"spec": map[string]any{
+			"podSelector": map[string]any{"matchLabels": map[string]string{"massive.dev/network-policy": name}},
+			"policyTypes": []string{"Egress"}, "egress": []any{},
+		},
+	}
+	return canonicalJSON(value)
 }
 
 func canonicalJSON(v any) ([]byte, error) {

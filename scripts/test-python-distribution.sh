@@ -53,6 +53,29 @@ bundle_result="$(
     --json
 )"
 
+mkdir -p "$test_root/runtime-mount"
+"$python" - "$test_root/bundle/runtime-configmap.json" "$test_root/runtime-mount" <<'PY'
+import base64
+import json
+import sys
+from pathlib import Path
+
+config = json.loads(Path(sys.argv[1]).read_text())
+mount = Path(sys.argv[2])
+for name, body in config["binaryData"].items():
+    (mount / name).write_bytes(base64.b64decode(body, validate=True))
+PY
+
+"$massive" runtime step \
+  --plan "$test_root/runtime-mount/massive-plan.json" \
+  --bundle-dir "$test_root/runtime-mount" \
+  --node add_one \
+  --input '{"value": 41}' \
+  --output "$test_root/remote-result.json" \
+  --project argo/python-linear \
+  --run-id isolated-wheel \
+  --store "$test_root/remote-store"
+
 "$python" - "$run_result" "$bundle_result" "$test_root/bundle" <<'PY'
 import json
 import sys
@@ -70,8 +93,10 @@ for name in (
     "bundle-manifest.json",
     "deployment-spec.json",
     "massive-plan.json",
+    "runtime-configmap.json",
     "workflow-spec.json",
     "workflow-template.yaml",
 ):
     assert (bundle_root / name).is_file(), name
+assert json.loads((bundle_root.parent / "remote-result.json").read_text()) == {"value": 42}
 PY
