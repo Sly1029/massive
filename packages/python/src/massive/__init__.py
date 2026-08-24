@@ -10,7 +10,7 @@ from .builder import (
     StepDefinition,
     WorkflowSpec,
 )
-from .canonical import canonical_json, sha256_ref
+from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InvocationContext, StepContext
 from .contracts import (
     ContainerEnvironment,
@@ -33,6 +33,7 @@ __all__ = [
     "ExecutionContract",
     "GraphBuilder",
     "InvocationContext",
+    "JsonValue",
     "NodeHandle",
     "SourcePackage",
     "StepContext",
