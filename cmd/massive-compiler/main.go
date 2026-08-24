@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/Sly1029/massive/internal/deployment"
+	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
 	"github.com/Sly1029/massive/internal/target/argo"
@@ -83,11 +84,12 @@ func bundleArgo(args []string) error {
 	planPath := flags.String("plan", "", "canonical workflow plan JSON")
 	deploymentPath := flags.String("deployment", "", "DeploymentSpec JSON")
 	outDir := flags.String("out", "", "bundle output directory")
+	runtimeAssets := flags.String("runtime-assets", "", "directory containing source-sha256-<hash>.tar files")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("parse bundle-argo flags: %w", err)
 	}
-	if *planPath == "" || *deploymentPath == "" || *outDir == "" {
-		return fmt.Errorf("bundle-argo requires --plan, --deployment, and --out")
+	if *planPath == "" || *deploymentPath == "" || *outDir == "" || *runtimeAssets == "" {
+		return fmt.Errorf("bundle-argo requires --plan, --deployment, --runtime-assets, and --out")
 	}
 	planJSON, err := os.ReadFile(*planPath)
 	if err != nil {
@@ -97,7 +99,23 @@ func bundleArgo(args []string) error {
 	if err != nil {
 		return err
 	}
-	b, err := argo.Compile(planJSON, d)
+	parsedPlan, err := plan.ParseCanonicalJSON(planJSON)
+	if err != nil {
+		return err
+	}
+	archives := make(map[string][]byte, len(parsedPlan.GetSourcePackages()))
+	for _, sourcePackage := range parsedPlan.GetSourcePackages() {
+		name, err := orchestrator.SourceArchiveBundleName(sourcePackage.GetPackageHash())
+		if err != nil {
+			return err
+		}
+		body, err := os.ReadFile(filepath.Join(*runtimeAssets, name))
+		if err != nil {
+			return fmt.Errorf("read runtime source archive %q: %w", name, err)
+		}
+		archives[sourcePackage.GetPackageHash()] = body
+	}
+	b, err := argo.Compile(planJSON, d, argo.RuntimeAssets{SourceArchives: archives})
 	if err != nil {
 		return err
 	}

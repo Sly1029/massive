@@ -25,17 +25,40 @@ uv run massive build workflow.py \
   --target argo \
   --output .massive/argo \
   --namespace workflows \
-  --service-account massive-runner \
-  --artifact-store massive-artifacts
+  --service-account massive-runner
 ```
 
 The bundle contains the canonical workflow and deployment specifications, the
-compiled plan, a bundle manifest, and an offline-schema-validated Argo
-`WorkflowTemplate`. Local execution supports static steps, exhaustive
-decisions, and finite maps. Argo 0.1 lowering is intentionally limited to
-static graphs and immutable container environments; unsupported control-flow
-semantics fail during the build instead of producing a behaviorally different
-workflow.
+compiled plan, a bundle manifest, a runtime `ConfigMap`, and an
+offline-schema-validated Argo `WorkflowTemplate`. Apply and submit it with the
+workflow input as one JSON parameter:
+
+```sh
+kubectl apply -f .massive/argo/runtime-configmap.json
+test ! -f .massive/argo/runtime-network-policy.json || \
+  kubectl apply -f .massive/argo/runtime-network-policy.json
+kubectl apply -f .massive/argo/workflow-template.yaml
+
+argo submit -n workflows --from workflowtemplate/double \
+  -p 'input={"value":21}' --watch
+```
+
+Every container image selected with `container(...)` must contain Python 3.12+
+and the same `massive-workflows` release, so its default `massive` command can
+run the isolated step adapter and Python runner. Source files are verified at
+build time and mounted from the generated `ConfigMap`; they do not need to be
+baked into the runner image. If a container recipe supplies `command=`, that
+command must launch the Massive CLI and accept the generated runtime arguments.
+
+Local execution supports static steps, exhaustive decisions, and finite maps.
+Argo 0.1 lowering is intentionally limited to static graphs, immutable
+container environments, small JSON parameter values, and at most 700 KiB of
+embedded plan plus source archives. `network="none"` emits a matching
+`NetworkPolicy`; secret declarations and other egress policies fail during the
+build until their target lowering exists. Unsupported semantics fail rather
+than producing a behaviorally different workflow. The deployment profile keeps
+an artifact-store binding identity so larger source/value transport can move to
+S3-compatible storage later without changing authoring or plan identity.
 
 ```python
 from pydantic import BaseModel
@@ -249,6 +272,23 @@ transient infrastructure failures.
 The runtime derives the artifact namespace from a normalized project identity
 of the form `sha256-<64 lowercase hex characters>`; callers do not put a human
 repository name into an object-store path.
+
+## Building the 0.1 release
+
+From a clean checkout with Go 1.25 and `uv` installed, build the source archive
+and Linux, macOS, and Windows wheels for amd64 and arm64:
+
+```sh
+./scripts/build-python-release.sh dist/python-release
+uv publish dist/python-release/*
+```
+
+The release builder cross-compiles CGO-disabled Go control-plane binaries,
+assigns Python-ABI-independent platform tags, checks every wheel contains its
+native executable, and checks the source distribution can rebuild the Go
+binary. Run `pnpm check` before publishing; its distribution acceptance test
+installs a wheel in a clean environment and exercises local, Argo build, and
+isolated Argo-step paths.
 
 ## Current scope
 

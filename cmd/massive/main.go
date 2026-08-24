@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sly1029/massive/internal/controlplane"
 	"github.com/Sly1029/massive/internal/orchestrator"
+	"github.com/Sly1029/massive/internal/plan"
 	"github.com/alecthomas/kong"
 )
 
@@ -19,6 +20,7 @@ type CLI struct {
 	Run     RunCommand     `cmd:"" help:"Compile and execute a workflow locally."`
 	Build   BuildCommand   `cmd:"" help:"Compile a workflow for a deployment target."`
 	Version VersionCommand `cmd:"" help:"Print the Massive version."`
+	Runtime RuntimeCommand `cmd:"" hidden:""`
 }
 
 type RunCommand struct {
@@ -39,12 +41,27 @@ type BuildCommand struct {
 	Profile        string `help:"Deployment profile name." default:"argo"`
 	Namespace      string `help:"Kubernetes namespace." required:""`
 	ServiceAccount string `name:"service-account" help:"Kubernetes service account used by workflow pods." required:""`
-	ArtifactStore  string `name:"artifact-store" help:"Argo artifact repository ConfigMap binding." required:""`
+	ArtifactStore  string `name:"artifact-store" help:"Stable binding identity for future remote artifact transport." default:"embedded-v0"`
 	Name           string `help:"WorkflowTemplate name; defaults to the workflow name."`
 	JSON           bool   `help:"Emit one structured JSON result."`
 }
 
 type VersionCommand struct{}
+
+type RuntimeCommand struct {
+	Step RuntimeStepCommand `cmd:"" help:"Execute one compiled step in a remote executor."`
+}
+
+type RuntimeStepCommand struct {
+	Plan      string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
+	BundleDir string `name:"bundle-dir" help:"Directory containing mounted source archives." required:"" type:"existingdir"`
+	Node      string `help:"Static plan node to execute." required:""`
+	Input     string `help:"Canonical JSON step input." required:""`
+	Output    string `help:"Write canonical JSON result to this path." required:"" type:"path"`
+	Project   string `help:"Stable remote project identity." required:""`
+	RunID     string `name:"run-id" help:"Remote workflow run identifier." required:""`
+	Store     string `help:"Ephemeral local artifact store." default:"/tmp/massive-store" type:"path"`
+}
 
 type runOutput struct {
 	RunID    string          `json:"runId"`
@@ -166,6 +183,52 @@ func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
 func (*VersionCommand) Run(stdout io.Writer) error {
 	_, err := fmt.Fprintf(stdout, "massive %s\n", controlplane.Version)
 	return err
+}
+
+func (command *RuntimeStepCommand) Run(ctx context.Context) error {
+	planJSON, err := os.ReadFile(command.Plan)
+	if err != nil {
+		return fmt.Errorf("read runtime plan: %w", err)
+	}
+	parsed, err := plan.ParseCanonicalJSON(planJSON)
+	if err != nil {
+		return err
+	}
+	workflowPlan, err := plan.VerifyCanonicalJSON(planJSON, parsed.GetPlanHash())
+	if err != nil {
+		return err
+	}
+	archives := make(map[string][]byte, len(workflowPlan.GetSourcePackages()))
+	for _, sourcePackage := range workflowPlan.GetSourcePackages() {
+		name, err := orchestrator.SourceArchiveBundleName(sourcePackage.GetPackageHash())
+		if err != nil {
+			return err
+		}
+		body, err := os.ReadFile(filepath.Join(command.BundleDir, name))
+		if err != nil {
+			return fmt.Errorf("read runtime source archive %s: %w", name, err)
+		}
+		archives[sourcePackage.GetPackageHash()] = body
+	}
+	runnerCommand := []string(nil)
+	if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
+		runnerCommand = []string{python, "-m", "massive.runner", "{descriptor}"}
+	}
+	result, err := orchestrator.RunIsolatedStep(ctx, orchestrator.IsolatedStepConfig{
+		Plan: workflowPlan, NodeID: command.Node, DatastoreRoot: command.Store,
+		ProjectID: command.Project, RunID: command.RunID, RunnerCommand: runnerCommand,
+		SourceArchives: archives,
+	}, []byte(command.Input))
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(command.Output), 0o755); err != nil {
+		return fmt.Errorf("create runtime output directory: %w", err)
+	}
+	if err := os.WriteFile(command.Output, result, 0o644); err != nil {
+		return fmt.Errorf("write runtime output: %w", err)
+	}
+	return nil
 }
 
 func main() {
