@@ -77,8 +77,12 @@ PY
   --store "$test_root/remote-store"
 
 "$python" - "$run_result" "$bundle_result" "$test_root/bundle" <<'PY'
+import base64
+import hashlib
+import io
 import json
 import sys
+import tarfile
 from pathlib import Path
 
 run = json.loads(sys.argv[1])
@@ -88,6 +92,7 @@ bundle_root = Path(sys.argv[3])
 assert run["status"] == "succeeded", run
 assert run["result"] == {"value": 42}, run
 assert bundle["status"] == "built", bundle
+assert bundle["runtimeTransport"] == "embedded-v0", bundle
 assert bundle["planHash"] == run["planHash"], (run, bundle)
 for name in (
     "bundle-manifest.json",
@@ -95,8 +100,57 @@ for name in (
     "massive-plan.json",
     "runtime-configmap.json",
     "workflow-spec.json",
+    "workflow-template.json",
     "workflow-template.yaml",
 ):
     assert (bundle_root / name).is_file(), name
+
+plan = json.loads((bundle_root / "massive-plan.json").read_text())
+package_hash = plan["sourcePackages"][0]["packageHash"]
+archive_name = f"source-sha256-{package_hash.removeprefix('sha256:')}.tar"
+archive_path = bundle_root / "runtime-assets" / archive_name
+archive = archive_path.read_bytes()
+config_map = json.loads((bundle_root / "runtime-configmap.json").read_text())
+assert config_map["immutable"] is True
+assert base64.b64decode(config_map["binaryData"][archive_name], validate=True) == archive
+
+template = json.loads((bundle_root / "workflow-template.json").read_text())
+assert template["apiVersion"] == "argoproj.io/v1alpha1"
+assert template["kind"] == "WorkflowTemplate"
+assert template["spec"]["serviceAccountName"] == "massive-runner"
+assert template["spec"]["automountServiceAccountToken"] is False
+assert template["spec"]["entrypoint"] == "main"
+step = next(item for item in template["spec"]["templates"] if "container" in item)
+assert step["name"].startswith("step-add-one-")
+assert step["nodeSelector"] == {
+    "kubernetes.io/arch": "amd64",
+    "kubernetes.io/os": "linux",
+}
+assert step["container"]["command"] == ["massive"]
+assert step["container"]["args"][:2] == ["runtime", "step"]
+assert step["container"]["volumeMounts"] == [
+    {"mountPath": "/var/run/massive", "name": "massive-runtime", "readOnly": True}
+]
+
+with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as source:
+    members = source.getmembers()
+assert [member.name for member in members] == ["helper.py", "workflow.py"]
+assert all(
+    member.isfile()
+    and member.mode == 0o644
+    and member.mtime == 0
+    and member.uid == 0
+    and member.gid == 0
+    for member in members
+)
+
+manifest = json.loads((bundle_root / "bundle-manifest.json").read_text())
+archive_entry = next(entry for entry in manifest["files"] if entry["path"] == f"runtime-assets/{archive_name}")
+assert archive_entry["role"] == "source-archive"
+assert archive_entry["artifact"] == {
+    "key": f"runtime-assets/{archive_name}",
+    "hash": f"sha256:{hashlib.sha256(archive).hexdigest()}",
+    "contentType": "application/vnd.massive.source-tar",
+}
 assert json.loads((bundle_root.parent / "remote-result.json").read_text()) == {"value": 42}
 PY

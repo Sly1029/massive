@@ -304,16 +304,12 @@ def test_runner_rejects_a_verified_traversal_archive(tmp_path: Path) -> None:
     assert not (tmp_path / "escape.py").exists()
 
 
-@pytest.mark.skipif(
-    not os.environ.get("MASSIVE_TEST_S3_ENDPOINT"),
-    reason="requires a configured MinIO/S3 endpoint",
-)
-def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path) -> None:
-    endpoint = os.environ["MASSIVE_TEST_S3_ENDPOINT"]
-    access_key = os.environ.get("MASSIVE_TEST_S3_ACCESS_KEY")
-    secret_key = os.environ.get("MASSIVE_TEST_S3_SECRET_KEY")
-    if access_key is None or secret_key is None:
-        pytest.skip("MASSIVE_TEST_S3_ENDPOINT requires test access credentials")
+def test_runner_executes_against_a_real_s3_descriptor(
+    tmp_path: Path, s3_server: Any
+) -> None:
+    endpoint = s3_server.endpoint
+    access_key = s3_server.access_key
+    secret_key = s3_server.secret_key
     descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
     bucket = f"massive-python-{uuid.uuid4().hex}"
     client = boto3.client(

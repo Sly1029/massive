@@ -26,6 +26,7 @@ import (
 
 const (
 	Kind                      = "argo"
+	RuntimeTransport          = "embedded-v0"
 	workflowTemplateSchemaRef = "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.argoproj.workflow.v1alpha1.WorkflowTemplate"
 )
 
@@ -95,7 +96,15 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 	files := []File{
 		{"massive-plan.json", "application/json", "plan", planJSON},
 		{"runtime-configmap.json", "application/json", "runtime-config", configMapJSON},
+		{"workflow-template.json", "application/json", "workflow-template", templateJSON},
 		{"workflow-template.yaml", "application/yaml", "workflow-template", templateYAML},
+	}
+	for _, sourcePackage := range p.GetSourcePackages() {
+		name := "runtime-assets/source-sha256-" + strings.TrimPrefix(sourcePackage.GetPackageHash(), "sha256:") + ".tar"
+		files = append(files, File{
+			Path: name, ContentType: "application/vnd.massive.source-tar", Role: "source-archive",
+			Bytes: assets.SourceArchives[sourcePackage.GetPackageHash()],
+		})
 	}
 	if needsNetworkPolicy {
 		networkPolicyJSON, err := runtimeNetworkPolicyJSON(deploymentSpec, runtimeName)
@@ -405,7 +414,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			"name": name, "namespace": d.Profile.Target.Namespace,
 			"annotations": map[string]string{
 				"massive.dev/plan-hash": p.GetPlanHash(), "massive.dev/deployment-hash": d.DeploymentHash,
-				"massive.dev/execution-status": "executable-static",
+				"massive.dev/execution-status": "executable-static", "massive.dev/runtime-transport": RuntimeTransport,
 			},
 		},
 		"spec": map[string]any{

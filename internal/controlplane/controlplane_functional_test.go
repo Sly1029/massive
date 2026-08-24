@@ -1,13 +1,19 @@
 package controlplane
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Sly1029/massive/internal/orchestrator"
 )
 
 func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
@@ -67,14 +73,49 @@ func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
 	if bundle.PlanHash != local.Plan.PlanHash {
 		t.Fatalf("local plan hash %q differs from Argo plan hash %q", local.Plan.PlanHash, bundle.PlanHash)
 	}
+	if bundle.RuntimeTransport != "embedded-v0" {
+		t.Fatalf("runtime transport = %q, want embedded-v0", bundle.RuntimeTransport)
+	}
 	template, err := os.ReadFile(filepath.Join(output, "workflow-template.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"kind: WorkflowTemplate", "serviceAccountName: massive-runner", "massive.dev/plan-hash: " + bundle.PlanHash} {
+	for _, expected := range []string{"kind: WorkflowTemplate", "serviceAccountName: massive-runner", "massive.dev/plan-hash: " + bundle.PlanHash, "massive.dev/runtime-transport: embedded-v0"} {
 		if !strings.Contains(string(template), expected) {
 			t.Fatalf("WorkflowTemplate does not contain %q:\n%s", expected, template)
 		}
+	}
+
+	packageHash := frontend.Spec.SourcePackages["python-main"].PackageHash
+	archiveName, err := orchestrator.SourceArchiveBundleName(packageHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(output, "runtime-assets", archiveName)
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("build did not expose its verified source package at %s: %v", archivePath, err)
+	}
+	if err := orchestrator.VerifySourceArchiveIdentity(archive, packageHash); err != nil {
+		t.Fatalf("emitted source package does not match the compiled package identity: %v", err)
+	}
+	reader := tar.NewReader(bytes.NewReader(archive))
+	var entries []string
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, header.Name)
+		if header.Mode != 0o644 || header.ModTime.Unix() != 0 || header.Uid != 0 || header.Gid != 0 {
+			t.Fatalf("source archive metadata is not reproducible: %#v", header)
+		}
+	}
+	if strings.Join(entries, ",") != "helper.py,workflow.py" {
+		t.Fatalf("source archive entries = %v, want helper.py and workflow.py", entries)
 	}
 }
 

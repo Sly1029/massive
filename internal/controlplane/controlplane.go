@@ -171,10 +171,11 @@ type ArgoBundleRequest struct {
 }
 
 type ArgoBundleResult struct {
-	PlanHash       string
-	DeploymentHash string
-	BundleHash     string
-	Files          []string
+	PlanHash         string
+	DeploymentHash   string
+	BundleHash       string
+	RuntimeTransport string
+	Files            []string
 }
 
 func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
@@ -242,7 +243,8 @@ func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
 	}
 	return &ArgoBundleResult{
 		PlanHash: compiled.PlanHash, DeploymentHash: deploymentSpec.DeploymentHash,
-		BundleHash: bundle.Manifest.GetBundleHash(), Files: files,
+		BundleHash: bundle.Manifest.GetBundleHash(), RuntimeTransport: argo.RuntimeTransport,
+		Files: files,
 	}, nil
 }
 

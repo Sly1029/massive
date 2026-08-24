@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -23,13 +24,33 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 	if !bytes.Equal(first.ManifestJSON, second.ManifestJSON) {
 		t.Fatal("bundle manifest is not deterministic")
 	}
-	if len(first.Files) != 4 {
-		t.Fatalf("bundle files = %#v", first.Files)
+	if len(first.Files) != 6 {
+		t.Fatalf("bundle file count = %d, want 6", len(first.Files))
+	}
+	foundSourceArchive := false
+	for _, file := range first.Files {
+		if file.Role != "source-archive" {
+			continue
+		}
+		foundSourceArchive = true
+		if !strings.HasPrefix(file.Path, "runtime-assets/source-sha256-") || !strings.HasSuffix(file.Path, ".tar") || file.ContentType != "application/vnd.massive.source-tar" {
+			t.Fatalf("source archive bundle entry = %#v", file)
+		}
+	}
+	if !foundSourceArchive {
+		t.Fatal("bundle does not expose its verified source archive")
 	}
 	var template map[string]any
 	workflowTemplate := fileByPath(t, first, "workflow-template.yaml")
 	if err := yaml.Unmarshal(workflowTemplate.Bytes, &template); err != nil {
 		t.Fatal(err)
+	}
+	var templateJSON map[string]any
+	if err := json.Unmarshal(fileByPath(t, first, "workflow-template.json").Bytes, &templateJSON); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(templateJSON, template) {
+		t.Fatal("JSON and YAML WorkflowTemplate projections differ")
 	}
 	serialized := string(workflowTemplate.Bytes)
 	for _, forbidden := range []string{"accessKey", "secretKey", "credential", "sourceFetch"} {

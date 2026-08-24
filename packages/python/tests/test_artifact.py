@@ -7,6 +7,7 @@ from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import boto3
 import pytest
@@ -381,16 +382,10 @@ def test_immutable_conflict_preserves_an_unrelated_datastore_read_failure(tmp_pa
         runtime.publish_json(_destination(), _producer(), BODY)
 
 
-@pytest.mark.skipif(
-    not os.environ.get("MASSIVE_TEST_S3_ENDPOINT"),
-    reason="requires a configured MinIO/S3 endpoint",
-)
-def test_publish_and_resolve_against_a_real_s3_store() -> None:
-    endpoint = os.environ["MASSIVE_TEST_S3_ENDPOINT"]
-    access_key = os.environ.get("MASSIVE_TEST_S3_ACCESS_KEY")
-    secret_key = os.environ.get("MASSIVE_TEST_S3_SECRET_KEY")
-    if access_key is None or secret_key is None:
-        pytest.skip("MASSIVE_TEST_S3_ENDPOINT requires test access credentials")
+def test_publish_and_resolve_against_a_real_s3_store(s3_server: Any) -> None:
+    endpoint = s3_server.endpoint
+    access_key = s3_server.access_key
+    secret_key = s3_server.secret_key
     bucket = f"massive-python-artifact-{uuid.uuid4().hex}"
     setup_client = boto3.client(
         "s3",
@@ -425,16 +420,10 @@ def test_publish_and_resolve_against_a_real_s3_store() -> None:
     assert body == BODY
 
 
-@pytest.mark.skipif(
-    not os.environ.get("MASSIVE_TEST_S3_ENDPOINT"),
-    reason="requires a configured MinIO/S3 endpoint",
-)
-def test_concurrent_publication_against_a_real_s3_store() -> None:
-    endpoint = os.environ["MASSIVE_TEST_S3_ENDPOINT"]
-    access_key = os.environ.get("MASSIVE_TEST_S3_ACCESS_KEY")
-    secret_key = os.environ.get("MASSIVE_TEST_S3_SECRET_KEY")
-    if access_key is None or secret_key is None:
-        pytest.skip("MASSIVE_TEST_S3_ENDPOINT requires test access credentials")
+def test_concurrent_publication_against_a_real_s3_store(s3_server: Any) -> None:
+    endpoint = s3_server.endpoint
+    access_key = s3_server.access_key
+    secret_key = s3_server.secret_key
     bucket = f"massive-python-artifact-race-{uuid.uuid4().hex}"
     setup_client = boto3.client(
         "s3",
