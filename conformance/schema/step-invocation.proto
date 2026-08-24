@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package massive.runtime.v2;
+
+option go_package = "github.com/Sly1029/massive/conformance/schema/runtimepb;runtimepb";
+
+// Runner boundary owned by Massive rather than any language SDK. The v2 wire
+// format is the canonical proto-JSON projection of this message, followed by
+// canonical-json-v0 key ordering. All required scalars use explicit presence;
+// the frozen JSON Schema applies value and conditional datastore constraints.
+message StepInvocationDescriptor {
+  optional string kind = 1;
+  optional uint32 schema_version = 2;
+  optional string encoding = 3;
+  optional string plan_hash = 4;
+  optional string project_key = 5;
+  optional string run_id = 6;
+  optional string node_id = 7;
+  optional uint32 attempt = 8;
+  optional ExecutionScope scope = 9;
+  optional StepSymbol symbol = 10;
+  optional SourcePackage source_package = 11;
+  optional string environment_ref = 12;
+  optional DataArtifactRef input = 13;
+  optional DataArtifactManifestDestination output = 14;
+  repeated ChannelArtifactRef channel_reads = 15;
+  repeated ChannelArtifactDestination channel_writes = 16;
+  optional Datastore datastore = 17;
+}
+
+message ExecutionScope {
+  repeated MapItemScopeFrame frames = 1;
+}
+
+message MapItemScopeFrame {
+  optional string kind = 1;
+  optional string map_id = 2;
+  optional uint32 index = 3;
+}
+
+message StepSymbol {
+  optional string package_id = 1;
+  optional string language = 2;
+  optional string module = 3;
+  optional string export = 4;
+}
+
+message SourcePackage {
+  optional string package_id = 1;
+  optional string language = 2;
+  optional string package_hash = 3;
+  optional ArtifactRef source_archive = 4;
+  optional ArtifactRef manifest = 5;
+}
+
+message ArtifactRef {
+  optional string key = 1;
+  optional string hash = 2;
+  optional string content_type = 3;
+}
+
+message ArtifactDestination {
+  optional string key = 1;
+  optional string content_type = 2;
+}
+
+message DataArtifactRef {
+  optional ArtifactRef artifact = 1;
+  optional string schema = 2;
+}
+
+message DataArtifactManifestDestination {
+  optional string manifest_key = 1;
+  optional string schema = 2;
+}
+
+message ChannelArtifactRef {
+  optional string channel_name = 1;
+  optional ArtifactRef artifact = 2;
+  optional string schema = 3;
+}
+
+message ChannelArtifactDestination {
+  optional string channel_name = 1;
+  optional ArtifactDestination artifact = 2;
+  optional string schema = 3;
+}
+
+// The v2 JSON projection predates this proto and uses a flat tagged union.
+// kind selects the valid field set; the JSON Schema rejects mixed variants.
+message Datastore {
+  optional string kind = 1;
+  optional string path = 2;
+  optional string bucket = 3;
+  optional string region = 4;
+  optional string prefix = 5;
+  optional string endpoint = 6;
+  optional bool force_path_style = 7;
+}

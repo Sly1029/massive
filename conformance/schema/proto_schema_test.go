@@ -10,11 +10,31 @@ import (
 	"testing"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/conformance/schema/runtimepb"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func TestProtoSchemasCompile(t *testing.T) {
-	runProtoc(t, "workflow-plan.proto", "bundle-manifest.proto")
+	runProtoc(t, "workflow-plan.proto", "bundle-manifest.proto", "step-invocation.proto")
+}
+
+func TestStepInvocationJSONRoundTrip(t *testing.T) {
+	input, err := os.ReadFile(filepath.Join("..", "fixtures", "descriptors", "linear-chain", "descriptor.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var descriptor runtimepb.StepInvocationDescriptor
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(input, &descriptor); err != nil {
+		t.Fatal(err)
+	}
+	output, err := (protojson.MarshalOptions{EmitDefaultValues: true}).Marshal(&descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(jsonFieldTree(t, input), jsonFieldTree(t, output)) {
+		t.Fatalf("step invocation JSON field tree changed after protojson round trip\ninput:\n%s\n\noutput:\n%s", input, output)
+	}
 }
 
 func TestWorkflowPlanJSONRoundTrip(t *testing.T) {

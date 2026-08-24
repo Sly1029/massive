@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://massive.dev/conformance/schema/step-invocation-descriptor.schema.json",
   "title": "Massive StepInvocationDescriptor",
-  "description": "V2 StepInvocationDescriptor JSON transport between backend orchestration and language runtime adapters. Output publication is manifest-last and immutable. scope is optional for static invocations and ordered outer-to-inner for mapped invocations.",
+  "description": "Canonical proto-JSON projection of the v2 StepInvocationDescriptor transport between backend orchestration and language runtime adapters. Output publication is manifest-last and immutable. scope is optional for static invocations and ordered outer-to-inner for mapped invocations.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -32,7 +32,7 @@
     "attempt": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 9007199254740991
+      "maximum": 4294967295
     },
     "scope": { "$ref": "#/$defs/executionScope" },
     "symbol": { "$ref": "#/$defs/symbol" },
@@ -70,7 +70,7 @@
       "properties": {
         "kind": { "const": "map-item" },
         "mapId": { "$ref": "#/$defs/safePathSegment" },
-        "index": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+        "index": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
       }
     },
     "executionScope": {
