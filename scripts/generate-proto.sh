@@ -25,3 +25,9 @@ protoc \
   --go_out=paths=source_relative:planpb \
   workflow-plan.proto \
   bundle-manifest.proto
+
+mkdir -p runtimepb
+protoc \
+  -I . \
+  --go_out=paths=source_relative:runtimepb \
+  step-invocation.proto

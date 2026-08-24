@@ -82,11 +82,13 @@ func (x *ArtifactRef) GetContentType() string {
 }
 
 type HashingSpec struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Algorithm        *string                `protobuf:"bytes,1,opt,name=algorithm,proto3,oneof" json:"algorithm,omitempty"`
-	Canonicalization *string                `protobuf:"bytes,2,opt,name=canonicalization,proto3,oneof" json:"canonicalization,omitempty"`
-	Recipe           *string                `protobuf:"bytes,3,opt,name=recipe,proto3,oneof" json:"recipe,omitempty"`
-	RecipeVersion    *uint32                `protobuf:"varint,4,opt,name=recipe_version,json=recipeVersion,proto3,oneof" json:"recipe_version,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required by the canonical JSON contract. Proto optional presence lets a
+	// consumer distinguish an absent value from an explicitly encoded zero.
+	Algorithm        *string `protobuf:"bytes,1,opt,name=algorithm,proto3,oneof" json:"algorithm,omitempty"`
+	Canonicalization *string `protobuf:"bytes,2,opt,name=canonicalization,proto3,oneof" json:"canonicalization,omitempty"`
+	Recipe           *string `protobuf:"bytes,3,opt,name=recipe,proto3,oneof" json:"recipe,omitempty"`
+	RecipeVersion    *uint32 `protobuf:"varint,4,opt,name=recipe_version,json=recipeVersion,proto3,oneof" json:"recipe_version,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
