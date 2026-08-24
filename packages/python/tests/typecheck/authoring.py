@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from massive import GraphBuilder, NodeHandle, StepContext, container, execution
+from massive import GraphBuilder, JsonValue, NodeHandle, StepContext, container, execution
 
 
 class Request(BaseModel):
@@ -17,6 +17,10 @@ class Result(BaseModel):
 
 class BatchRequest(BaseModel):
     values: list[Request]
+
+
+class Metadata(BaseModel):
+    values: dict[str, JsonValue]
 
 
 class Approved(BaseModel):

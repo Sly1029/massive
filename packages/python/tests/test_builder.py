@@ -15,6 +15,7 @@ from massive import (
     DEFAULT_MAP_CONCURRENCY,
     MAX_MAP_CONCURRENCY,
     GraphBuilder,
+    JsonValue,
     StepContext,
     container,
     execution,
@@ -78,6 +79,10 @@ class CanonicalShape(BaseModel):
     occurred_at: datetime
     kind: EventKind
     nested: NestedIntegerShape
+
+
+class PortableMetadata(BaseModel):
+    values: dict[str, JsonValue]
 
 
 class AnyResult(BaseModel):
@@ -145,6 +150,12 @@ def float_enum_result(context: StepContext[None, Request]) -> FloatEnumResult:
 
 
 def canonical_shape_identity(context: StepContext[None, CanonicalShape]) -> CanonicalShape:
+    return context.inputs
+
+
+def portable_metadata_identity(
+    context: StepContext[None, PortableMetadata],
+) -> PortableMetadata:
     return context.inputs
 
 
@@ -775,6 +786,21 @@ def test_emit_accepts_supported_integer_and_string_json_shapes() -> None:
         defaults=_defaults(),
     )
     node = graph.add(graph.step()(canonical_shape_identity))
+    graph.edge_from(graph.start).to(node).to(graph.end)
+
+    specification = _emit(graph)
+
+    assert specification.spec_hash.startswith("sha256:")
+
+
+def test_public_json_value_models_portable_escape_hatches() -> None:
+    graph = GraphBuilder(
+        name="portable-metadata",
+        input_type=PortableMetadata,
+        output_type=PortableMetadata,
+        defaults=_defaults(),
+    )
+    node = graph.add(graph.step()(portable_metadata_identity))
     graph.edge_from(graph.start).to(node).to(graph.end)
 
     specification = _emit(graph)

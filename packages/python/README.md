@@ -330,6 +330,20 @@ admit floats that no runtime can encode consistently. Prefer a concrete model,
 Models configured with Pydantic `extra="allow"` are rejected for the same
 reason; prefer the default behavior or `extra="forbid"` for workflow payloads.
 
+Use Massive's recursive `JsonValue` type when a result deliberately carries
+open-ended metadata while retaining the portable wire constraint:
+
+```python
+from massive import JsonValue
+
+
+class Result(BaseModel):
+    metadata: dict[str, JsonValue]
+```
+
+This permits nested strings, safe integers, booleans, nulls, arrays, and
+objects, but keeps floating-point values out of the schema and runtime payload.
+
 These author-time checks intentionally cover the Pydantic-generated schema
 forms Massive emits; they do not attempt to solve arbitrary JSON Schema
 satisfiability. Runtime canonicalization remains the authoritative final

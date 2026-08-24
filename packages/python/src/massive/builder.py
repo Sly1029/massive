@@ -1103,7 +1103,8 @@ def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
             raise ValueError(
                 f"{role} uses JSON Schema type 'number' at {path}; "
                 "canonical-json-v0 is integer-only. Use an integer field or "
-                "model fractional values as strings."
+                "model fractional values as strings. For JSON escape hatches, "
+                "annotate values with massive.JsonValue."
             )
         for key in mappings:
             child = value.get(key)
