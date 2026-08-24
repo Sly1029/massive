@@ -23,7 +23,7 @@ import (
 	"github.com/Sly1029/massive/internal/target/argo"
 )
 
-const Version = "0.1.0"
+var Version = "0.1.0"
 
 type FrontendResult struct {
 	Spec        *spec.WorkflowSpec

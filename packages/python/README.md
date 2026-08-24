@@ -6,6 +6,37 @@ specification; a step receives one typed input through `StepContext` and
 returns one typed output. Python is the primary Massive authoring surface;
 TypeScript uses the same portable artifact protocol.
 
+## Install and run
+
+The PyPI distribution is named `massive-workflows`; it installs the `massive`
+Python module and command. The platform wheel contains the matching Go control
+plane, while the command passes the active Python interpreter to the frontend
+and step runner automatically:
+
+```sh
+uv add massive-workflows
+uv run massive run workflow.py --input '{"value": 21}'
+```
+
+Build a static, container-target workflow for Argo with the same compiled plan:
+
+```sh
+uv run massive build workflow.py \
+  --target argo \
+  --output .massive/argo \
+  --namespace workflows \
+  --service-account massive-runner \
+  --artifact-store massive-artifacts
+```
+
+The bundle contains the canonical workflow and deployment specifications, the
+compiled plan, a bundle manifest, and an offline-schema-validated Argo
+`WorkflowTemplate`. Local execution supports static steps, exhaustive
+decisions, and finite maps. Argo 0.1 lowering is intentionally limited to
+static graphs and immutable container environments; unsupported control-flow
+semantics fail during the build instead of producing a behaviorally different
+workflow.
+
 ```python
 from pydantic import BaseModel
 
