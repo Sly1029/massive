@@ -21,8 +21,11 @@ An Argo compile target emits a deployable template bundle, not an ad hoc run obj
 ```text
 dist/argo/<workflow-name>/
   workflow-template.yaml
+  workflow-template.json      # canonical machine-readable projection
   runtime-configmap.json
   runtime-network-policy.json  # only for egress: none
+  runtime-assets/
+    source-sha256-<digest>.tar  # verified transport-neutral source package
   massive-plan.json
   bundle-manifest.json
   deployment-spec.json
@@ -43,7 +46,26 @@ massive build workflow.py \
 The lower-level `massive-compiler bundle-argo` command additionally requires a
 `--runtime-assets` directory. `massive build` is the public path: it verifies
 the authoring source manifest, creates deterministic archives, and binds them
-to the exact canonical plan.
+to the exact canonical plan. Verified source archives are exposed as standalone
+runtime assets and recorded in `bundle-manifest.json`; the 0.1 embedded
+ConfigMap contains the same bytes. This deliberate duplication keeps the first
+Argo wedge self-contained while giving an object-store transport a stable pack
+to upload without decoding Kubernetes resources.
+
+## Runtime Transport
+
+Runtime packing and runtime transport are separate concerns. Compilation
+produces one immutable pack containing the canonical plan, schemas, and
+content-addressed source archives. A transport adapter then materializes that
+pack:
+
+- `embedded-v0` stores the plan and archives in an immutable ConfigMap;
+- `object-store` will publish the same pack to the datastore and place only
+  verified artifact references in the generated template.
+
+The embedded adapter remains intentionally size-bounded. S3 support should be
+implemented by adding the second adapter at this seam, not by teaching Python
+workflow authors about uploads or adding S3 conditionals to graph compilation.
 
 ## Target Config
 
@@ -140,6 +162,21 @@ deployment.argo({
 ```
 
 System mediation runs after user patches. Users can customize generated YAML freely, then the compiler reasserts secret/network/runtime wiring in a controlled stage.
+
+### Pod Placement Seam
+
+Portable execution contracts should not contain raw Kubernetes `PodSpec`
+fields. They should carry an opaque placement class such as `sandboxed`,
+`sandboxed-netraw`, or `large-ephemeral-disk`. The Argo deployment profile
+resolves each class to target-owned pod settings such as runtime class,
+affinity, tolerations, priority, and ephemeral-storage requests. A future
+backend can resolve the same class differently or reject it precisely.
+
+This is the intended replacement for workflow-local copies of affinity and
+toleration trees. Raw named patches remain the escape hatch for genuinely
+one-off Kubernetes behavior, but they are applied after placement resolution
+and validated against the pinned Argo/Kubernetes schema. Massive-owned volume,
+identity, output, and runtime fields remain reserved.
 
 ## V0 Executable Wedge
 

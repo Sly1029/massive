@@ -173,10 +173,11 @@ func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
 		return json.NewEncoder(stdout).Encode(map[string]any{
 			"status": "built", "target": command.Target, "output": output,
 			"planHash": result.PlanHash, "deploymentHash": result.DeploymentHash,
-			"bundleHash": result.BundleHash, "files": result.Files,
+			"bundleHash": result.BundleHash, "runtimeTransport": result.RuntimeTransport,
+			"files": result.Files,
 		})
 	}
-	fmt.Fprintf(stdout, "✓ built Argo bundle\n  output      %s\n  plan        %s\n  deployment  %s\n", output, result.PlanHash, result.DeploymentHash)
+	fmt.Fprintf(stdout, "✓ built Argo bundle\n  output      %s\n  plan        %s\n  deployment  %s\n  transport   %s\n", output, result.PlanHash, result.DeploymentHash, result.RuntimeTransport)
 	return nil
 }
 

@@ -123,7 +123,11 @@ func bundleArgo(args []string) error {
 		return err
 	}
 	for _, f := range b.Files {
-		if err := os.WriteFile(filepath.Join(*outDir, f.Path), f.Bytes, 0o644); err != nil {
+		path := filepath.Join(*outDir, f.Path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create bundle path %s: %w", f.Path, err)
+		}
+		if err := os.WriteFile(path, f.Bytes, 0o644); err != nil {
 			return fmt.Errorf("write bundle file %s: %w", f.Path, err)
 		}
 	}

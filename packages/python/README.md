@@ -30,8 +30,12 @@ uv run massive build workflow.py \
 
 The bundle contains the canonical workflow and deployment specifications, the
 compiled plan, a bundle manifest, a runtime `ConfigMap`, and an
-offline-schema-validated Argo `WorkflowTemplate`. Apply and submit it with the
-workflow input as one JSON parameter:
+offline-schema-validated Argo `WorkflowTemplate` in both YAML and canonical
+JSON. Verified source packages are
+also exposed under `runtime-assets/` as deterministic, content-addressed tar
+files. Their hashes and media types are recorded in `bundle-manifest.json`, so
+the same pack can be inspected or uploaded without decoding the ConfigMap.
+Apply and submit it with the workflow input as one JSON parameter:
 
 ```sh
 kubectl apply -f .massive/argo/runtime-configmap.json
