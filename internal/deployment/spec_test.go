@@ -13,6 +13,32 @@ import (
 
 const testPlanHash = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
+func TestNewConstructsCanonicalValidatedDeployment(t *testing.T) {
+	deployment, body, err := New(testPlanHash, Profile{
+		Name:                 "argo-staging",
+		ArtifactStoreBinding: "staging-artifacts",
+		Target: Target{
+			Kind:                 "argo",
+			Namespace:            "workflows",
+			ServiceAccountName:   "massive-runner",
+			WorkflowTemplateName: "example-workflow",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deployment.PlanHash != testPlanHash || deployment.DeploymentHash == "" {
+		t.Fatalf("deployment identities = %#v", deployment)
+	}
+	parsed, err := Parse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.DeploymentHash != deployment.DeploymentHash {
+		t.Fatalf("parsed hash = %q, want %q", parsed.DeploymentHash, deployment.DeploymentHash)
+	}
+}
+
 func TestDeploymentIdentityIsSeparateFromPlanIdentity(t *testing.T) {
 	localData := deploymentJSON(t, map[string]any{
 		"name":                 "local-dev",

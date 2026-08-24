@@ -3,6 +3,7 @@ module github.com/Sly1029/massive
 go 1.25.0
 
 require (
+	github.com/alecthomas/kong v1.16.1
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
