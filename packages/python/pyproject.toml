@@ -1,7 +1,8 @@
 [project]
-name = "massive"
+name = "massive-workflows"
 version = "0.1.0"
 description = "Typed, portable workflow authoring for Massive"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "boto3>=1.35,<2",
@@ -9,7 +10,12 @@ dependencies = [
   "pydantic>=2.10,<3",
 ]
 
+[project.urls]
+Repository = "https://github.com/Sly1029/massive"
+Issues = "https://github.com/Sly1029/massive/issues"
+
 [project.scripts]
+massive = "massive.cli:main"
 massive-python-frontend = "massive.frontend:main"
 massive-python-runner = "massive.runner:main"
 
