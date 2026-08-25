@@ -36,4 +36,6 @@ or compiled plan.
 
 See [the Python guide](packages/python/README.md) for the complete authoring and
 deployment walkthrough, or [the graph examples](examples/README.md) for graph
-shapes from passthrough through decisions and maps.
+shapes from passthrough through decisions and maps. Direction and
+prioritization live in [the roadmap](docs/roadmap.md) and
+[the spec index](docs/spec/README.md).
