@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/Sly1029/massive/internal/orchestrator"
+	"github.com/Sly1029/massive/internal/plan"
 )
 
 func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
@@ -116,6 +117,69 @@ func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
 	}
 	if strings.Join(entries, ",") != "helper.py,workflow.py" {
 		t.Fatalf("source archive entries = %v, want helper.py and workflow.py", entries)
+	}
+}
+
+func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	python := filepath.Join(repository, "packages", "python", ".venv", "bin", "python")
+	if _, err := os.Stat(python); err != nil {
+		t.Skip("Python SDK environment is unavailable; run uv sync --project packages/python")
+	}
+	t.Setenv("MASSIVE_PYTHON", python)
+
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "examples", "06-map", "workflow.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := t.TempDir()
+	if _, err := BundleArgo(ArgoBundleRequest{
+		Frontend: frontend, OutputDirectory: output, ProfileName: "functional-test",
+		ArtifactStoreBinding: "massive-artifacts", Namespace: "workflows",
+		ServiceAccountName: "massive-runner", WorkflowTemplateName: "map-example",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	planJSON, err := os.ReadFile(filepath.Join(output, "massive-plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := plan.ParseCanonicalJSON(planJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowPlan, err := plan.VerifyCanonicalJSON(planJSON, parsed.GetPlanHash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	archives := make(map[string][]byte, len(workflowPlan.GetSourcePackages()))
+	for _, sourcePackage := range workflowPlan.GetSourcePackages() {
+		name, err := orchestrator.SourceArchiveBundleName(sourcePackage.GetPackageHash())
+		if err != nil {
+			t.Fatal(err)
+		}
+		archive, err := os.ReadFile(filepath.Join(output, "runtime-assets", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		archives[sourcePackage.GetPackageHash()] = archive
+	}
+
+	result, err := orchestrator.RunIsolatedMapItem(context.Background(), orchestrator.IsolatedStepConfig{
+		Plan: workflowPlan, NodeID: "square-items", DatastoreRoot: t.TempDir(),
+		ProjectID: "argo/map-example", RunID: "mapped-python-item",
+		RunnerCommand:  []string{python, "-m", "massive.runner", "{descriptor}"},
+		SourceArchives: archives,
+	}, []byte(`{"value":3}`), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(result), `{"source":3,"squared":9}`; got != want {
+		t.Fatalf("mapped result = %s, want %s", got, want)
 	}
 }
 

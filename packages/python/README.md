@@ -242,9 +242,11 @@ item-output, and collected-output schemas, mapper symbol and contract, and
 `maxConcurrency`. The emitted map contract is the execution boundary; no local
 in-memory map behavior is part of the authoring API.
 
-Finite maps execute through `massive run`'s local compiled path today. The Argo
-target rejects Graph IR 0.3 map nodes with an explicit unsupported-semantic
-diagnostic; it does not generate a template that changes map behavior.
+Finite maps execute through both `massive run` and the Argo target. Argo lowers
+each map to a bounded nested DAG: an indexed envelope crystallizes the input,
+`withParam` invokes the mapper under the declared concurrency limit, and a
+collector restores source order. Duplicate values retain distinct indexes and
+an empty input publishes canonical `[]` without invoking mapper code.
 
 ## Artifact handling
 

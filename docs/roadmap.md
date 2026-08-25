@@ -38,15 +38,16 @@ with its layer split.
 
 ## Workstream A — graph semantics on Argo (core)
 
-The Argo lowering currently accepts only `start`/`step`/`end` and rejects Graph
-IR 0.2 decisions/selects and 0.3 maps. This is the single largest gap between
+The Argo lowering accepts `start`/`step`/`map`/`end` and still rejects Graph IR
+0.2 decisions/selects. This is the single largest remaining gap between
 what the SDK can express and what deploys: in the reference fleet, 87 of 142
 workflows use dynamic fan-out and the conditional-routing pattern is mandated
 by its style guide.
 
-1. Lower finite maps to Argo native fan-out (`withParam` over the crystallized
-   item list), preserving `maxConcurrency` via `parallelism` and ordered
-   collection at the fan-in.
+1. **Complete (2026-08-25):** lower finite maps to Argo native fan-out
+   (`withParam` over an indexed crystallization of the item list), preserving
+   `maxConcurrency` via `parallelism`, duplicate-item identity, empty-map
+   behavior, and ordered collection at the fan-in.
 2. Lower decisions/selects to `when` expressions over the persisted decision
    artifact's discriminant tag.
 3. Extend the conformance graph catalog with decision and map shapes so Graph

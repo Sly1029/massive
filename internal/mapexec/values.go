@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/Sly1029/massive/internal/canonical"
 )
@@ -19,6 +20,137 @@ type Item struct {
 type Result struct {
 	Index int
 	Body  []byte
+}
+
+// ArgoItems projects a finite map input into indexed loop values. Argo does
+// not expose a stable source index for withParam items, so the index travels
+// with each value. The singleton empty marker avoids Argo's unresolved
+// aggregate-output behavior for a zero-iteration loop; it never invokes user
+// code and CollectArgoResults removes it again.
+func ArgoItems(body []byte) ([]byte, error) {
+	canonicalBody, err := canonical.CanonicalizeJSON(body)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize Argo map input: %w", err)
+	}
+	items, err := Expand(canonicalBody)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return []byte(`[{"empty":true}]`), nil
+	}
+	var output bytes.Buffer
+	output.WriteByte('[')
+	for index, item := range items {
+		if index > 0 {
+			output.WriteByte(',')
+		}
+		output.WriteString(`{"index":`)
+		output.WriteString(strconv.Itoa(item.Index))
+		output.WriteString(`,"value":`)
+		output.Write(item.Body)
+		output.WriteByte('}')
+	}
+	output.WriteByte(']')
+	return output.Bytes(), nil
+}
+
+// ParseArgoItem validates one indexed loop value or the singleton empty-map
+// marker. Values are canonicalized again after Argo templating before they are
+// passed to a language runner.
+func ParseArgoItem(body []byte) (Item, bool, error) {
+	index, value, empty, err := parseArgoEnvelope(body)
+	if err != nil {
+		return Item{}, false, fmt.Errorf("parse Argo map item: %w", err)
+	}
+	return Item{Index: index, Body: value}, empty, nil
+}
+
+// ArgoResult binds one mapper result back to its source index before Argo
+// aggregates parallel task outputs.
+func ArgoResult(index int, body []byte) ([]byte, error) {
+	if index < 0 {
+		return nil, fmt.Errorf("map result index %d must be nonnegative", index)
+	}
+	canonicalBody, err := canonical.CanonicalizeJSON(body)
+	if err != nil || !bytes.Equal(canonicalBody, body) {
+		return nil, fmt.Errorf("map item %d output must be canonical JSON", index)
+	}
+	var output bytes.Buffer
+	output.WriteString(`{"index":`)
+	output.WriteString(strconv.Itoa(index))
+	output.WriteString(`,"value":`)
+	output.Write(body)
+	output.WriteByte('}')
+	return output.Bytes(), nil
+}
+
+// CollectArgoResults unwraps Argo's aggregate output, accepting both raw JSON
+// objects and the JSON-string form used by some Argo releases, then delegates
+// dense ordered collection to Collect.
+func CollectArgoResults(body []byte) ([]byte, error) {
+	var values []json.RawMessage
+	if err := json.Unmarshal(body, &values); err != nil {
+		return nil, fmt.Errorf("decode Argo map results: %w", err)
+	}
+	results := make([]Result, 0, len(values))
+	emptyMarkers := 0
+	for position, value := range values {
+		envelope := []byte(value)
+		if len(envelope) > 0 && envelope[0] == '"' {
+			var encoded string
+			if err := json.Unmarshal(envelope, &encoded); err != nil {
+				return nil, fmt.Errorf("decode Argo map result %d string: %w", position, err)
+			}
+			envelope = []byte(encoded)
+		}
+		canonicalEnvelope, err := canonical.CanonicalizeJSON(envelope)
+		if err != nil {
+			return nil, fmt.Errorf("canonicalize Argo map result %d: %w", position, err)
+		}
+		index, result, empty, err := parseArgoEnvelope(canonicalEnvelope)
+		if err != nil {
+			return nil, fmt.Errorf("parse Argo map result %d: %w", position, err)
+		}
+		if empty {
+			emptyMarkers++
+			continue
+		}
+		results = append(results, Result{Index: index, Body: result})
+	}
+	if emptyMarkers > 0 {
+		if emptyMarkers != 1 || len(values) != 1 {
+			return nil, fmt.Errorf("empty-map marker cannot be combined with map results")
+		}
+		return []byte(`[]`), nil
+	}
+	return Collect(len(results), results)
+}
+
+func parseArgoEnvelope(body []byte) (int, []byte, bool, error) {
+	canonicalBody, err := canonical.CanonicalizeJSON(body)
+	if err != nil {
+		return 0, nil, false, fmt.Errorf("map envelope must be JSON: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(canonicalBody, &fields); err != nil {
+		return 0, nil, false, fmt.Errorf("decode map envelope: %w", err)
+	}
+	if len(fields) == 1 && bytes.Equal(fields["empty"], []byte("true")) {
+		return 0, nil, true, nil
+	}
+	if len(fields) != 2 || fields["index"] == nil || fields["value"] == nil {
+		return 0, nil, false, fmt.Errorf("map envelope must contain exactly index and value")
+	}
+	var index int
+	if err := json.Unmarshal(fields["index"], &index); err != nil || index < 0 {
+		return 0, nil, false, fmt.Errorf("map envelope index must be a nonnegative integer")
+	}
+	value, err := canonical.CanonicalizeJSON(fields["value"])
+	if err != nil {
+		return 0, nil, false, fmt.Errorf("canonicalize map envelope value: %w", err)
+	}
+	return index, value, false, nil
 }
 
 // Expand returns one immutable item per source-array position. Equal values

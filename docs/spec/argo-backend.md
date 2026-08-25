@@ -209,6 +209,13 @@ The mounted runtime bundle supplies verified source, and `massive runtime step`
 resolves the requested symbol, validates one canonical JSON input, invokes the
 language runner, and writes one canonical JSON output parameter.
 
+Graph IR 0.3 finite maps use the same runner seam. A nested DAG expands the
+crystallized list into indexed values, invokes `massive runtime map item` with
+Argo `withParam`, and collects indexed outputs in source order. Template
+`parallelism` enforces `maxConcurrency`. A singleton internal marker carries an
+empty list through Argo's loop-output aggregation without invoking user code;
+the collector publishes canonical `[]`.
+
 The compiler does not emit a one-off `Workflow`. Apply the ConfigMap, optional
 NetworkPolicy, and WorkflowTemplate, then submit it with
 `argo submit --from workflowtemplate/<name> -p 'input=<json>'`.

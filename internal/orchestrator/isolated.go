@@ -29,6 +29,20 @@ type IsolatedStepConfig struct {
 // and language runner seam as local orchestration. It is the runtime primitive
 // used by Argo; DAG readiness and JSON value passing stay target-owned.
 func RunIsolatedStep(ctx context.Context, config IsolatedStepConfig, inputJSON []byte) ([]byte, error) {
+	return runIsolatedInvocation(ctx, config, inputJSON, nil)
+}
+
+// RunIsolatedMapItem executes one source-indexed invocation of a static map
+// node. Argo uses this primitive for each native fan-out task while retaining
+// the same scoped descriptor and artifact identity as local orchestration.
+func RunIsolatedMapItem(ctx context.Context, config IsolatedStepConfig, inputJSON []byte, itemIndex int) ([]byte, error) {
+	if itemIndex < 0 {
+		return nil, fmt.Errorf("isolated map item index %d must be nonnegative", itemIndex)
+	}
+	return runIsolatedInvocation(ctx, config, inputJSON, &itemIndex)
+}
+
+func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, inputJSON []byte, mapItemIndex *int) ([]byte, error) {
 	if config.Plan == nil {
 		return nil, errors.New("isolated step requires a workflow plan")
 	}
@@ -51,8 +65,12 @@ func RunIsolatedStep(ctx context.Context, config IsolatedStepConfig, inputJSON [
 		return nil, err
 	}
 	node := index.nodesByID[config.NodeID]
-	if node == nil || node.GetKind() != "step" {
-		return nil, fmt.Errorf("isolated node %q is not a plan step", config.NodeID)
+	if node == nil || mapItemIndex == nil && node.GetKind() != "step" || mapItemIndex != nil && node.GetKind() != "map" {
+		kind := "step"
+		if mapItemIndex != nil {
+			kind = "map"
+		}
+		return nil, fmt.Errorf("isolated node %q is not a plan %s", config.NodeID, kind)
 	}
 	for _, schema := range config.Plan.GetSchemas() {
 		body := []byte(schema.GetCanonicalJson())
@@ -92,15 +110,26 @@ func RunIsolatedStep(ctx context.Context, config IsolatedStepConfig, inputJSON [
 		return nil, fmt.Errorf("canonicalize isolated step input: %w", err)
 	}
 	projectKey := NormalizeProjectKey(config.ProjectID)
+	var scope *ExecutionScope
+	inputSchema := node.GetInputSchema()
+	if mapItemIndex != nil {
+		scope = &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: node.GetId(), Index: *mapItemIndex}}}
+		inputSchema = node.GetItemInputSchema()
+	}
 	inputArtifact := manifestDataArtifact{
-		Key:  runInputKey(projectKey, config.RunID, node.GetId(), nil).String(),
-		Hash: canonical.DigestBytes(input), ContentType: jsonContentType, Schema: node.GetInputSchema(),
+		Key:  runInputKey(projectKey, config.RunID, node.GetId(), scope).String(),
+		Hash: canonical.DigestBytes(input), ContentType: jsonContentType, Schema: inputSchema,
 	}
 	if _, err := store.Put(ctx, datastore.MustKey(inputArtifact.Key), input, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
 		return nil, fmt.Errorf("write isolated step input: %w", err)
 	}
 	runConfig := RunConfig{Plan: config.Plan, DatastoreRoot: storeRoot}
-	descriptor, err := descriptorForStep(runConfig, projectKey, config.RunID, node, inputArtifact, index)
+	var descriptor StepInvocationDescriptor
+	if mapItemIndex == nil {
+		descriptor, err = descriptorForStep(runConfig, projectKey, config.RunID, node, inputArtifact, index)
+	} else {
+		descriptor, err = descriptorForMapItem(runConfig, projectKey, config.RunID, node, inputArtifact, index, *mapItemIndex)
+	}
 	if err != nil {
 		return nil, err
 	}

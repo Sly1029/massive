@@ -28,11 +28,11 @@ argo submit -n workflows --from workflowtemplate/my-workflow \
   -p 'input={"value":21}' --watch
 ```
 
-Version 0.1 supports static graphs on Argo and static graphs, exhaustive
-decisions, and finite maps locally. Argo source transport is intentionally
-small and self-contained for the first release; larger source bundles and
-values will move to the existing artifact-store seam without changing the SDK
-or compiled plan.
+Version 0.1 supports static graphs and finite maps on Argo, and static graphs,
+exhaustive decisions, and finite maps locally. Argo source transport is
+intentionally small and self-contained for the first release; larger source
+bundles and values will move to the existing artifact-store seam without
+changing the SDK or compiled plan.
 
 See [the Python guide](packages/python/README.md) for the complete authoring and
 deployment walkthrough, or [the graph examples](examples/README.md) for graph
