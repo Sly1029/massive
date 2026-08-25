@@ -1108,7 +1108,7 @@ func runFixtureStep(nodeID string, inputBytes []byte) ([]byte, error) {
 	default:
 		return nil, errors.New("unknown fixture step " + nodeID)
 	}
-	return marshalCanonicalJSON(output)
+	return canonical.Marshal(output)
 }
 
 var (
@@ -1135,7 +1135,7 @@ func normalizeDescriptorJSON(t *testing.T, data []byte, runID string, storeRoot 
 func mustMarshalCanonical(t *testing.T, value any) []byte {
 	t.Helper()
 
-	body, err := marshalCanonicalJSON(value)
+	body, err := canonical.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
 	}

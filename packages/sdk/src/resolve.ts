@@ -35,13 +35,11 @@ export async function resolveWorkflowEntrypoint(
   const parsed = parseEntrypoint(specifier);
   const path = resolve(parsed.path);
 
-  if (await exists(resolve(path, "massive.config.ts"))) {
-    const packageRoot = path;
-    const workflowPackage = await loadWorkflowPackageConfig(
-      resolve(packageRoot, "massive.config.ts"),
-    );
+  const directConfigPath = resolve(path, "massive.config.ts");
+  if (await exists(directConfigPath)) {
+    const workflowPackage = await loadWorkflowPackageConfig(directConfigPath);
     const packageEntrypoint = parseEntrypoint(workflowPackage.entrypoint);
-    const entrypointPath = resolve(packageRoot, packageEntrypoint.path);
+    const entrypointPath = resolve(path, packageEntrypoint.path);
     const selected = await selectWorkflowExport(
       entrypointPath,
       packageEntrypoint.exportName,
@@ -50,12 +48,12 @@ export async function resolveWorkflowEntrypoint(
     return {
       workflow: selected.workflow,
       selectedExport: selected.exportName,
-      packageRoot,
+      packageRoot: path,
       package: workflowPackage,
       source: {
-        root: packageRoot,
+        root: path,
         include: workflowPackage.include,
-        module: relativeModulePath(packageRoot, entrypointPath),
+        module: relativeModulePath(path, entrypointPath),
       },
       explicitConfig: true,
     };
@@ -66,20 +64,19 @@ export async function resolveWorkflowEntrypoint(
     const packageRoot = dirname(configPath);
     const workflowPackage = await loadWorkflowPackageConfig(configPath);
     const selected = await selectWorkflowExport(path, parsed.exportName);
+    const module = relativeModulePath(packageRoot, path);
     return {
       workflow: selected.workflow,
       selectedExport: selected.exportName,
       packageRoot,
       package: {
         ...workflowPackage,
-        entrypoint: `${
-          relativeModulePath(packageRoot, path)
-        }#${selected.exportName}`,
+        entrypoint: `${module}#${selected.exportName}`,
       },
       source: {
         root: packageRoot,
         include: workflowPackage.include,
-        module: relativeModulePath(packageRoot, path),
+        module,
       },
       explicitConfig: true,
     };

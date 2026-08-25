@@ -19,6 +19,17 @@ const maxSafeInteger = 1<<53 - 1
 var canonicalIntegerPattern = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 var sha256RefPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
+// Marshal encodes a Go value using its JSON representation and returns the v0
+// canonical form. json.RawMessage fields retain their JSON value semantics
+// rather than being encoded as byte strings.
+func Marshal(value any) ([]byte, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshal JSON: %w", err)
+	}
+	return CanonicalizeJSON(encoded)
+}
+
 // CanonicalizeJSON parses a JSON field tree and writes the v0 canonical JSON
 // representation from conformance/schema/hashing.md.
 func CanonicalizeJSON(data []byte) ([]byte, error) {

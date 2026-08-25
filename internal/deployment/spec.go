@@ -89,21 +89,17 @@ func New(planHash string, profile Profile) (*Spec, []byte, error) {
 		},
 		PlanHash: planHash, Profile: profile,
 	}
-	withoutHash, err := json.Marshal(value)
+	withoutHash, err := canonical.Marshal(value)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal deployment spec: %w", err)
+		return nil, nil, fmt.Errorf("encode canonical deployment spec: %w", err)
 	}
 	value.DeploymentHash, err = RecomputedHash(withoutHash)
 	if err != nil {
 		return nil, nil, err
 	}
-	raw, err := json.Marshal(value)
+	canonicalJSON, err := canonical.Marshal(value)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal deployment spec: %w", err)
-	}
-	canonicalJSON, err := canonical.CanonicalizeJSON(raw)
-	if err != nil {
-		return nil, nil, fmt.Errorf("canonicalize deployment spec: %w", err)
+		return nil, nil, fmt.Errorf("encode canonical deployment spec: %w", err)
 	}
 	parsed, err := Parse(canonicalJSON)
 	if err != nil {

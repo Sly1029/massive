@@ -120,6 +120,22 @@ func TestCanonicalizeJSONEscaping(t *testing.T) {
 	}
 }
 
+func TestMarshalCanonicalizesTypedValuesAndRawMessages(t *testing.T) {
+	actual, err := Marshal(struct {
+		Values []json.RawMessage `json:"values"`
+		Unsafe string            `json:"unsafe"`
+	}{
+		Values: []json.RawMessage{json.RawMessage(`{"b":2,"a":1}`)},
+		Unsafe: "<>&",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expected := `{"unsafe":"<>&","values":[{"a":1,"b":2}]}`; string(actual) != expected {
+		t.Fatalf("canonical JSON mismatch\nactual:   %s\nexpected: %s", actual, expected)
+	}
+}
+
 func TestCanonicalizeJSONRejectsNonSafeIntegers(t *testing.T) {
 	tests := []struct {
 		name  string

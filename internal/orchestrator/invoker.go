@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/Sly1029/massive/internal/artifact"
+	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 )
 
@@ -213,7 +214,7 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 			ExitCode: 1,
 		}, err
 	}
-	descriptorBytes, err := marshalCanonicalJSON(descriptor)
+	descriptorBytes, err := canonical.Marshal(descriptor)
 	if err != nil {
 		return infrastructureFailure(fmt.Errorf("marshal descriptor for %s: %w", descriptor.NodeID, err))
 	}

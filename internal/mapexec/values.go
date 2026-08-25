@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"github.com/Sly1029/massive/internal/canonical"
 )
@@ -20,6 +19,15 @@ type Item struct {
 type Result struct {
 	Index int
 	Body  []byte
+}
+
+type indexedValue struct {
+	Index int             `json:"index"`
+	Value json.RawMessage `json:"value"`
+}
+
+type emptyMarker struct {
+	Empty bool `json:"empty"`
 }
 
 // ArgoItems projects a finite map input into indexed loop values. Argo does
@@ -37,22 +45,13 @@ func ArgoItems(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	if len(items) == 0 {
-		return []byte(`[{"empty":true}]`), nil
+		return canonical.Marshal([]emptyMarker{{Empty: true}})
 	}
-	var output bytes.Buffer
-	output.WriteByte('[')
+	values := make([]indexedValue, len(items))
 	for index, item := range items {
-		if index > 0 {
-			output.WriteByte(',')
-		}
-		output.WriteString(`{"index":`)
-		output.WriteString(strconv.Itoa(item.Index))
-		output.WriteString(`,"value":`)
-		output.Write(item.Body)
-		output.WriteByte('}')
+		values[index] = indexedValue{Index: item.Index, Value: item.Body}
 	}
-	output.WriteByte(']')
-	return output.Bytes(), nil
+	return canonical.Marshal(values)
 }
 
 // ParseArgoItem validates one indexed loop value or the singleton empty-map
@@ -76,13 +75,7 @@ func ArgoResult(index int, body []byte) ([]byte, error) {
 	if err != nil || !bytes.Equal(canonicalBody, body) {
 		return nil, fmt.Errorf("map item %d output must be canonical JSON", index)
 	}
-	var output bytes.Buffer
-	output.WriteString(`{"index":`)
-	output.WriteString(strconv.Itoa(index))
-	output.WriteString(`,"value":`)
-	output.Write(body)
-	output.WriteByte('}')
-	return output.Bytes(), nil
+	return canonical.Marshal(indexedValue{Index: index, Value: body})
 }
 
 // CollectArgoResults unwraps Argo's aggregate output, accepting both raw JSON
@@ -186,7 +179,7 @@ func Collect(expectedCount int, results []Result) ([]byte, error) {
 	if expectedCount < 0 || len(results) != expectedCount {
 		return nil, fmt.Errorf("map returned %d results, want %d", len(results), expectedCount)
 	}
-	ordered := make([][]byte, expectedCount)
+	ordered := make([]json.RawMessage, expectedCount)
 	seen := make([]bool, expectedCount)
 	for _, result := range results {
 		if result.Index < 0 || result.Index >= expectedCount {
@@ -203,14 +196,5 @@ func Collect(expectedCount int, results []Result) ([]byte, error) {
 		ordered[result.Index] = result.Body
 	}
 
-	var output bytes.Buffer
-	output.WriteByte('[')
-	for index, body := range ordered {
-		if index > 0 {
-			output.WriteByte(',')
-		}
-		output.Write(body)
-	}
-	output.WriteByte(']')
-	return output.Bytes(), nil
+	return canonical.Marshal(ordered)
 }
