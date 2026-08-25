@@ -122,7 +122,7 @@ The old TypeScript in-memory runner is not the architectural local path and shou
 There is no local Argo cluster command today. The legacy TypeScript Argo
 emitter and its `pnpm test:argo-cluster` harness were retired along with the
 in-SDK plan/Argo surface. The WS-8 cluster harness
-([implementation-roadmap.md](implementation-roadmap.md)) rebuilds it against
+([archive/implementation-roadmap.md](archive/implementation-roadmap.md)) rebuilds it against
 Go-emitted bundles: apply the generated `WorkflowTemplate`, submit a run against
 the active cluster, wait for terminal status, and inspect datastore artifacts.
 When it lands it will again expect the active Kubernetes context to be

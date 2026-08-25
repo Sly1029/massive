@@ -58,7 +58,7 @@ source workflow
 
 Environment materialization is deduped by unique effective environment spec, not by workflow and not by full step contract.
 
-Resource limits, priority, network policy, and secrets do not change the dependency environment.
+Resource limits, priority, network policy, and secrets do not change the dependency environment. Those runtime facets have their own compositional model in [Runtime Environment Composition](runtime-environment.md).
 
 A Node environment key should include:
 

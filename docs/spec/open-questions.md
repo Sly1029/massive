@@ -250,15 +250,18 @@ Current v0 wedge:
 
 ## Sidecar Runtime
 
-The sidecar/proxy runtime is future architecture, not v0 required.
+> **Direction accepted (August 2026):**
+> [Runtime Environment Composition](runtime-environment.md) resolves the shape
+> of this: secret mediation is a provider behind a core seam (sentinel tokens
+> substituted and re-signed by a mediation proxy), local development runs the
+> same mediator as a loopback process, and policy events surface in the run
+> manifest. The remaining items below are provider-level details.
 
 Open questions:
 
 - What exact proxy protocol should be used for secrets and egress mediation?
 - Should the sidecar own object-store credentials and re-sign requests?
-- How should local development emulate the sidecar?
 - Which reserved ports and names should be standardized now?
-- How should policy violations be surfaced in step logs and run artifacts?
 
 ## Datastore
 
@@ -301,11 +304,20 @@ Current v0 direction:
 
 ## Market Positioning
 
-Current stance (July 2026): TypeScript/JavaScript is the only authoring language for now — no second-language SDK is scheduled, though the IR stays language-neutral by design. The near-term wedge leans toward platform teams that want compiled, deterministic, provenance-carrying deploy bundles with verifiable execution contracts; author-facing DX is the adoption surface, not the differentiator.
+Current stance (revised August 2026, superseding the July TypeScript-only
+note): Python is the primary authoring SDK, per
+[Workflow Platform v2 Direction](workflow-platform-v2.md); TypeScript remains
+supported through the shared IR. The near-term wedge still leans toward
+platform teams that want compiled, deterministic, provenance-carrying deploy
+bundles with verifiable execution contracts; author-facing DX is the adoption
+surface, not the differentiator. The Metaflow comparison is now explicit — the
+first consumer integration replaces a Metaflow-backed platform SDK.
 
 Open questions:
 
 - Is the first public wedge "portable workflow compiler" or "typed deployable workflow plans"?
-- How much should Massive compare itself to Metaflow in docs versus staying TypeScript-native?
 - Is Argo the primary production story long-term, or only the first serious target?
-- Which future backend should follow Argo: Cloudflare, Vercel, or Temporal?
+- Which future backend should follow Argo? A design-level probe of Cloudflare
+  Workflows (see
+  [../research/cloudflare-workflows-backend.md](../research/cloudflare-workflows-backend.md))
+  exists to test the backend seams; no second executable backend is scheduled.
