@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Sly1029/massive/internal/controlplane"
+	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/alecthomas/kong"
@@ -50,6 +51,13 @@ type VersionCommand struct{}
 
 type RuntimeCommand struct {
 	Step RuntimeStepCommand `cmd:"" help:"Execute one compiled step in a remote executor."`
+	Map  RuntimeMapCommand  `cmd:"" help:"Execute finite-map transport operations."`
+}
+
+type RuntimeMapCommand struct {
+	Expand  RuntimeMapExpandCommand  `cmd:"" help:"Expand a crystallized list into indexed Argo loop items."`
+	Item    RuntimeMapItemCommand    `cmd:"" help:"Execute one indexed map item in a remote executor."`
+	Collect RuntimeMapCollectCommand `cmd:"" help:"Collect indexed Argo loop results in source order."`
 }
 
 type RuntimeStepCommand struct {
@@ -61,6 +69,27 @@ type RuntimeStepCommand struct {
 	Project   string `help:"Stable remote project identity." required:""`
 	RunID     string `name:"run-id" help:"Remote workflow run identifier." required:""`
 	Store     string `help:"Ephemeral local artifact store." default:"/tmp/massive-store" type:"path"`
+}
+
+type RuntimeMapExpandCommand struct {
+	Input  string `help:"Canonical JSON map input." required:""`
+	Output string `help:"Write indexed Argo loop items to this path." required:"" type:"path"`
+}
+
+type RuntimeMapItemCommand struct {
+	Plan      string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
+	BundleDir string `name:"bundle-dir" help:"Directory containing mounted source archives." required:"" type:"existingdir"`
+	Node      string `help:"Static plan map node to execute." required:""`
+	Item      string `help:"Indexed Argo map item envelope." required:""`
+	Output    string `help:"Write indexed map result to this path." required:"" type:"path"`
+	Project   string `help:"Stable remote project identity." required:""`
+	RunID     string `name:"run-id" help:"Remote workflow run identifier." required:""`
+	Store     string `help:"Ephemeral local artifact store." default:"/tmp/massive-store" type:"path"`
+}
+
+type RuntimeMapCollectCommand struct {
+	Input  string `help:"Aggregated indexed Argo map results." required:""`
+	Output string `help:"Write the canonical ordered result list to this path." required:"" type:"path"`
 }
 
 type runOutput struct {
@@ -187,27 +216,70 @@ func (*VersionCommand) Run(stdout io.Writer) error {
 }
 
 func (command *RuntimeStepCommand) Run(ctx context.Context) error {
-	planJSON, err := os.ReadFile(command.Plan)
+	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, command.Input, command.Project, command.RunID, command.Store, nil)
 	if err != nil {
-		return fmt.Errorf("read runtime plan: %w", err)
+		return err
+	}
+	return writeRuntimeOutput(command.Output, result)
+}
+
+func (command *RuntimeMapExpandCommand) Run() error {
+	items, err := mapexec.ArgoItems([]byte(command.Input))
+	if err != nil {
+		return err
+	}
+	return writeRuntimeOutput(command.Output, items)
+}
+
+func (command *RuntimeMapItemCommand) Run(ctx context.Context) error {
+	item, empty, err := mapexec.ParseArgoItem([]byte(command.Item))
+	if err != nil {
+		return err
+	}
+	if empty {
+		return writeRuntimeOutput(command.Output, []byte(`{"empty":true}`))
+	}
+	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, string(item.Body), command.Project, command.RunID, command.Store, &item.Index)
+	if err != nil {
+		return err
+	}
+	envelope, err := mapexec.ArgoResult(item.Index, result)
+	if err != nil {
+		return err
+	}
+	return writeRuntimeOutput(command.Output, envelope)
+}
+
+func (command *RuntimeMapCollectCommand) Run() error {
+	result, err := mapexec.CollectArgoResults([]byte(command.Input))
+	if err != nil {
+		return err
+	}
+	return writeRuntimeOutput(command.Output, result)
+}
+
+func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, input, project, runID, store string, mapItemIndex *int) ([]byte, error) {
+	planJSON, err := os.ReadFile(planPath)
+	if err != nil {
+		return nil, fmt.Errorf("read runtime plan: %w", err)
 	}
 	parsed, err := plan.ParseCanonicalJSON(planJSON)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	workflowPlan, err := plan.VerifyCanonicalJSON(planJSON, parsed.GetPlanHash())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	archives := make(map[string][]byte, len(workflowPlan.GetSourcePackages()))
 	for _, sourcePackage := range workflowPlan.GetSourcePackages() {
 		name, err := orchestrator.SourceArchiveBundleName(sourcePackage.GetPackageHash())
 		if err != nil {
-			return err
+			return nil, err
 		}
-		body, err := os.ReadFile(filepath.Join(command.BundleDir, name))
+		body, err := os.ReadFile(filepath.Join(bundleDir, name))
 		if err != nil {
-			return fmt.Errorf("read runtime source archive %s: %w", name, err)
+			return nil, fmt.Errorf("read runtime source archive %s: %w", name, err)
 		}
 		archives[sourcePackage.GetPackageHash()] = body
 	}
@@ -215,18 +287,22 @@ func (command *RuntimeStepCommand) Run(ctx context.Context) error {
 	if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
 		runnerCommand = []string{python, "-m", "massive.runner", "{descriptor}"}
 	}
-	result, err := orchestrator.RunIsolatedStep(ctx, orchestrator.IsolatedStepConfig{
-		Plan: workflowPlan, NodeID: command.Node, DatastoreRoot: command.Store,
-		ProjectID: command.Project, RunID: command.RunID, RunnerCommand: runnerCommand,
+	config := orchestrator.IsolatedStepConfig{
+		Plan: workflowPlan, NodeID: nodeID, DatastoreRoot: store,
+		ProjectID: project, RunID: runID, RunnerCommand: runnerCommand,
 		SourceArchives: archives,
-	}, []byte(command.Input))
-	if err != nil {
-		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(command.Output), 0o755); err != nil {
+	if mapItemIndex != nil {
+		return orchestrator.RunIsolatedMapItem(ctx, config, []byte(input), *mapItemIndex)
+	}
+	return orchestrator.RunIsolatedStep(ctx, config, []byte(input))
+}
+
+func writeRuntimeOutput(path string, result []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create runtime output directory: %w", err)
 	}
-	if err := os.WriteFile(command.Output, result, 0o644); err != nil {
+	if err := os.WriteFile(path, result, 0o644); err != nil {
 		return fmt.Errorf("write runtime output: %w", err)
 	}
 	return nil

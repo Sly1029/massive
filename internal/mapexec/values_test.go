@@ -56,6 +56,82 @@ func TestEmptyMapCollectsAnEmptyArray(t *testing.T) {
 	}
 }
 
+func TestArgoItemsKeepDuplicateValuesDistinctAndMakeEmptyMapsRunnable(t *testing.T) {
+	items, err := mapexec.ArgoItems([]byte(`[3, 3, {"name": "x"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(items), `[{"index":0,"value":3},{"index":1,"value":3},{"index":2,"value":{"name":"x"}}]`; got != want {
+		t.Fatalf("Argo items = %s, want %s", got, want)
+	}
+
+	empty, err := mapexec.ArgoItems([]byte(`[]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(empty), `[{"empty":true}]`; got != want {
+		t.Fatalf("empty Argo items = %s, want %s", got, want)
+	}
+}
+
+func TestArgoItemAndResultEnvelopesPreserveCanonicalValues(t *testing.T) {
+	item, empty, err := mapexec.ParseArgoItem([]byte(`{ "value": { "name": "x" }, "index": 2 }`))
+	if err != nil || empty || item.Index != 2 || string(item.Body) != `{"name":"x"}` {
+		t.Fatalf("parsed item = %#v, empty=%v, err=%v", item, empty, err)
+	}
+
+	result, err := mapexec.ArgoResult(item.Index, []byte(`{"ok":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(result), `{"index":2,"value":{"ok":true}}`; got != want {
+		t.Fatalf("Argo result = %s, want %s", got, want)
+	}
+}
+
+func TestCollectArgoResultsAcceptsArgoRawAndStringAggregates(t *testing.T) {
+	for name, body := range map[string][]byte{
+		"raw objects":  []byte(`[{"index":1,"value":"b"},{"index":0,"value":"a"}]`),
+		"JSON strings": []byte(`["{\"index\":1,\"value\":\"b\"}","{\"index\":0,\"value\":\"a\"}"]`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			collected, err := mapexec.CollectArgoResults(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := string(collected), `["a","b"]`; got != want {
+				t.Fatalf("collected = %s, want %s", got, want)
+			}
+		})
+	}
+
+	empty, err := mapexec.CollectArgoResults([]byte(`[{"empty":true}]`))
+	if err != nil || string(empty) != `[]` {
+		t.Fatalf("empty collection = %s, err=%v", empty, err)
+	}
+}
+
+func TestArgoEnvelopeValidationRejectsAmbiguousOrInvalidCollections(t *testing.T) {
+	for name, body := range map[string][]byte{
+		"negative index":          []byte(`{"index":-1,"value":1}`),
+		"extra item field":        []byte(`{"extra":true,"index":0,"value":1}`),
+		"empty mixed with result": []byte(`[{"empty":true},{"index":0,"value":1}]`),
+		"missing dense result":    []byte(`[{"index":1,"value":1}]`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if name == "negative index" || name == "extra item field" {
+				if _, _, err := mapexec.ParseArgoItem(body); err == nil {
+					t.Fatal("expected item validation failure")
+				}
+				return
+			}
+			if _, err := mapexec.CollectArgoResults(body); err == nil {
+				t.Fatal("expected collection validation failure")
+			}
+		})
+	}
+}
+
 func TestExpandAndCollectRejectValuesOutsideCanonicalArrayContract(t *testing.T) {
 	for name, body := range map[string][]byte{
 		"object":       []byte(`{"value":1}`),

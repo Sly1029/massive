@@ -260,11 +260,70 @@ func TestStaticDAGRejectsExhaustiveDecisionSemantics(t *testing.T) {
 	}
 }
 
-func TestStaticDAGRejectsFiniteMapSemantics(t *testing.T) {
+func TestFiniteMapLowersToBoundedIndexedArgoFanoutAndCollection(t *testing.T) {
+	bundle := compileFixture(t, "finite-map")
+	var template map[string]any
+	if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+		t.Fatal(err)
+	}
+	templates := template["spec"].(map[string]any)["templates"].([]any)
+	main := templateByName(t, templates, "main")
+	mapTask := taskByName(t, main["dag"].(map[string]any)["tasks"].([]any), "map-items")
+	if mapTask["template"] != "map-map-items" {
+		t.Fatalf("map task template = %v", mapTask["template"])
+	}
+
+	mapTemplate := templateByName(t, templates, "map-map-items")
+	if mapTemplate["parallelism"] != float64(3) {
+		t.Fatalf("map parallelism = %v, want 3", mapTemplate["parallelism"])
+	}
+	mapTasks := mapTemplate["dag"].(map[string]any)["tasks"].([]any)
+	expand := taskByName(t, mapTasks, "expand")
+	invoke := taskByName(t, mapTasks, "invoke")
+	collect := taskByName(t, mapTasks, "collect")
+	if invoke["withParam"] != "{{tasks.expand.outputs.parameters.result}}" {
+		t.Fatalf("map fan-out source = %v", invoke["withParam"])
+	}
+	if expand["template"] != "map-expand-map-items" || invoke["template"] != "map-item-map-items" || collect["template"] != "map-collect-map-items" {
+		t.Fatalf("map transport tasks = %#v", mapTasks)
+	}
+	result := mapTemplate["outputs"].(map[string]any)["parameters"].([]any)[0].(map[string]any)
+	if result["valueFrom"].(map[string]any)["parameter"] != "{{tasks.collect.outputs.parameters.result}}" {
+		t.Fatalf("map collection output = %v", result)
+	}
+
+	itemTemplate := templateByName(t, templates, "map-item-map-items")
+	args := itemTemplate["container"].(map[string]any)["args"].([]any)
+	if !containsArgs(args, "runtime", "map", "item") || !containsArgs(args, "--node", "map-items") {
+		t.Fatalf("mapped runtime command = %v", args)
+	}
+}
+
+func TestFiniteMapResultFeedsDownstreamStep(t *testing.T) {
 	result := fixturePlan(t, "finite-map")
-	_, err := Compile(result.CanonicalJSON, deploymentForPlan(t, result.PlanHash), runtimeAssetsForPlan(result.Plan))
-	if err == nil || !strings.Contains(err.Error(), `graph semantic "map" is unsupported`) {
-		t.Fatalf("error=%v, want explicit map semantic diagnostic", err)
+	graph := result.Plan.Graph
+	mapNode := graph.Nodes[1]
+	graph.Nodes = append(graph.Nodes, &planpb.GraphNode{
+		Id: pointer("after-map"), Kind: pointer("step"),
+		InputSchema: mapNode.OutputSchema, OutputSchema: mapNode.OutputSchema,
+		SymbolRef: mapNode.SymbolRef, ContractRef: mapNode.ContractRef,
+	})
+	graph.Edges[1].To = pointer("after-map")
+	graph.Edges = append(graph.Edges, &planpb.GraphEdge{From: pointer("after-map"), To: pointer("__end")})
+	canonicalPlan, hash := rehashPlan(t, result.Plan)
+	bundle, err := Compile(canonicalPlan, deploymentForPlan(t, hash), runtimeAssetsForPlan(result.Plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var template map[string]any
+	if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+		t.Fatal(err)
+	}
+	main := templateByName(t, template["spec"].(map[string]any)["templates"].([]any), "main")
+	after := taskByName(t, main["dag"].(map[string]any)["tasks"].([]any), "after-map")
+	input := after["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"]
+	if input != "{{tasks.map-items.outputs.parameters.result}}" {
+		t.Fatalf("downstream map input = %v", input)
 	}
 }
 

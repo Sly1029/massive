@@ -150,14 +150,14 @@ func validateStaticGraph(p *planpb.WorkflowPlan) error {
 		return errors.New("argo target: graph must contain declared start/end sentinel nodes")
 	}
 	for _, n := range g.GetNodes() {
-		if n.GetKind() == "decision" || n.GetKind() == "select" || n.GetKind() == "map" {
-			return fmt.Errorf("argo target: graph semantic %q is unsupported; static Argo lowering supports only start, step, and end", n.GetKind())
+		if n.GetKind() == "decision" || n.GetKind() == "select" {
+			return fmt.Errorf("argo target: graph semantic %q is unsupported; Argo lowering does not yet support decisions and selects", n.GetKind())
 		}
-		if n.GetKind() != "start" && n.GetKind() != "step" && n.GetKind() != "end" {
+		if n.GetKind() != "start" && n.GetKind() != "step" && n.GetKind() != "map" && n.GetKind() != "end" {
 			return fmt.Errorf("argo target: node %q has unsupported kind %q", n.GetId(), n.GetKind())
 		}
-		if n.GetKind() == "step" && (n.GetSymbolRef() == "" || n.GetContractRef() == "") {
-			return fmt.Errorf("argo target: step %q lacks symbol or contract", n.GetId())
+		if (n.GetKind() == "step" || n.GetKind() == "map") && (n.GetSymbolRef() == "" || n.GetContractRef() == "") {
+			return fmt.Errorf("argo target: executable node %q lacks symbol or contract", n.GetId())
 		}
 	}
 	inbound := make(map[string][]string, len(nodes))
@@ -275,21 +275,21 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 	for _, e := range p.GetEnvironments() {
 		envs[e.GetEnvRef()] = e
 	}
-	steps := make([]*planpb.GraphNode, 0)
+	executableNodes := make([]*planpb.GraphNode, 0)
 	for _, n := range g.GetNodes() {
-		if n.GetKind() == "step" {
-			steps = append(steps, n)
+		if n.GetKind() == "step" || n.GetKind() == "map" {
+			executableNodes = append(executableNodes, n)
 		}
 	}
-	sort.Slice(steps, func(i, j int) bool { return steps[i].GetId() < steps[j].GetId() })
-	taskNames := make(map[string]string, len(steps))
-	for _, step := range steps {
-		taskNames[step.GetId()] = argoFieldName(step.GetId())
+	sort.Slice(executableNodes, func(i, j int) bool { return executableNodes[i].GetId() < executableNodes[j].GetId() })
+	taskNames := make(map[string]string, len(executableNodes))
+	for _, node := range executableNodes {
+		taskNames[node.GetId()] = argoFieldName(node.GetId())
 	}
 	dependencies := map[string][]string{}
 	inbound := map[string][]string{}
-	for _, step := range steps {
-		dependencies[step.GetId()] = []string{}
+	for _, node := range executableNodes {
+		dependencies[node.GetId()] = []string{}
 	}
 	for _, edge := range g.GetEdges() {
 		inbound[edge.GetTo()] = append(inbound[edge.GetTo()], edge.GetFrom())
@@ -299,97 +299,63 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			}
 		}
 	}
-	tasks, templates := make([]any, 0, len(steps)), make([]any, 0, len(steps)+1)
+	tasks, templates := make([]any, 0, len(executableNodes)), make([]any, 0, len(executableNodes)+1)
 	needsNetworkPolicy := false
-	for _, step := range steps {
-		contract := contracts[step.GetContractRef()]
+	for _, node := range executableNodes {
+		contract := contracts[node.GetContractRef()]
 		if contract == nil {
-			return nil, "", false, fmt.Errorf("argo target: step %q references unknown contract", step.GetId())
+			return nil, "", false, fmt.Errorf("argo target: executable node %q references unknown contract", node.GetId())
 		}
 		env := envs[contract.GetEnvironmentRef()]
-		if env == nil || env.GetKind() != "container-plan" || env.GetContainer().GetImage() == "" {
-			return nil, "", false, fmt.Errorf("argo target: step %q requires a directly runnable container plan with image", step.GetId())
-		}
-		if len(contract.GetSecrets()) > 0 {
-			return nil, "", false, fmt.Errorf("argo target: step %q declares secrets; 0.1 has no secret-ref lowering", step.GetId())
-		}
-		deps := dependencies[step.GetId()]
+		deps := dependencies[node.GetId()]
 		sort.Strings(deps)
 		argoDependencies := make([]string, len(deps))
 		for index, dependency := range deps {
 			argoDependencies[index] = taskNames[dependency]
 		}
-		inputExpression, err := argoInputExpression(step, inbound[step.GetId()], g.GetStartNode(), taskNames)
+		inputExpression, err := argoInputExpression(node, inbound[node.GetId()], g.GetStartNode(), taskNames)
 		if err != nil {
 			return nil, "", false, err
 		}
+		templateName := argoFieldName("step-" + node.GetId())
+		if node.GetKind() == "map" {
+			templateName = argoFieldName("map-" + node.GetId())
+		}
 		task := map[string]any{
-			"name": taskNames[step.GetId()], "template": argoFieldName("step-" + step.GetId()),
+			"name": taskNames[node.GetId()], "template": templateName,
 			"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": inputExpression}}},
 		}
 		if len(argoDependencies) > 0 {
 			task["dependencies"] = argoDependencies
 		}
 		tasks = append(tasks, task)
-		args := []string{
-			"runtime", "step",
-			"--plan", "/var/run/massive/massive-plan.json",
-			"--bundle-dir", "/var/run/massive",
-			"--node", step.GetId(),
-			"--input", "{{inputs.parameters.input}}",
-			"--output", "/tmp/massive/result.json",
-			"--project", "argo/" + name,
-			"--run-id", "{{workflow.uid}}",
-			"--store", "/tmp/massive/store",
-		}
-		runtime := env.GetContainer()
-		command := runtime.GetCommand()
-		if len(command) == 0 {
-			command = []string{"massive"}
-		}
-		container := map[string]any{
-			"image": runtime.GetImage(), "command": command, "args": args,
-			"volumeMounts": []any{map[string]any{"name": "massive-runtime", "mountPath": "/var/run/massive", "readOnly": true}},
-		}
-		if runtime.GetWorkingDirectory() != "" {
-			container["workingDir"] = runtime.GetWorkingDirectory()
-		}
-		if r := contract.GetResources(); r != nil && (r.GetCpu() != "" || r.GetMemory() != "") {
-			q := map[string]string{}
-			if r.GetCpu() != "" {
-				q["cpu"] = r.GetCpu()
+		if node.GetKind() == "map" {
+			mapTemplates, networkPolicy, err := argoMapTemplates(node, env, contract, runtimeName, name)
+			if err != nil {
+				return nil, "", false, err
 			}
-			if r.GetMemory() != "" {
-				q["memory"] = r.GetMemory()
-			}
-			container["resources"] = map[string]any{"requests": q, "limits": q}
+			needsNetworkPolicy = needsNetworkPolicy || networkPolicy
+			templates = append(templates, mapTemplates...)
+			continue
 		}
-		stepTemplate := map[string]any{
-			"name":   argoFieldName("step-" + step.GetId()),
-			"inputs": map[string]any{"parameters": []any{map[string]any{"name": "input"}}},
-			"outputs": map[string]any{"parameters": []any{map[string]any{
-				"name": "result", "valueFrom": map[string]any{"path": "/tmp/massive/result.json"},
-			}}},
-			"container": container,
+		stepTemplate, networkPolicy, err := runtimePodTemplate(
+			templateName, node.GetId(), env, contract, runtimeName,
+			[]string{
+				"runtime", "step",
+				"--plan", "/var/run/massive/massive-plan.json",
+				"--bundle-dir", "/var/run/massive",
+				"--node", node.GetId(),
+				"--input", "{{inputs.parameters.input}}",
+				"--output", "/tmp/massive/result.json",
+				"--project", "argo/" + name,
+				"--run-id", "{{workflow.uid}}",
+				"--store", "/tmp/massive/store",
+			},
+		)
+		if err != nil {
+			return nil, "", false, err
 		}
-		if network := contract.GetNetwork(); network != nil {
-			switch network.GetEgress() {
-			case "none":
-				needsNetworkPolicy = true
-				stepTemplate["metadata"] = map[string]any{"labels": map[string]string{"massive.dev/network-policy": runtimeName}}
-			case "", "any":
-			default:
-				return nil, "", false, fmt.Errorf("argo target: step %q has unsupported egress policy %q", step.GetId(), network.GetEgress())
-			}
-		}
-		platform := strings.Split(runtime.GetPlatform(), "/")
-		if len(platform) != 2 {
-			return nil, "", false, fmt.Errorf("argo target: step %q has invalid container platform %q", step.GetId(), runtime.GetPlatform())
-		}
-		stepTemplate["nodeSelector"] = map[string]string{
-			"kubernetes.io/os":   platform[0],
-			"kubernetes.io/arch": platform[1],
-		}
+		needsNetworkPolicy = needsNetworkPolicy || networkPolicy
 		templates = append(templates, stepTemplate)
 	}
 	endInbound := inbound[g.GetEndNode()]
@@ -425,6 +391,129 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			"templates":                    templates,
 		},
 	}, runtimeName, needsNetworkPolicy, nil
+}
+
+func argoMapTemplates(node *planpb.GraphNode, env *planpb.MaterializedEnvironment, contract *planpb.ExecutionContract, runtimeName, workflowName string) ([]any, bool, error) {
+	expandName := argoFieldName("map-expand-" + node.GetId())
+	itemName := argoFieldName("map-item-" + node.GetId())
+	collectName := argoFieldName("map-collect-" + node.GetId())
+	mapName := argoFieldName("map-" + node.GetId())
+
+	expandTemplate, expandNetwork, err := runtimePodTemplate(
+		expandName, node.GetId(), env, contract, runtimeName,
+		[]string{"runtime", "map", "expand", "--input", "{{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	itemTemplate, itemNetwork, err := runtimePodTemplate(
+		itemName, node.GetId(), env, contract, runtimeName,
+		[]string{
+			"runtime", "map", "item",
+			"--plan", "/var/run/massive/massive-plan.json",
+			"--bundle-dir", "/var/run/massive",
+			"--node", node.GetId(),
+			"--item", "{{inputs.parameters.input}}",
+			"--output", "/tmp/massive/result.json",
+			"--project", "argo/" + workflowName,
+			"--run-id", "{{workflow.uid}}",
+			"--store", "/tmp/massive/store",
+		},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	collectTemplate, collectNetwork, err := runtimePodTemplate(
+		collectName, node.GetId(), env, contract, runtimeName,
+		[]string{"runtime", "map", "collect", "--input", "{{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	mapTemplate := map[string]any{
+		"name":        mapName,
+		"parallelism": node.GetMaxConcurrency(),
+		"inputs":      map[string]any{"parameters": []any{map[string]any{"name": "input"}}},
+		"outputs": map[string]any{"parameters": []any{map[string]any{
+			"name": "result", "valueFrom": map[string]any{"parameter": "{{tasks.collect.outputs.parameters.result}}"},
+		}}},
+		"dag": map[string]any{"tasks": []any{
+			map[string]any{
+				"name": "expand", "template": expandName,
+				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{inputs.parameters.input}}"}}},
+			},
+			map[string]any{
+				"name": "invoke", "template": itemName, "dependencies": []any{"expand"},
+				"withParam": "{{tasks.expand.outputs.parameters.result}}",
+				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{item}}"}}},
+			},
+			map[string]any{
+				"name": "collect", "template": collectName, "dependencies": []any{"invoke"},
+				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{tasks.invoke.outputs.parameters.result}}"}}},
+			},
+		}},
+	}
+	return []any{mapTemplate, expandTemplate, itemTemplate, collectTemplate}, expandNetwork || itemNetwork || collectNetwork, nil
+}
+
+func runtimePodTemplate(name, nodeID string, env *planpb.MaterializedEnvironment, contract *planpb.ExecutionContract, runtimeName string, args []string) (map[string]any, bool, error) {
+	if env == nil || env.GetKind() != "container-plan" || env.GetContainer().GetImage() == "" {
+		return nil, false, fmt.Errorf("argo target: executable node %q requires a directly runnable container plan with image", nodeID)
+	}
+	if len(contract.GetSecrets()) > 0 {
+		return nil, false, fmt.Errorf("argo target: executable node %q declares secrets; 0.1 has no secret-ref lowering", nodeID)
+	}
+	runtime := env.GetContainer()
+	command := runtime.GetCommand()
+	if len(command) == 0 {
+		command = []string{"massive"}
+	}
+	container := map[string]any{
+		"image": runtime.GetImage(), "command": command, "args": args,
+		"volumeMounts": []any{map[string]any{"name": "massive-runtime", "mountPath": "/var/run/massive", "readOnly": true}},
+	}
+	if runtime.GetWorkingDirectory() != "" {
+		container["workingDir"] = runtime.GetWorkingDirectory()
+	}
+	if resources := contract.GetResources(); resources != nil && (resources.GetCpu() != "" || resources.GetMemory() != "") {
+		quantities := map[string]string{}
+		if resources.GetCpu() != "" {
+			quantities["cpu"] = resources.GetCpu()
+		}
+		if resources.GetMemory() != "" {
+			quantities["memory"] = resources.GetMemory()
+		}
+		container["resources"] = map[string]any{"requests": quantities, "limits": quantities}
+	}
+	template := map[string]any{
+		"name":   name,
+		"inputs": map[string]any{"parameters": []any{map[string]any{"name": "input"}}},
+		"outputs": map[string]any{"parameters": []any{map[string]any{
+			"name": "result", "valueFrom": map[string]any{"path": "/tmp/massive/result.json"},
+		}}},
+		"container": container,
+	}
+	needsNetworkPolicy := false
+	if network := contract.GetNetwork(); network != nil {
+		switch network.GetEgress() {
+		case "none":
+			needsNetworkPolicy = true
+			template["metadata"] = map[string]any{"labels": map[string]string{"massive.dev/network-policy": runtimeName}}
+		case "", "any":
+		default:
+			return nil, false, fmt.Errorf("argo target: executable node %q has unsupported egress policy %q", nodeID, network.GetEgress())
+		}
+	}
+	platform := strings.Split(runtime.GetPlatform(), "/")
+	if len(platform) != 2 {
+		return nil, false, fmt.Errorf("argo target: executable node %q has invalid container platform %q", nodeID, runtime.GetPlatform())
+	}
+	template["nodeSelector"] = map[string]string{
+		"kubernetes.io/os":   platform[0],
+		"kubernetes.io/arch": platform[1],
+	}
+	return template, needsNetworkPolicy, nil
 }
 
 func argoInputExpression(step *planpb.GraphNode, inbound []string, startNode string, taskNames map[string]string) (string, error) {
