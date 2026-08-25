@@ -13,16 +13,11 @@ const TAR_BLOCK_SIZE = 512;
 const MAX_SOURCE_FILES = 1_024;
 const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
 
-export interface ResolvedStepSymbol {
-  readonly packageRoot: string;
-  readonly run: StepRun<unknown, unknown>;
-  readonly cleanup: () => Promise<void>;
-}
-
-export async function resolveStepSymbol(
+export async function withResolvedStepSymbol<Result>(
   descriptor: StepInvocationDescriptor,
   store: DatastoreClient,
-): Promise<ResolvedStepSymbol> {
+  use: (run: StepRun<unknown, unknown>) => Promise<Result>,
+): Promise<Result> {
   if (descriptor.symbol.language !== "typescript") {
     throw new SymbolResolutionError(
       `language "${descriptor.symbol.language}" is not supported by the TypeScript runner`,
@@ -43,7 +38,9 @@ export async function resolveStepSymbol(
   try {
     const modulePath = resolveModulePath(packageRoot, descriptor.symbol.module);
     const module = (await import(
-      `${pathToFileURL(modulePath).href}?packageHash=${encodeURIComponent(descriptor.sourcePackage.packageHash)}`
+      `${pathToFileURL(modulePath).href}?packageHash=${
+        encodeURIComponent(descriptor.sourcePackage.packageHash)
+      }`
     )) as Record<string, unknown>;
     const run = stepRunFromExport(module[descriptor.symbol.export]);
     if (run === undefined) {
@@ -51,14 +48,9 @@ export async function resolveStepSymbol(
         `export "${descriptor.symbol.export}" in module "${descriptor.symbol.module}" is not a step run function`,
       );
     }
-    return {
-      packageRoot,
-      run,
-      cleanup: async () => await rm(packageRoot, { force: true, recursive: true }),
-    };
-  } catch (error) {
+    return await use(run);
+  } finally {
     await rm(packageRoot, { force: true, recursive: true });
-    throw error;
   }
 }
 
@@ -66,7 +58,10 @@ async function fetchSourcePackage(
   descriptor: StepInvocationDescriptor,
   store: DatastoreClient,
 ): Promise<string> {
-  if (descriptor.sourcePackage.sourceArchive.contentType !== SOURCE_ARCHIVE_CONTENT_TYPE) {
+  if (
+    descriptor.sourcePackage.sourceArchive.contentType !==
+      SOURCE_ARCHIVE_CONTENT_TYPE
+  ) {
     throw new SymbolResolutionError(
       `unsupported source archive content type "${descriptor.sourcePackage.sourceArchive.contentType}"`,
     );
@@ -92,7 +87,10 @@ async function fetchSourcePackage(
   const scratchParent = descriptor.datastore.kind === "local"
     ? descriptor.datastore.path
     : Deno.cwd();
-  const root = await Deno.makeTempDir({ dir: scratchParent, prefix: "massive-source-" });
+  const root = await Deno.makeTempDir({
+    dir: scratchParent,
+    prefix: "massive-source-",
+  });
   try {
     await extractSourceArchive(bytes, root);
     return root;
@@ -104,7 +102,10 @@ async function fetchSourcePackage(
   }
 }
 
-async function extractSourceArchive(bytes: Uint8Array, root: string): Promise<void> {
+async function extractSourceArchive(
+  bytes: Uint8Array,
+  root: string,
+): Promise<void> {
   let offset = 0;
   const names = new Set<string>();
   let sawEnd = false;
@@ -113,7 +114,12 @@ async function extractSourceArchive(bytes: Uint8Array, root: string): Promise<vo
     const header = bytes.slice(offset, offset + TAR_BLOCK_SIZE);
     offset += TAR_BLOCK_SIZE;
     if (header.every((byte) => byte === 0)) {
-      if (offset + TAR_BLOCK_SIZE > bytes.length || !bytes.slice(offset, offset + TAR_BLOCK_SIZE).every((byte) => byte === 0)) {
+      if (
+        offset + TAR_BLOCK_SIZE > bytes.length ||
+        !bytes.slice(offset, offset + TAR_BLOCK_SIZE).every((byte) =>
+          byte === 0
+        )
+      ) {
         throw new Error("tar archive is missing its second zero block");
       }
       sawEnd = true;
@@ -123,37 +129,55 @@ async function extractSourceArchive(bytes: Uint8Array, root: string): Promise<vo
       break;
     }
     verifyTarChecksum(header);
-    if (tarString(header, 257, 6) !== "ustar" || tarString(header, 263, 2) !== "00") {
+    if (
+      tarString(header, 257, 6) !== "ustar" ||
+      tarString(header, 263, 2) !== "00"
+    ) {
       throw new Error("source archive must use the USTAR format");
     }
     const name = tarString(header, 0, 100);
     const prefix = tarString(header, 345, 155);
     const path = prefix === "" ? name : `${prefix}/${name}`;
     if (!safeArchivePath(path) || names.has(path)) {
-      throw new Error(`tar archive has unsafe or duplicate path ${JSON.stringify(path)}`);
+      throw new Error(
+        `tar archive has unsafe or duplicate path ${JSON.stringify(path)}`,
+      );
     }
     const type = header[156];
     if (type !== 0 && type !== 48) {
-      throw new Error(`tar archive entry ${JSON.stringify(path)} is not a regular file`);
+      throw new Error(
+        `tar archive entry ${JSON.stringify(path)} is not a regular file`,
+      );
     }
     const size = tarSize(header);
     totalSize += size;
     if (names.size >= MAX_SOURCE_FILES || totalSize > MAX_SOURCE_BYTES) {
       throw new Error("tar archive exceeds source package limits");
     }
-    if (size > bytes.length - offset) throw new Error(`tar archive entry ${JSON.stringify(path)} is truncated`);
+    if (size > bytes.length - offset) {
+      throw new Error(`tar archive entry ${JSON.stringify(path)} is truncated`);
+    }
     const target = resolve(root, path);
     const backToRoot = relative(root, target);
-    if (backToRoot === "" || backToRoot.startsWith(`..${sep}`) || isAbsolute(backToRoot)) {
-      throw new Error(`tar archive entry ${JSON.stringify(path)} escapes extraction root`);
+    if (
+      backToRoot === "" || backToRoot.startsWith(`..${sep}`) ||
+      isAbsolute(backToRoot)
+    ) {
+      throw new Error(
+        `tar archive entry ${JSON.stringify(path)} escapes extraction root`,
+      );
     }
     await Deno.mkdir(dirname(target), { recursive: true });
-    await writeFile(target, bytes.slice(offset, offset + size), { mode: 0o644 });
+    await writeFile(target, bytes.slice(offset, offset + size), {
+      mode: 0o644,
+    });
     await chmod(target, 0o444);
     names.add(path);
     offset += Math.ceil(size / TAR_BLOCK_SIZE) * TAR_BLOCK_SIZE;
   }
-  if (!sawEnd || offset > bytes.length) throw new Error("tar archive is incomplete");
+  if (!sawEnd || offset > bytes.length) {
+    throw new Error("tar archive is incomplete");
+  }
 }
 
 function tarString(header: Uint8Array, start: number, length: number): string {
@@ -164,9 +188,13 @@ function tarString(header: Uint8Array, start: number, length: number): string {
 
 function tarSize(header: Uint8Array): number {
   const text = tarString(header, 124, 12).trim();
-  if (!/^[0-7]+$/.test(text)) throw new Error("tar archive has an invalid file size");
+  if (!/^[0-7]+$/.test(text)) {
+    throw new Error("tar archive has an invalid file size");
+  }
   const size = Number.parseInt(text, 8);
-  if (!Number.isSafeInteger(size) || size < 0) throw new Error("tar archive has an unsafe file size");
+  if (!Number.isSafeInteger(size) || size < 0) {
+    throw new Error("tar archive has an unsafe file size");
+  }
   return size;
 }
 
@@ -176,33 +204,48 @@ function verifyTarChecksum(header: Uint8Array): void {
   for (let index = 0; index < TAR_BLOCK_SIZE; index++) {
     actual += index >= 148 && index < 156 ? 32 : header[index];
   }
-  if (actual !== expected) throw new Error("tar archive header checksum mismatch");
+  if (actual !== expected) {
+    throw new Error("tar archive header checksum mismatch");
+  }
 }
 
 function tarOctal(field: Uint8Array, name: string): number {
   const text = new TextDecoder().decode(field).replaceAll("\0", "").trim();
-  if (!/^[0-7]+$/.test(text)) throw new Error(`tar archive has an invalid ${name}`);
+  if (!/^[0-7]+$/.test(text)) {
+    throw new Error(`tar archive has an invalid ${name}`);
+  }
   const value = Number.parseInt(text, 8);
-  if (!Number.isSafeInteger(value) || value < 0) throw new Error(`tar archive has an unsafe ${name}`);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`tar archive has an unsafe ${name}`);
+  }
   return value;
 }
 
 function safeArchivePath(path: string): boolean {
   if (path === "" || path.startsWith("/") || path.includes("\\")) return false;
-  return path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+  return path.split("/").every((part) =>
+    part !== "" && part !== "." && part !== ".."
+  );
 }
 
 function resolveModulePath(packageRoot: string, module: string): string {
   const modulePath = module.startsWith("./") ? module.slice(2) : module;
   const resolved = resolve(packageRoot, modulePath);
   const backToRoot = relative(packageRoot, resolved);
-  if (backToRoot === "" || backToRoot.startsWith(`..${sep}`) || isAbsolute(backToRoot)) {
-    throw new SymbolResolutionError(`module "${module}" resolves outside source package root`);
+  if (
+    backToRoot === "" || backToRoot.startsWith(`..${sep}`) ||
+    isAbsolute(backToRoot)
+  ) {
+    throw new SymbolResolutionError(
+      `module "${module}" resolves outside source package root`,
+    );
   }
   return resolved;
 }
 
-function stepRunFromExport(value: unknown): StepRun<unknown, unknown> | undefined {
+function stepRunFromExport(
+  value: unknown,
+): StepRun<unknown, unknown> | undefined {
   if (typeof value === "function") return value as StepRun<unknown, unknown>;
   if (value !== null && typeof value === "object" && "run" in value) {
     const run = (value as { readonly run?: unknown }).run;

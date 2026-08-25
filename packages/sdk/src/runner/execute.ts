@@ -28,7 +28,7 @@ import {
   StepSchemaValidationError,
   SymbolResolutionError,
 } from "./outcomes.ts";
-import { resolveStepSymbol } from "./source.ts";
+import { withResolvedStepSymbol } from "./source.ts";
 
 export async function executeStep(
   descriptor: StepInvocationDescriptor,
@@ -59,11 +59,10 @@ export async function executeStep(
 
     validateJson(inputSchema, input, "input");
 
-    const resolved = await resolveStepSymbol(descriptor, store);
-    let output: unknown;
-    try {
+    return await withResolvedStepSymbol(descriptor, store, async (run) => {
+      let output: unknown;
       try {
-        output = await resolved.run({
+        output = await run({
           input,
           state: {},
           context: {
@@ -97,9 +96,7 @@ export async function executeStep(
           schema: published.schema,
         },
       };
-    } finally {
-      await resolved.cleanup();
-    }
+    });
   } catch (error) {
     if (
       error instanceof DescriptorError || error instanceof SymbolResolutionError

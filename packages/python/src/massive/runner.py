@@ -11,6 +11,7 @@ import sys
 import tarfile
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from functools import cache
 from io import BytesIO
 from pathlib import Path
@@ -130,6 +131,59 @@ class StepError(Exception):
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedStep:
+    function: StepFunction
+    input_adapter: TypeAdapter[object] | None = None
+    output_adapter: TypeAdapter[object] | None = None
+
+    def invoke(self, descriptor: StepInvocationDescriptor, input_value: object) -> bytes:
+        if self.input_adapter is not None:
+            try:
+                input_value = self.input_adapter.validate_python(input_value)
+            except PydanticValidationError as error:
+                raise SchemaError(f"input does not satisfy the step input type: {error}") from error
+
+        context = StepContext[None, object](
+            inputs=input_value,
+            deps=None,
+            invocation=InvocationContext(
+                run_id=descriptor["runId"],
+                step_id=descriptor["nodeId"],
+                idempotency_key=InvocationIdentity.model_validate(
+                    {
+                        "runId": descriptor["runId"],
+                        "nodeId": descriptor["nodeId"],
+                        "attempt": descriptor["attempt"],
+                        **({} if "scope" not in descriptor else {"scope": descriptor["scope"]}),
+                    }
+                ).idempotency_key,
+            ),
+        )
+        try:
+            output = self.function(context)
+            if inspect.isawaitable(output):
+                output = asyncio.run(_await_output(output))
+        except Exception as error:
+            raise StepError(str(error)) from error
+
+        if self.output_adapter is not None:
+            try:
+                validated_output = self.output_adapter.validate_python(output)
+            except PydanticValidationError as error:
+                raise SchemaError(
+                    f"output does not satisfy the step output type: {error}"
+                ) from error
+            try:
+                output = self.output_adapter.dump_python(validated_output, mode="json")
+            except PydanticSerializationError as error:
+                raise SchemaError(f"output cannot be serialized as JSON: {error}") from error
+        try:
+            return canonical_json(cast(JsonValue, output)).encode()
+        except (TypeError, ValueError) as error:
+            raise SchemaError(f"output is not canonical JSON: {error}") from error
+
+
 def run_descriptor_path(path: Path) -> int:
     try:
         descriptor = _load_descriptor(path)
@@ -190,18 +244,12 @@ def _execute(descriptor: StepInvocationDescriptor) -> None:
     except (ArtifactError, PydanticValidationError) as error:
         raise SchemaError(f"output artifact destination is invalid: {error}") from error
     input_value, _input_schema = _read_input(descriptor, datastore)
-    with _source_root(source_package, datastore) as source_root:
-        function, input_adapter, output_adapter = _resolve_step(symbol, source_root)
-        _execute_source(
-            descriptor,
-            datastore,
-            destination,
-            producer,
-            function,
-            input_adapter,
-            output_adapter,
-            input_value,
-        )
+    with _resolved_step(symbol, source_package, datastore) as step:
+        output_body = step.invoke(descriptor, input_value)
+    try:
+        ArtifactRuntime(datastore).publish_json(destination, producer, output_body)
+    except (ArtifactError, PydanticValidationError) as error:
+        raise SchemaError(f"output artifact publication failed: {error}") from error
 
 
 def _publication_identity(
@@ -223,66 +271,6 @@ def _publication_identity(
             ),
         ),
     )
-
-
-def _execute_source(
-    descriptor: StepInvocationDescriptor,
-    datastore: Datastore,
-    destination: Destination,
-    producer: Producer,
-    function: StepFunction,
-    input_adapter: TypeAdapter[object] | None,
-    output_adapter: TypeAdapter[object] | None,
-    input_value: object,
-) -> None:
-    if input_adapter is not None:
-        try:
-            input_value = input_adapter.validate_python(input_value)
-        except PydanticValidationError as error:
-            raise SchemaError(f"input does not satisfy the step input type: {error}") from error
-    context = StepContext[None, object](
-        inputs=input_value,
-        deps=None,
-        invocation=InvocationContext(
-            run_id=descriptor["runId"],
-            step_id=descriptor["nodeId"],
-            idempotency_key=InvocationIdentity.model_validate(
-                {
-                    "runId": descriptor["runId"],
-                    "nodeId": descriptor["nodeId"],
-                    "attempt": descriptor["attempt"],
-                    **({} if "scope" not in descriptor else {"scope": descriptor["scope"]}),
-                }
-            ).idempotency_key,
-        ),
-    )
-    try:
-        output = function(context)
-        if inspect.isawaitable(output):
-            output = asyncio.run(_await_output(output))
-    except Exception as error:
-        raise StepError(str(error)) from error
-    if output_adapter is not None:
-        try:
-            validated_output = output_adapter.validate_python(output)
-        except PydanticValidationError as error:
-            raise SchemaError(f"output does not satisfy the step output type: {error}") from error
-        try:
-            output = output_adapter.dump_python(validated_output, mode="json")
-        except PydanticSerializationError as error:
-            raise SchemaError(f"output cannot be serialized as JSON: {error}") from error
-    try:
-        output_text = canonical_json(cast(JsonValue, output))
-    except (TypeError, ValueError) as error:
-        raise SchemaError(f"output is not canonical JSON: {error}") from error
-    try:
-        ArtifactRuntime(datastore).publish_json(
-            destination,
-            producer,
-            output_text.encode(),
-        )
-    except (ArtifactError, PydanticValidationError) as error:
-        raise SchemaError(f"output artifact publication failed: {error}") from error
 
 
 async def _await_output(value: Awaitable[object]) -> object:
@@ -382,9 +370,17 @@ def _source_root(
         yield root
 
 
-def _resolve_step(
-    symbol: SymbolDescriptor, source_root: Path
-) -> tuple[StepFunction, TypeAdapter[object] | None, TypeAdapter[object] | None]:
+@contextmanager
+def _resolved_step(
+    symbol: SymbolDescriptor,
+    source_package: SourcePackageDescriptor,
+    datastore: Datastore,
+) -> Generator[_ResolvedStep, None, None]:
+    with _source_root(source_package, datastore) as source_root:
+        yield _load_step(symbol, source_root)
+
+
+def _load_step(symbol: SymbolDescriptor, source_root: Path) -> _ResolvedStep:
     module_name = symbol["module"]
     if not module_name or any(not part.isidentifier() for part in module_name.split(".")):
         raise DescriptorError("Python module must be a dotted identifier")
@@ -399,13 +395,13 @@ def _resolve_step(
     exported = getattr(module, export, None)
     if isinstance(exported, StepDefinition):
         step = cast(StepDefinition[object, object, object], exported)
-        return (
-            cast(StepFunction, step.function),
-            TypeAdapter[object](step.input_type),
-            TypeAdapter[object](step.output_type),
+        return _ResolvedStep(
+            function=cast(StepFunction, step.function),
+            input_adapter=TypeAdapter[object](step.input_type),
+            output_adapter=TypeAdapter[object](step.output_type),
         )
     if callable(exported):
-        return cast(StepFunction, exported), None, None
+        return _ResolvedStep(function=cast(StepFunction, exported))
     raise DescriptorError(f"export {export!r} is not a step function")
 
 

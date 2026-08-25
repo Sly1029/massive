@@ -343,13 +343,9 @@ func putImmutable(ctx context.Context, store datastore.Datastore, key datastore.
 }
 
 func canonicalManifest(manifest dataArtifactManifest) ([]byte, error) {
-	raw, err := json.Marshal(manifest)
+	encoded, err := canonical.Marshal(manifest)
 	if err != nil {
-		return nil, fmt.Errorf("marshal artifact manifest: %w", err)
-	}
-	encoded, err := canonical.CanonicalizeJSON(raw)
-	if err != nil {
-		return nil, fmt.Errorf("canonicalize artifact manifest: %w", err)
+		return nil, fmt.Errorf("encode canonical artifact manifest: %w", err)
 	}
 	if err := validateManifestSchema(encoded); err != nil {
 		return nil, fmt.Errorf("%w: artifact manifest: %v", ErrValidation, err)

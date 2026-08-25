@@ -5,7 +5,6 @@ package argo
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -78,7 +77,7 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 	if err != nil {
 		return nil, err
 	}
-	templateJSON, err := canonicalJSON(template)
+	templateJSON, err := canonical.Marshal(template)
 	if err != nil {
 		return nil, err
 	}
@@ -574,7 +573,7 @@ func runtimeConfigMapJSON(p *planpb.WorkflowPlan, d *deployment.Spec, name strin
 		"metadata":   map[string]any{"name": name, "namespace": d.Profile.Target.Namespace},
 		"binaryData": binaryData, "immutable": true,
 	}
-	return canonicalJSON(value)
+	return canonical.Marshal(value)
 }
 
 func runtimeNetworkPolicyJSON(d *deployment.Spec, name string) ([]byte, error) {
@@ -586,15 +585,7 @@ func runtimeNetworkPolicyJSON(d *deployment.Spec, name string) ([]byte, error) {
 			"policyTypes": []string{"Egress"}, "egress": []any{},
 		},
 	}
-	return canonicalJSON(value)
-}
-
-func canonicalJSON(v any) ([]byte, error) {
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	return canonical.CanonicalizeJSON(raw)
+	return canonical.Marshal(value)
 }
 
 var schemaOnce sync.Once
@@ -638,10 +629,11 @@ func buildBundle(p *planpb.WorkflowPlan, d *deployment.Spec, files []File) (*Bun
 		identityFiles = append(identityFiles, map[string]string{"path": f.Path, "hash": h})
 	}
 	identity := map[string]any{"planHash": p.GetPlanHash(), "deploymentHash": d.DeploymentHash, "target": Kind, "files": identityFiles}
-	bundleHash, err := canonical.DigestJSON(mustJSON(identity))
+	identityJSON, err := canonical.Marshal(identity)
 	if err != nil {
 		return nil, err
 	}
+	bundleHash := canonical.DigestBytes(identityJSON)
 	manifest := &planpb.TargetBundleManifest{SchemaVersion: u32(0), Target: str(Kind), PlanHash: str(p.GetPlanHash()), BundleHash: str(bundleHash), Files: entries, Validations: []*planpb.ValidationResult{{Name: str("argo-schema"), Passed: boolp(true)}, {Name: str("dag-integrity"), Passed: boolp(true)}, {Name: str("credential-free-binding"), Passed: boolp(true)}}, Provenance: &planpb.BundleProvenance{CompilerName: str(p.GetProvenance().GetCompilerName()), CompilerVersion: str(p.GetProvenance().GetCompilerVersion())}, DeploymentHash: str(d.DeploymentHash)}
 	raw, err := protojson.Marshal(manifest)
 	if err != nil {
@@ -652,13 +644,6 @@ func buildBundle(p *planpb.WorkflowPlan, d *deployment.Spec, files []File) (*Bun
 		return nil, err
 	}
 	return &Bundle{files, manifest, manifestJSON}, nil
-}
-func mustJSON(v any) []byte {
-	b, e := json.Marshal(v)
-	if e != nil {
-		panic(e)
-	}
-	return b
 }
 func str(s string) *string { return &s }
 func u32(v uint32) *uint32 { return &v }
