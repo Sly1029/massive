@@ -7,13 +7,14 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // ParseCanonicalJSON decodes the canonical JSON projection of a WorkflowPlan.
 func ParseCanonicalJSON(data []byte) (*planpb.WorkflowPlan, error) {
 	var parsed planpb.WorkflowPlan
 	if err := protojson.Unmarshal(data, &parsed); err != nil {
-		return nil, fmt.Errorf("parse workflow plan JSON: %w", err)
+		return nil, fmt.Errorf("parse workflow plan schema v1 JSON (rebuild older plans): %w", err)
 	}
 	return &parsed, nil
 }
@@ -51,8 +52,8 @@ func VerifyCanonicalJSON(planJSON []byte, expectedHash string) (*planpb.Workflow
 }
 
 func validateVersionedIdentity(plan *planpb.WorkflowPlan) error {
-	if plan.SchemaVersion == nil || plan.GetSchemaVersion() != 0 {
-		return fmt.Errorf("workflow plan schemaVersion must be present and equal 0")
+	if plan.SchemaVersion == nil || plan.GetSchemaVersion() != 1 {
+		return fmt.Errorf("workflow plan schemaVersion must be present and equal 1; rebuild older plans")
 	}
 	if plan.SpecHash == nil {
 		return fmt.Errorf("workflow plan specHash must be present")
@@ -81,6 +82,23 @@ func validateVersionedIdentity(plan *planpb.WorkflowPlan) error {
 		}
 		if sourcePackage.PackageHash == nil || !canonical.IsSHA256Ref(sourcePackage.GetPackageHash()) {
 			return fmt.Errorf("workflow plan sourcePackages[%d].packageHash must be sha256:<64 lowercase hex>", index)
+		}
+	}
+	environments := map[string]bool{}
+	for _, requirement := range plan.GetEnvironments() {
+		ref := requirement.GetEnvRef()
+		if requirement.Runtime == nil || !canonical.IsSHA256Ref(ref) || environments[ref] {
+			return fmt.Errorf("workflow plan requires unique, typed environment requirements with sha256 references")
+		}
+		environments[ref] = true
+		input := proto.Clone(requirement).(*planpb.EnvironmentRequirement)
+		input.EnvRef = nil
+		hash, err := hashPlanMessage(input)
+		if err != nil {
+			return err
+		}
+		if hash != ref {
+			return fmt.Errorf("workflow plan environment reference %s does not match requirement %s", ref, hash)
 		}
 	}
 	return nil

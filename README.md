@@ -34,6 +34,12 @@ argo submit -n workflows --from workflowtemplate/my-workflow \
   -p 'input={"value":21}' --watch
 ```
 
+Builds also emit portable materialization inputs and a manifest bound to the
+deployment. Compilation can consume those inputs without the original checkout.
+Source archives are verified; image references are pinned declarations, not
+registry or dependency attestations. See the
+[materialization contract](docs/spec/materialization-contract.md).
+
 Version 0.1 supports static graphs and finite maps on Argo, and static graphs,
 exhaustive decisions, and finite maps locally. Argo source transport is
 intentionally small and self-contained for the first release; larger source

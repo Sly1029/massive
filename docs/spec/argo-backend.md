@@ -29,6 +29,8 @@ dist/argo/<workflow-name>/
   massive-plan.json
   bundle-manifest.json
   deployment-spec.json
+  materialization-spec.json
+  materialization-manifest.json
   workflow-spec.json
 ```
 
@@ -44,7 +46,10 @@ massive build workflow.py \
 ```
 
 The lower-level `massive-compiler bundle-argo` command additionally requires a
-`--runtime-assets` directory. `massive build` is the public path: it verifies
+`--runtime-assets` directory and `--materialization materialization-spec.json`.
+Plan and deployment schema v1 are required; older artifacts must be rebuilt. See the
+[portable materialization contract](materialization-contract.md).
+`massive build` is the public path: it verifies
 the authoring source manifest, creates deterministic archives, and binds them
 to the exact canonical plan. Verified source archives are exposed as standalone
 runtime assets and recorded in `bundle-manifest.json`; the 0.1 embedded

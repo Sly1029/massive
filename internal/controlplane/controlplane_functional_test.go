@@ -15,6 +15,7 @@ import (
 
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/sourceidentity"
 )
 
 func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
@@ -97,7 +98,7 @@ func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build did not expose its verified source package at %s: %v", archivePath, err)
 	}
-	if err := orchestrator.VerifySourceArchiveIdentity(archive, packageHash); err != nil {
+	if err := sourceidentity.VerifyArchive(archive, packageHash); err != nil {
 		t.Fatalf("emitted source package does not match the compiled package identity: %v", err)
 	}
 	reader := tar.NewReader(bytes.NewReader(archive))

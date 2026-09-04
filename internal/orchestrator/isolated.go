@@ -9,6 +9,7 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/sourceidentity"
 )
 
 // IsolatedStepConfig contains the portable inputs available inside one remote
@@ -91,7 +92,7 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 		if !ok || len(archive) == 0 {
 			return nil, fmt.Errorf("isolated source archive %s is unavailable", sourcePackage.GetPackageHash())
 		}
-		if err := VerifySourceArchiveIdentity(archive, sourcePackage.GetPackageHash()); err != nil {
+		if err := sourceidentity.VerifyArchive(archive, sourcePackage.GetPackageHash()); err != nil {
 			return nil, err
 		}
 		key := sourcePackageKey(sourcePackage.GetPackageHash())

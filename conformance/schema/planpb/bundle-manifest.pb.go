@@ -298,17 +298,17 @@ var File_bundle_manifest_proto protoreflect.FileDescriptor
 
 const file_bundle_manifest_proto_rawDesc = "" +
 	"\n" +
-	"\x15bundle-manifest.proto\x12\x0fmassive.plan.v0\x1a\x13workflow-plan.proto\"\xf5\x03\n" +
+	"\x15bundle-manifest.proto\x12\x0fmassive.plan.v1\x1a\x13workflow-plan.proto\"\xf5\x03\n" +
 	"\x14TargetBundleManifest\x12*\n" +
 	"\x0eschema_version\x18\x01 \x01(\rH\x00R\rschemaVersion\x88\x01\x01\x12\x1b\n" +
 	"\x06target\x18\x02 \x01(\tH\x01R\x06target\x88\x01\x01\x12 \n" +
 	"\tplan_hash\x18\x03 \x01(\tH\x02R\bplanHash\x88\x01\x01\x12$\n" +
 	"\vbundle_hash\x18\x04 \x01(\tH\x03R\n" +
 	"bundleHash\x88\x01\x01\x122\n" +
-	"\x05files\x18\x05 \x03(\v2\x1c.massive.plan.v0.EmittedFileR\x05files\x12C\n" +
-	"\vvalidations\x18\x06 \x03(\v2!.massive.plan.v0.ValidationResultR\vvalidations\x12F\n" +
+	"\x05files\x18\x05 \x03(\v2\x1c.massive.plan.v1.EmittedFileR\x05files\x12C\n" +
+	"\vvalidations\x18\x06 \x03(\v2!.massive.plan.v1.ValidationResultR\vvalidations\x12F\n" +
 	"\n" +
-	"provenance\x18\a \x01(\v2!.massive.plan.v0.BundleProvenanceH\x04R\n" +
+	"provenance\x18\a \x01(\v2!.massive.plan.v1.BundleProvenanceH\x04R\n" +
 	"provenance\x88\x01\x01\x12,\n" +
 	"\x0fdeployment_hash\x18\b \x01(\tH\x05R\x0edeploymentHash\x88\x01\x01B\x11\n" +
 	"\x0f_schema_versionB\t\n" +
@@ -320,7 +320,7 @@ const file_bundle_manifest_proto_rawDesc = "" +
 	"\x10_deployment_hash\"\x9d\x01\n" +
 	"\vEmittedFile\x12\x17\n" +
 	"\x04path\x18\x01 \x01(\tH\x00R\x04path\x88\x01\x01\x12=\n" +
-	"\bartifact\x18\x02 \x01(\v2\x1c.massive.plan.v0.ArtifactRefH\x01R\bartifact\x88\x01\x01\x12\x17\n" +
+	"\bartifact\x18\x02 \x01(\v2\x1c.massive.plan.v1.ArtifactRefH\x01R\bartifact\x88\x01\x01\x12\x17\n" +
 	"\x04role\x18\x03 \x01(\tH\x02R\x04role\x88\x01\x01B\a\n" +
 	"\x05_pathB\v\n" +
 	"\t_artifactB\a\n" +
@@ -354,17 +354,17 @@ func file_bundle_manifest_proto_rawDescGZIP() []byte {
 
 var file_bundle_manifest_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_bundle_manifest_proto_goTypes = []any{
-	(*TargetBundleManifest)(nil), // 0: massive.plan.v0.TargetBundleManifest
-	(*EmittedFile)(nil),          // 1: massive.plan.v0.EmittedFile
-	(*ValidationResult)(nil),     // 2: massive.plan.v0.ValidationResult
-	(*BundleProvenance)(nil),     // 3: massive.plan.v0.BundleProvenance
-	(*ArtifactRef)(nil),          // 4: massive.plan.v0.ArtifactRef
+	(*TargetBundleManifest)(nil), // 0: massive.plan.v1.TargetBundleManifest
+	(*EmittedFile)(nil),          // 1: massive.plan.v1.EmittedFile
+	(*ValidationResult)(nil),     // 2: massive.plan.v1.ValidationResult
+	(*BundleProvenance)(nil),     // 3: massive.plan.v1.BundleProvenance
+	(*ArtifactRef)(nil),          // 4: massive.plan.v1.ArtifactRef
 }
 var file_bundle_manifest_proto_depIdxs = []int32{
-	1, // 0: massive.plan.v0.TargetBundleManifest.files:type_name -> massive.plan.v0.EmittedFile
-	2, // 1: massive.plan.v0.TargetBundleManifest.validations:type_name -> massive.plan.v0.ValidationResult
-	3, // 2: massive.plan.v0.TargetBundleManifest.provenance:type_name -> massive.plan.v0.BundleProvenance
-	4, // 3: massive.plan.v0.EmittedFile.artifact:type_name -> massive.plan.v0.ArtifactRef
+	1, // 0: massive.plan.v1.TargetBundleManifest.files:type_name -> massive.plan.v1.EmittedFile
+	2, // 1: massive.plan.v1.TargetBundleManifest.validations:type_name -> massive.plan.v1.ValidationResult
+	3, // 2: massive.plan.v1.TargetBundleManifest.provenance:type_name -> massive.plan.v1.BundleProvenance
+	4, // 3: massive.plan.v1.EmittedFile.artifact:type_name -> massive.plan.v1.ArtifactRef
 	4, // [4:4] is the sub-list for method output_type
 	4, // [4:4] is the sub-list for method input_type
 	4, // [4:4] is the sub-list for extension type_name

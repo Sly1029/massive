@@ -179,14 +179,11 @@ type ArgoBundleResult struct {
 }
 
 func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
-	if request.Frontend == nil {
-		return nil, errors.New("frontend result is required")
-	}
-	compiled, err := plan.Compile(request.Frontend.Spec, request.Frontend.Canonical)
+	inputs, err := PrepareArgo(request.Frontend)
 	if err != nil {
-		return nil, fmt.Errorf("compile workflow plan: %w", err)
+		return nil, err
 	}
-	deploymentSpec, deploymentJSON, err := deployment.New(compiled.PlanHash, deployment.Profile{
+	compiled, err := CompileArgo(*inputs, deployment.Profile{
 		Name: request.ProfileName, ArtifactStoreBinding: request.ArtifactStoreBinding,
 		Target: deployment.Target{
 			Kind: "argo", Namespace: request.Namespace,
@@ -195,24 +192,9 @@ func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("construct deployment spec: %w", err)
-	}
-	archives := make(map[string][]byte, len(request.Frontend.Spec.SourcePackages))
-	for _, sourcePackage := range request.Frontend.Spec.SourcePackages {
-		files := make([]orchestrator.SourcePackageFile, 0, len(sourcePackage.Files))
-		for _, file := range sourcePackage.Files {
-			files = append(files, orchestrator.SourcePackageFile{Path: file.Path, Hash: file.Hash})
-		}
-		archive, err := orchestrator.BuildSourceArchive(request.Frontend.PackageRoot, files)
-		if err != nil {
-			return nil, fmt.Errorf("package Argo source %q: %w", sourcePackage.PackageID, err)
-		}
-		archives[sourcePackage.PackageHash] = archive
-	}
-	bundle, err := argo.Compile(compiled.CanonicalJSON, deploymentSpec, argo.RuntimeAssets{SourceArchives: archives})
-	if err != nil {
 		return nil, err
 	}
+	bundle := compiled.Bundle
 	if err := os.MkdirAll(request.OutputDirectory, 0o755); err != nil {
 		return nil, fmt.Errorf("create bundle directory: %w", err)
 	}
@@ -232,8 +214,8 @@ func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
 		body []byte
 	}{
 		{"bundle-manifest.json", bundle.ManifestJSON},
-		{"deployment-spec.json", deploymentJSON},
-		{"workflow-spec.json", request.Frontend.Canonical},
+		{"deployment-spec.json", compiled.DeploymentJSON},
+		{"workflow-spec.json", inputs.WorkflowSpec},
 	}
 	for _, file := range extra {
 		if err := os.WriteFile(filepath.Join(request.OutputDirectory, file.name), file.body, 0o644); err != nil {
@@ -242,7 +224,7 @@ func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
 		files = append(files, file.name)
 	}
 	return &ArgoBundleResult{
-		PlanHash: compiled.PlanHash, DeploymentHash: deploymentSpec.DeploymentHash,
+		PlanHash: compiled.Plan.PlanHash, DeploymentHash: compiled.Deployment.DeploymentHash,
 		BundleHash: bundle.Manifest.GetBundleHash(), RuntimeTransport: argo.RuntimeTransport,
 		Files: files,
 	}, nil

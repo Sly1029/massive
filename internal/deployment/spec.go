@@ -16,13 +16,14 @@ import (
 )
 
 type Spec struct {
-	Kind           string  `json:"kind"`
-	SchemaVersion  uint32  `json:"schemaVersion"`
-	Encoding       string  `json:"encoding"`
-	Hashing        Hashing `json:"hashing"`
-	DeploymentHash string  `json:"deploymentHash"`
-	PlanHash       string  `json:"planHash"`
-	Profile        Profile `json:"profile"`
+	Kind                string  `json:"kind"`
+	SchemaVersion       uint32  `json:"schemaVersion"`
+	Encoding            string  `json:"encoding"`
+	Hashing             Hashing `json:"hashing"`
+	DeploymentHash      string  `json:"deploymentHash"`
+	PlanHash            string  `json:"planHash"`
+	MaterializationHash string  `json:"materializationHash"`
+	Profile             Profile `json:"profile"`
 }
 
 type Hashing struct {
@@ -79,15 +80,15 @@ func ReadFile(path string) (*Spec, error) {
 
 // New constructs the canonical deployment artifact at the Go-owned target
 // seam. SDKs provide author intent; plan binding and deployment identity are
-// compiler responsibilities.
-func New(planHash string, profile Profile) (*Spec, []byte, error) {
+// compiler responsibilities. Every deployment binds a materialization manifest.
+func New(planHash string, profile Profile, materializationHash string) (*Spec, []byte, error) {
 	value := Spec{
-		Kind: "DeploymentSpec", SchemaVersion: 0, Encoding: "json-v0",
+		Kind: "DeploymentSpec", SchemaVersion: 1, Encoding: "json-v0",
 		Hashing: Hashing{
 			Algorithm: "sha256", Canonicalization: "canonical-json-v0",
 			Recipe: "deployment-spec", RecipeVersion: 1,
 		},
-		PlanHash: planHash, Profile: profile,
+		PlanHash: planHash, Profile: profile, MaterializationHash: materializationHash,
 	}
 	withoutHash, err := canonical.Marshal(value)
 	if err != nil {

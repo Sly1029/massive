@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package massive.plan.v0;
+package massive.plan.v1;
 
 import "workflow-plan.proto";
 

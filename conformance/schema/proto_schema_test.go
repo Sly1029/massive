@@ -15,7 +15,7 @@ import (
 )
 
 func TestProtoSchemasCompile(t *testing.T) {
-	runProtoc(t, "workflow-plan.proto", "bundle-manifest.proto", "step-invocation.proto")
+	runProtoc(t, "workflow-plan.proto", "bundle-manifest.proto", "step-invocation.proto", "materialization.proto")
 }
 
 func TestStepInvocationJSONRoundTrip(t *testing.T) {

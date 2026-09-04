@@ -17,6 +17,7 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/irversion"
+	"github.com/Sly1029/massive/internal/materialization"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -41,18 +42,30 @@ type Bundle struct {
 
 type RuntimeAssets struct {
 	SourceArchives map[string][]byte
+	// The target recomputes the required materialization manifest from
+	// these inputs; a caller-supplied manifest is not evidence of verification.
+	MaterializationSpec []byte
 }
 
 const maxEmbeddedRuntimeBytes = 700 * 1024
 
 var argoFieldNamePattern = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`)
 
-// Compile accepts only separately verified deployment configuration and a
-// canonical plan. The artifact store binding is an opaque Argo ConfigMap name:
+// Compile revalidates deployment configuration, canonical plan, and materialization
+// inputs at the target boundary, including when called directly by the standalone
+// compiler. The artifact store binding is an opaque Argo ConfigMap name:
 // credentials are resolved by its repository configuration and pod identity.
 func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAssets) (*Bundle, error) {
 	if deploymentSpec == nil {
 		return nil, errors.New("argo target: deployment spec is required")
+	}
+	deploymentJSON, err := canonical.Marshal(deploymentSpec)
+	if err != nil {
+		return nil, err
+	}
+	deploymentSpec, err = deployment.Parse(deploymentJSON)
+	if err != nil {
+		return nil, fmt.Errorf("argo target: verify deployment: %w", err)
 	}
 	if deploymentSpec.Profile.Target.Kind != Kind {
 		return nil, fmt.Errorf("argo target: deployment target is %q, expected argo", deploymentSpec.Profile.Target.Kind)
@@ -71,6 +84,21 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 		return nil, err
 	}
 	if err := validateRuntimeAssets(p, planJSON, assets); err != nil {
+		return nil, err
+	}
+	manifest, err := materialization.Resolve(p, assets.MaterializationSpec, assets.SourceArchives)
+	if err != nil {
+		return nil, err
+	}
+	if manifest.GetManifestHash() != deploymentSpec.MaterializationHash {
+		return nil, errors.New("argo target: materialization manifest does not match deployment binding")
+	}
+	manifestJSON, err := materialization.MarshalCanonical(manifest)
+	if err != nil {
+		return nil, err
+	}
+	specJSON, err := canonical.CanonicalizeJSON(assets.MaterializationSpec)
+	if err != nil {
 		return nil, err
 	}
 	template, runtimeName, needsNetworkPolicy, err := workflowTemplate(p, deploymentSpec)
@@ -97,6 +125,8 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 		{"runtime-configmap.json", "application/json", "runtime-config", configMapJSON},
 		{"workflow-template.json", "application/json", "workflow-template", templateJSON},
 		{"workflow-template.yaml", "application/yaml", "workflow-template", templateYAML},
+		{"materialization-spec.json", "application/json", "materialization-spec", specJSON},
+		{"materialization-manifest.json", "application/json", "materialization-manifest", manifestJSON},
 	}
 	for _, sourcePackage := range p.GetSourcePackages() {
 		name := "runtime-assets/source-sha256-" + strings.TrimPrefix(sourcePackage.GetPackageHash(), "sha256:") + ".tar"
@@ -270,7 +300,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 	for _, c := range p.GetContracts() {
 		contracts[c.GetContractRef()] = c
 	}
-	envs := map[string]*planpb.MaterializedEnvironment{}
+	envs := map[string]*planpb.EnvironmentRequirement{}
 	for _, e := range p.GetEnvironments() {
 		envs[e.GetEnvRef()] = e
 	}
@@ -392,7 +422,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 	}, runtimeName, needsNetworkPolicy, nil
 }
 
-func argoMapTemplates(node *planpb.GraphNode, env *planpb.MaterializedEnvironment, contract *planpb.ExecutionContract, runtimeName, workflowName string) ([]any, bool, error) {
+func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string) ([]any, bool, error) {
 	expandName := argoFieldName("map-expand-" + node.GetId())
 	itemName := argoFieldName("map-item-" + node.GetId())
 	collectName := argoFieldName("map-collect-" + node.GetId())
@@ -456,9 +486,9 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.MaterializedEnvironmen
 	return []any{mapTemplate, expandTemplate, itemTemplate, collectTemplate}, expandNetwork || itemNetwork || collectNetwork, nil
 }
 
-func runtimePodTemplate(name, nodeID string, env *planpb.MaterializedEnvironment, contract *planpb.ExecutionContract, runtimeName string, args []string) (map[string]any, bool, error) {
-	if env == nil || env.GetKind() != "container-plan" || env.GetContainer().GetImage() == "" {
-		return nil, false, fmt.Errorf("argo target: executable node %q requires a directly runnable container plan with image", nodeID)
+func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName string, args []string) (map[string]any, bool, error) {
+	if env.GetContainer().GetImage() == "" {
+		return nil, false, fmt.Errorf("argo target: executable node %q requires an immutable container requirement", nodeID)
 	}
 	if len(contract.GetSecrets()) > 0 {
 		return nil, false, fmt.Errorf("argo target: executable node %q declares secrets; 0.1 has no secret-ref lowering", nodeID)

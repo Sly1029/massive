@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-package massive.plan.v0;
+package massive.plan.v1;
 
 option go_package = "github.com/Sly1029/massive/conformance/schema/planpb;planpb";
 
-// Canonical backend-compiled plan boundary for Massive v0.
+// Canonical backend-compiled plan boundary for Massive plan schema v1.
 // Frontend SDKs emit WorkflowSpec JSON; the Go compiler emits this typed
 // canonical JSON WorkflowPlan artifact.
 //
@@ -39,7 +39,7 @@ message WorkflowPlan {
   repeated SchemaEntry schemas = 5;
   repeated SymbolEntry symbols = 6;
   repeated SourcePackageRef source_packages = 7;
-  repeated MaterializedEnvironment environments = 8;
+  repeated EnvironmentRequirement environments = 8;
   repeated ExecutionContract contracts = 9;
   repeated TargetPlan targets = 10;
   repeated ArtifactRef datastore_manifests = 11;
@@ -127,20 +127,27 @@ message SourcePackageRef {
   optional HashingSpec hashing = 6;
 }
 
-message MaterializedEnvironment {
+// Requirements belong to the workflow; realized outputs belong exclusively to
+// materialization.proto. A target must reject requirements it cannot realize.
+message EnvironmentRequirement {
   optional string env_ref = 1;
-  optional string spec_hash = 2;
-  optional string kind = 3;
-  optional ArtifactRef local = 4;
-  optional ContainerRuntime container = 5;
+  oneof runtime {
+    ContainerRequirement container = 2;
+    NodeRequirement node = 3;
+  }
 }
 
-message ContainerRuntime {
+message ContainerRequirement {
   optional string image = 1;
-  optional ArtifactRef source_fetch = 2;
-  optional string platform = 3;
-  repeated string command = 4;
-  optional string working_directory = 5;
+  optional string platform = 2;
+  repeated string command = 3;
+  optional string working_directory = 4;
+}
+
+message NodeRequirement {
+  optional string version = 1;
+  optional string package_manager = 2;
+  optional string lockfile = 3;
 }
 
 message ExecutionContract {

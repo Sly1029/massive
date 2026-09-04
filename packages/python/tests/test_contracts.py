@@ -19,11 +19,11 @@ def test_container_recipe_composes_invocation_fields_into_a_canonical_plan() -> 
         "platform": "linux/amd64",
     }
     assert plan.canonical_json == (
-        '{"command":["python","-m","worker"],'
+        '{"container":{"command":["python","-m","worker"],'
         '"image":"registry.example/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",'
-        '"platform":"linux/amd64","workingDirectory":"app"}'
+        '"platform":"linux/amd64","workingDirectory":"app"}}'
     )
-    assert plan.identity == "sha256:955ff79a6c9999658eaa09f710b629834d0556f70506d79c71deddf302bf4e4e"
+    assert plan.identity == "sha256:25b23f1859f62339edaa0e5c9d48b4cb448b76a1b8c2895be896e33e48fb3e19"
 
 
 def test_resources_and_secret_refs_do_not_change_container_plan_identity() -> None:

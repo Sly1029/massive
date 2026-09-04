@@ -85,11 +85,12 @@ func bundleArgo(args []string) error {
 	deploymentPath := flags.String("deployment", "", "DeploymentSpec JSON")
 	outDir := flags.String("out", "", "bundle output directory")
 	runtimeAssets := flags.String("runtime-assets", "", "directory containing source-sha256-<hash>.tar files")
+	materializationPath := flags.String("materialization", "", "MaterializationSpec JSON")
 	if err := flags.Parse(args); err != nil {
 		return fmt.Errorf("parse bundle-argo flags: %w", err)
 	}
-	if *planPath == "" || *deploymentPath == "" || *outDir == "" || *runtimeAssets == "" {
-		return fmt.Errorf("bundle-argo requires --plan, --deployment, --runtime-assets, and --out")
+	if *planPath == "" || *deploymentPath == "" || *outDir == "" || *runtimeAssets == "" || *materializationPath == "" {
+		return fmt.Errorf("bundle-argo requires --plan, --deployment, --materialization, --runtime-assets, and --out")
 	}
 	planJSON, err := os.ReadFile(*planPath)
 	if err != nil {
@@ -115,7 +116,13 @@ func bundleArgo(args []string) error {
 		}
 		archives[sourcePackage.GetPackageHash()] = body
 	}
-	b, err := argo.Compile(planJSON, d, argo.RuntimeAssets{SourceArchives: archives})
+	materializationJSON, err := os.ReadFile(*materializationPath)
+	if err != nil {
+		return fmt.Errorf("read materialization spec: %w", err)
+	}
+	b, err := argo.Compile(planJSON, d, argo.RuntimeAssets{
+		SourceArchives: archives, MaterializationSpec: materializationJSON,
+	})
 	if err != nil {
 		return err
 	}

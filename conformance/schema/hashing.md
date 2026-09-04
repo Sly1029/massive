@@ -120,7 +120,7 @@ write time, compile time, run IDs, or any other wall-clock timestamp.
 - symbol table;
 - patches;
 - compiler identity and version;
-- environment materialization references;
+- typed environment requirements;
 - datastore manifest references;
 - mediation provider identity;
 - the workflow-plan hash descriptor and the foreign `specHash` descriptor.
@@ -130,6 +130,7 @@ write time, compile time, run IDs, or any other wall-clock timestamp.
 `deploymentHash` covers the `DeploymentSpec` field tree except itself:
 
 - the referenced `planHash`;
+- the required `materializationHash`;
 - the profile name and opaque artifact-store binding;
 - target kind and its target-specific settings;
 - the deployment-spec hash descriptor and its recipe version.

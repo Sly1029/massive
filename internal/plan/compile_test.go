@@ -83,6 +83,36 @@ func TestCompileDoesNotInventMaterializedSourceArtifacts(t *testing.T) {
 	}
 }
 
+func TestCompilePreservesAndDeduplicatesEnvironmentRequirements(t *testing.T) {
+	container := spec.Environment{
+		Kind: "container", Image: "runner@sha256:" + strings.Repeat("1", 64), Platform: "linux/amd64",
+	}
+	node := spec.Environment{Kind: "node", Version: "22", PackageManager: "pnpm", Lockfile: "pnpm-lock.yaml"}
+	refs, entries, err := compileEnvironments(&spec.WorkflowSpec{Environments: map[string]spec.Environment{
+		"first": container, "second": container, "node": node,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || refs["first"] != refs["second"] || refs["first"] == refs["node"] {
+		t.Fatal("environment requirement aliases were not content-addressed and deduplicated")
+	}
+	foundNode := false
+	for _, entry := range entries {
+		if entry.GetEnvRef() != refs["node"] {
+			continue
+		}
+		foundNode = true
+		requirement := entry.GetNode()
+		if requirement.GetVersion() != node.Version || requirement.GetPackageManager() != node.PackageManager || requirement.GetLockfile() != node.Lockfile {
+			t.Fatal("Node requirement was dropped instead of preserved")
+		}
+	}
+	if !foundNode {
+		t.Fatal("Node requirement missing")
+	}
+}
+
 func TestCompilePreservesPythonFrontendIdentity(t *testing.T) {
 	specData := readFixture(t, "specs", "python-linear", "workflow-spec.json")
 	workflowSpec, err := spec.Parse(specData)
