@@ -1,6 +1,6 @@
 # WorkflowPlan Canonical JSON Encoding
 
-Status: v0 artifact contract
+Status: v1 artifact contract; older plans must be rebuilt
 
 `WorkflowPlan` is canonically written by the Go compiler as JSON typed by [`workflow-plan.proto`](workflow-plan.proto). The `.proto` schema defines the field names and types; `protojson` maps those fields to this JSON body. Artifact identity still comes from the canonical field tree defined in [`hashing.md`](hashing.md), not from any binary wire encoding.
 
@@ -8,7 +8,7 @@ The artifact body is a deterministic JSON rendering of the typed plan field tree
 
 - object keys are sorted lexicographically at every level,
 - list order is the plan's semantic order,
-- node and environment variants render as objects with explicit `kind` strings plus the selected value fields,
+- graph nodes use explicit `kind` strings; environment requirements select exactly one typed `container` or `node` field,
 - digest fields render as `sha256:<hex>` strings,
 - `ArtifactRef` renders as `{ "key", "hash", "contentType" }`,
 - `GraphIR.irVersion` is the explicit semantic graph contract version and is distinct from the enclosing transport `schemaVersion`,
@@ -18,7 +18,7 @@ The artifact body is a deterministic JSON rendering of the typed plan field tree
   `specHash` digest carried by the plan,
 - `SchemaEntry.canonicalJson` is sorted-key canonical JSON for the lowered portable schema value,
 - wall-clock fields, including compile time and bundle emission time, are not part of the canonical JSON artifacts and must not appear in the plan,
-- scalar fields use explicit presence (`optional` in the `.proto`): a set field always appears, including zero values such as `"schemaVersion": 0`,
+- scalar fields use explicit presence (`optional` in the `.proto`); the plan's required `schemaVersion` is `1`,
 - repeated fields appear only when non-empty; empty lists are omitted (a step node with no fan-in has no `mergeInputs` member). This matches `protojson`'s default marshaling, so the canonical writer is plain `protojson.Marshal` of a fully populated message,
 - plans must not contain dangling references: every step node's `contractRef` resolves to an entry in `contracts`, and every contract's `environmentRef` resolves to an entry in `environments`.
 
@@ -35,7 +35,7 @@ Shape:
 
 ```json
 {
-  "schemaVersion": 0,
+  "schemaVersion": 1,
   "hashing": {
     "algorithm": "sha256",
     "canonicalization": "canonical-json-v0",
@@ -130,8 +130,11 @@ Shape:
   "environments": [
     {
       "envRef": "sha256:<hex>",
-      "kind": "skipped",
-      "specHash": "sha256:<hex>"
+      "node": {
+        "version": "22",
+        "packageManager": "pnpm",
+        "lockfile": "pnpm-lock.yaml"
+      }
     }
   ],
   "contracts": [
@@ -156,4 +159,6 @@ committed yet. Remote target lowering must obtain concrete, body-hash-verified
 artifact references from a materialization manifest; it must not predict keys
 or reuse `packageHash` as an archive-body hash.
 
-This JSON shape is the compatibility promise for runners. `WorkflowPlan`, source manifests, environment manifests, provenance records, and target bundle manifests are canonical JSON artifacts typed by the `.proto` schemas.
+Runners require this current JSON shape; obsolete versions are rejected rather
+than adapted. `WorkflowPlan`, materialization manifests, provenance records, and
+target bundle manifests are canonical JSON artifacts typed by the `.proto` schemas.

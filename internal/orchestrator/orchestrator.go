@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -474,47 +473,6 @@ func SourceArchiveBundleName(packageHash string) (string, error) {
 		return "", fmt.Errorf("invalid source package hash %q", packageHash)
 	}
 	return "source-sha256-" + strings.TrimPrefix(packageHash, "sha256:") + ".tar", nil
-}
-
-// VerifySourceArchiveIdentity derives the semantic source-package identity
-// from exact tar entry bytes. Remote runtimes use it to reject a mounted asset
-// that does not match the package hash committed into the compiled plan.
-func VerifySourceArchiveIdentity(archive []byte, expectedHash string) error {
-	reader := tar.NewReader(bytes.NewReader(archive))
-	files := make([]sourceidentity.File, 0)
-	seen := map[string]bool{}
-	totalSize := int64(0)
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("read source archive: %w", err)
-		}
-		if header.Typeflag != tar.TypeReg || !safeArchivePath(header.Name) || seen[header.Name] {
-			return fmt.Errorf("source archive contains invalid entry %q", header.Name)
-		}
-		seen[header.Name] = true
-		totalSize += header.Size
-		if len(files) >= 1024 || totalSize > 50*1024*1024 {
-			return errors.New("source archive exceeds source package limits")
-		}
-		body, err := io.ReadAll(reader)
-		if err != nil {
-			return fmt.Errorf("read source archive entry %q: %w", header.Name, err)
-		}
-		files = append(files, sourceidentity.File{Path: header.Name, Hash: canonical.DigestBytes(body)})
-	}
-	sort.Slice(files, func(i, j int) bool { return canonical.LessUTF16(files[i].Path, files[j].Path) })
-	actual, err := sourceidentity.Digest(files)
-	if err != nil {
-		return fmt.Errorf("derive source archive identity: %w", err)
-	}
-	if actual != expectedHash {
-		return fmt.Errorf("source archive identity %s does not match plan package hash %s", actual, expectedHash)
-	}
-	return nil
 }
 
 func safeArchivePath(path string) bool {

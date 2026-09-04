@@ -152,20 +152,20 @@ func (x *HashingSpec) GetRecipeVersion() uint32 {
 }
 
 type WorkflowPlan struct {
-	state              protoimpl.MessageState     `protogen:"open.v1"`
-	SchemaVersion      *uint32                    `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3,oneof" json:"schema_version,omitempty"`
-	PlanHash           *string                    `protobuf:"bytes,2,opt,name=plan_hash,json=planHash,proto3,oneof" json:"plan_hash,omitempty"`
-	SpecHash           *string                    `protobuf:"bytes,3,opt,name=spec_hash,json=specHash,proto3,oneof" json:"spec_hash,omitempty"`
-	Graph              *GraphIR                   `protobuf:"bytes,4,opt,name=graph,proto3,oneof" json:"graph,omitempty"`
-	Schemas            []*SchemaEntry             `protobuf:"bytes,5,rep,name=schemas,proto3" json:"schemas,omitempty"`
-	Symbols            []*SymbolEntry             `protobuf:"bytes,6,rep,name=symbols,proto3" json:"symbols,omitempty"`
-	SourcePackages     []*SourcePackageRef        `protobuf:"bytes,7,rep,name=source_packages,json=sourcePackages,proto3" json:"source_packages,omitempty"`
-	Environments       []*MaterializedEnvironment `protobuf:"bytes,8,rep,name=environments,proto3" json:"environments,omitempty"`
-	Contracts          []*ExecutionContract       `protobuf:"bytes,9,rep,name=contracts,proto3" json:"contracts,omitempty"`
-	Targets            []*TargetPlan              `protobuf:"bytes,10,rep,name=targets,proto3" json:"targets,omitempty"`
-	DatastoreManifests []*ArtifactRef             `protobuf:"bytes,11,rep,name=datastore_manifests,json=datastoreManifests,proto3" json:"datastore_manifests,omitempty"`
-	Provenance         *CompilerProvenance        `protobuf:"bytes,12,opt,name=provenance,proto3,oneof" json:"provenance,omitempty"`
-	Hashing            *HashingSpec               `protobuf:"bytes,13,opt,name=hashing,proto3,oneof" json:"hashing,omitempty"`
+	state              protoimpl.MessageState    `protogen:"open.v1"`
+	SchemaVersion      *uint32                   `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3,oneof" json:"schema_version,omitempty"`
+	PlanHash           *string                   `protobuf:"bytes,2,opt,name=plan_hash,json=planHash,proto3,oneof" json:"plan_hash,omitempty"`
+	SpecHash           *string                   `protobuf:"bytes,3,opt,name=spec_hash,json=specHash,proto3,oneof" json:"spec_hash,omitempty"`
+	Graph              *GraphIR                  `protobuf:"bytes,4,opt,name=graph,proto3,oneof" json:"graph,omitempty"`
+	Schemas            []*SchemaEntry            `protobuf:"bytes,5,rep,name=schemas,proto3" json:"schemas,omitempty"`
+	Symbols            []*SymbolEntry            `protobuf:"bytes,6,rep,name=symbols,proto3" json:"symbols,omitempty"`
+	SourcePackages     []*SourcePackageRef       `protobuf:"bytes,7,rep,name=source_packages,json=sourcePackages,proto3" json:"source_packages,omitempty"`
+	Environments       []*EnvironmentRequirement `protobuf:"bytes,8,rep,name=environments,proto3" json:"environments,omitempty"`
+	Contracts          []*ExecutionContract      `protobuf:"bytes,9,rep,name=contracts,proto3" json:"contracts,omitempty"`
+	Targets            []*TargetPlan             `protobuf:"bytes,10,rep,name=targets,proto3" json:"targets,omitempty"`
+	DatastoreManifests []*ArtifactRef            `protobuf:"bytes,11,rep,name=datastore_manifests,json=datastoreManifests,proto3" json:"datastore_manifests,omitempty"`
+	Provenance         *CompilerProvenance       `protobuf:"bytes,12,opt,name=provenance,proto3,oneof" json:"provenance,omitempty"`
+	Hashing            *HashingSpec              `protobuf:"bytes,13,opt,name=hashing,proto3,oneof" json:"hashing,omitempty"`
 	// Recipe for spec_hash and provenance.source_spec_hash. Consumers must not
 	// infer this foreign digest's coverage from the plan's own hash recipe.
 	SpecHashing   *HashingSpec `protobuf:"bytes,14,opt,name=spec_hashing,json=specHashing,proto3,oneof" json:"spec_hashing,omitempty"`
@@ -252,7 +252,7 @@ func (x *WorkflowPlan) GetSourcePackages() []*SourcePackageRef {
 	return nil
 }
 
-func (x *WorkflowPlan) GetEnvironments() []*MaterializedEnvironment {
+func (x *WorkflowPlan) GetEnvironments() []*EnvironmentRequirement {
 	if x != nil {
 		return x.Environments
 	}
@@ -936,31 +936,34 @@ func (x *SourcePackageRef) GetHashing() *HashingSpec {
 	return nil
 }
 
-type MaterializedEnvironment struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	EnvRef        *string                `protobuf:"bytes,1,opt,name=env_ref,json=envRef,proto3,oneof" json:"env_ref,omitempty"`
-	SpecHash      *string                `protobuf:"bytes,2,opt,name=spec_hash,json=specHash,proto3,oneof" json:"spec_hash,omitempty"`
-	Kind          *string                `protobuf:"bytes,3,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
-	Local         *ArtifactRef           `protobuf:"bytes,4,opt,name=local,proto3,oneof" json:"local,omitempty"`
-	Container     *ContainerRuntime      `protobuf:"bytes,5,opt,name=container,proto3,oneof" json:"container,omitempty"`
+// Requirements belong to the workflow; realized outputs belong exclusively to
+// materialization.proto. A target must reject requirements it cannot realize.
+type EnvironmentRequirement struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	EnvRef *string                `protobuf:"bytes,1,opt,name=env_ref,json=envRef,proto3,oneof" json:"env_ref,omitempty"`
+	// Types that are valid to be assigned to Runtime:
+	//
+	//	*EnvironmentRequirement_Container
+	//	*EnvironmentRequirement_Node
+	Runtime       isEnvironmentRequirement_Runtime `protobuf_oneof:"runtime"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *MaterializedEnvironment) Reset() {
-	*x = MaterializedEnvironment{}
+func (x *EnvironmentRequirement) Reset() {
+	*x = EnvironmentRequirement{}
 	mi := &file_workflow_plan_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *MaterializedEnvironment) String() string {
+func (x *EnvironmentRequirement) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*MaterializedEnvironment) ProtoMessage() {}
+func (*EnvironmentRequirement) ProtoMessage() {}
 
-func (x *MaterializedEnvironment) ProtoReflect() protoreflect.Message {
+func (x *EnvironmentRequirement) ProtoReflect() protoreflect.Message {
 	mi := &file_workflow_plan_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -972,71 +975,83 @@ func (x *MaterializedEnvironment) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use MaterializedEnvironment.ProtoReflect.Descriptor instead.
-func (*MaterializedEnvironment) Descriptor() ([]byte, []int) {
+// Deprecated: Use EnvironmentRequirement.ProtoReflect.Descriptor instead.
+func (*EnvironmentRequirement) Descriptor() ([]byte, []int) {
 	return file_workflow_plan_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *MaterializedEnvironment) GetEnvRef() string {
+func (x *EnvironmentRequirement) GetEnvRef() string {
 	if x != nil && x.EnvRef != nil {
 		return *x.EnvRef
 	}
 	return ""
 }
 
-func (x *MaterializedEnvironment) GetSpecHash() string {
-	if x != nil && x.SpecHash != nil {
-		return *x.SpecHash
-	}
-	return ""
-}
-
-func (x *MaterializedEnvironment) GetKind() string {
-	if x != nil && x.Kind != nil {
-		return *x.Kind
-	}
-	return ""
-}
-
-func (x *MaterializedEnvironment) GetLocal() *ArtifactRef {
+func (x *EnvironmentRequirement) GetRuntime() isEnvironmentRequirement_Runtime {
 	if x != nil {
-		return x.Local
+		return x.Runtime
 	}
 	return nil
 }
 
-func (x *MaterializedEnvironment) GetContainer() *ContainerRuntime {
+func (x *EnvironmentRequirement) GetContainer() *ContainerRequirement {
 	if x != nil {
-		return x.Container
+		if x, ok := x.Runtime.(*EnvironmentRequirement_Container); ok {
+			return x.Container
+		}
 	}
 	return nil
 }
 
-type ContainerRuntime struct {
+func (x *EnvironmentRequirement) GetNode() *NodeRequirement {
+	if x != nil {
+		if x, ok := x.Runtime.(*EnvironmentRequirement_Node); ok {
+			return x.Node
+		}
+	}
+	return nil
+}
+
+type isEnvironmentRequirement_Runtime interface {
+	isEnvironmentRequirement_Runtime()
+}
+
+type EnvironmentRequirement_Container struct {
+	Container *ContainerRequirement `protobuf:"bytes,2,opt,name=container,proto3,oneof"`
+}
+
+type EnvironmentRequirement_Node struct {
+	Node *NodeRequirement `protobuf:"bytes,3,opt,name=node,proto3,oneof"`
+}
+
+func (*EnvironmentRequirement_Container) isEnvironmentRequirement_Runtime() {}
+
+func (*EnvironmentRequirement_Node) isEnvironmentRequirement_Runtime() {}
+
+type ContainerRequirement struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Image            *string                `protobuf:"bytes,1,opt,name=image,proto3,oneof" json:"image,omitempty"`
-	SourceFetch      *ArtifactRef           `protobuf:"bytes,2,opt,name=source_fetch,json=sourceFetch,proto3,oneof" json:"source_fetch,omitempty"`
-	Platform         *string                `protobuf:"bytes,3,opt,name=platform,proto3,oneof" json:"platform,omitempty"`
-	Command          []string               `protobuf:"bytes,4,rep,name=command,proto3" json:"command,omitempty"`
-	WorkingDirectory *string                `protobuf:"bytes,5,opt,name=working_directory,json=workingDirectory,proto3,oneof" json:"working_directory,omitempty"`
+	Platform         *string                `protobuf:"bytes,2,opt,name=platform,proto3,oneof" json:"platform,omitempty"`
+	Command          []string               `protobuf:"bytes,3,rep,name=command,proto3" json:"command,omitempty"`
+	WorkingDirectory *string                `protobuf:"bytes,4,opt,name=working_directory,json=workingDirectory,proto3,oneof" json:"working_directory,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
 
-func (x *ContainerRuntime) Reset() {
-	*x = ContainerRuntime{}
+func (x *ContainerRequirement) Reset() {
+	*x = ContainerRequirement{}
 	mi := &file_workflow_plan_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ContainerRuntime) String() string {
+func (x *ContainerRequirement) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ContainerRuntime) ProtoMessage() {}
+func (*ContainerRequirement) ProtoMessage() {}
 
-func (x *ContainerRuntime) ProtoReflect() protoreflect.Message {
+func (x *ContainerRequirement) ProtoReflect() protoreflect.Message {
 	mi := &file_workflow_plan_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1048,42 +1063,95 @@ func (x *ContainerRuntime) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ContainerRuntime.ProtoReflect.Descriptor instead.
-func (*ContainerRuntime) Descriptor() ([]byte, []int) {
+// Deprecated: Use ContainerRequirement.ProtoReflect.Descriptor instead.
+func (*ContainerRequirement) Descriptor() ([]byte, []int) {
 	return file_workflow_plan_proto_rawDescGZIP(), []int{12}
 }
 
-func (x *ContainerRuntime) GetImage() string {
+func (x *ContainerRequirement) GetImage() string {
 	if x != nil && x.Image != nil {
 		return *x.Image
 	}
 	return ""
 }
 
-func (x *ContainerRuntime) GetSourceFetch() *ArtifactRef {
-	if x != nil {
-		return x.SourceFetch
-	}
-	return nil
-}
-
-func (x *ContainerRuntime) GetPlatform() string {
+func (x *ContainerRequirement) GetPlatform() string {
 	if x != nil && x.Platform != nil {
 		return *x.Platform
 	}
 	return ""
 }
 
-func (x *ContainerRuntime) GetCommand() []string {
+func (x *ContainerRequirement) GetCommand() []string {
 	if x != nil {
 		return x.Command
 	}
 	return nil
 }
 
-func (x *ContainerRuntime) GetWorkingDirectory() string {
+func (x *ContainerRequirement) GetWorkingDirectory() string {
 	if x != nil && x.WorkingDirectory != nil {
 		return *x.WorkingDirectory
+	}
+	return ""
+}
+
+type NodeRequirement struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Version        *string                `protobuf:"bytes,1,opt,name=version,proto3,oneof" json:"version,omitempty"`
+	PackageManager *string                `protobuf:"bytes,2,opt,name=package_manager,json=packageManager,proto3,oneof" json:"package_manager,omitempty"`
+	Lockfile       *string                `protobuf:"bytes,3,opt,name=lockfile,proto3,oneof" json:"lockfile,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *NodeRequirement) Reset() {
+	*x = NodeRequirement{}
+	mi := &file_workflow_plan_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeRequirement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeRequirement) ProtoMessage() {}
+
+func (x *NodeRequirement) ProtoReflect() protoreflect.Message {
+	mi := &file_workflow_plan_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeRequirement.ProtoReflect.Descriptor instead.
+func (*NodeRequirement) Descriptor() ([]byte, []int) {
+	return file_workflow_plan_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *NodeRequirement) GetVersion() string {
+	if x != nil && x.Version != nil {
+		return *x.Version
+	}
+	return ""
+}
+
+func (x *NodeRequirement) GetPackageManager() string {
+	if x != nil && x.PackageManager != nil {
+		return *x.PackageManager
+	}
+	return ""
+}
+
+func (x *NodeRequirement) GetLockfile() string {
+	if x != nil && x.Lockfile != nil {
+		return *x.Lockfile
 	}
 	return ""
 }
@@ -1101,7 +1169,7 @@ type ExecutionContract struct {
 
 func (x *ExecutionContract) Reset() {
 	*x = ExecutionContract{}
-	mi := &file_workflow_plan_proto_msgTypes[13]
+	mi := &file_workflow_plan_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1113,7 +1181,7 @@ func (x *ExecutionContract) String() string {
 func (*ExecutionContract) ProtoMessage() {}
 
 func (x *ExecutionContract) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[13]
+	mi := &file_workflow_plan_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1126,7 +1194,7 @@ func (x *ExecutionContract) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutionContract.ProtoReflect.Descriptor instead.
 func (*ExecutionContract) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{13}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ExecutionContract) GetContractRef() string {
@@ -1174,7 +1242,7 @@ type ResourceRequirements struct {
 
 func (x *ResourceRequirements) Reset() {
 	*x = ResourceRequirements{}
-	mi := &file_workflow_plan_proto_msgTypes[14]
+	mi := &file_workflow_plan_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1186,7 +1254,7 @@ func (x *ResourceRequirements) String() string {
 func (*ResourceRequirements) ProtoMessage() {}
 
 func (x *ResourceRequirements) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[14]
+	mi := &file_workflow_plan_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1199,7 +1267,7 @@ func (x *ResourceRequirements) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceRequirements.ProtoReflect.Descriptor instead.
 func (*ResourceRequirements) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{14}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ResourceRequirements) GetCpu() string {
@@ -1226,7 +1294,7 @@ type SecretRef struct {
 
 func (x *SecretRef) Reset() {
 	*x = SecretRef{}
-	mi := &file_workflow_plan_proto_msgTypes[15]
+	mi := &file_workflow_plan_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1238,7 +1306,7 @@ func (x *SecretRef) String() string {
 func (*SecretRef) ProtoMessage() {}
 
 func (x *SecretRef) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[15]
+	mi := &file_workflow_plan_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1251,7 +1319,7 @@ func (x *SecretRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SecretRef.ProtoReflect.Descriptor instead.
 func (*SecretRef) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{15}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SecretRef) GetName() string {
@@ -1280,7 +1348,7 @@ type NetworkPolicy struct {
 
 func (x *NetworkPolicy) Reset() {
 	*x = NetworkPolicy{}
-	mi := &file_workflow_plan_proto_msgTypes[16]
+	mi := &file_workflow_plan_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1292,7 +1360,7 @@ func (x *NetworkPolicy) String() string {
 func (*NetworkPolicy) ProtoMessage() {}
 
 func (x *NetworkPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[16]
+	mi := &file_workflow_plan_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1305,7 +1373,7 @@ func (x *NetworkPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkPolicy.ProtoReflect.Descriptor instead.
 func (*NetworkPolicy) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{16}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *NetworkPolicy) GetEgress() string {
@@ -1333,7 +1401,7 @@ type TargetPlan struct {
 
 func (x *TargetPlan) Reset() {
 	*x = TargetPlan{}
-	mi := &file_workflow_plan_proto_msgTypes[17]
+	mi := &file_workflow_plan_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1345,7 +1413,7 @@ func (x *TargetPlan) String() string {
 func (*TargetPlan) ProtoMessage() {}
 
 func (x *TargetPlan) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[17]
+	mi := &file_workflow_plan_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1358,7 +1426,7 @@ func (x *TargetPlan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TargetPlan.ProtoReflect.Descriptor instead.
 func (*TargetPlan) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{17}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *TargetPlan) GetKind() string {
@@ -1393,7 +1461,7 @@ type CompilerProvenance struct {
 
 func (x *CompilerProvenance) Reset() {
 	*x = CompilerProvenance{}
-	mi := &file_workflow_plan_proto_msgTypes[18]
+	mi := &file_workflow_plan_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1405,7 +1473,7 @@ func (x *CompilerProvenance) String() string {
 func (*CompilerProvenance) ProtoMessage() {}
 
 func (x *CompilerProvenance) ProtoReflect() protoreflect.Message {
-	mi := &file_workflow_plan_proto_msgTypes[18]
+	mi := &file_workflow_plan_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1418,7 +1486,7 @@ func (x *CompilerProvenance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompilerProvenance.ProtoReflect.Descriptor instead.
 func (*CompilerProvenance) Descriptor() ([]byte, []int) {
-	return file_workflow_plan_proto_rawDescGZIP(), []int{18}
+	return file_workflow_plan_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *CompilerProvenance) GetCompilerName() string {
@@ -1446,7 +1514,7 @@ var File_workflow_plan_proto protoreflect.FileDescriptor
 
 const file_workflow_plan_proto_rawDesc = "" +
 	"\n" +
-	"\x13workflow-plan.proto\x12\x0fmassive.plan.v0\"\x87\x01\n" +
+	"\x13workflow-plan.proto\x12\x0fmassive.plan.v1\"\x87\x01\n" +
 	"\vArtifactRef\x12\x15\n" +
 	"\x03key\x18\x01 \x01(\tH\x00R\x03key\x88\x01\x01\x12\x17\n" +
 	"\x04hash\x18\x02 \x01(\tH\x01R\x04hash\x88\x01\x01\x12&\n" +
@@ -1463,25 +1531,25 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"_algorithmB\x13\n" +
 	"\x11_canonicalizationB\t\n" +
 	"\a_recipeB\x11\n" +
-	"\x0f_recipe_version\"\xb7\a\n" +
+	"\x0f_recipe_version\"\xb6\a\n" +
 	"\fWorkflowPlan\x12*\n" +
 	"\x0eschema_version\x18\x01 \x01(\rH\x00R\rschemaVersion\x88\x01\x01\x12 \n" +
 	"\tplan_hash\x18\x02 \x01(\tH\x01R\bplanHash\x88\x01\x01\x12 \n" +
 	"\tspec_hash\x18\x03 \x01(\tH\x02R\bspecHash\x88\x01\x01\x123\n" +
-	"\x05graph\x18\x04 \x01(\v2\x18.massive.plan.v0.GraphIRH\x03R\x05graph\x88\x01\x01\x126\n" +
-	"\aschemas\x18\x05 \x03(\v2\x1c.massive.plan.v0.SchemaEntryR\aschemas\x126\n" +
-	"\asymbols\x18\x06 \x03(\v2\x1c.massive.plan.v0.SymbolEntryR\asymbols\x12J\n" +
-	"\x0fsource_packages\x18\a \x03(\v2!.massive.plan.v0.SourcePackageRefR\x0esourcePackages\x12L\n" +
-	"\fenvironments\x18\b \x03(\v2(.massive.plan.v0.MaterializedEnvironmentR\fenvironments\x12@\n" +
-	"\tcontracts\x18\t \x03(\v2\".massive.plan.v0.ExecutionContractR\tcontracts\x125\n" +
+	"\x05graph\x18\x04 \x01(\v2\x18.massive.plan.v1.GraphIRH\x03R\x05graph\x88\x01\x01\x126\n" +
+	"\aschemas\x18\x05 \x03(\v2\x1c.massive.plan.v1.SchemaEntryR\aschemas\x126\n" +
+	"\asymbols\x18\x06 \x03(\v2\x1c.massive.plan.v1.SymbolEntryR\asymbols\x12J\n" +
+	"\x0fsource_packages\x18\a \x03(\v2!.massive.plan.v1.SourcePackageRefR\x0esourcePackages\x12K\n" +
+	"\fenvironments\x18\b \x03(\v2'.massive.plan.v1.EnvironmentRequirementR\fenvironments\x12@\n" +
+	"\tcontracts\x18\t \x03(\v2\".massive.plan.v1.ExecutionContractR\tcontracts\x125\n" +
 	"\atargets\x18\n" +
-	" \x03(\v2\x1b.massive.plan.v0.TargetPlanR\atargets\x12M\n" +
-	"\x13datastore_manifests\x18\v \x03(\v2\x1c.massive.plan.v0.ArtifactRefR\x12datastoreManifests\x12H\n" +
+	" \x03(\v2\x1b.massive.plan.v1.TargetPlanR\atargets\x12M\n" +
+	"\x13datastore_manifests\x18\v \x03(\v2\x1c.massive.plan.v1.ArtifactRefR\x12datastoreManifests\x12H\n" +
 	"\n" +
-	"provenance\x18\f \x01(\v2#.massive.plan.v0.CompilerProvenanceH\x04R\n" +
+	"provenance\x18\f \x01(\v2#.massive.plan.v1.CompilerProvenanceH\x04R\n" +
 	"provenance\x88\x01\x01\x12;\n" +
-	"\ahashing\x18\r \x01(\v2\x1c.massive.plan.v0.HashingSpecH\x05R\ahashing\x88\x01\x01\x12D\n" +
-	"\fspec_hashing\x18\x0e \x01(\v2\x1c.massive.plan.v0.HashingSpecH\x06R\vspecHashing\x88\x01\x01B\x11\n" +
+	"\ahashing\x18\r \x01(\v2\x1c.massive.plan.v1.HashingSpecH\x05R\ahashing\x88\x01\x01\x12D\n" +
+	"\fspec_hashing\x18\x0e \x01(\v2\x1c.massive.plan.v1.HashingSpecH\x06R\vspecHashing\x88\x01\x01B\x11\n" +
 	"\x0f_schema_versionB\f\n" +
 	"\n" +
 	"_plan_hashB\f\n" +
@@ -1499,8 +1567,8 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\n" +
 	"start_node\x18\x04 \x01(\tH\x03R\tstartNode\x88\x01\x01\x12\x1e\n" +
 	"\bend_node\x18\x05 \x01(\tH\x04R\aendNode\x88\x01\x01\x120\n" +
-	"\x05nodes\x18\x06 \x03(\v2\x1a.massive.plan.v0.GraphNodeR\x05nodes\x120\n" +
-	"\x05edges\x18\a \x03(\v2\x1a.massive.plan.v0.GraphEdgeR\x05edges\x12\"\n" +
+	"\x05nodes\x18\x06 \x03(\v2\x1a.massive.plan.v1.GraphNodeR\x05nodes\x120\n" +
+	"\x05edges\x18\a \x03(\v2\x1a.massive.plan.v1.GraphEdgeR\x05edges\x12\"\n" +
 	"\n" +
 	"ir_version\x18\b \x01(\tH\x05R\tirVersion\x88\x01\x01B\x10\n" +
 	"\x0e_workflow_nameB\x0f\n" +
@@ -1519,10 +1587,10 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\fcontract_ref\x18\x06 \x01(\tH\x05R\vcontractRef\x88\x01\x01\x12!\n" +
 	"\fmerge_inputs\x18\a \x03(\tR\vmergeInputs\x12\x1f\n" +
 	"\bselector\x18\b \x01(\tH\x06R\bselector\x88\x01\x01\x123\n" +
-	"\x05cases\x18\t \x03(\v2\x1d.massive.plan.v0.DecisionCaseR\x05cases\x12&\n" +
+	"\x05cases\x18\t \x03(\v2\x1d.massive.plan.v1.DecisionCaseR\x05cases\x12&\n" +
 	"\fdecision_ref\x18\n" +
 	" \x01(\tH\aR\vdecisionRef\x88\x01\x01\x12A\n" +
-	"\rselect_inputs\x18\v \x03(\v2\x1c.massive.plan.v0.SelectInputR\fselectInputs\x12/\n" +
+	"\rselect_inputs\x18\v \x03(\v2\x1c.massive.plan.v1.SelectInputR\fselectInputs\x12/\n" +
 	"\x11item_input_schema\x18\f \x01(\tH\bR\x0fitemInputSchema\x88\x01\x01\x121\n" +
 	"\x12item_output_schema\x18\r \x01(\tH\tR\x10itemOutputSchema\x88\x01\x01\x12,\n" +
 	"\x0fmax_concurrency\x18\x0e \x01(\rH\n" +
@@ -1578,46 +1646,45 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"package_id\x18\x01 \x01(\tH\x00R\tpackageId\x88\x01\x01\x12\x1f\n" +
 	"\blanguage\x18\x02 \x01(\tH\x01R\blanguage\x88\x01\x01\x12&\n" +
 	"\fpackage_hash\x18\x03 \x01(\tH\x02R\vpackageHash\x88\x01\x01\x12=\n" +
-	"\bmanifest\x18\x04 \x01(\v2\x1c.massive.plan.v0.ArtifactRefH\x03R\bmanifest\x88\x01\x01\x12H\n" +
-	"\x0esource_archive\x18\x05 \x01(\v2\x1c.massive.plan.v0.ArtifactRefH\x04R\rsourceArchive\x88\x01\x01\x12;\n" +
-	"\ahashing\x18\x06 \x01(\v2\x1c.massive.plan.v0.HashingSpecH\x05R\ahashing\x88\x01\x01B\r\n" +
+	"\bmanifest\x18\x04 \x01(\v2\x1c.massive.plan.v1.ArtifactRefH\x03R\bmanifest\x88\x01\x01\x12H\n" +
+	"\x0esource_archive\x18\x05 \x01(\v2\x1c.massive.plan.v1.ArtifactRefH\x04R\rsourceArchive\x88\x01\x01\x12;\n" +
+	"\ahashing\x18\x06 \x01(\v2\x1c.massive.plan.v1.HashingSpecH\x05R\ahashing\x88\x01\x01B\r\n" +
 	"\v_package_idB\v\n" +
 	"\t_languageB\x0f\n" +
 	"\r_package_hashB\v\n" +
 	"\t_manifestB\x11\n" +
 	"\x0f_source_archiveB\n" +
 	"\n" +
-	"\b_hashing\"\xac\x02\n" +
-	"\x17MaterializedEnvironment\x12\x1c\n" +
-	"\aenv_ref\x18\x01 \x01(\tH\x00R\x06envRef\x88\x01\x01\x12 \n" +
-	"\tspec_hash\x18\x02 \x01(\tH\x01R\bspecHash\x88\x01\x01\x12\x17\n" +
-	"\x04kind\x18\x03 \x01(\tH\x02R\x04kind\x88\x01\x01\x127\n" +
-	"\x05local\x18\x04 \x01(\v2\x1c.massive.plan.v0.ArtifactRefH\x03R\x05local\x88\x01\x01\x12D\n" +
-	"\tcontainer\x18\x05 \x01(\v2!.massive.plan.v0.ContainerRuntimeH\x04R\tcontainer\x88\x01\x01B\n" +
+	"\b_hashing\"\xcc\x01\n" +
+	"\x16EnvironmentRequirement\x12\x1c\n" +
+	"\aenv_ref\x18\x01 \x01(\tH\x01R\x06envRef\x88\x01\x01\x12E\n" +
+	"\tcontainer\x18\x02 \x01(\v2%.massive.plan.v1.ContainerRequirementH\x00R\tcontainer\x126\n" +
+	"\x04node\x18\x03 \x01(\v2 .massive.plan.v1.NodeRequirementH\x00R\x04nodeB\t\n" +
+	"\aruntimeB\n" +
 	"\n" +
-	"\b_env_refB\f\n" +
-	"\n" +
-	"_spec_hashB\a\n" +
-	"\x05_kindB\b\n" +
-	"\x06_localB\f\n" +
-	"\n" +
-	"_container\"\x9e\x02\n" +
-	"\x10ContainerRuntime\x12\x19\n" +
-	"\x05image\x18\x01 \x01(\tH\x00R\x05image\x88\x01\x01\x12D\n" +
-	"\fsource_fetch\x18\x02 \x01(\v2\x1c.massive.plan.v0.ArtifactRefH\x01R\vsourceFetch\x88\x01\x01\x12\x1f\n" +
-	"\bplatform\x18\x03 \x01(\tH\x02R\bplatform\x88\x01\x01\x12\x18\n" +
-	"\acommand\x18\x04 \x03(\tR\acommand\x120\n" +
-	"\x11working_directory\x18\x05 \x01(\tH\x03R\x10workingDirectory\x88\x01\x01B\b\n" +
-	"\x06_imageB\x0f\n" +
-	"\r_source_fetchB\v\n" +
+	"\b_env_ref\"\xcb\x01\n" +
+	"\x14ContainerRequirement\x12\x19\n" +
+	"\x05image\x18\x01 \x01(\tH\x00R\x05image\x88\x01\x01\x12\x1f\n" +
+	"\bplatform\x18\x02 \x01(\tH\x01R\bplatform\x88\x01\x01\x12\x18\n" +
+	"\acommand\x18\x03 \x03(\tR\acommand\x120\n" +
+	"\x11working_directory\x18\x04 \x01(\tH\x02R\x10workingDirectory\x88\x01\x01B\b\n" +
+	"\x06_imageB\v\n" +
 	"\t_platformB\x14\n" +
-	"\x12_working_directory\"\xe7\x02\n" +
+	"\x12_working_directory\"\xac\x01\n" +
+	"\x0fNodeRequirement\x12\x1d\n" +
+	"\aversion\x18\x01 \x01(\tH\x00R\aversion\x88\x01\x01\x12,\n" +
+	"\x0fpackage_manager\x18\x02 \x01(\tH\x01R\x0epackageManager\x88\x01\x01\x12\x1f\n" +
+	"\blockfile\x18\x03 \x01(\tH\x02R\blockfile\x88\x01\x01B\n" +
+	"\n" +
+	"\b_versionB\x12\n" +
+	"\x10_package_managerB\v\n" +
+	"\t_lockfile\"\xe7\x02\n" +
 	"\x11ExecutionContract\x12&\n" +
 	"\fcontract_ref\x18\x01 \x01(\tH\x00R\vcontractRef\x88\x01\x01\x12,\n" +
 	"\x0fenvironment_ref\x18\x02 \x01(\tH\x01R\x0eenvironmentRef\x88\x01\x01\x12H\n" +
-	"\tresources\x18\x03 \x01(\v2%.massive.plan.v0.ResourceRequirementsH\x02R\tresources\x88\x01\x01\x124\n" +
-	"\asecrets\x18\x04 \x03(\v2\x1a.massive.plan.v0.SecretRefR\asecrets\x12=\n" +
-	"\anetwork\x18\x05 \x01(\v2\x1e.massive.plan.v0.NetworkPolicyH\x03R\anetwork\x88\x01\x01B\x0f\n" +
+	"\tresources\x18\x03 \x01(\v2%.massive.plan.v1.ResourceRequirementsH\x02R\tresources\x88\x01\x01\x124\n" +
+	"\asecrets\x18\x04 \x03(\v2\x1a.massive.plan.v1.SecretRefR\asecrets\x12=\n" +
+	"\anetwork\x18\x05 \x01(\v2\x1e.massive.plan.v1.NetworkPolicyH\x03R\anetwork\x88\x01\x01B\x0f\n" +
 	"\r_contract_refB\x12\n" +
 	"\x10_environment_refB\f\n" +
 	"\n" +
@@ -1643,7 +1710,7 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12$\n" +
 	"\vtarget_hash\x18\x02 \x01(\tH\x01R\n" +
 	"targetHash\x88\x01\x01\x12J\n" +
-	"\x0fbundle_manifest\x18\x03 \x01(\v2\x1c.massive.plan.v0.ArtifactRefH\x02R\x0ebundleManifest\x88\x01\x01B\a\n" +
+	"\x0fbundle_manifest\x18\x03 \x01(\v2\x1c.massive.plan.v1.ArtifactRefH\x02R\x0ebundleManifest\x88\x01\x01B\a\n" +
 	"\x05_kindB\x0e\n" +
 	"\f_target_hashB\x12\n" +
 	"\x10_bundle_manifest\"\xd9\x01\n" +
@@ -1667,59 +1734,59 @@ func file_workflow_plan_proto_rawDescGZIP() []byte {
 	return file_workflow_plan_proto_rawDescData
 }
 
-var file_workflow_plan_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_workflow_plan_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_workflow_plan_proto_goTypes = []any{
-	(*ArtifactRef)(nil),             // 0: massive.plan.v0.ArtifactRef
-	(*HashingSpec)(nil),             // 1: massive.plan.v0.HashingSpec
-	(*WorkflowPlan)(nil),            // 2: massive.plan.v0.WorkflowPlan
-	(*GraphIR)(nil),                 // 3: massive.plan.v0.GraphIR
-	(*GraphNode)(nil),               // 4: massive.plan.v0.GraphNode
-	(*GraphEdge)(nil),               // 5: massive.plan.v0.GraphEdge
-	(*DecisionCase)(nil),            // 6: massive.plan.v0.DecisionCase
-	(*SelectInput)(nil),             // 7: massive.plan.v0.SelectInput
-	(*SchemaEntry)(nil),             // 8: massive.plan.v0.SchemaEntry
-	(*SymbolEntry)(nil),             // 9: massive.plan.v0.SymbolEntry
-	(*SourcePackageRef)(nil),        // 10: massive.plan.v0.SourcePackageRef
-	(*MaterializedEnvironment)(nil), // 11: massive.plan.v0.MaterializedEnvironment
-	(*ContainerRuntime)(nil),        // 12: massive.plan.v0.ContainerRuntime
-	(*ExecutionContract)(nil),       // 13: massive.plan.v0.ExecutionContract
-	(*ResourceRequirements)(nil),    // 14: massive.plan.v0.ResourceRequirements
-	(*SecretRef)(nil),               // 15: massive.plan.v0.SecretRef
-	(*NetworkPolicy)(nil),           // 16: massive.plan.v0.NetworkPolicy
-	(*TargetPlan)(nil),              // 17: massive.plan.v0.TargetPlan
-	(*CompilerProvenance)(nil),      // 18: massive.plan.v0.CompilerProvenance
+	(*ArtifactRef)(nil),            // 0: massive.plan.v1.ArtifactRef
+	(*HashingSpec)(nil),            // 1: massive.plan.v1.HashingSpec
+	(*WorkflowPlan)(nil),           // 2: massive.plan.v1.WorkflowPlan
+	(*GraphIR)(nil),                // 3: massive.plan.v1.GraphIR
+	(*GraphNode)(nil),              // 4: massive.plan.v1.GraphNode
+	(*GraphEdge)(nil),              // 5: massive.plan.v1.GraphEdge
+	(*DecisionCase)(nil),           // 6: massive.plan.v1.DecisionCase
+	(*SelectInput)(nil),            // 7: massive.plan.v1.SelectInput
+	(*SchemaEntry)(nil),            // 8: massive.plan.v1.SchemaEntry
+	(*SymbolEntry)(nil),            // 9: massive.plan.v1.SymbolEntry
+	(*SourcePackageRef)(nil),       // 10: massive.plan.v1.SourcePackageRef
+	(*EnvironmentRequirement)(nil), // 11: massive.plan.v1.EnvironmentRequirement
+	(*ContainerRequirement)(nil),   // 12: massive.plan.v1.ContainerRequirement
+	(*NodeRequirement)(nil),        // 13: massive.plan.v1.NodeRequirement
+	(*ExecutionContract)(nil),      // 14: massive.plan.v1.ExecutionContract
+	(*ResourceRequirements)(nil),   // 15: massive.plan.v1.ResourceRequirements
+	(*SecretRef)(nil),              // 16: massive.plan.v1.SecretRef
+	(*NetworkPolicy)(nil),          // 17: massive.plan.v1.NetworkPolicy
+	(*TargetPlan)(nil),             // 18: massive.plan.v1.TargetPlan
+	(*CompilerProvenance)(nil),     // 19: massive.plan.v1.CompilerProvenance
 }
 var file_workflow_plan_proto_depIdxs = []int32{
-	3,  // 0: massive.plan.v0.WorkflowPlan.graph:type_name -> massive.plan.v0.GraphIR
-	8,  // 1: massive.plan.v0.WorkflowPlan.schemas:type_name -> massive.plan.v0.SchemaEntry
-	9,  // 2: massive.plan.v0.WorkflowPlan.symbols:type_name -> massive.plan.v0.SymbolEntry
-	10, // 3: massive.plan.v0.WorkflowPlan.source_packages:type_name -> massive.plan.v0.SourcePackageRef
-	11, // 4: massive.plan.v0.WorkflowPlan.environments:type_name -> massive.plan.v0.MaterializedEnvironment
-	13, // 5: massive.plan.v0.WorkflowPlan.contracts:type_name -> massive.plan.v0.ExecutionContract
-	17, // 6: massive.plan.v0.WorkflowPlan.targets:type_name -> massive.plan.v0.TargetPlan
-	0,  // 7: massive.plan.v0.WorkflowPlan.datastore_manifests:type_name -> massive.plan.v0.ArtifactRef
-	18, // 8: massive.plan.v0.WorkflowPlan.provenance:type_name -> massive.plan.v0.CompilerProvenance
-	1,  // 9: massive.plan.v0.WorkflowPlan.hashing:type_name -> massive.plan.v0.HashingSpec
-	1,  // 10: massive.plan.v0.WorkflowPlan.spec_hashing:type_name -> massive.plan.v0.HashingSpec
-	4,  // 11: massive.plan.v0.GraphIR.nodes:type_name -> massive.plan.v0.GraphNode
-	5,  // 12: massive.plan.v0.GraphIR.edges:type_name -> massive.plan.v0.GraphEdge
-	6,  // 13: massive.plan.v0.GraphNode.cases:type_name -> massive.plan.v0.DecisionCase
-	7,  // 14: massive.plan.v0.GraphNode.select_inputs:type_name -> massive.plan.v0.SelectInput
-	0,  // 15: massive.plan.v0.SourcePackageRef.manifest:type_name -> massive.plan.v0.ArtifactRef
-	0,  // 16: massive.plan.v0.SourcePackageRef.source_archive:type_name -> massive.plan.v0.ArtifactRef
-	1,  // 17: massive.plan.v0.SourcePackageRef.hashing:type_name -> massive.plan.v0.HashingSpec
-	0,  // 18: massive.plan.v0.MaterializedEnvironment.local:type_name -> massive.plan.v0.ArtifactRef
-	12, // 19: massive.plan.v0.MaterializedEnvironment.container:type_name -> massive.plan.v0.ContainerRuntime
-	0,  // 20: massive.plan.v0.ContainerRuntime.source_fetch:type_name -> massive.plan.v0.ArtifactRef
-	14, // 21: massive.plan.v0.ExecutionContract.resources:type_name -> massive.plan.v0.ResourceRequirements
-	15, // 22: massive.plan.v0.ExecutionContract.secrets:type_name -> massive.plan.v0.SecretRef
-	16, // 23: massive.plan.v0.ExecutionContract.network:type_name -> massive.plan.v0.NetworkPolicy
-	0,  // 24: massive.plan.v0.TargetPlan.bundle_manifest:type_name -> massive.plan.v0.ArtifactRef
-	25, // [25:25] is the sub-list for method output_type
-	25, // [25:25] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	3,  // 0: massive.plan.v1.WorkflowPlan.graph:type_name -> massive.plan.v1.GraphIR
+	8,  // 1: massive.plan.v1.WorkflowPlan.schemas:type_name -> massive.plan.v1.SchemaEntry
+	9,  // 2: massive.plan.v1.WorkflowPlan.symbols:type_name -> massive.plan.v1.SymbolEntry
+	10, // 3: massive.plan.v1.WorkflowPlan.source_packages:type_name -> massive.plan.v1.SourcePackageRef
+	11, // 4: massive.plan.v1.WorkflowPlan.environments:type_name -> massive.plan.v1.EnvironmentRequirement
+	14, // 5: massive.plan.v1.WorkflowPlan.contracts:type_name -> massive.plan.v1.ExecutionContract
+	18, // 6: massive.plan.v1.WorkflowPlan.targets:type_name -> massive.plan.v1.TargetPlan
+	0,  // 7: massive.plan.v1.WorkflowPlan.datastore_manifests:type_name -> massive.plan.v1.ArtifactRef
+	19, // 8: massive.plan.v1.WorkflowPlan.provenance:type_name -> massive.plan.v1.CompilerProvenance
+	1,  // 9: massive.plan.v1.WorkflowPlan.hashing:type_name -> massive.plan.v1.HashingSpec
+	1,  // 10: massive.plan.v1.WorkflowPlan.spec_hashing:type_name -> massive.plan.v1.HashingSpec
+	4,  // 11: massive.plan.v1.GraphIR.nodes:type_name -> massive.plan.v1.GraphNode
+	5,  // 12: massive.plan.v1.GraphIR.edges:type_name -> massive.plan.v1.GraphEdge
+	6,  // 13: massive.plan.v1.GraphNode.cases:type_name -> massive.plan.v1.DecisionCase
+	7,  // 14: massive.plan.v1.GraphNode.select_inputs:type_name -> massive.plan.v1.SelectInput
+	0,  // 15: massive.plan.v1.SourcePackageRef.manifest:type_name -> massive.plan.v1.ArtifactRef
+	0,  // 16: massive.plan.v1.SourcePackageRef.source_archive:type_name -> massive.plan.v1.ArtifactRef
+	1,  // 17: massive.plan.v1.SourcePackageRef.hashing:type_name -> massive.plan.v1.HashingSpec
+	12, // 18: massive.plan.v1.EnvironmentRequirement.container:type_name -> massive.plan.v1.ContainerRequirement
+	13, // 19: massive.plan.v1.EnvironmentRequirement.node:type_name -> massive.plan.v1.NodeRequirement
+	15, // 20: massive.plan.v1.ExecutionContract.resources:type_name -> massive.plan.v1.ResourceRequirements
+	16, // 21: massive.plan.v1.ExecutionContract.secrets:type_name -> massive.plan.v1.SecretRef
+	17, // 22: massive.plan.v1.ExecutionContract.network:type_name -> massive.plan.v1.NetworkPolicy
+	0,  // 23: massive.plan.v1.TargetPlan.bundle_manifest:type_name -> massive.plan.v1.ArtifactRef
+	24, // [24:24] is the sub-list for method output_type
+	24, // [24:24] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_workflow_plan_proto_init() }
@@ -1738,7 +1805,10 @@ func file_workflow_plan_proto_init() {
 	file_workflow_plan_proto_msgTypes[8].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[9].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[10].OneofWrappers = []any{}
-	file_workflow_plan_proto_msgTypes[11].OneofWrappers = []any{}
+	file_workflow_plan_proto_msgTypes[11].OneofWrappers = []any{
+		(*EnvironmentRequirement_Container)(nil),
+		(*EnvironmentRequirement_Node)(nil),
+	}
 	file_workflow_plan_proto_msgTypes[12].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[13].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[14].OneofWrappers = []any{}
@@ -1746,13 +1816,14 @@ func file_workflow_plan_proto_init() {
 	file_workflow_plan_proto_msgTypes[16].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[17].OneofWrappers = []any{}
 	file_workflow_plan_proto_msgTypes[18].OneofWrappers = []any{}
+	file_workflow_plan_proto_msgTypes[19].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_workflow_plan_proto_rawDesc), len(file_workflow_plan_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

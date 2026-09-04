@@ -31,3 +31,9 @@ protoc \
   -I . \
   --go_out=paths=source_relative:runtimepb \
   step-invocation.proto
+
+mkdir -p materializationpb
+protoc \
+  -I . \
+  --go_out=paths=source_relative:materializationpb \
+  materialization.proto

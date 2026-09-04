@@ -30,6 +30,39 @@ func TestVerifyCanonicalJSONAcceptsCompilerOutput(t *testing.T) {
 	}
 }
 
+func TestVerifyCanonicalJSONRejectsObsoletePlanSchema(t *testing.T) {
+	data := readFixture(t, "plans", "linear-chain", "workflow-plan.json")
+	mutated, hash := mutateAndResignPlan(t, data, func(root map[string]any) {
+		root["schemaVersion"] = 0
+	})
+	if _, err := VerifyCanonicalJSON(mutated, hash); err == nil || !strings.Contains(err.Error(), "rebuild older plans") {
+		t.Fatalf("obsolete plan accepted or missing rebuild diagnostic: %v", err)
+	}
+}
+
+func TestVerifyCanonicalJSONAuthenticatesEnvironmentRequirements(t *testing.T) {
+	data := readFixture(t, "plans", "linear-chain", "workflow-plan.json")
+	for _, mutation := range []string{"missing-runtime", "duplicate", "mismatched-identity"} {
+		t.Run(mutation, func(t *testing.T) {
+			mutated, hash := mutateAndResignPlan(t, data, func(root map[string]any) {
+				environments := root["environments"].([]any)
+				requirement := environments[0].(map[string]any)
+				switch mutation {
+				case "missing-runtime":
+					delete(requirement, "container")
+				case "duplicate":
+					root["environments"] = append(environments, requirement)
+				case "mismatched-identity":
+					requirement["container"].(map[string]any)["platform"] = "linux/arm64"
+				}
+			})
+			if _, err := VerifyCanonicalJSON(mutated, hash); err == nil {
+				t.Fatal("invalid environment requirement accepted")
+			}
+		})
+	}
+}
+
 func TestVerifyCanonicalJSONRequiresEveryIdentityVersion(t *testing.T) {
 	data := readFixture(t, "specs", "passthrough", "workflow-spec.json")
 	workflowSpec, err := spec.Parse(data)

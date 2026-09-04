@@ -19,15 +19,19 @@ export interface DeploymentProfile {
   readonly target: DeploymentTarget;
 }
 
-export interface DeploymentSpec {
+type DeploymentIdentity = {
   readonly kind: "DeploymentSpec";
-  readonly schemaVersion: 0;
   readonly encoding: "json-v0";
   readonly hashing: HashingSpec<"deployment-spec">;
-  readonly deploymentHash: string;
   readonly planHash: string;
   readonly profile: DeploymentProfile;
-}
+  readonly schemaVersion: 1;
+  readonly materializationHash: string;
+};
+
+export type DeploymentSpec = DeploymentIdentity & {
+  readonly deploymentHash: string;
+};
 
 export const deployment = {
   local(
@@ -66,14 +70,16 @@ export const deployment = {
 export function emitDeploymentSpec(
   planHash: string,
   profile: DeploymentProfile,
+  materializationHash: string,
 ): DeploymentSpec {
   const specWithoutHash = {
     kind: "DeploymentSpec" as const,
-    schemaVersion: 0 as const,
+    schemaVersion: 1 as const,
     encoding: "json-v0" as const,
     hashing: DEPLOYMENT_SPEC_HASHING,
     planHash,
     profile,
+    materializationHash,
   };
   return {
     ...specWithoutHash,
@@ -82,7 +88,7 @@ export function emitDeploymentSpec(
 }
 
 export function computeDeploymentHash(
-  spec: Omit<DeploymentSpec, "deploymentHash"> & {
+  spec: DeploymentIdentity & {
     readonly deploymentHash?: string;
   },
 ): string {

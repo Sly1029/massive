@@ -43,10 +43,12 @@ Deno.test("deployment profiles lower separately from a package workflow spec", a
     const local = emitDeploymentSpec(
       "sha256:" + "1".repeat(64),
       workflowPackage.deploymentProfiles![0],
+      "sha256:" + "2".repeat(64),
     );
     const argo = emitDeploymentSpec(
       "sha256:" + "1".repeat(64),
       workflowPackage.deploymentProfiles![1],
+      "sha256:" + "2".repeat(64),
     );
     assertEquals(local.planHash, argo.planHash);
     assertEquals(local.hashing, {

@@ -13,7 +13,7 @@ _PLATFORM = re.compile(r"^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$")
 
 @dataclass(frozen=True, slots=True)
 class ContainerInvocationPlan:
-    """Canonical runtime selection for an already-built container image."""
+    """Canonical plan-schema-v1 requirement for an already-built container image."""
 
     identity: str
     canonical_json: str
@@ -42,7 +42,7 @@ class ContainerRecipe:
 
     def plan(self) -> ContainerInvocationPlan:
         value = {key: item for key, item in self.as_json().items() if key != "kind"}
-        encoded = canonical_json(value)
+        encoded = canonical_json({"container": value})
         return ContainerInvocationPlan(identity=sha256_ref(encoded), canonical_json=encoded)
 
     def extend(

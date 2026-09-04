@@ -1,6 +1,7 @@
 package argo
 
 import (
+	"archive/tar"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -13,7 +14,9 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/deployment"
+	"github.com/Sly1029/massive/internal/materialization"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/Sly1029/massive/internal/spec"
 	"sigs.k8s.io/yaml"
 )
@@ -24,8 +27,8 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 	if !bytes.Equal(first.ManifestJSON, second.ManifestJSON) {
 		t.Fatal("bundle manifest is not deterministic")
 	}
-	if len(first.Files) != 6 {
-		t.Fatalf("bundle file count = %d, want 6", len(first.Files))
+	if len(first.Files) != 8 {
+		t.Fatalf("bundle file count = %d, want 8", len(first.Files))
 	}
 	foundSourceArchive := false
 	for _, file := range first.Files {
@@ -99,8 +102,8 @@ func TestStaticDAGAcceptsBothPythonAndTypeScriptSymbols(t *testing.T) {
 			for _, pkg := range r.Plan.SourcePackages {
 				pkg.Language = pointer(language)
 			}
-			canonicalPlan, hash := rehashPlan(t, r.Plan)
-			b, err := Compile(canonicalPlan, deploymentForPlan(t, hash), runtimeAssetsForPlan(r.Plan))
+			canonicalPlan, _ := rehashPlan(t, r.Plan)
+			b, err := Compile(canonicalPlan, deploymentForPlan(t, canonicalPlan), runtimeAssetsForPlan(t, r.Plan))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,8 +117,8 @@ func TestStaticDAGAcceptsBothPythonAndTypeScriptSymbols(t *testing.T) {
 
 func TestRuntimeConfigMapContainsExactVerifiedAssets(t *testing.T) {
 	compiled := fixturePlan(t, "python-linear")
-	assets := runtimeAssetsForPlan(compiled.Plan)
-	bundle, err := Compile(compiled.CanonicalJSON, deploymentForPlan(t, compiled.PlanHash), assets)
+	assets := runtimeAssetsForPlan(t, compiled.Plan)
+	bundle, err := Compile(compiled.CanonicalJSON, deploymentForPlan(t, compiled.CanonicalJSON), assets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,14 +149,14 @@ func TestRuntimeConfigMapContainsExactVerifiedAssets(t *testing.T) {
 
 func TestExecutableBundleRequiresBoundedRuntimeAssets(t *testing.T) {
 	compiled := fixturePlan(t, "python-linear")
-	if _, err := Compile(compiled.CanonicalJSON, deploymentForPlan(t, compiled.PlanHash), RuntimeAssets{}); err == nil || !strings.Contains(err.Error(), "source archive") {
+	if _, err := Compile(compiled.CanonicalJSON, deploymentForPlan(t, compiled.CanonicalJSON), RuntimeAssets{}); err == nil || !strings.Contains(err.Error(), "source archive") {
 		t.Fatalf("missing source assets error = %v", err)
 	}
-	assets := runtimeAssetsForPlan(compiled.Plan)
+	assets := runtimeAssetsForPlan(t, compiled.Plan)
 	for hash := range assets.SourceArchives {
 		assets.SourceArchives[hash] = make([]byte, maxEmbeddedRuntimeBytes)
 	}
-	if _, err := Compile(compiled.CanonicalJSON, deploymentForPlan(t, compiled.PlanHash), assets); err == nil || !strings.Contains(err.Error(), "ConfigMap transport") {
+	if _, err := Compile(compiled.CanonicalJSON, deploymentForPlan(t, compiled.CanonicalJSON), assets); err == nil || !strings.Contains(err.Error(), "ConfigMap transport") {
 		t.Fatalf("oversized source assets error = %v", err)
 	}
 }
@@ -177,8 +180,8 @@ func TestPassthroughReturnsWorkflowInputWithoutLaunchingAPod(t *testing.T) {
 func TestExecutableBundleRejectsUnloweredSecrets(t *testing.T) {
 	compiled := fixturePlan(t, "python-linear")
 	compiled.Plan.Contracts[0].Secrets = []*planpb.SecretRef{{Name: pointer("token"), Ref: pointer("secret/key")}}
-	canonicalPlan, hash := rehashPlan(t, compiled.Plan)
-	_, err := Compile(canonicalPlan, deploymentForPlan(t, hash), runtimeAssetsForPlan(compiled.Plan))
+	canonicalPlan, _ := rehashPlan(t, compiled.Plan)
+	_, err := Compile(canonicalPlan, deploymentForPlan(t, canonicalPlan), runtimeAssetsForPlan(t, compiled.Plan))
 	if err == nil || !strings.Contains(err.Error(), "secret-ref lowering") {
 		t.Fatalf("secret lowering error = %v", err)
 	}
@@ -236,25 +239,25 @@ func TestPythonFrontendFixtureLowersThroughArgoSchema(t *testing.T) {
 
 func TestStaticDAGRejectsUnverifiedOrUnsupportedPlan(t *testing.T) {
 	result := fixturePlan(t, "linear-chain")
-	d := deploymentForPlan(t, result.PlanHash)
+	d := deploymentForPlan(t, result.CanonicalJSON)
 	bad := append([]byte(nil), result.CanonicalJSON...)
 	bad[len(bad)-1] = ' '
-	if _, err := Compile(bad, d, runtimeAssetsForPlan(result.Plan)); err == nil || !strings.Contains(err.Error(), "canonical") {
+	if _, err := Compile(bad, d, runtimeAssetsForPlan(t, result.Plan)); err == nil || !strings.Contains(err.Error(), "canonical") {
 		t.Fatalf("error=%v, want canonical verification", err)
 	}
 
 	result = fixturePlan(t, "linear-chain")
 	duplicate := result.Plan.GetGraph().GetEdges()[0]
 	result.Plan.Graph.Edges = append(result.Plan.Graph.Edges, duplicate)
-	canonicalPlan, hash := rehashPlan(t, result.Plan)
-	if _, err := Compile(canonicalPlan, deploymentForPlan(t, hash), runtimeAssetsForPlan(result.Plan)); err == nil || !strings.Contains(err.Error(), "duplicate edge") {
+	canonicalPlan, _ := rehashPlan(t, result.Plan)
+	if _, err := Compile(canonicalPlan, deploymentForPlan(t, canonicalPlan), runtimeAssetsForPlan(t, result.Plan)); err == nil || !strings.Contains(err.Error(), "duplicate edge") {
 		t.Fatalf("error=%v, want static graph diagnostic", err)
 	}
 }
 
 func TestStaticDAGRejectsExhaustiveDecisionSemantics(t *testing.T) {
 	result := fixturePlan(t, "exhaustive-decision")
-	_, err := Compile(result.CanonicalJSON, deploymentForPlan(t, result.PlanHash), runtimeAssetsForPlan(result.Plan))
+	_, err := Compile(result.CanonicalJSON, deploymentForPlan(t, result.CanonicalJSON), runtimeAssetsForPlan(t, result.Plan))
 	if err == nil || !strings.Contains(err.Error(), `graph semantic "decision" is unsupported`) {
 		t.Fatalf("error=%v, want explicit decision semantic diagnostic", err)
 	}
@@ -310,8 +313,8 @@ func TestFiniteMapResultFeedsDownstreamStep(t *testing.T) {
 	})
 	graph.Edges[1].To = pointer("after-map")
 	graph.Edges = append(graph.Edges, &planpb.GraphEdge{From: pointer("after-map"), To: pointer("__end")})
-	canonicalPlan, hash := rehashPlan(t, result.Plan)
-	bundle, err := Compile(canonicalPlan, deploymentForPlan(t, hash), runtimeAssetsForPlan(result.Plan))
+	canonicalPlan, _ := rehashPlan(t, result.Plan)
+	bundle, err := Compile(canonicalPlan, deploymentForPlan(t, canonicalPlan), runtimeAssetsForPlan(t, result.Plan))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +352,7 @@ func rehashPlan(t *testing.T, value *planpb.WorkflowPlan) ([]byte, string) {
 func compileFixture(t *testing.T, name string) *Bundle {
 	t.Helper()
 	r := fixturePlan(t, name)
-	b, err := Compile(r.CanonicalJSON, deploymentForPlan(t, r.PlanHash), runtimeAssetsForPlan(r.Plan))
+	b, err := Compile(r.CanonicalJSON, deploymentForPlan(t, r.CanonicalJSON), runtimeAssetsForPlan(t, r.Plan))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,33 +372,38 @@ func fixturePlan(t *testing.T, name string) *plan.CompileResult {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// These tests exercise target generation, not language execution. Give each
+	// plan a real source archive identity rather than claiming arbitrary bytes
+	// are already verified.
+	hash, err := sourceidentity.Digest([]sourceidentity.File{{Path: "fixture.txt", Hash: canonical.DigestBytes([]byte("source fixture\n"))}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range r.Plan.SourcePackages {
+		source.PackageHash = pointer(hash)
+	}
+	r.CanonicalJSON, r.PlanHash = rehashPlan(t, r.Plan)
 	return r
 }
-func deploymentForPlan(t *testing.T, hash string) *deployment.Spec {
+func deploymentForPlan(t *testing.T, planJSON []byte) *deployment.Spec {
 	t.Helper()
-	v := map[string]any{"kind": "DeploymentSpec", "schemaVersion": 0, "encoding": "json-v0", "hashing": map[string]any{"algorithm": "sha256", "canonicalization": "canonical-json-v0", "recipe": "deployment-spec", "recipeVersion": 1}, "planHash": hash, "profile": map[string]any{"name": "argo-staging", "artifactStoreBinding": "staging-artifacts", "target": map[string]any{"kind": "argo", "namespace": "workflows", "serviceAccountName": "massive-runner", "workflowTemplateName": "massive-static"}}}
-	raw, err := json.Marshal(v)
+	p, err := plan.ParseCanonicalJSON(planJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	v["deploymentHash"] = mustHash(t, raw)
-	raw, err = json.Marshal(v)
+	assets := runtimeAssetsForPlan(t, p)
+	manifest, err := materialization.Resolve(p, assets.MaterializationSpec, assets.SourceArchives)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := deployment.Parse(raw)
+	d, _, err := deployment.New(p.GetPlanHash(), deployment.Profile{
+		Name: "argo-staging", ArtifactStoreBinding: "staging-artifacts",
+		Target: deployment.Target{Kind: "argo", Namespace: "workflows", ServiceAccountName: "massive-runner", WorkflowTemplateName: "massive-static"},
+	}, manifest.GetManifestHash())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return d
-}
-func mustHash(t *testing.T, data []byte) string {
-	t.Helper()
-	h, err := canonical.DigestJSON(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return h
 }
 func taskByName(t *testing.T, tasks []any, name string) map[string]any {
 	t.Helper()
@@ -445,11 +453,32 @@ func fileByPath(t *testing.T, bundle *Bundle, path string) File {
 	return File{}
 }
 
-func runtimeAssetsForPlan(plan *planpb.WorkflowPlan) RuntimeAssets {
+func runtimeAssetsForPlan(t *testing.T, plan *planpb.WorkflowPlan) RuntimeAssets {
+	t.Helper()
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	body := []byte("source fixture\n")
+	if err := writer.WriteHeader(&tar.Header{Name: "fixture.txt", Size: int64(len(body)), Mode: 0o644, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
 	archives := make(map[string][]byte, len(plan.GetSourcePackages()))
 	for _, sourcePackage := range plan.GetSourcePackages() {
-		archives[sourcePackage.GetPackageHash()] = []byte("verified source archive")
+		archives[sourcePackage.GetPackageHash()] = archive.Bytes()
 	}
-	return RuntimeAssets{SourceArchives: archives}
+	selection, err := materialization.ForPlan(plan, archives)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specJSON, err := materialization.MarshalCanonical(selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return RuntimeAssets{SourceArchives: archives, MaterializationSpec: specJSON}
 }
 func pointer(v string) *string { return &v }

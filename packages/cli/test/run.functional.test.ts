@@ -151,7 +151,7 @@ Deno.test("massive run Python graph: same compiler, runner, and frozen artifact 
       packageId: string;
       symbolRef: string;
     }[];
-    environments: { kind: string; container?: { image: string } }[];
+    environments: { envRef: string; container?: { image: string } }[];
   };
   assertEquals(plan.symbols, [{
     export: "add_one",
@@ -164,7 +164,7 @@ Deno.test("massive run Python graph: same compiler, runner, and frozen artifact 
     plan.graph.nodes.find((node) => node.kind === "step")?.symbolRef,
     "python-main:workflow#add_one",
   );
-  assertEquals(plan.environments[0]?.kind, "container-plan");
+  assertStringIncludes(plan.environments[0]?.envRef ?? "", "sha256:");
   assertStringIncludes(
     plan.environments[0]?.container?.image ?? "",
     "python-runner@sha256:",

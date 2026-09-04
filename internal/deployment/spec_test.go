@@ -7,11 +7,52 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/plan"
 	workflowspec "github.com/Sly1029/massive/internal/spec"
 )
 
 const testPlanHash = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+func TestMaterializationBindingRequiresVersionOne(t *testing.T) {
+	profile := Profile{Name: "local", ArtifactStoreBinding: "artifacts", Target: Target{Kind: "local"}}
+	if _, _, err := New(testPlanHash, profile, ""); err == nil {
+		t.Fatal("deployment accepted missing materialization identity")
+	}
+	bound, body, err := New(testPlanHash, profile, testPlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.SchemaVersion != 1 || bound.MaterializationHash != testPlanHash {
+		t.Fatal("deployment omitted its required materialization binding")
+	}
+	for _, mutation := range []string{"v0-with-manifest", "v1-without-manifest"} {
+		t.Run(mutation, func(t *testing.T) {
+			var value map[string]any
+			if err := json.Unmarshal(body, &value); err != nil {
+				t.Fatal(err)
+			}
+			if mutation == "v0-with-manifest" {
+				value["schemaVersion"] = 0
+			} else {
+				delete(value, "materializationHash")
+			}
+			delete(value, "deploymentHash")
+			unhashed, err := canonical.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			value["deploymentHash"] = canonical.DigestBytes(unhashed)
+			invalid, err := canonical.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Parse(invalid); err == nil {
+				t.Fatal("invalid version/materialization combination accepted")
+			}
+		})
+	}
+}
 
 func TestNewConstructsCanonicalValidatedDeployment(t *testing.T) {
 	deployment, body, err := New(testPlanHash, Profile{
@@ -23,7 +64,7 @@ func TestNewConstructsCanonicalValidatedDeployment(t *testing.T) {
 			ServiceAccountName:   "massive-runner",
 			WorkflowTemplateName: "example-workflow",
 		},
-	})
+	}, testPlanHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,14 +272,15 @@ func deploymentJSONForPlan(t *testing.T, planHash string, profile map[string]any
 	t.Helper()
 	value := map[string]any{
 		"kind":          "DeploymentSpec",
-		"schemaVersion": 0,
+		"schemaVersion": 1,
 		"encoding":      "json-v0",
 		"hashing": map[string]any{
 			"algorithm": "sha256", "canonicalization": "canonical-json-v0",
 			"recipe": "deployment-spec", "recipeVersion": 1,
 		},
-		"planHash": planHash,
-		"profile":  profile,
+		"planHash":            planHash,
+		"materializationHash": testPlanHash,
+		"profile":             profile,
 	}
 	body, err := json.Marshal(value)
 	if err != nil {

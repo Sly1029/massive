@@ -25,7 +25,7 @@ func TestRemoteSourceArchiveRetainsSemanticPackageIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifySourceArchiveIdentity(archive, expected); err != nil {
+	if err := sourceidentity.VerifyArchive(archive, expected); err != nil {
 		t.Fatal(err)
 	}
 
@@ -37,7 +37,7 @@ func TestRemoteSourceArchiveRetainsSemanticPackageIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifySourceArchiveIdentity(changedArchive, expected); err == nil {
+	if err := sourceidentity.VerifyArchive(changedArchive, expected); err == nil {
 		t.Fatal("runtime accepted source bytes from a different semantic package")
 	}
 }

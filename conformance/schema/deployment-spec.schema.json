@@ -2,17 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://massive.dev/conformance/schema/deployment-spec.schema.json",
   "title": "Massive DeploymentSpec",
-  "description": "V0 DeploymentSpec binds a target profile to one immutable WorkflowPlan. It deliberately contains opaque artifact-store binding names rather than credentials or connection details.",
+  "description": "DeploymentSpec v1 binds a target profile to an immutable WorkflowPlan and materialization manifest identity. Bindings contain names, never credentials.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["kind", "schemaVersion", "encoding", "hashing", "deploymentHash", "planHash", "profile"],
+  "required": ["kind", "schemaVersion", "encoding", "hashing", "deploymentHash", "planHash", "materializationHash", "profile"],
   "properties": {
     "kind": { "const": "DeploymentSpec" },
-    "schemaVersion": { "const": 0 },
+    "schemaVersion": { "const": 1 },
     "encoding": { "const": "json-v0" },
     "hashing": { "$ref": "#/$defs/hashing" },
     "deploymentHash": { "$ref": "#/$defs/hashRef" },
     "planHash": { "$ref": "#/$defs/hashRef" },
+    "materializationHash": { "$ref": "#/$defs/hashRef" },
     "profile": { "$ref": "#/$defs/profile" }
   },
   "$defs": {

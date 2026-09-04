@@ -61,6 +61,13 @@ container. They are not yet verified-equivalent realizations.
 
 ## The next small contract
 
+The first portable slice is implemented for **existing immutable containers**.
+See [the materialization wire contract](materialization-contract.md). Public
+`massive build` now packages portable inputs, independently compiles those inputs,
+and emits a separate materialization manifest bound by DeploymentSpec v1.
+It verifies source bytes but does not contact an image registry or inspect
+installed dependencies. `PINNED_REFERENCE_ONLY` records that limit explicitly.
+
 Reuse `[project]` and `uv.lock` as dependency sources of truth. Do not introduce
 another `packages={"httpx": ...}` DSL or copy package resolution into Massive.
 

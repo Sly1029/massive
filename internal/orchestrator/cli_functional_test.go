@@ -14,6 +14,8 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/deployment"
+	"github.com/Sly1029/massive/internal/materialization"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
 )
@@ -73,7 +75,8 @@ func TestCompilerCLIFunctional(t *testing.T) {
 
 func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	compileDir := t.TempDir()
-	specPath := filepath.Join(repoRootForTest(t), "conformance", "fixtures", "specs", "diamond", "workflow-spec.json")
+	workspace := prepareRunWorkspace(t, "diamond", "diamond")
+	specPath := filepath.Join(workspace, "workflow-spec.json")
 	compiled := runCommand(t, "go", "run", "./cmd/massive-compiler", "compile", "--spec", specPath, "--out", compileDir)
 	if compiled.err != nil {
 		t.Fatalf("compiler failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", compiled.stdout, compiled.stderr, compiled.err)
@@ -87,25 +90,47 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deploymentValue := map[string]any{
-		"kind": "DeploymentSpec", "schemaVersion": 0, "encoding": "json-v0",
-		"hashing":  map[string]any{"algorithm": "sha256", "canonicalization": "canonical-json-v0", "recipe": "deployment-spec", "recipeVersion": 1},
-		"planHash": parsedPlan.GetPlanHash(),
-		"profile": map[string]any{
-			"name": "argo-test", "artifactStoreBinding": "test-artifacts",
-			"target": map[string]any{"kind": "argo", "namespace": "workflows", "serviceAccountName": "massive-runner", "workflowTemplateName": "diamond-test"},
-		},
-	}
-	unhashedDeployment, err := json.Marshal(deploymentValue)
+	bundleDir := t.TempDir()
+	runtimeAssets := t.TempDir()
+	archives := map[string][]byte{}
+	workflowSpec, err := spec.ReadFile(specPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deploymentHash, err := canonical.DigestJSON(unhashedDeployment)
+	for _, sourcePackage := range workflowSpec.SourcePackages {
+		name, err := SourceArchiveBundleName(sourcePackage.PackageHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := make([]SourcePackageFile, 0, len(sourcePackage.Files))
+		for _, file := range sourcePackage.Files {
+			files = append(files, SourcePackageFile{Path: file.Path, Hash: file.Hash})
+		}
+		archive, err := BuildSourceArchive(workspace, files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(runtimeAssets, name), archive, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		archives[sourcePackage.PackageHash] = archive
+	}
+	selection, err := materialization.ForPlan(parsedPlan, archives)
 	if err != nil {
 		t.Fatal(err)
 	}
-	deploymentValue["deploymentHash"] = deploymentHash
-	deploymentJSON, err := json.Marshal(deploymentValue)
+	selectionJSON, err := materialization.MarshalCanonical(selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialized, err := materialization.Resolve(parsedPlan, selectionJSON, archives)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, deploymentJSON, err := deployment.New(parsedPlan.GetPlanHash(), deployment.Profile{
+		Name: "argo-test", ArtifactStoreBinding: "test-artifacts",
+		Target: deployment.Target{Kind: "argo", Namespace: "workflows", ServiceAccountName: "massive-runner", WorkflowTemplateName: "diamond-test"},
+	}, materialized.GetManifestHash())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,19 +138,11 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	if err := os.WriteFile(deploymentPath, deploymentJSON, 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	bundleDir := t.TempDir()
-	runtimeAssets := t.TempDir()
-	for _, sourcePackage := range parsedPlan.GetSourcePackages() {
-		name, err := SourceArchiveBundleName(sourcePackage.GetPackageHash())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(runtimeAssets, name), []byte("verified test source"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	materializationPath := filepath.Join(t.TempDir(), "materialization-spec.json")
+	if err := os.WriteFile(materializationPath, selectionJSON, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	bundled := runCommand(t, "go", "run", "./cmd/massive-compiler", "bundle-argo", "--plan", planPath, "--deployment", deploymentPath, "--runtime-assets", runtimeAssets, "--out", bundleDir)
+	bundled := runCommand(t, "go", "run", "./cmd/massive-compiler", "bundle-argo", "--plan", planPath, "--deployment", deploymentPath, "--materialization", materializationPath, "--runtime-assets", runtimeAssets, "--out", bundleDir)
 	if bundled.err != nil {
 		t.Fatalf("bundle compiler failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", bundled.stdout, bundled.stderr, bundled.err)
 	}
@@ -148,7 +165,7 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest["deploymentHash"] != deploymentHash || manifest["planHash"] != parsedPlan.GetPlanHash() {
+	if manifest["deploymentHash"] != binding.DeploymentHash || manifest["planHash"] != parsedPlan.GetPlanHash() {
 		t.Fatalf("bundle manifest identities = %#v", manifest)
 	}
 }

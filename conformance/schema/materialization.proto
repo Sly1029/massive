@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package massive.materialization.v0;
+
+option go_package = "github.com/Sly1029/massive/conformance/schema/materializationpb;materializationpb";
+
+// Portable inputs, independent of a checkout, compiler process, and target.
+// Environment refs refer to requirement identities in the compiled plan, not
+// frontend aliases. Source package identity and archive byte identity differ.
+// Hashes use canonical-json-v0, excluding only the root self-hash field.
+message MaterializationSpec {
+  optional uint32 schema_version = 1;
+  optional string spec_hash = 2;
+  repeated EnvironmentSelection environments = 3;
+  repeated SourceArchive source_archives = 4;
+}
+
+message EnvironmentSelection {
+  optional string environment_ref = 1;
+  oneof mode {
+    ExistingContainer existing_container = 2;
+  }
+}
+
+// An externally supplied immutable image, not a build recipe. Command and
+// working directory remain execution requirements in the plan.
+message ExistingContainer {
+  optional string image = 1;
+  optional string platform = 2;
+}
+
+message SourceArchive {
+  optional string package_hash = 1;
+  optional string archive_hash = 2;
+}
+
+message MaterializationManifest {
+  optional uint32 schema_version = 1;
+  optional string manifest_hash = 2;
+  optional string spec_hash = 3;
+  repeated EnvironmentRealization environments = 4;
+  // Both semantic package identity and exact archive bytes have been checked.
+  repeated SourceArchive source_archives = 5;
+  optional string materializer_name = 6;
+  optional string materializer_version = 7;
+}
+
+message EnvironmentRealization {
+  optional string environment_ref = 1;
+  // Excludes environment_ref and source/workflow/deployment identities so an
+  // identical image/platform selection can be shared across workflows.
+  optional string realization_hash = 2;
+  optional ExistingContainer existing_container = 3;
+  optional ContainerVerification verification = 4;
+}
+
+enum ContainerVerification {
+  CONTAINER_VERIFICATION_UNSPECIFIED = 0;
+  // Only the pinned reference and declared platform were validated. No registry
+  // lookup, pull, dependency inspection, or hermetic build was performed.
+  PINNED_REFERENCE_ONLY = 1;
+}

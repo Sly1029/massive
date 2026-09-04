@@ -7,6 +7,7 @@
 - Avoid passthrough functions and abstractions that only rename behavior.
 - Prefer library primitives for validation and parsing. Use Zod, Cap'n Proto schemas, Kubernetes schema validation, and typecheckers instead of ad hoc defensive checks.
 - Avoid broad defensive code. Make invalid states unrepresentable where the language and validation libraries allow it.
+- Do not maintain legacy behavior or backward-compatibility paths. Migrate contracts and callers together; reject obsolete artifacts with a rebuild diagnostic.
 
 ## Testing Policy
 

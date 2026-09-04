@@ -90,8 +90,6 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
     assert compiled["environments"] == [
         {
             "envRef": environment_identity,
-            "kind": "container-plan",
-            "specHash": environment_identity,
             "container": {
                 "image": "example.invalid/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 "platform": "linux/amd64",

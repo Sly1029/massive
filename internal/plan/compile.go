@@ -57,7 +57,7 @@ func Compile(workflowSpec *spec.WorkflowSpec, sourceJSON []byte) (*CompileResult
 	}
 
 	plan := &planpb.WorkflowPlan{
-		SchemaVersion:  uint32Ptr(0),
+		SchemaVersion:  uint32Ptr(1),
 		Hashing:        hashingSpec("workflow-plan"),
 		SpecHashing:    hashingSpec("workflow-spec"),
 		SpecHash:       stringPtr(specHash),
@@ -231,51 +231,43 @@ func compileSchemas(workflowSpec *spec.WorkflowSpec) (map[string]string, []*plan
 	return oldToNew, entries, nil
 }
 
-func compileEnvironments(workflowSpec *spec.WorkflowSpec) (map[string]string, []*planpb.MaterializedEnvironment, error) {
+func compileEnvironments(workflowSpec *spec.WorkflowSpec) (map[string]string, []*planpb.EnvironmentRequirement, error) {
 	oldToNew := make(map[string]string, len(workflowSpec.Environments))
-	for oldRef, environment := range workflowSpec.Environments {
-		if environment.Kind != "container" {
-			hash, err := hashJSONValue(environment)
-			if err != nil {
-				return nil, nil, fmt.Errorf("hash environment %s: %w", oldRef, err)
-			}
-			oldToNew[oldRef] = hash
-			continue
+	oldRefs := sortedKeys(workflowSpec.Environments)
+	entries := make([]*planpb.EnvironmentRequirement, 0, len(oldRefs))
+	seen := make(map[string]bool, len(oldRefs))
+	for _, oldRef := range oldRefs {
+		environment := workflowSpec.Environments[oldRef]
+		requirement := &planpb.EnvironmentRequirement{}
+		switch environment.Kind {
+		case "container":
+			requirement.Runtime = &planpb.EnvironmentRequirement_Container{Container: containerRequirement(environment)}
+		case "node":
+			requirement.Runtime = &planpb.EnvironmentRequirement_Node{Node: &planpb.NodeRequirement{
+				Version: stringPtr(environment.Version), PackageManager: stringPtr(environment.PackageManager),
+				Lockfile: stringPtr(environment.Lockfile),
+			}}
+		default:
+			return nil, nil, fmt.Errorf("unsupported environment requirement kind %q", environment.Kind)
 		}
-		hash, err := hashPlanMessage(containerPlan(environment))
+		hash, err := hashPlanMessage(requirement)
 		if err != nil {
 			return nil, nil, fmt.Errorf("hash environment %s: %w", oldRef, err)
 		}
 		oldToNew[oldRef] = hash
-	}
-
-	oldRefs := sortedKeys(workflowSpec.Environments)
-	entries := make([]*planpb.MaterializedEnvironment, 0, len(oldRefs))
-	for _, oldRef := range oldRefs {
-		newRef := oldToNew[oldRef]
-		environment := workflowSpec.Environments[oldRef]
-		if environment.Kind == "container" {
-			entries = append(entries, &planpb.MaterializedEnvironment{
-				EnvRef:    stringPtr(newRef),
-				SpecHash:  stringPtr(newRef),
-				Kind:      stringPtr("container-plan"),
-				Container: containerPlan(environment),
-			})
-			continue
+		if !seen[hash] {
+			requirement.EnvRef = stringPtr(hash)
+			entries = append(entries, requirement)
+			seen[hash] = true
 		}
-		entries = append(entries, &planpb.MaterializedEnvironment{
-			EnvRef:   stringPtr(newRef),
-			SpecHash: stringPtr(newRef),
-			Kind:     stringPtr("skipped"),
-		})
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return canonical.LessUTF16(entries[i].GetEnvRef(), entries[j].GetEnvRef()) })
 	return oldToNew, entries, nil
 }
 
-func containerPlan(environment spec.Environment) *planpb.ContainerRuntime {
-	compiled := &planpb.ContainerRuntime{Image: stringPtr(environment.Image)}
+func containerRequirement(environment spec.Environment) *planpb.ContainerRequirement {
+	compiled := &planpb.ContainerRequirement{Image: stringPtr(environment.Image)}
 	compiled.Platform = stringPtr(environment.Platform)
 	compiled.Command = append([]string{}, environment.Command...)
 	if environment.WorkingDirectory != "" {

@@ -1,6 +1,6 @@
 {
   "kind": "DeploymentSpec",
-  "schemaVersion": 0,
+  "schemaVersion": 1,
   "encoding": "json-v0",
   "hashing": {
     "algorithm": "sha256",
@@ -9,6 +9,7 @@
     "recipeVersion": 1
   },
   "planHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "materializationHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
   "profile": {
     "name": "local",
     "artifactStoreBinding": "local-artifacts",
@@ -16,5 +17,5 @@
       "kind": "local"
     }
   },
-  "deploymentHash": "sha256:d9efb733847e8d8ec3351bfa25d99ba81211dd3fbbd7108b6cd9d76982029035"
+  "deploymentHash": "sha256:ab73e7a20b87658d66f81edca3e835c68bded6b23b8a0e379e1c97067dad15da"
 }

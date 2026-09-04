@@ -8,19 +8,17 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/internal/canonical"
+	"github.com/Sly1029/massive/internal/containerimage"
 	"github.com/Sly1029/massive/internal/irversion"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
-
-var immutableContainerImage = regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`)
 
 const (
 	NodeKindStart    = "start"
@@ -1390,8 +1388,8 @@ func validateContainerRecipe(environmentRef string, environment Environment) []D
 	if environment.Platform == "" {
 		diagnostics = append(diagnostics, Diagnostic{Path: path + ".platform", Message: "container recipe requires platform"})
 	}
-	if !immutableContainerImage.MatchString(environment.Image) {
-		diagnostics = append(diagnostics, Diagnostic{Path: path + ".image", Ref: environment.Image, Message: "container recipe requires an immutable image digest reference"})
+	if err := containerimage.ValidatePinned(environment.Image); err != nil {
+		diagnostics = append(diagnostics, Diagnostic{Path: path + ".image", Ref: environment.Image, Message: err.Error()})
 	}
 	return diagnostics
 }
