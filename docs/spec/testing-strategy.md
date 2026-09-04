@@ -39,7 +39,7 @@ Useful assertions:
 - GraphIR topology is correct,
 - schema references are present,
 - source package manifests contain exact files and hashes,
-- post-M2 channel publications have the expected reducers once channels enter the portable schema,
+- steps expose only explicit typed inputs and outputs, not mutable workflow channels,
 - emit diagnostics point to authoring locations,
 - every supported v0 graph shape emits a valid `WorkflowSpec`.
 

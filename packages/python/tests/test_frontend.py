@@ -124,6 +124,29 @@ def test_emit_errors_have_a_stable_nonzero_exit(tmp_path: Path) -> None:
     assert first.stderr == second.stderr
 
 
+def test_missing_entrypoint_in_source_fails_before_import(tmp_path: Path) -> None:
+    workflow = tmp_path / "workflow.py"
+    workflow.write_text('raise RuntimeError("must not import")\n')
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.massive.source]\ninclude = ["pyproject.toml"]\n'
+    )
+    result = _emit(workflow)
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "source include must select the workflow entrypoint" in result.stderr
+    assert "must not import" not in result.stderr
+
+
+def test_malformed_packaging_fails_before_import(tmp_path: Path) -> None:
+    workflow = tmp_path / "workflow.py"
+    workflow.write_text('raise RuntimeError("must not import")\n')
+    (tmp_path / "pyproject.toml").write_text("[invalid toml")
+    result = _emit(workflow)
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "must not import" not in result.stderr
+
+
 def _emit(workflow: Path, selector: str | None = None) -> subprocess.CompletedProcess[str]:
     package = Path(__file__).resolve().parents[1]
     entry = str(workflow) if selector is None else f"{workflow}#{selector}"

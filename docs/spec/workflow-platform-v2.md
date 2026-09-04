@@ -13,6 +13,12 @@ The supporting research is in:
 - [Replacing Metaflow by deepening Massive](../research/metaflow-replacement.md)
 - [Pydantic Graph as an authoring reference](../research/pydantic-graph-v2-sdk.md)
 
+The [roadmap](../roadmap.md) narrows the next milestone to Python packaging and
+reliable local/CI execution. The environment and runtime-binding designs replace
+the broad materializer/provider ambitions below with standard Python project
+metadata and explicit deployment responsibilities. Future graph syntax here is
+not a current SDK promise.
+
 ## Decision
 
 Replace Metaflow rather than emulate it.

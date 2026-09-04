@@ -1,0 +1,8 @@
+[project]
+name = "packaged-workflow-example"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["massive-workflows==0.1.0"]
+
+[tool.massive.source]
+include = ["workflow.py", "packaged_steps/**/*.py", "packaged_steps/*.txt"]

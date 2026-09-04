@@ -30,7 +30,7 @@ const dockerAccessKeyEnv = "MASSIVE_RUNNER_S3_ACCESS_KEY";
 const dockerSecretAccessKeyEnv = "MASSIVE_RUNNER_S3_SECRET_KEY";
 const sourceArchiveContentType = "application/vnd.massive.source-tar";
 const artifactProjectKey =
-  "sha256:9999999999999999999999999999999999999999999999999999999999999999";
+  "sha256-9999999999999999999999999999999999999999999999999999999999999999";
 const valueSchema = {
   type: "object",
   additionalProperties: false,
@@ -45,8 +45,7 @@ Deno.test("S3 invocation descriptors carry transport but no credentials", async 
     encoding: "json-v2",
     planHash:
       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    projectKey:
-      "sha256-9999999999999999999999999999999999999999999999999999999999999999",
+    projectKey: artifactProjectKey,
     runId: "run-s3-descriptor-0001",
     nodeId: "task",
     attempt: 1,
@@ -143,8 +142,7 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
       encoding: "json-v2",
       planHash:
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      projectKey:
-        "sha256-9999999999999999999999999999999999999999999999999999999999999999",
+      projectKey: artifactProjectKey,
       runId: "run-s3-runner-fixture-0001",
       nodeId: "double",
       attempt: 1,
@@ -180,8 +178,6 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
         manifestKey: outputManifestKey(),
         schema: sha256RefText(schemaText),
       },
-      channelReads: [],
-      channelWrites: [],
       datastore: {
         kind: "s3",
         bucket,
@@ -200,20 +196,25 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
 
     const descriptorPath = join(root, "descriptor.json");
     await Deno.writeTextFile(descriptorPath, stableStringify(descriptor));
-    const child = await new Deno.Command("deno", {
+    const child = await new Deno.Command(Deno.execPath(), {
       args: [
         "run",
         "--config",
         "deno.json",
-        `--allow-read=${root}`,
+        `--allow-read=${root},${repoRoot()}`,
         `--allow-write=${root},${repoRoot()}`,
         `--allow-net=${minio.host}`,
         "--allow-env",
+        "--allow-sys=osRelease",
         "packages/sdk/src/runner/main.ts",
         descriptorPath,
       ],
       cwd: repoRoot(),
+      // The fixture supplies its own credentials. Developer AWS profiles and
+      // session tokens must not override them or contact a real account.
+      clearEnv: true,
       env: {
+        HOME: root,
         AWS_ACCESS_KEY_ID: minio.accessKey,
         AWS_SECRET_ACCESS_KEY: minio.secretKey,
       },
@@ -498,11 +499,11 @@ function schemaKey(schema: string): string {
 }
 
 function inputKey(): string {
-  return "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-s3-runner-fixture-0001/inputs/double.json";
+  return `projects/${artifactProjectKey}/runs/run-s3-runner-fixture-0001/inputs/double.json`;
 }
 
 function outputManifestKey(): string {
-  return "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-s3-runner-fixture-0001/steps/double/1/output-manifest.json";
+  return `projects/${artifactProjectKey}/runs/run-s3-runner-fixture-0001/steps/double/1/output-manifest.json`;
 }
 
 function producerFor(descriptor: StepInvocationDescriptor) {

@@ -12,22 +12,11 @@ This document tracks decisions that are intentionally unsettled or likely to cha
 
 ## Tentative Decisions
 
-### Global State Channel Declaration
+### State Channels — Closed
 
-Channels are post-M2 for the portable `WorkflowSpec` schema. When they enter the schema, the current tentative direction is to declare them globally in `stateSchema(...)`.
-
-Why this is the current choice:
-
-- the compiler can validate schemas and reducers up front,
-- branch discriminants are easy to inspect,
-- join and foreach collection behavior is explicit,
-- final output projection is easier to compile.
-
-Why it may change:
-
-- local channel declarations may make small workflows more ergonomic,
-- reusable workflow modules may want to expose channels alongside their steps,
-- a future SDK may infer safe channels from typed publish declarations.
+Shared mutable state and channels are not part of the accepted dataflow model.
+The former unemittable TypeScript surface has been removed. Steps consume declared
+inputs and return typed outputs; map collection and explicit merges provide fan-in.
 
 ### DAG-Only IR
 
@@ -304,20 +293,17 @@ Current v0 direction:
 
 ## Market Positioning
 
-Current stance (revised August 2026, superseding the July TypeScript-only
-note): Python is the primary authoring SDK, per
+Python is the primary authoring SDK, per
 [Workflow Platform v2 Direction](workflow-platform-v2.md); TypeScript remains
-supported through the shared IR. The near-term wedge still leans toward
-platform teams that want compiled, deterministic, provenance-carrying deploy
-bundles with verifiable execution contracts; author-facing DX is the adoption
-surface, not the differentiator. The Metaflow comparison is now explicit — the
-first consumer integration replaces a Metaflow-backed platform SDK.
+supported through the shared IR. The [roadmap](../roadmap.md) prioritizes typed
+workflows that run locally and in customer-owned CI without a hosted control plane.
+Deterministic plans and explicit execution contracts support that developer experience.
 
 Open questions:
 
-- Is the first public wedge "portable workflow compiler" or "typed deployable workflow plans"?
+- Which representative workflows best test packaging and recovery costs?
 - Is Argo the primary production story long-term, or only the first serious target?
-- Which future backend should follow Argo? A design-level probe of Cloudflare
+- Would a second distributed target solve a demonstrated customer need? A design-level probe of Cloudflare
   Workflows (see
   [../research/cloudflare-workflows-backend.md](../research/cloudflare-workflows-backend.md))
   exists to test the backend seams; no second executable backend is scheduled.

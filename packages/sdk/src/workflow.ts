@@ -9,7 +9,6 @@ export const END_NODE = "__end";
 
 export type StepRun<Input, Output> = (context: {
   readonly input: Input;
-  readonly state: Record<string, unknown>;
   readonly context: {
     readonly runId: string;
     readonly stepId: string;
@@ -22,26 +21,14 @@ export interface StepSpec<InputSchema extends AnySchema, OutputSchema extends An
   readonly output: OutputSchema;
   readonly run: StepRun<z.infer<InputSchema>, z.infer<OutputSchema>>;
   readonly contract?: ContractSpec | ExecutionContract;
-  readonly channel?: string;
-  readonly publish?: Record<string, string>;
 }
 
 export interface WorkflowConfig<InputSchema extends AnySchema, OutputSchema extends AnySchema> {
   readonly name: string;
   readonly input: InputSchema;
   readonly output: OutputSchema;
-  readonly state?: StateSchema;
   readonly defaults?: ContractSpec | ExecutionContract;
 }
-
-export interface ChannelDefinition<Output> {
-  readonly schema: AnySchema;
-  readonly reducer: "last";
-  // Phantom type until StepRun receives typed channel state.
-  readonly __output?: Output;
-}
-
-export type StateSchema = Record<string, ChannelDefinition<unknown>>;
 
 export interface StepNode {
   readonly id: string;
@@ -51,9 +38,7 @@ export interface StepNode {
   readonly run: StepRun<unknown, unknown>;
   readonly symbolRef: string;
   readonly contract?: ContractSpec | ExecutionContract;
-  readonly channel?: string;
   mergeInputs?: string[];
-  readonly publish?: Record<string, string>;
 }
 
 export class StepHandle<Input, Output> {
@@ -104,16 +89,13 @@ export class WorkflowBuilder<Input, Output> {
   readonly graph = new DirectedGraph();
   readonly stepNodes = new Map<string, StepNode>();
   readonly runtimeRegistry = new Map<string, StepRun<unknown, unknown>>();
-  readonly channels: StateSchema;
 
   constructor(
     readonly name: string,
     readonly input: AnySchema,
     readonly output: AnySchema,
-    readonly defaults: ContractSpec | ExecutionContract | undefined,
-    channels: StateSchema = {}
+    readonly defaults: ContractSpec | ExecutionContract | undefined
   ) {
-    this.channels = channels;
     this.graph.addNode(START_NODE, { kind: "start" });
     this.graph.addNode(END_NODE, { kind: "end" });
   }
@@ -135,8 +117,6 @@ export class WorkflowBuilder<Input, Output> {
       run: spec.run as StepRun<unknown, unknown>,
       symbolRef,
       ...(spec.contract === undefined ? {} : { contract: spec.contract }),
-      ...(spec.channel === undefined ? {} : { channel: spec.channel }),
-      ...(spec.publish === undefined ? {} : { publish: spec.publish }),
     };
 
     this.stepNodes.set(id, node);
@@ -205,15 +185,6 @@ export function workflow<InputSchema extends AnySchema, OutputSchema extends Any
     config.name,
     config.input,
     config.output,
-    config.defaults,
-    config.state
+    config.defaults
   );
-}
-
-export function channel<Schema extends AnySchema>(schema: Schema): ChannelDefinition<z.infer<Schema>> {
-  return { schema, reducer: "last" };
-}
-
-export function stateSchema<const Schema extends StateSchema>(schema: Schema): Schema {
-  return schema;
 }

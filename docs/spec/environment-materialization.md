@@ -1,180 +1,117 @@
-# Environment Materialization
+# Workflow Packaging and Environment Materialization
 
-Status: draft
+Status: accepted direction; implementation status is explicit below.
 
-Environments are portable specs first. Container images are an escape hatch and one possible backend realization.
+## Three things, not one overloaded environment
 
-This follows the same broad idea that makes Metaflow's uv support useful: describe the environment at a higher level, then let the backend materialize or validate it.
+| Concern | Question | Owner |
+| --- | --- | --- |
+| Source package | Which workflow modules and resource bytes execute? | Workflow author |
+| Dependency environment | Which Python, distributions, native tools, and platform are needed? | Workflow author; materializer realizes them |
+| Deployment bindings | Where does it run, and how are credentials and policy supplied? | CI or platform operator |
 
-## Environment Specs
+An environment is **not** an Argo spec with a local emulation. Nor should an Argo
+secret change a dependency build-cache key. A deployment selects how to realize
+requirements without changing the graph's dataflow.
 
-V0 should support:
+## What works today
 
-```ts
-env.node({
-  version: "22.12.0",
-  packageManager: "pnpm",
-  lockfile: "pnpm-lock.yaml",
-});
+The Python frontend reads `pyproject.toml` adjacent to the workflow entrypoint.
+It does not search parent directories. A directory is the package root; multiple
+workflow exports in it share its packaging configuration.
 
-env.container({
-  image: "ghcr.io/acme/workflow@sha256:...",
-  platform: "linux/amd64",
-});
+```toml
+[project]
+name = "example-analysis"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["massive-workflows==0.1.0", "httpx>=0.28,<1"]
+
+[tool.massive.source]
+include = ["*.py", "analysis/**/*.py", "analysis/prompts/*.txt", "rules/*.yaml"]
 ```
 
-In the portable spec, environments are normalized into an environment table keyed by environment spec hash. Execution contracts reference the environment hash. They do not inline or duplicate the full environment spec.
+The default include is `["*.py"]`. Custom includes replace that default and must
+include the entrypoint. `pyproject.toml` and `uv.lock`, when present, are always
+included so dependency/configuration edits change source identity. The source
+archive contains regular files only; selected symlinks and path escapes fail.
+Use explicit allowlists rather than `**/*`: credentials, `.env`, virtual
+environments, datasets, and caches do not belong in source archives.
 
-Future variants:
+Read packaged resources relative to `__file__` or with `importlib.resources`.
+Do not depend on the original checkout path or the runner's working directory.
+Third-party distributions are installed in the environment, not copied into source.
 
-```ts
-env.uv({
-  python: "3.13",
-  lockfile: "uv.lock",
-});
+For a workflow directory with a committed `uv.lock`, run from that directory:
 
-env.nix({
-  flake: ".#workflow",
-});
+```sh
+uv sync --locked
+uv run --locked massive run workflow.py --project example/analysis --input '{}'
 ```
 
-## Compile Phase
+Create/update the lock deliberately with `uv lock`, not as an implicit side effect
+of compilation. Each workflow can have its own directory, project metadata,
+lockfile, and virtual environment. `massive` uses the launching Python interpreter
+for both emission and task execution. It does not install dependencies itself.
 
-Environment materialization is a distinct compile phase:
+For Argo, build an image with the same locked dependencies and Massive version,
+then reference its immutable digest using `container(...)`. Argo currently executes
+that image; local execution uses the active Python environment, **not** the declared
+container. They are not yet verified-equivalent realizations.
 
-```text
-source workflow
-  -> build graph
-  -> SDK validate language-specific symbols and portable lowering
-  -> emit WorkflowSpec JSON
-  -> Go validate GraphIR + ExecutionContract
-  -> materialize environments for target platform/architecture
-  -> upload code package + environment artifacts to datastore
-  -> write WorkflowPlan
-  -> emit backend deployment artifact
-```
+## The next small contract
 
-## Materialization Key
+Reuse `[project]` and `uv.lock` as dependency sources of truth. Do not introduce
+another `packages={"httpx": ...}` DSL or copy package resolution into Massive.
 
-Environment materialization is deduped by unique effective environment spec, not by workflow and not by full step contract.
+An environment requirement should identify:
 
-Resource limits, priority, network policy, and secrets do not change the dependency environment. Those runtime facets have their own compositional model in [Runtime Environment Composition](runtime-environment.md).
+- Python compatibility and dependency project/lock inputs;
+- native tool requirements when a real workflow needs them;
+- supported OS/architecture when dependencies constrain them.
 
-A Node environment key should include:
+A realization should record:
 
-- environment kind,
-- Node version,
-- package manager and version if pinned,
-- lockfile hash,
-- package manifest hash,
-- workspace package hashes when local workspace packages are included,
-- platform OS,
-- CPU architecture,
-- materializer version,
-- relevant build args.
+- mode (`existing-python` or an immutable container initially);
+- actual interpreter/platform and dependency input digests;
+- materializer identity/version;
+- verified output identity, such as an OCI digest, where one exists.
 
-Example:
+An existing-environment check is not a hermetic build and must say so. Missing or
+incompatible dependencies should fail before scheduling work, with an actionable
+installation command. A container materializer must commit an actual image before
+recording an artifact; a recipe is not a built artifact.
 
-```text
-node@22.12.0 + linux/amd64 + pnpm@9 + lock:<hash> + package:<hash>
-```
+Dependency preflight should eventually happen before importing author code. That
+requires reading project metadata without graph evaluation. Optional Docker-based
+local execution can then reuse an existing image rather than invent a new scheduler.
+Neither dependency preflight nor local Docker execution is implemented by this change.
 
-## Materialized Artifacts
+## Identity and sharing
 
-Example Argo materialization output:
+Source and dependency identities serve different purposes:
 
-```text
-s3://bucket/envs/node/<env-key>/manifest.json
-s3://bucket/envs/node/<env-key>/runtime.tar.zst
-```
+- A source hash includes workflow code/resources and selected project inputs.
+- An environment key includes only dependency/build inputs, platform, and materializer
+  version, so unrelated workflows can reuse the same environment.
+- Deployment identity includes bindings and execution policy, never secret values.
 
-The manifest describes:
+Including `uv.lock` in a source archive records intended dependencies. It does not
+prove that the installed environment matches them, and it is not result-cache safety.
+Do not claim reproducibility until realization is verified.
 
-- environment key,
-- source hashes,
-- platform,
-- materializer version,
-- runtime entrypoint,
-- package manager metadata,
-- content digests,
-- created artifact paths.
+## Secrets are runtime bindings, not packages
 
-## Backend Behavior
+See [runtime environment bindings](runtime-environment.md). CI owns obtaining
+credentials; Massive should declare requirements, validate that bindings exist,
+and expose only the binding needed by the task. It should not become a vault.
 
-Local async:
+Private package-index credentials are build/install-time credentials. CI supplies
+them to `uv` or a container build's secret mechanism. Never put them in project URLs,
+lockfiles, build arguments, source archives, specs, or image layers.
 
-- materializes to the configured local datastore, `~/.massive/store/envs/<env-key>/` by default,
-- can reuse local package manager caches,
-- should still record a manifest and content hashes.
+## Non-goals for this milestone
 
-Argo:
-
-- materializes to object storage,
-- generated pods fetch or mount the environment artifact,
-- container escape hatch may skip package materialization if the image itself is the environment.
-- v0 executable support is container-only until Node dependency environment materialization is implemented for Kubernetes.
-
-Cloudflare/Vercel future:
-
-- may reject unsupported environment specs,
-- may translate compatible Node specs into their native bundling/deploy process,
-- should still consume the same environment contract.
-
-## Container Escape Hatch
-
-Containers are necessary for Argo and some advanced tools, but they should not be the only environment abstraction.
-
-`env.container(...)` means the author accepts backend portability limits. Other backends may reject the plan or require a backend-specific adapter.
-
-Direct-image recipes first compile to canonical, unbuilt `container-plan` entries. This
-is an invocation plan—not an environment build plan or build-cache key—and records the
-immutable image reference, platform, command, and working directory.
-Resource limits, runtime secrets, network, and scheduling remain execution-contract
-policy and never enter this identity. A target may accept this plan only when that
-selected image is directly runnable; dependency-building recipes remain future work.
-
-An environment artifact exists only when a materializer has committed real bytes
-or an OCI digest. The compiler must not emit an artifact reference for an
-unbuilt plan. A later materializer records the image reference, environment key,
-materialization mode, and runtime contract in an immutable manifest.
-
-Example:
-
-```text
-envs/<env-key>/manifest.json
-  kind: container
-  image: ghcr.io/acme/workflow@sha256:...
-  materialization: skipped
-  runtime:
-    sourceFetch: datastore
-    stepRunner: image-provided
-```
-
-For the first executable Argo path, `env.container(...)` may skip dependency-environment materialization, but it does not skip source package handling. The v0 runtime image contract is:
-
-- the image contains Node and the Massive step-runner CLI,
-- the workflow source package is fetched from the datastore at step startup,
-- the step runner resolves the symbol from the fetched source package,
-- step input and output artifacts are read from and written to the datastore.
-
-This keeps dependency packaging out of the first Argo wedge while still exercising real source packaging, datastore reads, and datastore writes.
-
-## Source Packages Versus Environments
-
-Source packages and environments are intentionally separate.
-
-Source packages answer: which workflow code and local package files are executable?
-
-Environments answer: which runtime, dependency manager, lockfile, platform, and materializer outputs are required to execute that source?
-
-The same source package can be compiled for multiple targets or environments. The same environment can be reused across multiple workflows or source packages when its effective dependency inputs match. Node environment keys may include package manifest and workspace package hashes when those files affect dependency installation, but resource limits, secrets, network intents, and target scheduling settings do not change the dependency environment key.
-
-Workflow packages may have their own `massive.config.ts`, `package.json`, lockfile, utility modules, and config. Those files belong to the source package when they are needed to execute or resolve workflow code. They influence dependency environment materialization only when they affect dependency installation or workspace package resolution.
-
-## Open Issues
-
-- Implement Node dependency environment materialization for deployable targets.
-- Decide how source packages are separated from dependency environments for TypeScript workspaces.
-- Decide whether the first Node dependency materializer creates a tarball, an OCI layer, or a backend-specific artifact.
-- Decide whether local materialization should require lockfile strictness by default.
-- Decide how to expose build logs and cache hits to users.
+No generic materializer registry, Nix integration, environment solver, automatic
+network installation in the runner, or backend-specific Python dependency syntax.
+Prove one locked Python path and one immutable image path before adding adapters.

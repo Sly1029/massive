@@ -382,8 +382,64 @@ are written to stderr and return exit status 2. The `massive run` CLI uses this
 process seam internally; workflow authors normally invoke `massive run`
 instead.
 
-This first frontend slice is zero-config. Its source package root is the entry
-file's parent directory, uses package ID `python-main`, and includes every
-root-level `*.py` file. Nested packages and recursive source layouts are not
-included yet, so keep the workflow and direct helper modules together until an
-explicit Python package configuration surface is added.
+## Workflow packages and resources
+
+The source package root is the entry file's parent directory, with package ID
+`python-main`. Without configuration, it includes root-level `*.py` files.
+For nested modules and non-Python assets, put a `pyproject.toml` beside the
+entrypoint:
+
+```toml
+[project]
+name = "my-analysis"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["massive-workflows==0.1.0", "httpx>=0.28,<1"]
+
+[tool.massive.source]
+include = ["workflow.py", "analysis/**/*.py", "analysis/prompts/*.txt", "rules/*.yaml"]
+```
+
+Includes are directory-relative `pathlib` glob patterns and replace the default
+`["*.py"]`. Include the entrypoint and all local modules/resources it needs.
+Unknown Massive configuration fields, selected symlinks, and patterns escaping
+the directory are rejected. Parent project configuration is not inherited;
+workflows in separate directories can carry different dependencies and assets.
+Multiple exports in one directory share that directory's package configuration.
+
+`pyproject.toml` and `uv.lock`, when present, are always included in the source
+manifest. Changes to their bytes or any included resource change package identity.
+This records intended dependency inputs; it does **not** verify installed packages.
+
+Use `importlib.resources.files("analysis")` or paths relative to `__file__` to
+load packaged resources. The runner imports from a verified extracted archive,
+not from the original checkout. Avoid `**/*`: do not package `.env`, credentials,
+virtual environments, large datasets, or caches.
+
+Third-party packages belong in `[project].dependencies`, not source includes.
+Create and commit a lock with `uv lock`. Then, from the workflow directory:
+
+```sh
+uv sync --locked
+uv run --locked massive run workflow.py --project example/analysis --input '{}'
+```
+
+The launching Python environment runs both the frontend and each step. Massive
+does not install dependencies automatically. For Argo, build an immutable runner
+image with the same locked dependencies and Massive version. Local execution
+currently uses the active interpreter, not the container declared in the contract.
+
+See the [packaged map example](../../examples/07-package/workflow.py) for a
+nested module, a text resource, and ordered collection into a typed result.
+
+### Secrets
+
+CI or the platform owns obtaining and rotating credentials. Never place their
+values in project metadata, lockfiles, source includes, or execution contracts.
+Local Python processes currently inherit the launching environment; secret
+preflight and selective task binding are not implemented. Argo rejects declared
+secrets until secret-reference lowering exists.
+
+The intended contract is logical requirements in the workflow and concrete
+bindings in deployment configuration. See the [binding design](../../docs/spec/runtime-environment.md)
+for the distinction between declarations, bindings, and enforcement.

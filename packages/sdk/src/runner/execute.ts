@@ -64,7 +64,6 @@ export async function executeStep(
       try {
         output = await run({
           input,
-          state: {},
           context: {
             runId: descriptor.runId,
             stepId: descriptor.nodeId,

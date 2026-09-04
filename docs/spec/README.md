@@ -14,14 +14,12 @@ Specification documents for Massive. The active prioritization lives in
 ## Design drafts
 
 - [Authoring Model](authoring-model.md) — portable authoring semantics; retains
-  the TypeScript forms. Channel/state sections are deferred, unemittable
-  surface.
+  the TypeScript forms. Channel/state surface is removed in favor of explicit dataflow.
 - [IR And Datastore](ir-and-datastore.md)
-- [Environment Materialization](environment-materialization.md) — dependency
-  environments.
-- [Runtime Environment Composition](runtime-environment.md) — secrets, egress,
-  placement, and middleware as composable declarative facets with per-backend
-  providers.
+- [Workflow Packaging and Environment Materialization](environment-materialization.md) —
+  implemented source packaging and the next dependency realization contract.
+- [Runtime Environment Bindings](runtime-environment.md) — workflow requirements,
+  deployment-owned credentials, and explicit enforcement limits; no provider framework.
 - [Artifact Runtime](artifact-runtime.md)
 - [Argo Backend](argo-backend.md)
 - [Testing Strategy](testing-strategy.md)

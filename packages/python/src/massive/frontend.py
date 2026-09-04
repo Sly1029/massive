@@ -11,10 +11,8 @@ from types import ModuleType
 from typing import Any, cast
 
 from .builder import GraphBuilder, WorkflowSpec
-from .source_package import source_package
+from .source_package import SourcePackage
 
-_PACKAGE_ID = "python-main"
-_SOURCE_INCLUDE = ["*.py"]
 _ERROR_EXIT = 2
 
 
@@ -65,13 +63,15 @@ class EmitResult:
 
 def emit(request: EntrypointRequest) -> EmitResult:
     """Load exactly one exported graph and emit its portable workflow specification."""
+    source = SourcePackage.from_project(request.path.parent)
+    files, _ = source.manifest()
+    if request.path.name not in {file["path"] for file in files}:
+        raise FrontendError(
+            "source include must select the workflow entrypoint; "
+            "ensure [tool.massive.source].include contains its filename"
+        )
     with redirect_stdout(sys.stderr), _import_workflow(request) as module:
         selection = _select_graph(request, module)
-        source = source_package(
-            root=request.path.parent,
-            include=_SOURCE_INCLUDE,
-            package_id=_PACKAGE_ID,
-        )
         specification = selection.graph.emit(source=source)
     return EmitResult(specification=specification)
 

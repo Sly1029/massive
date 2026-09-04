@@ -154,3 +154,56 @@ assert archive_entry["artifact"] == {
 }
 assert json.loads((bundle_root.parent / "remote-result.json").read_text()) == {"value": 42}
 PY
+
+# A real workflow-local package and resource must work through the installed CLI,
+# including map collection, and remain executable after the checkout moves.
+cp -R "$repository/examples/07-package" "$test_root/packaged"
+packaged_run="$(
+  cd "$test_root/packaged"
+  "$massive" run workflow.py \
+    --input '{"values":[3,1,3]}' \
+    --store "$test_root/packaged-store" \
+    --project massive/distribution-test \
+    --run-id packaged-wheel \
+    --json
+)"
+(
+  cd "$test_root/packaged"
+  "$massive" build workflow.py \
+    --output "$test_root/packaged-bundle" \
+    --namespace workflows \
+    --service-account massive-runner \
+    --json
+)
+mv "$test_root/packaged" "$test_root/moved-checkout"
+"$massive" runtime map item \
+  --plan "$test_root/packaged-bundle/massive-plan.json" \
+  --bundle-dir "$test_root/packaged-bundle/runtime-assets" \
+  --node labels \
+  --item '{"index":0,"value":7}' \
+  --output "$test_root/packaged-result.json" \
+  --project argo/packaged-example \
+  --run-id isolated-package \
+  --store "$test_root/packaged-remote-store"
+
+"$python" - "$packaged_run" "$test_root" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+run = json.loads(sys.argv[1])
+root = Path(sys.argv[2])
+assert run["status"] == "succeeded", run
+assert run["result"] == {"labels": ["item:3", "item:1", "item:3"]}, run
+assert json.loads((root / "packaged-result.json").read_text()) == {
+    "index": 0, "value": "item:7",
+}
+spec = json.loads((root / "packaged-bundle/workflow-spec.json").read_text())
+assert [file["path"] for file in spec["sourcePackages"]["python-main"]["files"]] == [
+    "packaged_steps/__init__.py",
+    "packaged_steps/formatters.py",
+    "packaged_steps/prefix.txt",
+    "pyproject.toml",
+    "workflow.py",
+]
+PY
