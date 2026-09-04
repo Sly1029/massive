@@ -42,13 +42,9 @@ export {
   WorkflowSpecError,
 } from "./workflow-spec.ts";
 export {
-  channel,
-  type ChannelDefinition,
   type EndHandle,
   type MergeBuilder,
   type PathBuilder,
-  type StateSchema,
-  stateSchema,
   type StepHandle,
   type StepNode,
   type StepRun,

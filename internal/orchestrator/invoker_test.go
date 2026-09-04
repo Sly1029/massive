@@ -192,7 +192,7 @@ func TestProcessStepInvokerStopsDispatchAfterContextCancellation(t *testing.T) {
 	state := t.TempDir()
 	startedPath := filepath.Join(state, "started")
 	script := filepath.Join(state, "runner.sh")
-	source := "#!/bin/sh\nprintf x >> '" + startedPath + "'\nsleep 5\n"
+	source := "#!/bin/sh\nprintf x >> '" + startedPath + "'\nexec sleep 30\n"
 	if err := os.WriteFile(script, []byte(source), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -201,18 +201,39 @@ func TestProcessStepInvokerStopsDispatchAfterContextCancellation(t *testing.T) {
 	for index := range steps {
 		steps[index] = StepInvocation{Descriptor: processMapDescriptor("cancelled-batch", index)}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	// Cancel after all worker slots have actually started, not after an assumed
+	// process startup latency. The deadline only bounds a broken fixture.
+	watching := make(chan struct{})
+	go func() {
+		defer close(watching)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				started, err := os.ReadFile(startedPath)
+				if err == nil && len(started) == 3 {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{script}}).InvokeSteps(
 		ctx,
 		StepInvocationBatch{Steps: steps, MaxConcurrency: 3},
 	)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("error = %v, want context deadline", err)
+	<-watching
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want cancellation after workers started", err)
 	}
 	started := len(mustReadFile(t, startedPath))
-	if started == 0 || started > 3 {
-		t.Fatalf("started processes = %d, want 1..3", started)
+	if started != 3 {
+		t.Fatalf("started processes = %d, want exactly the 3 worker slots", started)
 	}
 	if len(outcomes) != started {
 		t.Fatalf("outcomes = %d, started = %d", len(outcomes), started)

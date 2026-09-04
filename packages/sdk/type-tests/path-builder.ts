@@ -48,3 +48,31 @@ g.start().to(numberToNumber).to(g.end());
 
 // @ts-expect-error merged number outputs cannot flow into string array input
 g.merge([numberToNumber]).to(mergeStrings);
+
+workflow({
+  name: "no-mutable-state",
+  input: z.int(),
+  output: z.int(),
+  // @ts-expect-error workflow state is not a portable dataflow mechanism
+  state: {},
+});
+
+g.step("no-channels", {
+  input: z.int(),
+  output: z.int(),
+  // @ts-expect-error channel publication has no execution semantics
+  channel: "result",
+  run: ({ input }) => input,
+});
+
+g.step("no-publish", {
+  input: z.int(),
+  output: z.int(),
+  // @ts-expect-error return a typed output instead of publishing to a channel
+  publish: { result: "result" },
+  run: (context) => {
+    // @ts-expect-error step state is not part of the invocation interface
+    context.state;
+    return context.input;
+  },
+});

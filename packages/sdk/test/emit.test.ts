@@ -10,7 +10,6 @@ import { join } from "node:path";
 import { z } from "zod";
 import { GraphValidationError, SourcePackagePathError } from "../src/errors.ts";
 import {
-  channel,
   contract,
   emitWorkflowSpec,
   env,
@@ -322,84 +321,6 @@ Deno.test("source package manifest orders files by UTF-16 code units, not locale
   } finally {
     await Deno.remove(root, { recursive: true });
   }
-});
-
-Deno.test("emission rejects workflow-level channel declarations (post-M2)", async () => {
-  await withSourcePackage(async (root) => {
-    const g = workflow({
-      name: "channels-workflow",
-      input: z.int(),
-      output: z.int(),
-      state: { result: channel(z.int()) },
-    });
-    const first = g.step("first", {
-      input: z.int(),
-      output: z.int(),
-      run: ({ input }) => input + 1,
-    });
-    g.start().to(first).to(g.end());
-
-    await assertRejects(
-      () =>
-        emitWorkflowSpec(g, {
-          source: { root, include: ["workflow.ts"] },
-        }),
-      GraphValidationError,
-      "channel(s): result",
-    );
-  });
-});
-
-Deno.test("emission rejects step-level channel publication (post-M2)", async () => {
-  await withSourcePackage(async (root) => {
-    const g = workflow({
-      name: "channel-step",
-      input: z.int(),
-      output: z.int(),
-    });
-    const first = g.step("first", {
-      input: z.int(),
-      output: z.int(),
-      channel: "result",
-      run: ({ input }) => input + 1,
-    });
-    g.start().to(first).to(g.end());
-
-    await assertRejects(
-      () =>
-        emitWorkflowSpec(g, {
-          source: { root, include: ["workflow.ts"] },
-        }),
-      GraphValidationError,
-      'channel "result"',
-    );
-  });
-});
-
-Deno.test("emission rejects step-level channel publications via publish (post-M2)", async () => {
-  await withSourcePackage(async (root) => {
-    const g = workflow({
-      name: "channel-publish",
-      input: z.object({ value: z.int() }),
-      output: z.object({ findings: z.int() }),
-    });
-    const scan = g.step("scan", {
-      input: z.object({ value: z.int() }),
-      output: z.object({ findings: z.int() }),
-      publish: { findings: "findings" },
-      run: ({ input }) => ({ findings: input.value }),
-    });
-    g.start().to(scan).to(g.end());
-
-    await assertRejects(
-      () =>
-        emitWorkflowSpec(g, {
-          source: { root, include: ["workflow.ts"] },
-        }),
-      GraphValidationError,
-      "channel(s): findings",
-    );
-  });
 });
 
 Deno.test("source package rejects included file symlinks escaping root", async () => {
