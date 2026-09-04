@@ -3,6 +3,7 @@
 Massive is a typed workflow SDK with a Go control plane. Python authors define
 a static graph with Pydantic models; Massive compiles it to a protobuf-owned
 plan and executes that same plan locally or lowers it to Argo Workflows.
+The local runner also runs inside ordinary CI jobs without a hosted control plane.
 
 The `massive-workflows` platform wheel contains both the Python authoring/runtime
 package and the matching native Go CLI:
@@ -11,6 +12,11 @@ package and the matching native Go CLI:
 uv add massive-workflows
 uv run massive run workflow.py --input '{"value": 21}'
 ```
+
+Each workflow directory can own its dependencies and source/resource allowlist in
+`pyproject.toml`. See [workflow packaging](packages/python/README.md#workflow-packages-and-resources).
+The local runner uses the launching Python environment; it does not install
+dependencies, enforce the declared container, or provide a sandbox.
 
 For Argo, use an immutable runner image containing the same
 `massive-workflows` version, then build and apply the generated runtime assets

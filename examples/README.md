@@ -11,6 +11,11 @@ first if needed:
 pnpm install --frozen-lockfile
 ```
 
+Examples 01–04 exercise the existing TypeScript frontend through the legacy Deno
+CLI. Python examples use the shipped `massive` CLI from a platform wheel. For a
+source checkout, build/install the wheel first; an editable Python SDK alone does
+not include the native CLI.
+
 ## 1. The smallest graph: passthrough
 
 [`01-passthrough.ts`](01-passthrough.ts) has only Massive's two sentinel nodes:
@@ -122,8 +127,8 @@ the alternatives back into one result handle. Every discriminator case must be
 claimed, and only the selected branch runs; inactive branch steps are skipped.
 
 ```sh
-deno task massive run examples/05-decision/workflow.py --input '{"score":82}'
-deno task massive run examples/05-decision/workflow.py --input '{"score":40}'
+massive run examples/05-decision/workflow.py --project examples/decision --input '{"score":82}'
+massive run examples/05-decision/workflow.py --project examples/decision --input '{"score":40}'
 ```
 
 Decision/select graphs run on the local target. Argo lowering currently rejects
@@ -143,13 +148,44 @@ mapper receives one item per invocation; the resulting list preserves source
 order even if items finish out of order. Empty input produces an empty list.
 
 ```sh
-deno task massive run examples/06-map/workflow.py \
+massive run examples/06-map/workflow.py --project examples/map \
   --input '{"values":[2,3,4,5]}'
 ```
 
-Finite maps run on the local target today. Argo lowering currently rejects map
-nodes. Maps use Graph IR 0.3; decisions use 0.2; ordinary TypeScript step graphs
-use 0.1.
+Finite maps run locally and lower to bounded native Argo fan-out. Maps use Graph
+IR 0.3; decisions use 0.2; ordinary TypeScript step graphs use 0.1.
+
+## 7. Package modules and resources, then collect map results
+
+[`07-package/workflow.py`](07-package/workflow.py) imports its mapper from a
+workflow-local package. The mapper reads a text resource using
+`importlib.resources`; `[tool.massive.source].include` in the adjacent
+[`pyproject.toml`](07-package/pyproject.toml) selects both code and resource bytes.
+
+```sh
+massive run examples/07-package/workflow.py --project examples/package \
+  --input '{"values":[3,1,3]}'
+```
+
+The result is `{"labels":["item:3","item:1","item:3"]}`. Duplicate inputs remain
+separate items and output ordering follows source order. The map's collected
+`list[str]` feeds an ordinary typed step, which constructs the final result.
+The clean-wheel distribution test also executes this mapper from the generated
+bundle after moving the original checkout.
+
+### What we take from Pydantic Graph joins
+
+[Pydantic Graph's joins](https://ai.pydantic.dev/graph/beta/joins/) synchronize
+the work belonging to a parent fork, reduce incoming values, and finalize once
+that fork completes. That scope-aware model is useful inspiration for future
+multi-step map bodies; a join is not simply every predecessor in the entire graph.
+
+Massive currently crystallizes a finite list, maps each source index, and collects
+an ordered result list before invoking an ordinary aggregation step. This keeps
+empty input, duplicates, failure, and ordering explicit without a second reducer
+runtime. A decision's `select` chooses one alternative; it is not a parallel
+reducer join. Mutable shared state and completion-order reduction are not copied
+from the in-memory model.
 
 ## From graph code to protobuf
 
