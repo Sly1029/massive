@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from pydantic import BaseModel
 
 from massive import Blob, GraphBuilder, StepContext, Tree, container, execution
@@ -40,7 +38,7 @@ graph = GraphBuilder(
 
 
 def capture(ctx: StepContext[None, Request]) -> list[Snapshot]:
-    root = Path(__file__).parent / "checkout"
+    root = ctx.workspace / "checkout"
     root.mkdir()
     (root / "source.txt").write_text("original")
     (root / "empty").mkdir()
@@ -56,7 +54,7 @@ def inspect(ctx: StepContext[None, Snapshot]) -> Inspection:
     assert (root / "tool").stat().st_mode & 0o111
     assert (root / "source.txt").read_text() == "original"
     (root / "source.txt").write_text(f"copy-{ctx.inputs.index}")
-    report = root / "report.txt"
+    report = ctx.workspace / "report.txt"
     report.write_text(f"report-{ctx.inputs.index}")
     return Inspection(original=ctx.inputs.checkout, report=Blob.from_path(report))
 

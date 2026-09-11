@@ -85,7 +85,7 @@ def decimal_echo(context: StepContext[None, DecimalResult]) -> DecimalResult:
 
 
 def changed_file(context: StepContext[None, Request]) -> Blob:
-    path = Path(__file__).parent / "output.txt"
+    path = context.workspace / "output.txt"
     path.write_text("snapshot")
     result = Blob.from_path(path)
     path.write_text("changed after snapshot")
