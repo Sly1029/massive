@@ -533,4 +533,12 @@ hydrated input files. It stays alive through output validation and Blob/Tree
 publication, and is removed on success or failure. Paths inside it are temporary;
 return typed artifact handles when another task needs the contents. Workspace
 cleanup does not terminate detached child processes or impose a disk quota.
-Abrupt process termination can leave local scratch behind.
+Abrupt process termination can leave local scratch behind. Local task adapters
+own ordinary descendants through a process group (Linux/macOS) or job (Windows).
+Tasks must await child work before returning. Adapter completion or context
+cancellation terminates descendants still in that group; this is not a sandbox
+against code deliberately detaching from a Unix process group. Captured task
+output is limited to 1 MiB with an explicit truncation marker, and inherited
+output pipes have a bounded drain period. CLI signal handling and durable
+cancellation journals remain separate work; forcibly killing the CLI is not a
+graceful cancellation API.
