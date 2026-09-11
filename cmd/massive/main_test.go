@@ -25,6 +25,7 @@ func TestCLIExplainsInvalidArguments(t *testing.T) {
 		args []string
 		want string
 	}{
+		{"inspect conflicting views", []string{"inspect", "run-id", "--project", "test", "--step", "task", "--json"}, "--step"},
 		{"inspect requires project", []string{"inspect", "run-id"}, "--project"},
 		{"unknown flag", []string{"run", "example.py", "--invalid"}, "--invalid"},
 		{"missing build option", []string{"build", "example.py"}, "--output"},
@@ -150,7 +151,6 @@ func TestInspectCommandRendersAndFiltersStoredJournals(t *testing.T) {
 		{"step", "task", false, "task  failed", false},
 		{"json", "", true, `"schemaVersion":3`, false},
 		{"unknown step", "missing", false, "omit --step", true},
-		{"conflicting views", "task", true, "choose either", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var output bytes.Buffer

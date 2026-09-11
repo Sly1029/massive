@@ -19,9 +19,6 @@ type InspectCommand struct {
 }
 
 func (command *InspectCommand) Run(ctx context.Context, stdout io.Writer) error {
-	if command.JSON && command.Step != "" {
-		return fmt.Errorf("choose either --step text output or the complete --json journal")
-	}
 	journal, err := controlplane.Inspect(ctx, command.Store, command.Project, command.RunID)
 	if err != nil {
 		return err

@@ -308,3 +308,26 @@ export default flow;`
 		t.Fatal("large canonical transport was truncated")
 	}
 }
+
+func TestFrontendDiagnosticsDistinguishEntrypointsAndAuthorFailures(t *testing.T) {
+	directory := t.TempDir()
+	if _, err := Emit(context.Background(), directory); err == nil || !strings.Contains(err.Error(), "Python entrypoints must name a .py file") {
+		t.Fatalf("directory diagnostic = %v", err)
+	}
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	python := filepath.Join(repository, "packages", "python", ".venv", "bin", "python")
+	if _, err := os.Stat(python); err != nil {
+		t.Skip("Python SDK environment is unavailable")
+	}
+	t.Setenv("MASSIVE_PYTHON", python)
+	entry := filepath.Join(directory, "workflow.py")
+	if err := os.WriteFile(entry, []byte("raise RuntimeError('author failure marker')\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(context.Background(), entry); err == nil || !strings.Contains(err.Error(), "author failure marker") || strings.Contains(err.Error(), "install") {
+		t.Fatalf("author diagnostic = %v", err)
+	}
+}

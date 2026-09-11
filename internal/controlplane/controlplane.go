@@ -49,6 +49,9 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	packageRoot := filepath.Dir(absolute)
 	extension := filepath.Ext(absolute)
 	if info, err := os.Stat(absolute); err == nil && info.IsDir() {
+		if _, err := os.Stat(filepath.Join(absolute, "massive.config.ts")); err != nil {
+			return nil, fmt.Errorf("directory entrypoints require massive.config.ts; Python entrypoints must name a .py file: %w", err)
+		}
 		extension = ".ts"
 		packageRoot = absolute
 	}
@@ -91,7 +94,10 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 		if diagnostic == "" {
 			diagnostic = err.Error()
 		}
-		return nil, fmt.Errorf("%s frontend failed; install its language adapter: %s", language, diagnostic)
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("%s frontend unavailable; install its language adapter: %s", language, diagnostic)
+		}
+		return nil, fmt.Errorf("%s frontend failed: %s", language, diagnostic)
 	}
 	canonicalBytes := stdout.Bytes()
 	workflowSpec, err := spec.Parse(canonicalBytes)
