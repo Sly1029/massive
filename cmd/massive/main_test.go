@@ -2,12 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Sly1029/massive/internal/orchestrator"
+	"github.com/Sly1029/massive/internal/runjournal"
 )
 
 func TestCLIExplainsInvalidArguments(t *testing.T) {
@@ -20,6 +25,7 @@ func TestCLIExplainsInvalidArguments(t *testing.T) {
 		args []string
 		want string
 	}{
+		{"inspect requires project", []string{"inspect", "run-id"}, "--project"},
 		{"unknown flag", []string{"run", "example.py", "--invalid"}, "--invalid"},
 		{"missing build option", []string{"build", "example.py"}, "--output"},
 		{"invalid target", []string{"build", "example.py", "--target", "invalid", "--output", "bundle", "--namespace", "default", "--service-account", "runner"}, "argo"},
@@ -115,5 +121,49 @@ func TestRuntimeMapEmptyMarkerDoesNotLoadOrInvokeAPlan(t *testing.T) {
 	}
 	if string(result) != `{"empty":true}` {
 		t.Fatalf("empty marker result = %s", result)
+	}
+}
+
+func TestInspectCommandRendersAndFiltersStoredJournals(t *testing.T) {
+	store := t.TempDir()
+	projectKey := orchestrator.NormalizeProjectKey("test/inspect")
+	path := filepath.Join(store, "projects", projectKey, "runs", "recorded", "run-manifest.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	journal := runjournal.Manifest{Kind: "RunManifest", SchemaVersion: 3, Encoding: "json-v3", PlanHash: "sha256:plan", ProjectKey: projectKey, RunID: "recorded", Status: "failed", Steps: []runjournal.Step{{NodeID: "task", Status: "failed", Attempts: []runjournal.Attempt{{Attempt: 1, Status: "failed", Input: runjournal.DataArtifact{Key: "input", Hash: "hash", ContentType: "application/json", Schema: "schema"}, Diagnostic: "step failed"}}}}, Decisions: []runjournal.Decision{}}
+	body, err := json.Marshal(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		step  string
+		json  bool
+		want  string
+		fails bool
+	}{
+		{"text", "", false, "step failed", false},
+		{"step", "task", false, "task  failed", false},
+		{"json", "", true, `"schemaVersion":3`, false},
+		{"unknown step", "missing", false, "omit --step", true},
+		{"conflicting views", "task", true, "choose either", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var output bytes.Buffer
+			err := (&InspectCommand{RunID: "recorded", Project: "test/inspect", Store: store, Step: tc.step, JSON: tc.json}).Run(context.Background(), &output)
+			if tc.fails {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("error=%v", err)
+				}
+				return
+			}
+			if err != nil || !strings.Contains(output.String(), tc.want) {
+				t.Fatalf("output=%q error=%v", output.String(), err)
+			}
+		})
 	}
 }

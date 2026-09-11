@@ -319,10 +319,6 @@ func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, inpu
 		}
 		archives[sourcePackage.GetPackageHash()] = body
 	}
-	runnerCommand := []string(nil)
-	if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
-		runnerCommand = []string{python, "-m", "massive.runner", "{descriptor}"}
-	}
 	bindingJSON, err := os.ReadFile(datastoreConfig)
 	if err != nil {
 		return nil, fmt.Errorf("read datastore binding: %w", err)
@@ -333,7 +329,7 @@ func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, inpu
 	}
 	config := orchestrator.IsolatedStepConfig{
 		Plan: workflowPlan, NodeID: nodeID, Datastore: binding,
-		ProjectID: project, RunID: runID, RunnerCommand: runnerCommand,
+		ProjectID: project, RunID: runID,
 		SourceArchives: archives,
 	}
 	if mapItemIndex != nil {

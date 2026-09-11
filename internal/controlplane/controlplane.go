@@ -47,7 +47,12 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	var command *exec.Cmd
 	language := "Python"
 	packageRoot := filepath.Dir(absolute)
-	switch filepath.Ext(absolute) {
+	extension := filepath.Ext(absolute)
+	if info, err := os.Stat(absolute); err == nil && info.IsDir() {
+		extension = ".ts"
+		packageRoot = absolute
+	}
+	switch extension {
 	case ".py":
 		if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
 			command = exec.CommandContext(ctx, python, "-m", "massive.frontend", "emit", resolvedEntry)

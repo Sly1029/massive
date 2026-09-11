@@ -50,7 +50,7 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	if config.Datastore == nil || config.ProjectID == "" || config.RunID == "" {
 		return nil, errors.New("isolated step requires datastore descriptor, project id, and run id")
 	}
-	if !validSafePathSegment(config.RunID) {
+	if !ValidSafePathSegment(config.RunID) {
 		return nil, &InvalidRunInputError{Field: "run id", Value: config.RunID, Message: "must be a safe path segment"}
 	}
 	store, err := openInvocationDatastore(ctx, config.Datastore)

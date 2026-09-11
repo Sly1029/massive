@@ -112,3 +112,8 @@ test. A normal CI job invoking `massive run` does not need a new compiler target
 
 Graph artifacts use only current IR 0.3. Both frontends emit it for all graph
 shapes; obsolete specs and plans must be rebuilt, with no compatibility reader.
+
+CLI retirement removes the Deno-only emit cache, binary build cache, store-prefix
+flags/environment aliases, and bare `-` input spelling. Use an explicit `--store`
+root and `--input` or `--input-file`; no compatibility aliases remain. Local
+execution in both languages is trusted application execution, not a sandbox.

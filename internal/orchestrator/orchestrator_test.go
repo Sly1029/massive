@@ -365,7 +365,7 @@ func TestSafePathSegmentContractAgreesAcrossSchemasAndGo(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(fmt.Sprintf("%q", testCase.value), func(t *testing.T) {
-			if got := validSafePathSegment(testCase.value); got != testCase.valid {
+			if got := ValidSafePathSegment(testCase.value); got != testCase.valid {
 				t.Fatalf("Go safe path segment validation = %t, want %t", got, testCase.valid)
 			}
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -200,13 +201,19 @@ func writableStoreForTest(t *testing.T) string {
 }
 
 func TestInspectKeepsProjectsSeparateAndDoesNotWrite(t *testing.T) {
+	if _, err := exec.LookPath("deno"); err != nil {
+		t.Skip("Deno is unavailable; run pnpm check in a provisioned development environment")
+	}
 	repository, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MASSIVE_TYPESCRIPT_FRONTEND", filepath.Join(repository, "scripts", "massive-typescript-frontend"))
 	t.Setenv("MASSIVE_TYPESCRIPT_RUNNER", filepath.Join(repository, "scripts", "massive-typescript-runner"))
-	frontend, err := Emit(context.Background(), filepath.Join(repository, "conformance", "workflows", "linear-chain", "workflow.ts"))
+	if _, err := os.Stat(filepath.Join(repository, "node_modules", "zod")); err != nil {
+		t.Skip("SDK dependencies are unavailable; run pnpm install")
+	}
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "conformance", "workflows", "linear-chain"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,5 +274,37 @@ func TestInspectKeepsProjectsSeparateAndDoesNotWrite(t *testing.T) {
 		if _, err := Inspect(context.Background(), store, "acme/one", runID); err == nil {
 			t.Fatalf("unsafe run %q accepted", runID)
 		}
+	}
+}
+
+func TestTypeScriptFrontendStreamsLargeSpecsAndSeparatesAuthorLogs(t *testing.T) {
+	if _, err := exec.LookPath("deno"); err != nil {
+		t.Skip("Deno is unavailable")
+	}
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repository, "node_modules", "zod")); err != nil {
+		t.Skip("run pnpm install for SDK dependencies")
+	}
+	t.Setenv("MASSIVE_TYPESCRIPT_FRONTEND", filepath.Join(repository, "scripts", "massive-typescript-frontend"))
+	entry := filepath.Join(t.TempDir(), "workflow.ts")
+	source := `import { workflow } from "@massive/sdk";
+import { z } from "zod";
+console.log("author diagnostic belongs on stderr");
+const schema = z.string().describe("x".repeat(100000));
+const flow = workflow({name:"large-spec",input:schema,output:schema});
+flow.start().to(flow.end());
+export default flow;`
+	if err := os.WriteFile(entry, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	emitted, err := Emit(context.Background(), entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(emitted.Canonical) < 100000 || emitted.Spec.Workflow.Name != "large-spec" {
+		t.Fatal("large canonical transport was truncated")
 	}
 }

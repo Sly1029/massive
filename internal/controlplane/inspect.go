@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/orchestrator"
@@ -16,8 +15,7 @@ func Inspect(ctx context.Context, storeRoot, project, runID string) (*runjournal
 	if project == "" {
 		return nil, fmt.Errorf("project is required; provide --project")
 	}
-	segment, err := datastore.ParseKey(runID)
-	if err != nil || strings.Contains(runID, "/") {
+	if !orchestrator.ValidSafePathSegment(runID) {
 		return nil, fmt.Errorf("invalid run ID; use one safe path segment")
 	}
 	root, err := resolveStore(storeRoot)
@@ -29,7 +27,7 @@ func Inspect(ctx context.Context, storeRoot, project, runID string) (*runjournal
 		return nil, err
 	}
 	projectKey := orchestrator.NormalizeProjectKey(project)
-	key := datastore.MustKey("projects/" + projectKey + "/runs/" + segment.String() + "/run-manifest.json")
+	key := datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/run-manifest.json")
 	object, err := store.Get(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("read run %q; check --project, --store and run ID: %w", runID, err)

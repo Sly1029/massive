@@ -39,7 +39,7 @@ func validSHA256Ref(ref string) bool {
 	return canonical.IsSHA256Ref(ref)
 }
 
-func validSafePathSegment(value string) bool {
+func ValidSafePathSegment(value string) bool {
 	if len(value) > maxSafePathSegmentLength || value == "." || value == ".." || !safePathSegmentPattern.MatchString(value) {
 		return false
 	}
@@ -99,7 +99,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	// paths). Reject a traversal or otherwise unsafe id up front, using the same
 	// segment rules the datastore key parser enforces, before any run artifact
 	// is written. A run id must be a single normalized path segment.
-	if !validSafePathSegment(runID) {
+	if !ValidSafePathSegment(runID) {
 		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "must be a single safe path segment of at most 128 characters (datastore key segment rules)"}
 	}
 	if err := validatePlanIdentitySegments(config.Plan); err != nil {
@@ -295,27 +295,27 @@ func validatePlanIdentitySegments(plan *planpb.WorkflowPlan) error {
 	if graph == nil {
 		return &InvalidRunInputError{Field: "plan graph", Message: "is required"}
 	}
-	if !validSafePathSegment(graph.GetStartNode()) {
+	if !ValidSafePathSegment(graph.GetStartNode()) {
 		return invalidPlanIdentity("plan graph start node", graph.GetStartNode())
 	}
-	if !validSafePathSegment(graph.GetEndNode()) {
+	if !ValidSafePathSegment(graph.GetEndNode()) {
 		return invalidPlanIdentity("plan graph end node", graph.GetEndNode())
 	}
 	for _, node := range graph.GetNodes() {
-		if !validSafePathSegment(node.GetId()) {
+		if !ValidSafePathSegment(node.GetId()) {
 			return invalidPlanIdentity("plan graph node id", node.GetId())
 		}
 		for _, sourceID := range node.GetMergeInputs() {
-			if !validSafePathSegment(sourceID) {
+			if !ValidSafePathSegment(sourceID) {
 				return invalidPlanIdentity("plan graph node merge input", sourceID)
 			}
 		}
 	}
 	for _, edge := range graph.GetEdges() {
-		if !validSafePathSegment(edge.GetFrom()) {
+		if !ValidSafePathSegment(edge.GetFrom()) {
 			return invalidPlanIdentity("plan graph edge from", edge.GetFrom())
 		}
-		if !validSafePathSegment(edge.GetTo()) {
+		if !ValidSafePathSegment(edge.GetTo()) {
 			return invalidPlanIdentity("plan graph edge to", edge.GetTo())
 		}
 	}

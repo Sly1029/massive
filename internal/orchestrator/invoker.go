@@ -266,7 +266,7 @@ func descriptorFilePath(descriptorDir string, descriptor StepInvocationDescripto
 }
 
 func validateDescriptorFileIdentity(descriptor StepInvocationDescriptor) error {
-	if !validSafePathSegment(descriptor.RunID) || !validSafePathSegment(descriptor.NodeID) || descriptor.Attempt < 1 || int64(descriptor.Attempt) > artifact.MaxJSONSafeInteger {
+	if !ValidSafePathSegment(descriptor.RunID) || !ValidSafePathSegment(descriptor.NodeID) || descriptor.Attempt < 1 || int64(descriptor.Attempt) > artifact.MaxJSONSafeInteger {
 		return fmt.Errorf("invalid descriptor identity for filename")
 	}
 	if descriptor.Scope != nil {

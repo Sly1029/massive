@@ -14,7 +14,12 @@ try {
   const spec = await emitWorkflowSpec(resolved.workflow, {
     source: resolved.source, package: resolved.package,
   });
-  await Deno.stdout.write(new TextEncoder().encode(stableStringify(spec)));
+  const writer = Deno.stdout.writable.getWriter();
+  try {
+    await writer.write(new TextEncoder().encode(stableStringify(spec)));
+  } finally {
+    writer.releaseLock();
+  }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   Deno.exit(2);

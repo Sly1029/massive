@@ -28,7 +28,12 @@ func TestJournalReaderValidatesTerminalMapState(t *testing.T) {
 		{"sparse source order", func(m *Manifest) { (*m.Steps[0].Items)[1].Index = 5 }},
 		{"attempt disagreement", func(m *Manifest) { (*m.Steps[0].Items)[0].Status = "succeeded" }},
 		{"unfinished failed map", func(m *Manifest) { (*m.Steps[0].Items)[1].Status = "pending" }},
-		{"not-started without failure", func(m *Manifest) { m.Steps[0].Status = "running" }},
+		{"not-started without failure", func(m *Manifest) {
+			m.Status = "running"
+			m.Steps[0].Status = "running"
+			m.Steps[0].Attempts[0].Status = "running"
+			m.Steps[0].Attempts[0].Diagnostic = ""
+		}},
 		{"successful without result", func(m *Manifest) { m.Status = "succeeded" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

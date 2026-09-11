@@ -14,11 +14,14 @@ type InspectCommand struct {
 	RunID   string `arg:"" name:"run-id" help:"Run identifier."`
 	Project string `help:"Project identity used when submitting the run." required:""`
 	Store   string `help:"Local datastore root."`
-	Step    string `help:"Show one step in text output."`
-	JSON    bool   `help:"Print the complete validated run journal as JSON."`
+	Step    string `help:"Show one step in text output." xor:"view"`
+	JSON    bool   `help:"Print the complete validated run journal as JSON." xor:"view"`
 }
 
 func (command *InspectCommand) Run(ctx context.Context, stdout io.Writer) error {
+	if command.JSON && command.Step != "" {
+		return fmt.Errorf("choose either --step text output or the complete --json journal")
+	}
 	journal, err := controlplane.Inspect(ctx, command.Store, command.Project, command.RunID)
 	if err != nil {
 		return err
