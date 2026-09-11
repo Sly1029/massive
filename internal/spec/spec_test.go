@@ -114,7 +114,7 @@ func TestParseReportsUnsupportedGraphIRVersion(t *testing.T) {
 	}
 
 	diagnostics := diagnosticsFromError(t, err)
-	if diagnostics[0].Path != "$.graph.irVersion" || diagnostics[0].Ref != "0.4" || !strings.Contains(diagnostics[0].Message, "compiler supports >=0.1 <0.4") {
+	if diagnostics[0].Path != "$.graph.irVersion" || diagnostics[0].Ref != "0.4" || !strings.Contains(diagnostics[0].Message, "rebuild with the current SDK (requires 0.3)") {
 		t.Fatalf("unexpected diagnostic: %#v", diagnostics)
 	}
 }
@@ -211,12 +211,17 @@ func TestResolveLocalJSONPointerRejectsSignedArrayIndexes(t *testing.T) {
 	}
 }
 
-func TestParseForbidsMapFieldsBeforeGraphIR03(t *testing.T) {
-	data := mutateFixture(t, "finite-map", func(root map[string]any) {
-		root["graph"].(map[string]any)["irVersion"] = "0.2"
-	})
-	if _, err := Parse(data); err == nil {
-		t.Fatal("expected Graph IR 0.2 to reject map fields")
+func TestParseRejectsObsoleteGraphIRForAllShapes(t *testing.T) {
+	for _, fixture := range []string{"linear-chain", "exhaustive-decision", "finite-map"} {
+		for _, version := range []string{"0.1", "0.2"} {
+			changed := mutateValidFixture(t, fixture, func(root map[string]any) {
+				root["graph"].(map[string]any)["irVersion"] = version
+			})
+			_, err := Parse(changed)
+			if err == nil || !strings.Contains(err.Error(), "rebuild with the current SDK") {
+				t.Fatalf("%s with IR %s: %v", fixture, version, err)
+			}
+		}
 	}
 }
 

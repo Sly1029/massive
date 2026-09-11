@@ -152,7 +152,7 @@ def test_emit_serializes_an_exhaustive_pydantic_decision_as_data_only_ir() -> No
     decision = nodes["review-route"]
     select = nodes["review-route-select"]
 
-    assert graph_ir["irVersion"] == "0.2"
+    assert graph_ir["irVersion"] == "0.3"
     assert decision["kind"] == "decision"
     assert decision["selector"] == "kind"
     assert [case["tag"] for case in decision["cases"]] == ["approved", "rejected"]

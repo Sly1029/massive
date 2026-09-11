@@ -277,7 +277,7 @@ interesting portion looks like this (hash references are shortened here):
       { "from": "total", "to": "__end" },
       { "from": "triple", "to": "total" }
     ],
-    "irVersion": "0.1"
+    "irVersion": "0.3"
   }
 }
 ```

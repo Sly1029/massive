@@ -67,7 +67,7 @@ message GraphNode {
   optional string id = 1;
   // "start", "step", "decision", "select", "map", or "end". Fan-in steps list
   // their merged upstream step ids in merge_inputs; decision/select fields are
-  // data-only route declarations for Graph IR 0.2.
+  // data-only route declarations in the current Graph IR.
   optional string kind = 2;
   optional string input_schema = 3;
   optional string output_schema = 4;

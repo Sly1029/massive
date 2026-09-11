@@ -8,14 +8,14 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:689133bea0dc8ec650eeccd20aa9a0dc6f765ace7895a53713e9c25fb744bbd2",
+  "specHash": "sha256:c1578db0f386b1c17a10682453ba82cb82f653e5a7461db92032da298f438923",
   "workflow": {
     "name": "diamond",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   },
   "graph": {
-    "irVersion": "0.1",
+    "irVersion": "0.3",
     "start": "__start",
     "end": "__end",
     "nodes": [

@@ -109,3 +109,6 @@ validation and isolated runner tests do not replace a live cluster execution gat
 
 Revisit a deferred feature only with a concrete workflow and a functional acceptance
 test. A normal CI job invoking `massive run` does not need a new compiler target.
+
+Graph artifacts use only current IR 0.3. Both frontends emit it for all graph
+shapes; obsolete specs and plans must be rebuilt, with no compatibility reader.

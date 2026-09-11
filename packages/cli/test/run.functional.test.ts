@@ -139,7 +139,7 @@ Deno.test("massive run Python graph: same compiler, runner, and frozen artifact 
   const spec = await parseWorkflowSpecText(
     await Deno.readTextFile(join(store, specKey)),
   );
-  assertEquals(spec.graph.irVersion, "0.1");
+  assertEquals(spec.graph.irVersion, "0.3");
   assertEquals(spec.sourcePackages["python-main"]?.language, "python");
 
   const plan = JSON.parse(await Deno.readTextFile(join(store, planKey))) as {

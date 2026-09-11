@@ -16,7 +16,6 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/deployment"
-	"github.com/Sly1029/massive/internal/irversion"
 	"github.com/Sly1029/massive/internal/materialization"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -76,12 +75,6 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 	p, err := plan.VerifyCanonicalJSON(planJSON, deploymentSpec.PlanHash)
 	if err != nil {
 		return nil, fmt.Errorf("argo target: verify canonical plan: %w", err)
-	}
-	if version, err := irversion.Parse(p.GetGraph().GetIrVersion()); err != nil || !irversion.CompilerSupports(version) {
-		if err != nil {
-			return nil, fmt.Errorf("argo target: invalid graph IR version: %w", err)
-		}
-		return nil, fmt.Errorf("argo target: graph IR version %s is unsupported (accepted %s)", version, irversion.CompilerRange)
 	}
 	if err := validateStaticGraph(p); err != nil {
 		return nil, err

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://massive.dev/conformance/schema/workflow-spec.schema.json",
   "title": "Massive WorkflowSpec",
-  "description": "V0 WorkflowSpec transports Graph IR 0.1 static DAGs, Graph IR 0.2 data-only exhaustive decisions/selects, and Graph IR 0.3 finite maps. Graph IR has a separate explicit 0.x version from this transport schema version. Channels, broadcasts, gathers, and reducers remain intentionally post-M2.",
+  "description": "WorkflowSpec transports Graph IR 0.3: static DAGs, exhaustive decisions/selects, and finite maps. Obsolete artifacts must be rebuilt with the current SDK.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -35,13 +35,7 @@
         "outputSchema": { "$ref": "#/$defs/hashRef" }
       }
     },
-    "graph": {
-      "oneOf": [
-        { "$ref": "#/$defs/graphV01" },
-        { "$ref": "#/$defs/graphV02" },
-        { "$ref": "#/$defs/graphV03" }
-      ]
-    },
+    "graph": { "$ref": "#/$defs/graph" },
     "schemas": {
       "type": "object",
       "propertyNames": { "$ref": "#/$defs/hashRef" },
@@ -123,17 +117,12 @@
         "recipeVersion": { "const": 1 }
       }
     },
-    "graphV01": {
+    "graph": {
       "type": "object",
       "additionalProperties": false,
       "required": ["irVersion", "start", "end", "nodes", "edges"],
       "properties": {
-        "irVersion": {
-          "allOf": [
-            { "type": "string", "pattern": "^0\\.[0-9]+$" },
-            { "not": { "enum": ["0.2", "0.3"] } }
-          ]
-        },
+        "irVersion": { "const": "0.3" },
         "start": { "$ref": "#/$defs/safePathSegment" },
         "end": { "$ref": "#/$defs/safePathSegment" },
         "nodes": {
@@ -147,61 +136,7 @@
         }
       }
     },
-    "graphV02": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["irVersion", "start", "end", "nodes", "edges"],
-      "properties": {
-        "irVersion": { "const": "0.2" },
-        "start": { "$ref": "#/$defs/safePathSegment" },
-        "end": { "$ref": "#/$defs/safePathSegment" },
-        "nodes": {
-          "type": "array",
-          "minItems": 2,
-          "items": { "$ref": "#/$defs/nodeV02" }
-        },
-        "edges": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/edgeV02" }
-        }
-      }
-    },
-    "graphV03": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["irVersion", "start", "end", "nodes", "edges"],
-      "properties": {
-        "irVersion": { "const": "0.3" },
-        "start": { "$ref": "#/$defs/safePathSegment" },
-        "end": { "$ref": "#/$defs/safePathSegment" },
-        "nodes": {
-          "type": "array",
-          "minItems": 2,
-          "items": { "$ref": "#/$defs/nodeV03" }
-        },
-        "edges": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/edgeV02" }
-        }
-      }
-    },
     "node": {
-      "oneOf": [
-        { "$ref": "#/$defs/startNode" },
-        { "$ref": "#/$defs/endNode" },
-        { "$ref": "#/$defs/stepNode" }
-      ]
-    },
-    "nodeV02": {
-      "oneOf": [
-        { "$ref": "#/$defs/startNode" },
-        { "$ref": "#/$defs/endNode" },
-        { "$ref": "#/$defs/stepNode" },
-        { "$ref": "#/$defs/decisionNode" },
-        { "$ref": "#/$defs/selectNode" }
-      ]
-    },
-    "nodeV03": {
       "oneOf": [
         { "$ref": "#/$defs/startNode" },
         { "$ref": "#/$defs/endNode" },
@@ -313,7 +248,7 @@
         "source": { "$ref": "#/$defs/safePathSegment" }
       }
     },
-    "edge": {
+    "unconditionalEdge": {
       "type": "object",
       "additionalProperties": false,
       "required": ["from", "to"],
@@ -322,9 +257,9 @@
         "to": { "$ref": "#/$defs/safePathSegment" }
       }
     },
-    "edgeV02": {
+    "edge": {
       "oneOf": [
-        { "$ref": "#/$defs/edge" },
+        { "$ref": "#/$defs/unconditionalEdge" },
         { "$ref": "#/$defs/conditionalEdge" }
       ]
     },

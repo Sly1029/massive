@@ -36,7 +36,7 @@ async function validateWorkflowSpec(value: unknown): Promise<WorkflowSpec> {
   const validate = await compileWorkflowSpecValidator();
   if (!validate(value)) {
     throw new WorkflowSpecError(
-      `WorkflowSpec JSON schema violation ${formatAjvError(validate.errors)}`,
+      `WorkflowSpec JSON schema violation ${formatAjvError(validate.errors)}; rebuild with the current SDK`,
     );
   }
 

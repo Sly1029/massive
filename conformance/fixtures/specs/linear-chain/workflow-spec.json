@@ -8,14 +8,14 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:f4edde0cd25648a35c6c08521fd74f6c45514c47fa763987cdc1b320da6b9f4b",
+  "specHash": "sha256:9f8a7d85870c4e0a0945516cf25eb3e597f3d44b7875917c3dcd142f85200f6d",
   "workflow": {
     "name": "linear-chain",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "outputSchema": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
   },
   "graph": {
-    "irVersion": "0.1",
+    "irVersion": "0.3",
     "start": "__start",
     "end": "__end",
     "nodes": [

@@ -124,8 +124,8 @@ func TestCompilePreservesPythonFrontendIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := compiled.Plan.GetGraph().GetIrVersion(); got != "0.1" {
-		t.Fatalf("Graph IR version = %q, want 0.1", got)
+	if got := compiled.Plan.GetGraph().GetIrVersion(); got != "0.3" {
+		t.Fatalf("Graph IR version = %q, want 0.3", got)
 	}
 	if len(compiled.Plan.GetSymbols()) != 1 || compiled.Plan.GetSymbols()[0].GetLanguage() != "python" {
 		t.Fatalf("compiled symbols = %#v, want one Python symbol", compiled.Plan.GetSymbols())
@@ -238,7 +238,7 @@ func decisionSpecData(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	graph := root["graph"].(map[string]any)
-	graph["irVersion"] = "0.2"
+	graph["irVersion"] = "0.3"
 	graph["nodes"] = []any{
 		map[string]any{"id": "__start", "kind": "start"},
 		map[string]any{"id": "__end", "kind": "end"},

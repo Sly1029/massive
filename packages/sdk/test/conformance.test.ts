@@ -126,31 +126,17 @@ Deno.test("WorkflowSpec JSON Schema rejects step nodes without contractRef", asy
   assert(JSON.stringify(validate.errors).includes("contractRef"));
 });
 
-Deno.test("WorkflowSpec JSON Schema leaves unknown static Graph IR range checks to consumers", async () => {
-	const validate = await compileWorkflowSpecValidator();
-	const spec = (await readJson(
-		"../../../conformance/fixtures/specs/linear-chain/workflow-spec.json",
-	)) as { graph: { irVersion: string } };
-	spec.graph.irVersion = "0.3";
-
-	assert(validate(spec), `syntactically valid future IR should pass shape validation: ${JSON.stringify(validate.errors)}`);
-});
-
-Deno.test("WorkflowSpec JSON Schema restricts data-only routing fields to Graph IR 0.2", async () => {
-	const validate = await compileWorkflowSpecValidator();
-	const staticSpec = (await readJson(
-		"../../../conformance/fixtures/specs/linear-chain/workflow-spec.json",
-	)) as { graph: { irVersion: string } };
-	staticSpec.graph.irVersion = "0.2";
-	assert(validate(staticSpec), `0.2 preserves static DAG compatibility: ${JSON.stringify(validate.errors)}`);
-
-	const decisionSpec = (await readJson(
-		"../../../conformance/fixtures/specs/exhaustive-decision/workflow-spec.json",
-	)) as { graph: { irVersion: string } };
-	assert(validate(decisionSpec), `0.2 decision spec should validate: ${JSON.stringify(validate.errors)}`);
-
-	decisionSpec.graph.irVersion = "0.1";
-	assertEquals(validate(decisionSpec), false);
+Deno.test("WorkflowSpec JSON Schema accepts only current Graph IR for every graph shape", async () => {
+  const validate = await compileWorkflowSpecValidator();
+  for (const fixture of ["linear-chain", "exhaustive-decision", "finite-map"]) {
+    const spec = await readJson(`../../../conformance/fixtures/specs/${fixture}/workflow-spec.json`) as {graph: {irVersion: string}};
+    assertEquals(spec.graph.irVersion, "0.3");
+    assert(validate(spec), JSON.stringify(validate.errors));
+    for (const obsolete of ["0.1", "0.2", "0.4"]) {
+      spec.graph.irVersion = obsolete;
+      assertEquals(validate(spec), false);
+    }
+  }
 });
 
 Deno.test("WorkflowSpec JSON Schema rejects post-M2 channel fields in schema v0", async () => {

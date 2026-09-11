@@ -56,7 +56,7 @@ export interface WorkflowSpec {
     readonly outputSchema: string;
   };
   readonly graph: {
-    readonly irVersion: "0.1" | "0.2" | "0.3";
+    readonly irVersion: "0.3";
     readonly start: string;
     readonly end: string;
     readonly nodes: readonly WorkflowSpecNode[];
@@ -239,7 +239,7 @@ export async function emitWorkflowSpec<Input, Output>(
       outputSchema: workflowOutput,
     },
     graph: {
-      irVersion: "0.1" as const,
+      irVersion: "0.3" as const,
       start: START_NODE,
       end: END_NODE,
       nodes: lowerNodes(

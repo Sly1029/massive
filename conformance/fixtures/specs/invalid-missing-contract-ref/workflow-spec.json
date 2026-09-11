@@ -8,14 +8,14 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:ba9f6793360d8ed6e45e792c8a1dea0128d4706b71b27104ce5283d99c8df133",
+  "specHash": "sha256:410e3fcfa975dad18081443b9195fad2fa69faf56a9063ca95f60e2f7bb1fe20",
   "workflow": {
     "name": "invalid-missing-contract-ref",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   },
   "graph": {
-    "irVersion": "0.1",
+    "irVersion": "0.3",
     "start": "__start",
     "end": "__end",
     "nodes": [

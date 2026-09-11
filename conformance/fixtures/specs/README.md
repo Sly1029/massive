@@ -2,9 +2,9 @@
 
 These fixtures prove the `WorkflowSpec` JSON Schema accepts and rejects the intended v0 artifact shapes.
 
-Most graphs declare `irVersion: "0.1"`; `exhaustive-decision` uses 0.2 and
-`finite-map` uses 0.3. It is the semantic Graph IR version; the surrounding
-`schemaVersion` remains the JSON transport version.
+All graphs declare `irVersion: "0.3"`. Both SDKs emit this version for every
+graph shape, and all consumers reject older artifacts with a rebuild diagnostic.
+The surrounding `schemaVersion` remains the independent JSON transport version.
 
 `finite-map` is the portable finite-map contract: a single value-producing
 `map` node carries list input/output schemas, exact item schemas, a runnable
