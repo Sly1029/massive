@@ -19,6 +19,13 @@ Implemented:
 - The source identity includes the selected files, `pyproject.toml`, and `uv.lock`
   when present. The runner loads the same archived files locally and remotely.
 - Source packages reject selected symlinks and path escapes.
+- Python `Blob` and `Tree` references transport files through the existing
+  filesystem/S3 datastore, including ordered subprocess maps. Hydration is
+  invocation-local; explicit snapshots publish mutations.
+- Top-level typed functions work with or without decorator syntax.
+- Shrinking Python graph generators exercise nested decisions through the Go
+  compiler; continuous Go fuzzing covers raw parsing, DAG shapes, and exhaustive
+  decision/select semantics.
 
 Next:
 
@@ -26,7 +33,8 @@ Next:
 - Add dependency preflight and record the realized environment identity. Use
   standard Python project metadata and lockfiles, not a second dependency language.
 - Add object-store source transport beyond Argo's 700 KiB embedded limit, and
-  artifact references for values too large for Argo parameters.
+  artifact references for large arbitrary JSON values. File bodies already use
+  references; source archives and ordinary JSON parameter limits remain.
 
 Acceptance: a clean checkout runs a linear workflow, a resource-bearing fan-out,
 and a conditional workflow without manually repairing the environment.
@@ -66,6 +74,15 @@ Static DAGs and finite single-step maps lower to Argo today. Remaining work:
 
 Reject unsupported requirements instead of silently weakening them. Schema
 validation and isolated runner tests do not replace a live cluster execution gate.
+
+## Artifact release gates
+
+- Exercise Blob/Tree transport in live Argo pods with workload identity.
+- Add streaming transfer and scratch budgets for repository-sized trees; current
+  file operations buffer one file at a time.
+- Preserve reference closure before adding any retention or selective resume.
+- Keep repository fetching, revision metadata, service clients, and domain policy
+  in application packages composed over typed inputs and reusable contracts.
 
 ## Keep the core small
 

@@ -541,3 +541,65 @@ def _ambient_test_credentials(access_key: str, secret_key: str) -> Generator[Non
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+def test_tree_and_blob_cross_processes_through_real_s3(s3_server: Any, tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+    import sys
+
+    from massive import ArtifactFiles, Blob, Tree
+
+    bucket = f"massive-python-files-{uuid.uuid4().hex}"
+    setup = boto3.client(
+        "s3",
+        endpoint_url=s3_server.endpoint,
+        region_name="us-east-1",
+        aws_access_key_id=s3_server.access_key,
+        aws_secret_access_key=s3_server.secret_key,
+    )
+    setup.create_bucket(Bucket=bucket)
+    descriptor = {
+        "kind": "s3",
+        "bucket": bucket,
+        "region": "us-east-1",
+        "endpoint": s3_server.endpoint,
+        "forcePathStyle": True,
+    }
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "empty").mkdir()
+    (source / "data").write_bytes(b"x" * (1024 * 1024))
+    with _ambient_test_credentials(s3_server.access_key, s3_server.secret_key):
+        store = S3Datastore(descriptor)
+        files = ArtifactFiles(store, tmp_path / "writer")
+        tree = Tree.from_path(source).model_dump(mode="json", context=files)
+        blob = Blob.from_path(source / "data").model_dump(mode="json", context=files)
+        shutil.rmtree(source)
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+import json, sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from massive import ArtifactFiles, Blob, Tree
+from massive.datastore import S3Datastore
+value = json.load(sys.stdin)
+with TemporaryDirectory() as scratch:
+    files = ArtifactFiles(S3Datastore(value['store']), Path(scratch))
+    tree = Tree.model_validate(value['tree'], context=files)
+    blob = Blob.model_validate(value['blob'], context=files)
+    assert (tree.path() / 'empty').is_dir()
+    assert (tree.path() / 'data').read_bytes() == blob.path().read_bytes() == b'x' * (1024 * 1024)
+    (tree.path() / 'data').write_text('scratch mutation')
+    assert tree.model_dump(mode='json', context=files) == value['tree']
+""",
+            ],
+            input=json.dumps({"store": descriptor, "tree": tree, "blob": blob}),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert child.returncode == 0, child.stderr

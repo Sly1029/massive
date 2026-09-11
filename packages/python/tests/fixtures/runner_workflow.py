@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 
 from pydantic import BaseModel, field_validator
 
-from massive import GraphBuilder, StepContext, container, execution
+from massive import Blob, GraphBuilder, StepContext, container, execution
 
 
 class Request(BaseModel):
@@ -81,3 +82,15 @@ def decimal_result(context: StepContext[None, Request]) -> DecimalResult:
 @graph.step()
 def decimal_echo(context: StepContext[None, DecimalResult]) -> DecimalResult:
     return context.inputs
+
+
+def changed_file(context: StepContext[None, Request]) -> Blob:
+    path = Path(__file__).parent / "output.txt"
+    path.write_text("snapshot")
+    result = Blob.from_path(path)
+    path.write_text("changed after snapshot")
+    return result
+
+
+async def plain_increment(context: StepContext[None, Request]) -> Result:
+    return Result(value=context.inputs.value + 1)

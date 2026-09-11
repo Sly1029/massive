@@ -316,3 +316,7 @@ for the exact JSON projection and compatibility rules.
   enforce them.
 - Inspect the emitted spec or compiled plan when debugging topology; it is the
   portable truth consumed by every backend.
+
+- [File artifacts](08-artifacts/workflow.py): directory snapshots, isolated parallel
+  working copies, file reports, and decorator-free function registration. Run with
+  `massive run examples/08-artifacts/workflow.py --input '{"copies": 3}'`.

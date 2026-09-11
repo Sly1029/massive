@@ -25,7 +25,8 @@ PROJECT_KEY = "sha256-" + "b" * 64
 
 
 @pytest.mark.parametrize(
-    ("export", "expected"), [("double", {"value": 42}), ("increment", {"value": 22})]
+    ("export", "expected"),
+    [("double", {"value": 42}), ("increment", {"value": 22}), ("plain_increment", {"value": 22})],
 )
 def test_runner_executes_sync_and_async_python_steps_via_descriptor(
     tmp_path: Path, export: str, expected: dict[str, int]
@@ -304,9 +305,7 @@ def test_runner_rejects_a_verified_traversal_archive(tmp_path: Path) -> None:
     assert not (tmp_path / "escape.py").exists()
 
 
-def test_runner_executes_against_a_real_s3_descriptor(
-    tmp_path: Path, s3_server: Any
-) -> None:
+def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path, s3_server: Any) -> None:
     endpoint = s3_server.endpoint
     access_key = s3_server.access_key
     secret_key = s3_server.secret_key
@@ -468,3 +467,17 @@ def _archive_entry(name: str, body: bytes) -> bytes:
         info.mtime = 0
         archive.addfile(info, BytesIO(body))
     return buffer.getvalue()
+
+
+def test_changed_file_cannot_commit_a_successful_task_output(tmp_path: Path) -> None:
+    from massive import Blob
+
+    path, descriptor, store = _descriptor(
+        tmp_path,
+        export="changed_file",
+        output_schema=TypeAdapter(Blob).json_schema(),
+    )
+    result = _run(path)
+    assert result.returncode == 65, result.stderr
+    assert "source changed" in result.stderr
+    assert not (store / descriptor["output"]["manifestKey"]).exists()

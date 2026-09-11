@@ -64,7 +64,9 @@ def test_python_workflow_runs_through_go_orchestrator(tmp_path: Path) -> None:
     assert output["manifest"]["key"] == (
         f"projects/{project_key}/runs/python-e2e/steps/increment/1/output-manifest.json"
     )
-    assert output["manifest"]["contentType"] == "application/vnd.massive.data-artifact-manifest+json"
+    assert (
+        output["manifest"]["contentType"] == "application/vnd.massive.data-artifact-manifest+json"
+    )
     assert output["body"]["contentType"] == "application/json"
     published_manifest = json.loads((store / output["manifest"]["key"]).read_text())
     assert published_manifest["body"] == output["body"]
@@ -78,3 +80,54 @@ def _load_fixture(path: Path) -> ModuleType:
     sys.modules[specification.name] = module
     specification.loader.exec_module(module)
     return module
+
+
+def test_file_artifacts_cross_real_map_subprocesses(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[3]
+    fixture = repository / "examples/08-artifacts/workflow.py"
+    module = _load_fixture(fixture)
+    specification = module.graph.emit(
+        source=source_package(
+            root=fixture.parent,
+            include=[fixture.name],
+            package_id="python-files",
+        )
+    )
+    spec_path = tmp_path / "workflow-spec.json"
+    spec_path.write_text(specification.to_json())
+    store = tmp_path / "store"
+    for copies in [0, 4]:
+        result = subprocess.run(
+            [
+                "go",
+                "run",
+                "./cmd/massive-orchestrator",
+                "run",
+                "--spec",
+                str(spec_path),
+                "--source-root",
+                str(fixture.parent),
+                "--store",
+                str(store),
+                "--project",
+                "example/files",
+                "--run-id",
+                f"files-{copies}",
+                "--input",
+                json.dumps({"copies": copies}),
+                "--json",
+            ],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        run = json.loads(result.stdout)
+        assert run["status"] == "succeeded"
+        assert json.loads((store / run["resultKey"]).read_text()) == {
+            "reports": [f"report-{i}" for i in range(copies)],
+            "original": "original" if copies else "empty",
+        }
+    # Four mapper subprocesses share one immutable tree, with no persisted scratch paths.
+    assert len(list((store / "file-artifacts/trees/sha256").iterdir())) == 1

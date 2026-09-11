@@ -1,0 +1,36 @@
+name: Fuzz graphs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '19 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: graph-fuzz-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: graph-fuzz-${{ runner.os }}-
+      - run: ./scripts/fuzz.sh
+        env:
+          FUZZ_TIME: ${{ github.event_name == 'schedule' && '120s' || '15s' }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: graph-fuzz-reproducers
+          path: internal/**/testdata/fuzz/**
+          if-no-files-found: ignore

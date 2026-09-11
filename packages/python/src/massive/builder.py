@@ -89,9 +89,37 @@ class StepDefinition(Generic[DepsT, InputT, OutputT]):
     deps_type: Any
     contract: ExecutionContract | None
 
+    @classmethod
+    def from_callable(
+        cls,
+        function: Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]],
+        *,
+        contract: ExecutionContract | None = None,
+    ) -> StepDefinition[DepsT, InputT, OutputT]:
+        if "<locals>" in function.__qualname__ or function.__name__ == "<lambda>":
+            raise TypeError("workflow steps must be top-level named functions")
+        hints = get_type_hints(function, include_extras=True)
+        parameters = list(inspect.signature(function).parameters)
+        if len(parameters) != 1 or parameters[0] not in hints:
+            raise TypeError("a workflow step requires one annotated StepContext parameter")
+        context_type = hints[parameters[0]]
+        if get_origin(context_type) is not StepContext:
+            raise TypeError("a workflow step parameter must be StepContext[Deps, Input]")
+        declared_deps, input_type = get_args(context_type)
+        if hints.get("return", inspect.Signature.empty) is inspect.Signature.empty:
+            raise TypeError("a workflow step requires a return annotation")
+        return cls(
+            function=function,
+            input_type=input_type,
+            output_type=hints["return"],
+            deps_type=declared_deps,
+            contract=contract,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class NodeHandle(Generic[OutputT]):
+    graph_token: object = field(repr=False, compare=False)
     node_id: str
     input_type: Any
     output_type: Any
@@ -157,6 +185,7 @@ class _StartHandle(Generic[WorkflowInputT]):
 @dataclass(frozen=True, slots=True)
 class _EndHandle(Generic[WorkflowOutputT]):
     input_type: Any
+    graph_token: object = field(repr=False, compare=False)
 
 
 class EdgePath(Generic[OutputT]):
@@ -166,7 +195,10 @@ class EdgePath(Generic[OutputT]):
         source: str,
         output_type: Any,
         case: str | None = None,
+        *,
+        graph_token: object,
     ) -> None:
+        self._graph_token = graph_token
         self._add_edge = add_edge
         self._source = source
         self._output_type = output_type
@@ -179,13 +211,17 @@ class EdgePath(Generic[OutputT]):
     def to(self, target: _EndHandle[Any]) -> None: ...
 
     def to(self, target: NodeHandle[Any] | _EndHandle[Any]) -> EdgePath[Any] | None:
+        if target.graph_token is not self._graph_token:
+            raise ValueError("edge target belongs to a different graph")
         expected = target.input_type
         if self._output_type != expected:
             raise TypeError(f"edge from {self._source!r} has incompatible input type")
         target_id = target.node_id if isinstance(target, NodeHandle) else _END
         self._add_edge(self._source, target_id, self._case)
         if isinstance(target, NodeHandle):
-            return EdgePath(self._add_edge, target_id, target.output_type)
+            return EdgePath(
+                self._add_edge, target_id, target.output_type, graph_token=self._graph_token
+            )
         return None
 
 
@@ -219,7 +255,9 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             output_type=input_type,
             graph_token=self._graph_token,
         )
-        self.end = _EndHandle[WorkflowOutputT](input_type=output_type)
+        self.end = _EndHandle[WorkflowOutputT](
+            input_type=output_type, graph_token=self._graph_token
+        )
         self._nodes: dict[str, tuple[StepDefinition[Any, Any, Any], NodeHandle[Any]]] = {}
         self._handles: dict[str, NodeHandle[Any]] = {}
         self._edges: set[tuple[str, str]] = set()
@@ -238,29 +276,12 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         def register(
             function: Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]],
         ) -> StepDefinition[DepsT, InputT, OutputT]:
-            if "<locals>" in function.__qualname__ or function.__name__ == "<lambda>":
-                raise TypeError("workflow steps must be top-level named functions")
-            hints = get_type_hints(function, include_extras=True)
-            parameters = list(inspect.signature(function).parameters)
-            if len(parameters) != 1 or parameters[0] not in hints:
-                raise TypeError("a workflow step requires one annotated StepContext parameter")
-            context_type = hints[parameters[0]]
-            if get_origin(context_type) is not StepContext:
-                raise TypeError("a workflow step parameter must be StepContext[Deps, Input]")
-            declared_deps, input_type = get_args(context_type)
-            if hints.get("return", inspect.Signature.empty) is inspect.Signature.empty:
-                raise TypeError("a workflow step requires a return annotation")
-            if self.deps_type is None and declared_deps is not type(None):
+            step = StepDefinition[DepsT, InputT, OutputT].from_callable(function, contract=contract)
+            if self.deps_type is None and step.deps_type is not type(None):
                 raise TypeError("this graph does not permit dependencies")
-            if self.deps_type is not None and declared_deps != self.deps_type:
+            if self.deps_type is not None and step.deps_type != self.deps_type:
                 raise TypeError("step dependency type differs from the graph dependency type")
-            return StepDefinition(
-                function=function,
-                input_type=input_type,
-                output_type=hints["return"],
-                deps_type=declared_deps,
-                contract=contract,
-            )
+            return step
 
         return register
 
@@ -281,10 +302,13 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             return None
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
+        if item.deps_type != (type(None) if self.deps_type is None else self.deps_type):
+            raise TypeError("step dependency type differs from the graph dependency type")
         node_id = SAFE_PATH_SEGMENT.validate_python(id or item.function.__name__)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved step id {node_id!r}")
         handle = NodeHandle[OutputT](
+            graph_token=self._graph_token,
             node_id=node_id,
             input_type=item.input_type,
             output_type=item.output_type,
@@ -333,9 +357,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             f"map source {source_id!r}",
         )
         if source_item_schema != _normalized_core_schema(mapper.input_type):
-            raise TypeError(
-                f"map source {source_id!r} item type does not match mapper input type"
-            )
+            raise TypeError(f"map source {source_id!r} item type does not match mapper input type")
         identity = _MapIdentity(
             id=id,
             concurrency=_MAP_CONCURRENCY.validate_python(concurrency),
@@ -345,6 +367,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             raise ValueError(f"duplicate or reserved map id {map_id!r}")
         output_type = list[mapper.output_type]
         handle = NodeHandle[list[ResultT]](
+            graph_token=self._graph_token,
             node_id=map_id,
             input_type=source.output_type,
             output_type=output_type,
@@ -368,15 +391,17 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
 
     def edge_from(self, source: _StartHandle[Any] | NodeHandle[Any]) -> EdgePath[Any]:
         node_id = _START if isinstance(source, _StartHandle) else source.node_id
-        if node_id != _START and node_id not in self._known_node_ids():
+        if source.graph_token is not self._graph_token:
             raise ValueError("edge source belongs to a different graph")
         case = source.tag if isinstance(source, CaseHandle) else None
-        return EdgePath(self._add_edge, node_id, source.output_type, case)
+        return EdgePath(
+            self._add_edge, node_id, source.output_type, case, graph_token=self._graph_token
+        )
 
     def decision(self, source: NodeHandle[OutputT], *, on: str, id: str) -> DecisionHandle[OutputT]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        if source.node_id not in self._known_node_ids():
+        if source.graph_token is not self._graph_token:
             raise ValueError("decision source belongs to a different graph")
         identity = _DecisionIdentity(id=id)
         if identity.id in self._known_node_ids():
@@ -406,6 +431,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             raise ValueError(f"decision {decision_id!r} case {tag!r} is already connected")
         definition.claimed_cases.add(tag)
         return CaseHandle(
+            graph_token=self._graph_token,
             node_id=decision_id,
             input_type=case_type,
             output_type=case_type,
@@ -440,7 +466,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             )
         lineages = self._activation_lineages()
         for tag, source in inputs.items():
-            if source.node_id not in self._known_node_ids():
+            if source.graph_token is not self._graph_token:
                 raise ValueError("decision select source belongs to a different graph")
             if _normalized_core_schema(source.output_type) != _normalized_core_schema(output_type):
                 raise TypeError(
@@ -471,6 +497,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             self._add_edge(source.node_id, select_id, None)
         output_annotation = cast(Any, output_type)
         handle: NodeHandle[SelectT] = NodeHandle(
+            graph_token=self._graph_token,
             node_id=select_id,
             input_type=output_annotation,
             output_type=output_annotation,
@@ -479,6 +506,8 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         return handle
 
     def _add_edge(self, source: str, target: str, case: str | None = None) -> None:
+        if self._emitted:
+            raise RuntimeError("graph has already been emitted")
         if source not in self._known_node_ids():
             raise ValueError(f"unknown edge source {source!r}")
         if target not in self._known_node_ids():
@@ -939,7 +968,9 @@ def _normalize_core_schema_node(
         return [_normalize_core_schema_node(child, definitions, resolving) for child in items]
     if isinstance(value, tuple):
         tuple_items = cast(tuple[object, ...], value)
-        return tuple(_normalize_core_schema_node(child, definitions, resolving) for child in tuple_items)
+        return tuple(
+            _normalize_core_schema_node(child, definitions, resolving) for child in tuple_items
+        )
     return value
 
 

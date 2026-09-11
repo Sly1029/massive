@@ -138,7 +138,7 @@ class ArtifactRuntime:
         _validate_canonical_json(self._datastore, destination.schema_ref, body)
         body_hash = sha256_ref(body)
         body_ref = ArtifactRef(
-            key=_blob_key(body_hash),
+            key=blob_key(body_hash),
             hash=body_hash,
             size=len(body),
             content_type=JSON_CONTENT_TYPE,
@@ -155,10 +155,10 @@ class ArtifactRuntime:
             },
         )
         manifest_body = _canonical_manifest(manifest)
-        _put_immutable(
+        put_immutable(
             self._datastore, body_ref.key, body, JSON_CONTENT_TYPE, ArtifactBodyConflictError
         )
-        _put_immutable(
+        put_immutable(
             self._datastore,
             destination.manifest_key,
             manifest_body,
@@ -212,7 +212,7 @@ class ArtifactRuntime:
             size=cast(int, body["size"]),
             content_type=cast(str, body["contentType"]),
         )
-        if body_ref.key != _blob_key(body_ref.hash):
+        if body_ref.key != blob_key(body_ref.hash):
             raise ArtifactIntegrityError("manifest body key does not match its digest")
         try:
             body_object = self._datastore.get(body_ref.key)
@@ -253,7 +253,7 @@ def _validate_destination(destination: Destination, producer: Producer) -> None:
             f"manifest destination {destination.manifest_key!r} does not match producer slot"
         )
     try:
-        _blob_key(destination.schema_ref)
+        blob_key(destination.schema_ref)
     except ArtifactValidationError as error:
         raise ArtifactValidationError("schema reference must be a SHA-256 reference") from error
 
@@ -268,7 +268,7 @@ def _scope_key_suffix(scope: ExecutionScope | None) -> str:
 
 def _validate_canonical_json(datastore: Datastore, schema_ref: str, body: bytes) -> None:
     document = _parse_canonical_json(body, "value", ArtifactValidationError)
-    schema_key = _blob_key(schema_ref)
+    schema_key = blob_key(schema_ref)
     try:
         schema_body = datastore.get(schema_key).body
     except DatastoreNotFoundError as error:
@@ -306,7 +306,7 @@ def _canonical_manifest(manifest: dict[str, JsonValue]) -> bytes:
         raise ArtifactValidationError("artifact manifest does not satisfy its schema") from error
 
 
-def _put_immutable(
+def put_immutable(
     datastore: Datastore,
     key: str,
     body: bytes,
@@ -326,7 +326,7 @@ def _put_immutable(
         raise conflict_error(f"existing immutable object {key} differs")
 
 
-def _blob_key(hash_ref: str) -> str:
+def blob_key(hash_ref: str) -> str:
     prefix = "sha256:"
     digest = hash_ref.removeprefix(prefix)
     if (
