@@ -23,58 +23,24 @@ const (
 	stepInvocationStatusInfraFailed = "infrastructure-failed"
 )
 
-type DefaultRunnerCommandInputs struct {
-	Language      string
-	WorkingDir    string
-	DescriptorDir string
-	DatastoreRoot string
-}
-
-func DefaultRunnerCommand(inputs DefaultRunnerCommandInputs) ([]string, error) {
-	workingDir := inputs.WorkingDir
-	if workingDir == "" {
-		workingDir = "."
+// DefaultRunnerCommand selects a language adapter without imposing a different
+// language on other nodes in the same portable plan.
+func DefaultRunnerCommand(language string) ([]string, error) {
+	switch language {
+	case "python":
+		if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
+			return []string{python, "-m", "massive.runner", descriptorPathToken}, nil
+		}
+		return []string{"massive-python-runner", descriptorPathToken}, nil
+	case "typescript":
+		runner := os.Getenv("MASSIVE_TYPESCRIPT_RUNNER")
+		if runner == "" {
+			runner = "massive-typescript-runner"
+		}
+		return []string{runner, descriptorPathToken}, nil
+	default:
+		return nil, fmt.Errorf("unsupported runner language %q", language)
 	}
-	if inputs.DescriptorDir == "" {
-		return nil, fmt.Errorf("descriptor directory is required")
-	}
-	if inputs.DatastoreRoot == "" {
-		return nil, fmt.Errorf("datastore root is required")
-	}
-	workingDir, err := filepath.Abs(workingDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve runner working directory: %w", err)
-	}
-	descriptorDir, err := filepath.Abs(inputs.DescriptorDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve descriptor directory: %w", err)
-	}
-	datastoreRoot, err := filepath.Abs(inputs.DatastoreRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resolve datastore root: %w", err)
-	}
-
-	if inputs.Language == "python" {
-		return []string{
-			"massive-python-runner",
-			descriptorPathToken,
-		}, nil
-	}
-	if inputs.Language != "typescript" {
-		return nil, fmt.Errorf("unsupported runner language %q", inputs.Language)
-	}
-
-	readRoots := []string{workingDir, descriptorDir, datastoreRoot}
-	return []string{
-		"deno",
-		"run",
-		"--config",
-		"deno.json",
-		"--allow-read=" + strings.Join(readRoots, ","),
-		"--allow-write=" + datastoreRoot,
-		"packages/sdk/src/runner/main.ts",
-		descriptorPathToken,
-	}, nil
 }
 
 type ProcessStepInvoker struct {
@@ -232,17 +198,7 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 
 	var argv []string
 	if len(i.CommandTemplate) == 0 {
-		localDatastore, ok := descriptor.Datastore.(LocalDatastoreDescriptor)
-		if !ok {
-			return infrastructureFailure(fmt.Errorf("build runner command for %s: local process invoker requires a local datastore descriptor, got %T", descriptor.NodeID, descriptor.Datastore))
-		}
-		inputs := DefaultRunnerCommandInputs{
-			Language:      descriptor.Symbol.Language,
-			WorkingDir:    i.WorkingDir,
-			DescriptorDir: descriptorDir,
-			DatastoreRoot: localDatastore.Path,
-		}
-		argv, err = DefaultRunnerCommand(inputs)
+		argv, err = DefaultRunnerCommand(descriptor.Symbol.Language)
 		if err != nil {
 			return infrastructureFailure(fmt.Errorf("build runner command for %s: %w", descriptor.NodeID, err))
 		}

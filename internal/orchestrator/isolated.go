@@ -8,6 +8,7 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 )
 
@@ -112,7 +113,7 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 		scope = &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: node.GetId(), Index: *mapItemIndex}}}
 		inputSchema = node.GetItemInputSchema()
 	}
-	inputArtifact := manifestDataArtifact{
+	inputArtifact := runjournal.DataArtifact{
 		Key:  runInputKey(projectKey, config.RunID, node.GetId(), scope).String(),
 		Hash: canonical.DigestBytes(input), ContentType: jsonContentType, Schema: inputSchema,
 	}

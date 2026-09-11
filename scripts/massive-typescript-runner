@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec deno run --config "$repository/deno.json" --allow-read --allow-write --allow-env --allow-net "$repository/packages/sdk/src/runner/main.ts" "$@"

@@ -18,6 +18,7 @@ import (
 )
 
 type CLI struct {
+	Inspect InspectCommand `cmd:"" help:"Inspect a recorded local run without executing it."`
 	Run     RunCommand     `cmd:"" help:"Compile and execute a workflow locally."`
 	Build   BuildCommand   `cmd:"" help:"Compile a workflow for a deployment target."`
 	Version VersionCommand `cmd:"" help:"Print the Massive version."`
@@ -25,7 +26,7 @@ type CLI struct {
 }
 
 type RunCommand struct {
-	Entry     string `arg:"" name:"entry" help:"Python workflow entrypoint, optionally followed by #export." type:"path"`
+	Entry     string `arg:"" name:"entry" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
 	Input     string `help:"Workflow input as JSON; defaults to null."`
 	InputFile string `name:"input-file" help:"Read workflow input JSON from this file." type:"existingfile"`
 	Store     string `help:"Local artifact store root." type:"path"`
@@ -37,7 +38,7 @@ type RunCommand struct {
 
 type BuildCommand struct {
 	ArtifactCredentialsSecret string `name:"artifact-credentials-secret" help:"Optional Secret containing standard AWS credential keys; omit for workload identity."`
-	Entry                     string `arg:"" name:"entry" help:"Python workflow entrypoint, optionally followed by #export." type:"path"`
+	Entry                     string `arg:"" name:"entry" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
 	Target                    string `help:"Deployment target." enum:"argo" default:"argo"`
 	Output                    string `short:"o" help:"Bundle output directory." required:"" type:"path"`
 	Profile                   string `help:"Deployment profile name." default:"argo"`

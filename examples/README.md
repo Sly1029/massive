@@ -11,8 +11,9 @@ first if needed:
 pnpm install --frozen-lockfile
 ```
 
-Examples 01–04 exercise the existing TypeScript frontend through the legacy Deno
-CLI. Python examples use the shipped `massive` CLI from a platform wheel. For a
+Both languages use the shipped `massive` CLI from a platform wheel. TypeScript
+authors using this source checkout must also put `scripts/` on PATH to expose its
+Deno frontend and runner adapters: `export PATH="$PWD/scripts:$PATH"`. For a
 source checkout, build/install the wheel first; an editable Python SDK alone does
 not include the native CLI.
 
@@ -31,7 +32,7 @@ step transforms the value, input and output schemas are identical.
 Run it locally:
 
 ```sh
-deno task massive run examples/01-passthrough.ts \
+massive run examples/01-passthrough.ts \
   --input '{"message":"hello"}'
 ```
 
@@ -55,7 +56,7 @@ references, not function bodies, and the runner resolves those exports in a
 fresh step process.
 
 ```sh
-deno task massive run examples/02-linear.ts --input '{"value":21}'
+massive run examples/02-linear.ts --input '{"value":21}'
 ```
 
 The result is `{"message":"value:42"}`.
@@ -78,7 +79,7 @@ joins them; its target receives an array in the same order as the handles in
 the merge call.
 
 ```sh
-deno task massive run examples/03-diamond.ts --input '20'
+massive run examples/03-diamond.ts --input '20'
 ```
 
 `addOne` returns `21`, `triple` returns `60`, and `total` returns `81`.

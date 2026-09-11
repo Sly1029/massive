@@ -27,8 +27,8 @@ uv pip install --python "$python" "$wheel"
 test "$("$massive" version)" = "massive 0.1.0"
 
 mkdir -p "$test_root/project"
-cp "$repository/packages/cli/test/fixtures/python-linear/workflow.py" "$test_root/project/workflow.py"
-cp "$repository/packages/cli/test/fixtures/python-linear/helper.py" "$test_root/project/helper.py"
+cp "$repository/conformance/workflows/python-linear/workflow.py" "$test_root/project/workflow.py"
+cp "$repository/conformance/workflows/python-linear/helper.py" "$test_root/project/helper.py"
 
 run_result="$(
   cd "$test_root/project"
@@ -40,6 +40,18 @@ run_result="$(
     --json \
     --verbose
 )"
+
+"$massive" inspect clean-wheel --project massive/distribution-test \
+  --store "$test_root/store" --json > "$test_root/inspected.json"
+"$python" - "$test_root/inspected.json" <<'PYJOURNAL'
+import json,sys
+from pathlib import Path
+journal=json.loads(Path(sys.argv[1]).read_text())
+assert journal["status"] == "succeeded"
+assert journal["runId"] == "clean-wheel"
+assert journal["schemaVersion"] == 3
+assert journal["steps"][0]["attempts"][0]["output"]["manifest"]["key"]
+PYJOURNAL
 
 bundle_result="$(
   cd "$test_root/project"
@@ -234,4 +246,19 @@ assert run["status"] == "succeeded", run
 assert run["result"] == {
     "reports": ["report-0", "report-1", "report-2"], "original": "original"
 }, run
+PY
+
+# The shipped Go CLI dispatches to the TypeScript adapters even when the Python
+# launcher supplies MASSIVE_PYTHON. No repository CLI or binary build cache runs.
+cp -R "$repository/conformance/workflows/linear-chain" "$test_root/typescript"
+PATH="$repository/scripts:$PATH" "$massive" run "$test_root/typescript/workflow.ts" \
+  --input '20' --store "$test_root/typescript-store" \
+  --project massive/distribution-typescript --run-id typescript --json \
+  > "$test_root/typescript-result.json"
+"$python" - "$test_root/typescript-result.json" <<'PY'
+import json,sys
+from pathlib import Path
+run=json.loads(Path(sys.argv[1]).read_text())
+assert run["status"] == "succeeded", run
+assert run["result"] == "value:41", run
 PY

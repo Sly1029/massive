@@ -1,12 +1,8 @@
 import { workflow } from "@massive/sdk";
 import { z } from "zod";
 
-// The runner executes the exported `double` symbol, which returns a string while
-// its step declares a numeric output. The runner's output-schema validation
-// fails at the step boundary -> runner exit 65 (schema-validation-failure),
-// propagated by the CLI. Mirrors internal/orchestrator/testdata/invalid-output.
-export function double(_args: { readonly input: number }): string {
-  return "not-a-number";
+export function double(args: { readonly input: number }): number {
+  return args.input * 2;
 }
 
 export function increment(args: { readonly input: number }): number {
@@ -18,17 +14,14 @@ export function label(args: { readonly input: number }): string {
 }
 
 const flow = workflow({
-  name: "schema-invalid",
+  name: "linear-chain",
   input: z.int(),
   output: z.string(),
 });
-// The builder's `run` for `double` is a well-typed placeholder (number -> number)
-// so emission type-checks; execution uses the exported `double` symbol above,
-// which is the one that violates the output schema.
 const doubleStep = flow.step("double", {
   input: z.int(),
   output: z.int(),
-  run: ({ input }) => input * 2,
+  run: double,
 });
 const incrementStep = flow.step("increment", {
   input: z.int(),

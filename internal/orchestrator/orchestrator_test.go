@@ -18,6 +18,7 @@ import (
 	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/spec"
 )
 
@@ -135,9 +136,9 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	if descriptor.Output.ManifestKey != runOutputManifestKey(descriptor.ProjectKey, descriptor.RunID, descriptor.NodeID, descriptor.Scope, descriptor.Attempt).String() {
 		t.Fatalf("descriptor output manifest key = %q", descriptor.Output.ManifestKey)
 	}
-	runManifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
-	outputsByNode := make(map[string]manifestPublishedArtifact, len(runManifest.Steps))
-	for _, step := range runManifest.Steps {
+	journal := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
+	outputsByNode := make(map[string]runjournal.PublishedArtifact, len(journal.Steps))
+	for _, step := range journal.Steps {
 		if len(step.Attempts) != 1 || step.Attempts[0].Output == nil {
 			t.Fatalf("journal step %q attempts = %#v, want one published output", step.NodeID, step.Attempts)
 		}

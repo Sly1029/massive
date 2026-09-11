@@ -17,6 +17,7 @@ import (
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/materialization"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/spec"
 )
 
@@ -817,15 +818,15 @@ func assertRunManifestSucceeded(t *testing.T, storeRoot string, projectKey strin
 	}
 }
 
-func readRunManifest(t *testing.T, storeRoot string, projectKey string, runID string) runManifest {
+func readRunManifest(t *testing.T, storeRoot string, projectKey string, runID string) runjournal.Manifest {
 	t.Helper()
 
 	object := getObject(t, storeRoot, runManifestKey(projectKey, runID).String())
-	var manifest runManifest
-	if err := json.Unmarshal(object.Body, &manifest); err != nil {
+	manifest, err := runjournal.Parse(object.Body)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return manifest
+	return *manifest
 }
 
 func assertStoredJSON(t *testing.T, storeRoot string, key string, expected string) {

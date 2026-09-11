@@ -268,13 +268,11 @@ S3-compatible stores, such as R2 or MinIO, should be supportable through endpoin
 
 The default local datastore root is user-level: `~/.massive/store`. This avoids creating project-local `.massive` directories during normal development. Project-local datastore paths are still useful for tests, temporary isolation, and explicit user configuration.
 
-The CLI accepts `--store-prefix <relative-key>` or
-`MASSIVE_STORE_PREFIX=<relative-key>` (`--store-prefix` wins). The validated
-prefix is applied ahead of every logical datastore key and therefore isolates
-physical storage without changing workflow, plan, or artifact content
-identity. The user-facing TypeScript CLI and the low-level Go orchestrator CLI
-apply the same precedence and validation rules; the TypeScript handoff passes
-an already-resolved root so the child does not apply the environment twice.
+The shipped CLI uses `--store <directory>` as the complete local storage root.
+Choose a separate directory for each operational namespace; that location never
+enters workflow, plan, or artifact identity. The retired Deno CLI's prefix flags,
+environment precedence, emit cache, and binary build cache are not CLI contracts.
+S3 bindings carry their explicit relative object prefix in the datastore descriptor.
 
 ## No Metadata Database In V0
 

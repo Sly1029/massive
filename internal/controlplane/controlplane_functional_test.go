@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
 	}
 	t.Setenv("MASSIVE_PYTHON", python)
 
-	entry := filepath.Join(repository, "packages", "cli", "test", "fixtures", "python-linear", "workflow.py")
+	entry := filepath.Join(repository, "conformance", "workflows", "python-linear", "workflow.py")
 	frontend, err := Emit(context.Background(), entry)
 	if err != nil {
 		t.Fatal(err)
@@ -196,4 +197,75 @@ func writableStoreForTest(t *testing.T) string {
 		})
 	})
 	return root
+}
+
+func TestInspectKeepsProjectsSeparateAndDoesNotWrite(t *testing.T) {
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MASSIVE_TYPESCRIPT_FRONTEND", filepath.Join(repository, "scripts", "massive-typescript-frontend"))
+	t.Setenv("MASSIVE_TYPESCRIPT_RUNNER", filepath.Join(repository, "scripts", "massive-typescript-runner"))
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "conformance", "workflows", "linear-chain", "workflow.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := writableStoreForTest(t)
+	for _, project := range []string{"acme/one", "acme/two"} {
+		_, err := RunLocal(context.Background(), LocalRunRequest{Frontend: frontend, Input: []byte(`2`), Store: store, Project: project, RunID: "same"})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := map[string]string{}
+	if err := filepath.WalkDir(store, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		before[path] = string(body)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range []string{"acme/one", "acme/two"} {
+		journal, err := Inspect(context.Background(), store, project, "same")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if journal.Status != "succeeded" || journal.ProjectKey != orchestrator.NormalizeProjectKey(project) || journal.Result == nil {
+			t.Fatalf("journal: %+v", journal)
+		}
+	}
+	after := map[string]string{}
+	if err := filepath.WalkDir(store, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		after[path] = string(body)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("inspection changed stored bytes")
+	}
+	for _, runID := range []string{"../escape", "a/b", ""} {
+		if _, err := Inspect(context.Background(), store, "acme/one", runID); err == nil {
+			t.Fatalf("unsafe run %q accepted", runID)
+		}
+	}
 }

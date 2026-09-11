@@ -20,15 +20,11 @@ All datastore keys are relative object paths:
 
 Implementations must reject keys that escape the configured datastore root after resolution.
 
-For the CLI's local filesystem store, an operator may configure one validated
-relative prefix ahead of every key. `--store-prefix <key>` takes precedence over
-`MASSIVE_STORE_PREFIX`; neither setting enters `specHash`, `planHash`, or any
-artifact body hash. For example, prefix `tenants/acme` maps logical key
-`blobs/sha256/<digest>` to physical path
-`tenants/acme/blobs/sha256/<digest>`. The prefix obeys the same key syntax and
-the CLI additionally rejects control and leading/trailing whitespace. It is
-configuration, never part of a manifest reference. An empty environment value
-means no prefix; an explicitly supplied empty flag is invalid.
+For local execution, `--store <directory>` selects the complete physical root.
+Using distinct roots isolates stored bytes without changing `specHash`,
+`planHash`, or artifact body hashes. For S3, the datastore descriptor's `prefix`
+prepends each logical key. Storage location remains configuration, never part of
+an artifact reference.
 
 ## Digest references and path segments
 
