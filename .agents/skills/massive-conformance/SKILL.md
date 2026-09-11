@@ -10,7 +10,8 @@ from its repository root, not a remembered worktree.
 Choose evidence for the changed boundary:
 
 - Graph parsing or control flow: preserve a failing generated case as a small
-  regression; run the property tests and `scripts/fuzz.sh`. Parsing success
+  regression; run `packages/python/tests/test_graph_properties.py` and
+  `scripts/fuzz.sh`. Parsing success
   alone does not prove decision/select or map execution.
 - CLI or language adapters: run `scripts/test-python-distribution.sh` as well as
   affected unit tests. The wheel launcher sets Python-related environment variables;
