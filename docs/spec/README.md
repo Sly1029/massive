@@ -20,6 +20,7 @@ Specification documents for Massive. The active prioritization lives in
   implemented source packaging and the next dependency realization contract.
 - [Runtime Environment Bindings](runtime-environment.md) — workflow requirements,
   deployment-owned credentials, and explicit enforcement limits; no provider framework.
+- [File artifacts](file-artifacts.md) — implemented Python Blob/Tree wire and hydration contract.
 - [Artifact Runtime](artifact-runtime.md)
 - [Argo Backend](argo-backend.md)
 - [Testing Strategy](testing-strategy.md)

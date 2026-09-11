@@ -443,3 +443,62 @@ secrets until secret-reference lowering exists.
 The intended contract is logical requirements in the workflow and concrete
 bindings in deployment configuration. See the [binding design](../../docs/spec/runtime-environment.md)
 for the distinction between declarations, bindings, and enforcement.
+
+## Files and directory snapshots
+
+Use `Blob` for an opaque file and `Tree` for a directory. They compose inside
+Pydantic models, lists, map results, and decision payloads:
+
+```python
+from pathlib import Path
+from pydantic import BaseModel
+from massive import Blob, StepContext, Tree
+
+class Checkout(BaseModel):
+    files: Tree
+    revision: str
+
+class Report(BaseModel):
+    file: Blob
+
+def inspect(ctx: StepContext[None, Checkout]) -> Report:
+    root = ctx.inputs.files.path()
+    report = root / "report.txt"
+    report.write_text(f"Inspected revision {ctx.inputs.revision}")
+    return Report(file=Blob.from_path(report))
+
+# Register an ordinary top-level function; the decorator is optional.
+inspection = graph.add(graph.step()(inspect))
+```
+
+Create a snapshot with `Tree.from_path(directory)` or `Blob.from_path(file)`.
+Keep its source files available and unchanged until the step returns: Massive
+checks their captured hashes during publication. Bodies enter the configured
+filesystem or S3-compatible store before the task output manifest is committed.
+Only versioned hash/size references cross graph edges; file bytes never become
+Argo parameters. Repository checkout, revision selection, and credentials remain
+ordinary application logic; directory transport needs no Git-specific serializer.
+
+`path()` lazily downloads and verifies a handle into invocation-local scratch.
+The runner removes scratch after execution. Each consumer receives an isolated
+writable copy; edits cannot change upstream artifacts or another map item.
+Returning the same handle forwards the original snapshot. Return a new
+`Tree.from_path(root)` or `Blob.from_path(path)` to publish edits explicitly.
+
+Trees preserve regular files, executable bits, and empty directories, including
+hidden entries such as `.git` if present. They reject symlinks and special files.
+Timestamps, ownership, and other permission bits do not affect identity.
+Snapshot a deliberately selected directory; there is no implicit ignore file.
+The current implementation targets POSIX filesystems and buffers one file at a
+time in memory; streaming, download quotas, and garbage collection are future work.
+
+Outside a runner, pass an explicit `ArtifactFiles(store, scratch)` as Pydantic's
+`context` to `model_dump_json` when publishing and `model_validate_json` when
+binding references. Unbound handles can be inspected and serialized, but cannot
+hydrate. Use a dedicated datastore root or S3 prefix for each security boundary.
+
+The [artifact example](../../examples/08-artifacts/workflow.py) runs a directory
+snapshot through parallel processes and collects file reports. The
+[wire contract](../../docs/spec/file-artifacts.md) defines identity and retention
+requirements. Python currently provides hydration; TypeScript can forward the
+JSON references but has no corresponding file-handle API.

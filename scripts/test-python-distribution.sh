@@ -207,3 +207,23 @@ assert [file["path"] for file in spec["sourcePackages"]["python-main"]["files"]]
     "workflow.py",
 ]
 PY
+
+# File handles must survive installation without the development source tree,
+# including decorator-free registration and ordered subprocess map collection.
+mkdir -p "$test_root/files"
+cp "$repository/examples/08-artifacts/workflow.py" "$test_root/files/workflow.py"
+"$massive" run "$test_root/files/workflow.py" \
+  --input '{"copies": 3}' --store "$test_root/files-store" \
+  --project massive/distribution-files --run-id clean-wheel-files --json \
+  > "$test_root/files-result.json"
+"$python" - "$test_root/files-result.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+run = json.loads(Path(sys.argv[1]).read_text())
+assert run["status"] == "succeeded", run
+assert run["result"] == {
+    "reports": ["report-0", "report-1", "report-2"], "original": "original"
+}, run
+PY

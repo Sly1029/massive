@@ -43,6 +43,7 @@ from .datastore import (
     LocalDatastore,
     S3Datastore,
 )
+from .files import ArtifactFiles
 from .identity import SHA256_REFERENCE, InvocationIdentity
 from .identity import ExecutionScope as ArtifactExecutionScope
 
@@ -134,16 +135,16 @@ class StepError(Exception):
 @dataclass(frozen=True, slots=True)
 class _ResolvedStep:
     function: StepFunction
-    input_adapter: TypeAdapter[object] | None = None
-    output_adapter: TypeAdapter[object] | None = None
+    input_adapter: TypeAdapter[object]
+    output_adapter: TypeAdapter[object]
 
-    def invoke(self, descriptor: StepInvocationDescriptor, input_value: object) -> bytes:
-        if self.input_adapter is not None:
-            try:
-                input_value = self.input_adapter.validate_python(input_value)
-            except PydanticValidationError as error:
-                raise SchemaError(f"input does not satisfy the step input type: {error}") from error
-
+    def invoke(
+        self, descriptor: StepInvocationDescriptor, input_value: object, files: ArtifactFiles
+    ) -> bytes:
+        try:
+            input_value = self.input_adapter.validate_python(input_value, context=files)
+        except PydanticValidationError as error:
+            raise SchemaError(f"input does not satisfy the step input type: {error}") from error
         context = StepContext[None, object](
             inputs=input_value,
             deps=None,
@@ -167,17 +168,14 @@ class _ResolvedStep:
         except Exception as error:
             raise StepError(str(error)) from error
 
-        if self.output_adapter is not None:
-            try:
-                validated_output = self.output_adapter.validate_python(output)
-            except PydanticValidationError as error:
-                raise SchemaError(
-                    f"output does not satisfy the step output type: {error}"
-                ) from error
-            try:
-                output = self.output_adapter.dump_python(validated_output, mode="json")
-            except PydanticSerializationError as error:
-                raise SchemaError(f"output cannot be serialized as JSON: {error}") from error
+        try:
+            validated_output = self.output_adapter.validate_python(output)
+        except PydanticValidationError as error:
+            raise SchemaError(f"output does not satisfy the step output type: {error}") from error
+        try:
+            output = self.output_adapter.dump_python(validated_output, mode="json", context=files)
+        except PydanticSerializationError as error:
+            raise SchemaError(f"output cannot be serialized as JSON: {error}") from error
         try:
             return canonical_json(cast(JsonValue, output)).encode()
         except (TypeError, ValueError) as error:
@@ -244,8 +242,11 @@ def _execute(descriptor: StepInvocationDescriptor) -> None:
     except (ArtifactError, PydanticValidationError) as error:
         raise SchemaError(f"output artifact destination is invalid: {error}") from error
     input_value, _input_schema = _read_input(descriptor, datastore)
-    with _resolved_step(symbol, source_package, datastore) as step:
-        output_body = step.invoke(descriptor, input_value)
+    with (
+        TemporaryDirectory(prefix="massive-files-") as scratch,
+        _resolved_step(symbol, source_package, datastore) as step,
+    ):
+        output_body = step.invoke(descriptor, input_value, ArtifactFiles(datastore, Path(scratch)))
     try:
         ArtifactRuntime(datastore).publish_json(destination, producer, output_body)
     except (ArtifactError, PydanticValidationError) as error:
@@ -394,15 +395,21 @@ def _load_step(symbol: SymbolDescriptor, source_root: Path) -> _ResolvedStep:
             raise DescriptorError(f"cannot import {module_name}: {error}") from error
     exported = getattr(module, export, None)
     if isinstance(exported, StepDefinition):
-        step = cast(StepDefinition[object, object, object], exported)
-        return _ResolvedStep(
-            function=cast(StepFunction, step.function),
-            input_adapter=TypeAdapter[object](step.input_type),
-            output_adapter=TypeAdapter[object](step.output_type),
-        )
-    if callable(exported):
-        return _ResolvedStep(function=cast(StepFunction, exported))
-    raise DescriptorError(f"export {export!r} is not a step function")
+        step = cast(StepDefinition[None, object, object], exported)
+    elif callable(exported):
+        try:
+            step = StepDefinition[None, object, object].from_callable(cast(StepFunction, exported))
+        except (TypeError, ValueError, NameError) as error:
+            raise DescriptorError(f"export {export!r} is not a typed step: {error}") from error
+    else:
+        raise DescriptorError(f"export {export!r} is not a step function")
+    if step.deps_type is not type(None):
+        raise DescriptorError("Python runner does not support dependency bindings")
+    return _ResolvedStep(
+        function=step.function,
+        input_adapter=TypeAdapter[object](step.input_type),
+        output_adapter=TypeAdapter[object](step.output_type),
+    )
 
 
 @contextmanager

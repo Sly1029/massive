@@ -43,8 +43,10 @@ registry or dependency attestations. See the
 Version 0.1 supports static graphs and finite maps on Argo, and static graphs,
 exhaustive decisions, and finite maps locally. Argo source transport is
 intentionally small and self-contained for the first release; larger source
-bundles and values will move to the existing artifact-store seam without
-changing the SDK or compiled plan.
+bundles and arbitrary JSON values still need larger transport. Python `Blob`
+and `Tree` handles already send file bodies through the artifact store and
+hydrate isolated working copies in downstream tasks. See
+[files and directory snapshots](packages/python/README.md#files-and-directory-snapshots).
 
 See [the Python guide](packages/python/README.md) for the complete authoring and
 deployment walkthrough, or [the graph examples](examples/README.md) for graph

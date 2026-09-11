@@ -82,16 +82,15 @@ The cluster test harness should create a namespace per test run, install or veri
 
 ### Environment Materialization Tests
 
-Environment tests should materialize real Node environments from lockfiles. Assertions should inspect the manifest, cache key, artifact references, and backend-specific package shape. They should not mock package-manager output. Small fixture packages with committed lockfiles are preferable.
+Environment tests should use real Python projects and lockfiles. Assertions inspect source identity, materialization inputs, and the installed wheel. Locked dependency realization is still a roadmap item; recording a lockfile does not prove that an execution environment matches it. Do not substitute simulated package-manager output for an installation test.
 
 ## Local Developer Requirements
 
-For v0, the recommended local stack is:
+The current local test stack is:
 
-- Node and the chosen package manager for the TypeScript SDK,
-- Deno for the v0 local runner and SDK functional tests,
-- `tsgo` for TypeScript validation,
-- Go toolchain if backend compilers are written in Go,
+- `uv` and Python 3.12 or newer for the primary SDK and runner,
+- Node, pnpm, and Deno for the supported TypeScript frontend and functional tests,
+- Go for the compiler, control plane, and fuzzing,
 - Protocol Buffers compiler (`protoc`) for schema compile and protojson round-trip conformance checks,
 - Docker or compatible container runtime,
 - OrbStack or minikube Kubernetes cluster,
@@ -111,13 +110,13 @@ The `--allow-sys=cpus` permission is required by the Node-compatible `fast-glob`
 The local execution test path should use the same compiled artifact path as production-like targets:
 
 ```text
-TypeScript SDK emits WorkflowSpec
-Go compiler emits local WorkflowPlan
-local runner loads WorkflowPlan from datastore
-TypeScript SDK runtime adapter executes TypeScript steps
+Python or TypeScript SDK emits WorkflowSpec
+Go compiler emits WorkflowPlan
+Go orchestrator loads WorkflowPlan from datastore
+Each step runs in a separate language runner process
 ```
 
-The old TypeScript in-memory runner is not the architectural local path and should be removed when the Go local target lands.
+The retired in-memory TypeScript runner is not an execution path. Tests must exercise the portable plan and invocation protocol.
 
 There is no local Argo cluster command today. The legacy TypeScript Argo
 emitter and its `pnpm test:argo-cluster` harness were retired along with the
@@ -131,12 +130,37 @@ service account able to create `workflowtaskresults.argoproj.io`.
 
 ## Language Split
 
-The current recommended split is:
+Python is the primary authoring SDK and runtime; TypeScript remains a supported
+frontend. Both emit the same versioned WorkflowSpec and share conformance
+fixtures. Protobuf-owned canonical JSON is the portable plan boundary. Go owns
+validation, compilation, local orchestration, datastore tooling, and Argo bundle
+generation. Neither frontend is an independent source of graph semantics.
 
-- TypeScript for the authoring SDK and developer-facing workflow definitions,
-- proto-typed canonical JSON as the compiled-artifact boundary,
-- Go for backend compilers, datastore tooling, Argo bundle generation, and future target compilers.
+## Python graph properties and continuous fuzzing
 
-This split is reasonable because it keeps the authoring layer close to TypeScript users while putting the portable compiler and backend machinery in a language with strong static binaries, Kubernetes libraries, good concurrency, and straightforward distribution.
+The current Python-first fast path runs `pnpm check:python`. Hypothesis generates
+nested decision trees with uneven branches, checks that emitted specs compile
+with the real Go binary, shrinks cross-graph handle failures, and round-trips
+Unicode/punctuation directory shapes through the filesystem artifact store.
+The regular test suite runs these properties without Kubernetes or a fuzz daemon.
+Hypothesis's local example database is ignored by Git; turn a discovered failure
+into a named regression before changing the generator.
 
-The cost is schema discipline. The TypeScript SDK cannot become the real source of truth for semantics if Go owns backend compilation. Shared behavior must live in proto schemas, conformance fixtures, and golden functional tests that both languages consume.
+`./scripts/fuzz.sh` runs three Go fuzz targets with committed seed fixtures:
+
+- `FuzzWorkflowParsing`: arbitrary bytes through schema parsing, semantic
+  validation, compilation, and canonical plan verification.
+- `FuzzGraphShapes`: generated DAGs with an independent longest-path oracle,
+  input-order invariance, and deliberately introduced cycles.
+- `FuzzDecisionGraphs`: generated exhaustive decisions with variable width and
+  uneven branch depths, plus invalid cross-branch selects with recomputed hashes.
+
+Set `FUZZ_TIME=5m` and `FUZZ_WORKERS=4` for a longer local campaign. CI runs bounded
+campaigns on pull requests and longer campaigns nightly. Failing Go inputs are
+written to `internal/plan/testdata/fuzz/<target>/` and uploaded by CI. Commit
+minimized reproducers; `go test ./internal/plan` replays them as normal tests.
+
+File transport tests use real filesystem stores, independent Python processes,
+and MinIO. The wheel installation gate runs the artifact map example using only
+the installed distribution. These gates establish protocol and process behavior;
+they do not substitute for a live Argo cluster run with workload identity.

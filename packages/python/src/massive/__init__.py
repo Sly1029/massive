@@ -20,11 +20,14 @@ from .contracts import (
     container,
     execution,
 )
+from .files import ArtifactFiles, Blob, Tree
 from .source_package import SourcePackage, source_package
 
 __all__ = [
     "DEFAULT_MAP_CONCURRENCY",
     "MAX_MAP_CONCURRENCY",
+    "ArtifactFiles",
+    "Blob",
     "CaseHandle",
     "ContainerEnvironment",
     "ContainerInvocationPlan",
@@ -38,6 +41,7 @@ __all__ = [
     "SourcePackage",
     "StepContext",
     "StepDefinition",
+    "Tree",
     "WorkflowSpec",
     "canonical_json",
     "container",

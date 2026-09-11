@@ -175,3 +175,11 @@ map_select_graph.edge_from(map_select_graph.start).to(classified_for_map)
 map_select_graph.edge_from(approved_input).to(approved_source)
 map_select_graph.edge_from(rejected_input).to(rejected_source)
 map_select_graph.edge_from(selected_map).to(map_select_graph.end)
+
+
+
+def ordinary_increment(context: StepContext[None, Request]) -> Result:
+    return Result(value=context.inputs.value + 1)
+
+
+ordinary_node: NodeHandle[Result] = graph.add(graph.step()(ordinary_increment))
