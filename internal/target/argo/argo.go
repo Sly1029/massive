@@ -329,15 +329,18 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 		control := node.GetKind() == "decision" || node.GetKind() == "select"
 		if control {
 			// Control tasks execute no author code and need only a compatible
-			// Massive executable. Preserve its image and network policy,
+			// Massive executable. Preserve its image,
 			// without inheriting user resources or secrets.
 			source := controlEnvironmentSource(node.GetId(), executableNodes, inbound)
 			if source != nil && contracts[source.GetContractRef()] != nil {
-				contract = &planpb.ExecutionContract{EnvironmentRef: contracts[source.GetContractRef()].EnvironmentRef, Network: contracts[source.GetContractRef()].Network}
+				contract = contracts[source.GetContractRef()]
 			}
 		}
 		if contract == nil {
 			return nil, "", fmt.Errorf("argo target: executable node %q references unknown contract", node.GetId())
+		}
+		if control {
+			contract = &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef}
 		}
 		env := envs[contract.GetEnvironmentRef()]
 		deps := dependencies[node.GetId()]
@@ -489,7 +492,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	itemName := argoFieldName("map-item-" + node.GetId())
 	collectName := argoFieldName("map-collect-" + node.GetId())
 	mapName := argoFieldName("map-" + node.GetId())
-	controlContract := &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef, Network: contract.Network}
+	controlContract := &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef}
 
 	expandTemplate, err := runtimePodTemplate(
 		expandName, node.GetId(), env, controlContract, runtimeName, nil,
@@ -549,12 +552,11 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	return []any{mapTemplate, expandTemplate, itemTemplate, collectTemplate}, nil
 }
 
+var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName string, storage *deployment.Target, args []string) (map[string]any, error) {
 	if env.GetContainer().GetImage() == "" {
 		return nil, fmt.Errorf("argo target: executable node %q requires an immutable container requirement", nodeID)
-	}
-	if len(contract.GetSecrets()) > 0 {
-		return nil, fmt.Errorf("argo target: executable node %q declares secrets; 0.1 has no secret-ref lowering", nodeID)
 	}
 	runtime := env.GetContainer()
 	command := runtime.GetCommand()
@@ -565,15 +567,43 @@ func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement,
 		"image": runtime.GetImage(), "command": command, "args": args,
 		"volumeMounts": []any{map[string]any{"name": "massive-runtime", "mountPath": "/var/run/massive", "readOnly": true}},
 	}
+	variables := []any{}
+	var bindings map[string]deployment.SecretKeyRef
 	if storage != nil {
+		bindings = storage.SecretBindings
 		container["volumeMounts"] = append(container["volumeMounts"].([]any), map[string]any{"name": "massive-datastore", "mountPath": "/var/run/massive-datastore", "readOnly": true})
 		if secret := storage.ArtifactCredentialsSecret; secret != "" {
-			variables := []any{}
 			for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
 				variables = append(variables, map[string]any{"name": key, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secret, "key": key, "optional": key == "AWS_SESSION_TOKEN"}}})
 			}
-			container["env"] = variables
 		}
+	}
+
+	seenNames := map[string]bool{}
+	for _, secret := range contract.GetSecrets() {
+		name := secret.GetName()
+		if !environmentNamePattern.MatchString(name) {
+			return nil, fmt.Errorf("argo target: node %q secret name %q must be a portable environment variable", nodeID, name)
+		}
+		switch name {
+		case "PATH", "HOME", "PYTHONPATH", "PYTHONHOME", "TMPDIR", "TMP", "TEMP", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "NODE_OPTIONS":
+			return nil, fmt.Errorf("argo target: node %q secret name %q is reserved by the runtime", nodeID, name)
+		}
+		if strings.HasPrefix(name, "AWS_") || strings.HasPrefix(name, "MASSIVE_") {
+			return nil, fmt.Errorf("argo target: node %q secret name %q is reserved by the runtime", nodeID, name)
+		}
+		if seenNames[name] {
+			return nil, fmt.Errorf("argo target: node %q repeats secret environment variable %q", nodeID, name)
+		}
+		seenNames[name] = true
+		binding, ok := bindings[secret.GetRef()]
+		if !ok {
+			return nil, fmt.Errorf("argo target: node %q secret %q has missing deployment binding %q; supply --secret-bindings", nodeID, name, secret.GetRef())
+		}
+		variables = append(variables, map[string]any{"name": name, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": binding.Name, "key": binding.Key}}})
+	}
+	if len(variables) != 0 {
+		container["env"] = variables
 	}
 	if runtime.GetWorkingDirectory() != "" {
 		container["workingDir"] = runtime.GetWorkingDirectory()
@@ -723,7 +753,7 @@ func buildBundle(p *planpb.WorkflowPlan, d *deployment.Spec, files []File) (*Bun
 		return nil, err
 	}
 	bundleHash := canonical.DigestBytes(identityJSON)
-	manifest := &planpb.TargetBundleManifest{SchemaVersion: u32(0), Target: str(Kind), PlanHash: str(p.GetPlanHash()), BundleHash: str(bundleHash), Files: entries, Validations: []*planpb.ValidationResult{{Name: str("argo-schema"), Passed: boolp(true)}, {Name: str("dag-integrity"), Passed: boolp(true)}, {Name: str("credential-free-binding"), Passed: boolp(true)}}, Provenance: &planpb.BundleProvenance{CompilerName: str(p.GetProvenance().GetCompilerName()), CompilerVersion: str(p.GetProvenance().GetCompilerVersion())}, DeploymentHash: str(d.DeploymentHash)}
+	manifest := &planpb.TargetBundleManifest{SchemaVersion: u32(0), Target: str(Kind), PlanHash: str(p.GetPlanHash()), BundleHash: str(bundleHash), Files: entries, Validations: []*planpb.ValidationResult{{Name: str("argo-schema"), Passed: boolp(true)}, {Name: str("dag-integrity"), Passed: boolp(true)}, {Name: str("credential-free-binding"), Passed: boolp(true)}, {Name: str("secret-binding"), Passed: boolp(true)}}, Provenance: &planpb.BundleProvenance{CompilerName: str(p.GetProvenance().GetCompilerName()), CompilerVersion: str(p.GetProvenance().GetCompilerVersion())}, DeploymentHash: str(d.DeploymentHash)}
 	raw, err := protojson.Marshal(manifest)
 	if err != nil {
 		return nil, err

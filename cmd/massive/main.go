@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Sly1029/massive/internal/controlplane"
+	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
@@ -37,6 +38,7 @@ type RunCommand struct {
 }
 
 type BuildCommand struct {
+	SecretBindings            string `name:"secret-bindings" help:"JSON file mapping logical secret refs to Kubernetes Secret name/key bindings." type:"existingfile"`
 	ArtifactCredentialsSecret string `name:"artifact-credentials-secret" help:"Optional Secret containing standard AWS credential keys; omit for workload identity."`
 	Entry                     string `arg:"" name:"entry" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
 	Target                    string `help:"Deployment target." enum:"argo" default:"argo"`
@@ -217,6 +219,17 @@ func renderRun(writer io.Writer, jsonMode, verbose bool, result *controlplane.Lo
 }
 
 func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
+	var secretBindings map[string]deployment.SecretKeyRef
+	if command.SecretBindings != "" {
+		data, err := os.ReadFile(command.SecretBindings)
+		if err != nil {
+			return fmt.Errorf("read secret bindings: %w", err)
+		}
+		secretBindings, err = deployment.ParseSecretBindings(data)
+		if err != nil {
+			return fmt.Errorf("invalid secret bindings: %w", err)
+		}
+	}
 	frontend, err := controlplane.Emit(ctx, command.Entry)
 	if err != nil {
 		return err
@@ -229,6 +242,7 @@ func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
 		Frontend: frontend, OutputDirectory: output, ProfileName: command.Profile,
 		ArtifactStoreBinding: command.ArtifactStore, Namespace: command.Namespace,
 		ArtifactCredentialsSecret: command.ArtifactCredentialsSecret,
+		SecretBindings:            secretBindings,
 		ServiceAccountName:        command.ServiceAccount, WorkflowTemplateName: command.Name,
 	})
 	if err != nil {

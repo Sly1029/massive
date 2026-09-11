@@ -6,7 +6,10 @@ of credentials; execution requirements remain separate from deployment binding.
 
 Only user invocations need shared datastore access and application execution
 resources. Decision/select, map expansion, and collection control pods execute
-no author code; keep user credentials and resources off these pods.
+no author code; keep user credentials and resources off these pods. Bind each
+logical application-secret ref through DeploymentSpec and reject unbound refs
+before emitting a bundle. Reserve storage/runtime environment names even when
+no explicit storage credential Secret is configured.
 
 Inactive branches must not read nonexistent outputs. Select waits for inactive
 or terminal alternatives, requires a successful chosen source, and resolves

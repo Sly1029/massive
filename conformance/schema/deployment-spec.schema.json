@@ -68,6 +68,25 @@
         "kind": { "const": "local" }
       }
     },
+    "kubernetesSecretName": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+      "maxLength": 253
+    },
+    "secretKeyRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "key"],
+      "properties": {
+        "name": { "$ref": "#/$defs/kubernetesSecretName" },
+        "key": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$", "maxLength": 253, "not": { "pattern": "^(\\.$|\\.\\.)" } }
+      }
+    },
+    "secretBindings": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "$ref": "#/$defs/secretKeyRef" }
+    },
     "argoTarget": {
       "type": "object",
       "additionalProperties": false,
@@ -77,7 +96,8 @@
         "namespace": { "$ref": "#/$defs/id" },
         "serviceAccountName": { "$ref": "#/$defs/id" },
         "workflowTemplateName": { "$ref": "#/$defs/id" },
-        "artifactCredentialsSecret": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 }
+        "secretBindings": { "$ref": "#/$defs/secretBindings" },
+        "artifactCredentialsSecret": { "$ref": "#/$defs/kubernetesSecretName" }
       }
     }
   }

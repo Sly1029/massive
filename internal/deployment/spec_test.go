@@ -297,3 +297,37 @@ func deploymentJSONForPlan(t *testing.T, planHash string, profile map[string]any
 	}
 	return body
 }
+
+func TestSecretBindingsValidateKubernetesNamesAndKeys(t *testing.T) {
+	valid := []byte(`{"service-token":{"name":"service.credentials","key":".token"}}`)
+	bindings, err := ParseSecretBindings(valid)
+	if err != nil || bindings["service-token"].Key != ".token" {
+		t.Fatalf("valid bindings: %v %v", bindings, err)
+	}
+	for _, body := range []string{
+		`{"ref":{"name":"Invalid","key":"token"}}`,
+		`{"ref":{"name":"service","key":"../token"}}`,
+		`{"ref":{"name":"service","key":"..hidden"}}`,
+		`{"ref":{"name":"service","key":"."}}`,
+		`{"ref":{"name":"service","key":"token","value":"never-a-binding"}}`,
+		`{"":{"name":"service","key":"token"}}`,
+		`null`,
+	} {
+		if _, err := ParseSecretBindings([]byte(body)); err == nil {
+			t.Fatalf("invalid bindings accepted: %s", body)
+		}
+	}
+	profile := Profile{Name: "argo", ArtifactStoreBinding: "artifacts", Target: Target{Kind: "argo", Namespace: "default", ServiceAccountName: "runner", SecretBindings: bindings}}
+	first, _, err := New(testPlanHash, profile, testPlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.Target.SecretBindings["service-token"] = SecretKeyRef{Name: "other.credentials", Key: "token"}
+	second, _, err := New(testPlanHash, profile, testPlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.PlanHash != second.PlanHash || first.DeploymentHash == second.DeploymentHash {
+		t.Fatal("secret binding did not stay in deployment identity")
+	}
+}

@@ -196,6 +196,7 @@ type ArgoBundleRequest struct {
 	ProfileName               string
 	ArtifactStoreBinding      string
 	ArtifactCredentialsSecret string
+	SecretBindings            map[string]deployment.SecretKeyRef
 	Namespace                 string
 	ServiceAccountName        string
 	WorkflowTemplateName      string
@@ -221,6 +222,7 @@ func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
 			ServiceAccountName:        request.ServiceAccountName,
 			WorkflowTemplateName:      request.WorkflowTemplateName,
 			ArtifactCredentialsSecret: request.ArtifactCredentialsSecret,
+			SecretBindings:            request.SecretBindings,
 		},
 	})
 	if err != nil {

@@ -66,9 +66,10 @@ work. This is not a general metadata database or cross-run result cache.
 ## 4. Complete Argo for the supported graph model
 
 DAGs, exhaustive decisions/selects, and finite single-step maps lower to Argo.
-Live conformance covers nested inactive branches, empty maps, and failed items.
+Live conformance covers nested inactive branches, empty maps, failed items, and
+deployment-bound native Secret references. Cloud workload identity remains a
+separate infrastructure gate.
 Remaining work:
-- deployment-bound secret references;
 - larger source/value transport and representative application images.
 
 Reject unsupported requirements instead of silently weakening them. Schema

@@ -204,8 +204,8 @@ The full pipeline above is the target architecture, not the first implementation
    Emit canonical YAML, workflow.json, and bundle-manifest.json.
 ```
 
-Presets, plugins, user patches, field-level provenance explanations, and application
-secret declarations are deferred. Storage credentials can bind to a named Secret
+Presets, plugins, user patches, and field-level provenance explanations are deferred.
+Application secrets bind logical refs to native Kubernetes Secret keys. Storage credentials can bind to a named Secret
 or workload identity. Egress restrictions that prevent storage access fail the build.
 
 The v0 Argo step image contract is the same as the container environment
@@ -444,3 +444,40 @@ keys or configured web/container workload identity and does not discover EC2 nod
 credentials. Credential acquisition failures stop invocation before artifact IO.
 Automatic pod retries remain disabled until shared publication retry behavior is
 covered by live failure-injection tests.
+
+
+## Application secret bindings
+
+A task declares portable environment names and logical refs, for example
+`execution(environment=environment, secrets={"SERVICE_TOKEN": "catalog-api"})`.
+Deploy with `massive build ... --secret-bindings bindings.json`, where the file is:
+
+```json
+{"catalog-api": {"name": "catalog-credentials", "key": "token"}}
+```
+
+Bindings are names only. They enter DeploymentSpec and its hash, while plan and
+environment identities stay unchanged. The compiler never fetches credentials.
+Each user step or map item receives only its declared refs as required
+`valueFrom.secretKeyRef` entries. Control pods receive none. Missing logical
+bindings fail compilation; missing Kubernetes Secrets or keys prevent the pod
+from starting. Keys resolve in the workflow's deployment namespace. Kubernetes
+owns rotation and authorization; changing a Secret does not alter an already
+running container's environment.
+
+Names and keys follow [Kubernetes Secret constraints](https://kubernetes.io/docs/concepts/configuration/secret/#constraints-on-secret-names-and-data).
+Environment names must use the portable `[A-Za-z_][A-Za-z0-9_]*` form, with no
+repeated names in one contract. The `AWS_` and `MASSIVE_` prefixes are reserved for
+storage and runtime configuration, including when workload identity is selected.
+`PATH`, `HOME`, `PYTHONPATH`, `PYTHONHOME`, `TMPDIR`, `TMP`, `TEMP`, `LD_PRELOAD`,
+`LD_LIBRARY_PATH`, `LD_AUDIT`, and `NODE_OPTIONS` are also reserved. Use application
+names and explicitly configured clients for credentials outside that boundary.
+Reserved names protect runtime configuration; they are not a security boundary
+against author code. A deployment mapping can contain refs unused by a particular graph; they are
+never injected unless a task declares them.
+
+This is native environment binding only. Local execution continues to inherit
+the caller's environment without selective binding or secret preflight. There
+is no `.env` loader, secret-manager lookup, optional-secret fallback, or secret
+value serialization. The live Argo gate checks a real Secret through a mapped
+invocation and verifies that other pods never receive its environment entry.

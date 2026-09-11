@@ -46,7 +46,8 @@ not an authorization policy: possession of a name does not grant access.
 
 - Python local processes inherit the launching environment. Declared secrets are not
   yet selectively bound or preflighted.
-- Argo rejects declared secrets because secret-reference lowering is not implemented.
+- Argo binds declared environment secrets through a deployment mapping to native
+  Kubernetes Secret keys; see [Argo secret bindings](argo-backend.md#application-secret-bindings).
 - Local execution does not enforce a container, Kubernetes resources, or network policy.
 - Argo supports immutable container images, CPU/memory requirements, and explicit
   shared-storage egress validation; it does not implement the proposed mediation/placement model.
@@ -80,7 +81,8 @@ what ran where without making credential rotation rebuild dependency environment
 1. Package source and dependency inputs using standard Python project metadata.
 2. Implement dependency preflight and record actual environment realization.
 3. Version logical secret requirements and deployment mappings together.
-4. Add local env bindings and Argo `secretKeyRef` lowering with functional tests.
+4. Add selective local environment bindings; native Argo `secretKeyRef` lowering
+   has a live functional gate.
 5. Add lifecycle events before considering middleware or typed dependency providers.
 
 No first-party vault, provider plugin framework, token proxy, or generic policy renderer
