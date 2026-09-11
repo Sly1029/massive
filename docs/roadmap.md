@@ -69,7 +69,6 @@ DAGs, exhaustive decisions/selects, and finite single-step maps lower to Argo.
 Live conformance covers nested inactive branches, empty maps, and failed items.
 Remaining work:
 - deployment-bound secret references;
-- larger source/value transport;
 - larger source/value transport and representative application images.
 
 Reject unsupported requirements instead of silently weakening them. Schema

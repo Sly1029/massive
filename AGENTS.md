@@ -21,3 +21,13 @@
 node scripts/check-no-test-mocks.mjs
 ```
 
+
+## Durable context
+
+- Read `docs/roadmap.md` when choosing the next feature; use the matching spec for
+  its acceptance criteria.
+- Put module-specific invariants in an AGENTS.md beside that code as they are
+  learned. Keep root instructions cross-cutting and remove stale guidance when
+  changing a contract. Record procedures in skills, not chronological work logs.
+- This repository is public. Keep private application names, source, deployment
+  details, credentials, and integration evidence in their owning repositories.
