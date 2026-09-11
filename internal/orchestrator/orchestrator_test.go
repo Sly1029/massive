@@ -1168,3 +1168,26 @@ func repoRootForTest(t *testing.T) string {
 	}
 	return root
 }
+
+func TestCancelledBeforeDispatchCreatesNoJournal(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	result, err := Run(ctx, RunConfig{Plan: compiled.Plan, DatastoreRoot: storeRoot, ProjectID: "test/cancellation", RunID: "before-dispatch", SourcePackageRoot: sourceRoot, SourceManifests: manifests}, []byte("1"))
+	if !errors.Is(err, context.Canceled) || result != nil {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	if err := filepath.WalkDir(storeRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Name() == "run-manifest.json" {
+			t.Fatal("cancelled run published a journal")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -18,3 +18,8 @@ journal invariants without replacing the invoker with a mock API.
 Never persist raw runner output or arbitrary context cancellation causes in the
 root journal diagnostic. Return details to the caller; shared artifacts contain
 safe lifecycle summaries.
+
+Apply verification deadlines per invocation, not once per arbitrarily large map.
+Reconcile all reported dispatches before verification can fail. Publish the map
+journal after reconciliation instead of rewriting the full item list for every
+item, which makes publication quadratic in map cardinality.

@@ -225,6 +225,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		case "decision":
 			selectedCase, err := resolution.routeDecision(node)
 			if err != nil {
+				// Decision resolution already excludes classified values from errors.
 				markDecisionFailed(&manifest, nodeID, err.Error())
 				return nil, err
 			}
@@ -303,27 +304,23 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			if invokeErr != nil {
 				return nil, invokeErr
 			}
+			if outcome.Status == StatusCancelled && ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			return nil, errors.New(runnerDiagnostic(outcome))
 		}
 		// A successful outcome remains useful even if cancellation arrived as
 		// the invoker returned. Verify its published artifacts before stopping.
-		settlementContext, finishSettlement := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		if config.Hooks.AfterStepInvocation != nil {
-			if err := config.Hooks.AfterStepInvocation(settlementContext, descriptor); err != nil {
-				finishSettlement()
-				return nil, err
-			}
-		}
-		output, err := resolveOutputArtifact(settlementContext, store, descriptor, index)
+		output, err := settleInvocation(ctx, store, descriptor, index, config.Hooks)
 		if err != nil {
-			finishSettlement()
-			markAttemptTerminal(&manifest, nodeID, StatusFailed, err.Error())
+			markAttemptTerminal(&manifest, nodeID, StatusFailed, "output verification failed")
 			return nil, err
 		}
 		resolution.setOutput(nodeID, output)
 		markAttemptSucceeded(&manifest, nodeID, output.Published)
-		err = writeRunManifest(settlementContext, store, manifestKey, manifest)
-		finishSettlement()
+		publicationContext, finishPublication := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		err = writeRunManifest(publicationContext, store, manifestKey, manifest)
+		finishPublication()
 		if err != nil {
 			return nil, err
 		}
@@ -333,6 +330,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 
 	}
 
+	activeNodeID = ""
 	resultArtifact, err := resultForEnd(ctx, store, projectKey, runID, config.Plan.GetGraph().GetEndNode(), index, resolution.outputs)
 	if err != nil {
 		return nil, err
@@ -877,9 +875,6 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map invocation protocol failed", err)
 	}
 
-	settlementContext, finishSettlement := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer finishSettlement()
-
 	// Record every reported dispatch before verification can fail. Otherwise a
 	// publication error on an early item would mislabel later started items as
 	// never dispatched when the root journal is terminalized.
@@ -905,11 +900,6 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		if !started {
 			continue
 		}
-		if config.Hooks.AfterStepInvocation != nil {
-			if err := config.Hooks.AfterStepInvocation(settlementContext, descriptor.Descriptor); err != nil {
-				return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map post-invocation hook failed", err)
-			}
-		}
 		if outcome.Status != StatusSucceeded {
 			if outcome.Status == StatusCancelled || outcome.Status == stepInvocationStatusInfraFailed {
 				continue
@@ -918,30 +908,25 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 				firstRunnerFailure = runnerDiagnostic(outcome)
 			}
 			markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, durableRunnerDiagnostic(outcome))
-			if err := writeRunManifest(settlementContext, store, manifestKey, *manifest); err != nil {
-				return nodeOutput{}, err
-			}
 			continue
 		}
-		output, err := resolveOutputArtifact(settlementContext, store, descriptor.Descriptor, resolution.index)
+		output, err := settleInvocation(ctx, store, descriptor.Descriptor, resolution.index, config.Hooks)
 		if err != nil {
 			if firstRunnerFailure == "" {
 				firstRunnerFailure = err.Error()
 			}
 			markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "map item output verification failed")
-			if writeErr := writeRunManifest(settlementContext, store, manifestKey, *manifest); writeErr != nil {
-				return nodeOutput{}, writeErr
-			}
 			continue
 		}
 		markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
 		results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
-		if err := writeRunManifest(settlementContext, store, manifestKey, *manifest); err != nil {
-			return nodeOutput{}, err
-		}
 	}
 	if invokeErr != nil {
-		return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map invocation infrastructure failed", invokeErr)
+		diagnostic := "map invocation infrastructure failed"
+		if ctx.Err() != nil && errors.Is(invokeErr, ctx.Err()) {
+			diagnostic = "map execution cancelled"
+		}
+		return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), diagnostic, invokeErr)
 	}
 	if err := ctx.Err(); err != nil {
 		return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map execution cancelled", err)
@@ -1005,6 +990,20 @@ func mapOutcomesByIndex(mapID string, outcomes []StepInvocationOutcome, itemCoun
 		return nil, fmt.Errorf("map invoker omitted an item outcome")
 	}
 	return byIndex, nil
+}
+
+// settleInvocation verifies one reported success independently of execution
+// cancellation. Each publication has its own finite budget; a large map does
+// not consume every item's verification time in one shared deadline.
+func settleInvocation(ctx context.Context, store datastore.Datastore, descriptor StepInvocationDescriptor, index executionIndex, hooks RunHooks) (nodeOutput, error) {
+	settlementContext, stop := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer stop()
+	if hooks.AfterStepInvocation != nil {
+		if err := hooks.AfterStepInvocation(settlementContext, descriptor); err != nil {
+			return nodeOutput{}, err
+		}
+	}
+	return resolveOutputArtifact(settlementContext, store, descriptor, index)
 }
 
 func resolveOutputArtifact(ctx context.Context, store datastore.Datastore, descriptor StepInvocationDescriptor, index executionIndex) (nodeOutput, error) {
@@ -1294,7 +1293,7 @@ func markUnfinishedMapItemsTerminal(manifest *runjournal.Manifest, nodeID, statu
 		item := &(*step.Items)[index]
 		if item.Status == StatusPending {
 			item.Status = StatusNotStarted
-			item.Diagnostic = "map item was not started because the map " + status
+			item.Diagnostic = "map ended with status " + status + " before item dispatch"
 			continue
 		}
 		if item.Status == StatusRunning {

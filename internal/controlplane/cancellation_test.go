@@ -115,11 +115,14 @@ graph.edge_from(collected).to(graph.end)
 				t.Fatalf("undispatched item %d has an attempt", index)
 			}
 		}
+		if step.Attempts[0].Diagnostic != "map execution cancelled" {
+			t.Fatalf("cancelled map diagnostic = %q", step.Attempts[0].Diagnostic)
+		}
 		if step.Attempts[0].Output != nil {
 			t.Fatal("cancelled map advertises a collection")
 		}
 		collectionKey := "projects/" + journal.ProjectKey + "/runs/" + journal.RunID + "/steps/workers/1/output-manifest.json"
-		if _, err := store.Get(t.Context(), datastore.MustKey(collectionKey)); err == nil {
+		if _, err := store.Get(t.Context(), datastore.MustKey(collectionKey)); !errors.Is(err, datastore.ErrNotFound) {
 			t.Fatal("cancelled map published a collection manifest")
 		}
 		first := (*step.Items)[0]
