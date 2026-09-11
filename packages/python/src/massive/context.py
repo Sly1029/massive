@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Generic, TypeVar
 
 DepsT = TypeVar("DepsT")
@@ -19,3 +20,4 @@ class StepContext(Generic[DepsT, InputT]):
     inputs: InputT
     deps: DepsT
     invocation: InvocationContext
+    workspace: Path

@@ -205,6 +205,8 @@ following properties are not optional:
 - module-qualified symbols and schemas are serializable and reproducible;
 - dynamically created or otherwise unstable nodes are rejected at emission.
 
+`StepContext.workspace` is a writable invocation directory for generated files;
+its lifetime and cleanup are defined in [file artifacts](file-artifacts.md#author-workspace).
 `StepContext.inputs` carries workflow data. `StepContext.deps` contains typed
 service or capability handles only. Dependencies must not become an invisible
 second dataflow channel. Their deployment binding and cache participation are

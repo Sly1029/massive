@@ -481,3 +481,36 @@ def test_changed_file_cannot_commit_a_successful_task_output(tmp_path: Path) -> 
     assert result.returncode == 65, result.stderr
     assert "source changed" in result.stderr
     assert not (store / descriptor["output"]["manifestKey"]).exists()
+
+
+@pytest.mark.parametrize(
+    ("export", "exit_code"),
+    [("workspace_file", 0), ("workspace_failure", 66), ("workspace_invalid_output", 65)],
+)
+def test_workspace_lives_through_publication_and_is_cleaned_after_invocation(
+    tmp_path: Path, export: str, exit_code: int
+) -> None:
+    from massive import ArtifactFiles, Blob
+
+    descriptor_path, descriptor, store = _descriptor(
+        tmp_path, export=export, output_schema=TypeAdapter(Blob).json_schema()
+    )
+    result = _run(descriptor_path)
+    assert result.returncode == exit_code, result.stderr
+    if export == "workspace_failure":
+        assert "workspace failure" in result.stderr
+    elif export == "workspace_invalid_output":
+        assert "source changed" in result.stderr
+    workspace = Path(json.loads(result.stdout))
+    assert workspace.is_absolute()
+    assert not workspace.exists()
+    manifest_path = store / descriptor["output"]["manifestKey"]
+    if exit_code:
+        assert not manifest_path.exists()
+    else:
+        manifest = json.loads(manifest_path.read_text())
+        body = (store / manifest["body"]["key"]).read_bytes()
+        blob = Blob.model_validate_json(
+            body, context=ArtifactFiles(LocalDatastore(store), tmp_path / "read")
+        )
+        assert blob.path().read_text() == "workspace artifact"
