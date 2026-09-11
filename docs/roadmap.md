@@ -47,8 +47,11 @@ for what works today.
 
 - Expose a run-wide worker budget. Local maps already use parallel subprocesses;
   independent DAG branches should share the same budget rather than multiply it.
-- Add per-task timeout, explicit retry policy, attempt accounting, and cancellation
-  of child-process trees.
+- Local task subprocesses now own ordinary descendants through OS process groups
+  or Windows jobs, with bounded pipe drainage and captured output. Add CLI signal
+  ingress and terminal cancellation journals; killing the CLI itself still does
+  not constitute graceful run cancellation.
+- Add per-task timeout, explicit retry policy, and attempt accounting.
 - Persist bounded task logs and structured lifecycle events. Inspection is available
   in the shipped Go CLI; the Deno CLI has been removed.
 - Treat external side effects separately from immutable artifact publication:

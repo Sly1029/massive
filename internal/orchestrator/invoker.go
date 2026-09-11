@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/taskprocess"
 )
 
 const (
@@ -206,14 +206,8 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 	} else {
 		argv = substituteDescriptorPath(i.CommandTemplate, descriptorPath)
 	}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir = i.WorkingDir
-
-	var combined bytes.Buffer
-	cmd.Stdout = &combined
-	cmd.Stderr = &combined
-	err = cmd.Run()
-	diagnostic := strings.TrimSpace(combined.String())
+	output, err := taskprocess.Run(ctx, argv, i.WorkingDir)
+	diagnostic := strings.TrimSpace(output)
 
 	if err == nil {
 		return StepInvocationOutcome{
