@@ -110,6 +110,7 @@ class DecisionConformance(unittest.TestCase):
     def completed(self, label: str) -> dict:
         name = self.runs[label]
         deadline = time.monotonic() + 240
+        run = {}
         while time.monotonic() < deadline:
             run = kubectl("get", "workflow", name, "-o", "json")
             if run.get("status", {}).get("phase") in {"Succeeded", "Failed", "Error"}:
@@ -126,7 +127,11 @@ class DecisionConformance(unittest.TestCase):
         self.assertEqual(
             json.loads(root["outputs"]["parameters"][0]["value"]), expected
         )
-        return {node["displayName"]: node for node in run["status"]["nodes"].values()}
+        return {
+            node["displayName"]: node
+            for node in run["status"]["nodes"].values()
+            if node.get("boundaryID") == run["metadata"]["name"]
+        }
 
     def test_nested_selected_branch_and_map(self) -> None:
         nodes = self.successful("positive", 6)
@@ -161,4 +166,13 @@ class DecisionConformance(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    for required in (
+        "MASSIVE_TEST_ARGO_IMAGE",
+        "MASSIVE_TEST_ARGO_PLATFORM",
+        "KUBECONFIG",
+    ):
+        if not os.environ.get(required):
+            raise SystemExit(
+                f"{required} is required; run scripts/test-argo.sh to provision conformance"
+            )
     unittest.main(verbosity=2)

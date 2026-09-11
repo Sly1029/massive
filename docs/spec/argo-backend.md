@@ -360,6 +360,7 @@ control`, validates the selected case with the same schema validator as local
 execution, and emits a numeric case index. User tags never become controller
 expressions. Decision and select tasks reuse an upstream container environment
 without invoking author code or inheriting that step's resources or secrets.
+The upstream network policy remains enforced for the control task.
 
 Every ordinary dependency requires `.Succeeded`. Selects wait for all branch
 sources to finish or become inactive, require at least one successful source,

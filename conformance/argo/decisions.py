@@ -76,7 +76,7 @@ graph = GraphBuilder(
     output_type=int,
     defaults=execution(environment=container(IMAGE, platform=PLATFORM)),
 )
-outer_value = graph.add(graph.step()(classify))
+outer_value = graph.add(graph.step()(classify), id="-classify")
 outer = graph.decision(outer_value, on="kind", id="outer")
 inner_value = graph.add(graph.step()(classify_inner))
 inner = graph.decision(inner_value, on="kind", id="inner")

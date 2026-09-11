@@ -39,6 +39,7 @@ func ResolveControlValue(p *planpb.WorkflowPlan, nodeID string, inputJSON []byte
 					return &ControlValue{Value: input, CaseIndex: &index}, nil
 				}
 			}
+			return nil, fmt.Errorf("decision %q selected an unavailable case", nodeID)
 		case "select":
 			schema, exists := schemas[node.GetOutputSchema()]
 			if !exists {

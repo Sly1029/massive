@@ -3,24 +3,17 @@ package argo
 import (
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 )
 
-// Quote expression literals, including braces that Argo's outer tag parser
-// would otherwise interpret before Expr evaluates the string.
-func expressionString(value string) string {
-	return strings.NewReplacer("{", `\u007b`, "}", `\u007d`).Replace(strconv.Quote(value))
-}
-
-func argoCaseExpression(decision *planpb.GraphNode, tag string, names map[string]string) string {
+func argoCaseExpression(decision *planpb.GraphNode, tag string, names map[string]string) (string, error) {
 	for index, candidate := range decision.GetCases() {
 		if candidate.GetTag() == tag {
-			return "tasks[" + expressionString(names[decision.GetId()]) + "].outputs.parameters.selection == " + strconv.Quote(strconv.Itoa(index))
+			return "tasks[" + strconv.Quote(names[decision.GetId()]) + "].outputs.parameters.selection == " + strconv.Quote(strconv.Itoa(index)), nil
 		}
 	}
-	panic("validated decision is missing its case")
+	return "", fmt.Errorf("argo target: decision %q has no case %q", decision.GetId(), tag)
 }
 
 func argoSelectExpression(node *planpb.GraphNode, nodes []*planpb.GraphNode, names map[string]string) (string, error) {
@@ -39,7 +32,11 @@ func argoSelectExpression(node *planpb.GraphNode, nodes []*planpb.GraphNode, nam
 	expression := "nil"
 	for i := len(node.GetSelectInputs()) - 1; i >= 0; i-- {
 		input := node.GetSelectInputs()[i]
-		expression = argoCaseExpression(decision, input.GetCase(), names) + " ? tasks[" + expressionString(names[input.GetSource()]) + "].outputs.parameters.result : (" + expression + ")"
+		condition, err := argoCaseExpression(decision, input.GetCase(), names)
+		if err != nil {
+			return "", err
+		}
+		expression = condition + " ? tasks[" + strconv.Quote(names[input.GetSource()]) + "].outputs.parameters.result : (" + expression + ")"
 	}
 	return "{{=" + expression + "}}", nil
 }

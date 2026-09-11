@@ -21,13 +21,14 @@ func TestRemoteControlValuesShareDecisionValidation(t *testing.T) {
 	for _, tc := range []struct {
 		value string
 		valid bool
+		index int
 	}{
-		{`{"kind":"accepted","value":7}`, true},
-		{`{"kind":"rejected","reason":"no"}`, true},
-		{`{"kind":"unknown"}`, false},
-		{`{"kind":"accepted","value":"invalid"}`, false},
-		{`{"value":7}`, false},
-		{`null`, false},
+		{`{"kind":"accepted","value":7}`, true, 0},
+		{`{"kind":"rejected","reason":"no"}`, true, 1},
+		{`{"kind":"unknown"}`, false, -1},
+		{`{"kind":"accepted","value":"invalid"}`, false, -1},
+		{`{"value":7}`, false, -1},
+		{`null`, false, -1},
 	} {
 		t.Run(tc.value, func(t *testing.T) {
 			result, err := ResolveControlValue(compiled.Plan, "route", []byte(tc.value))
@@ -40,7 +41,7 @@ func TestRemoteControlValuesShareDecisionValidation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.CaseIndex == nil || !bytes.Equal(result.Value, []byte(tc.value)) {
+			if result.CaseIndex == nil || *result.CaseIndex != tc.index || !bytes.Equal(result.Value, []byte(tc.value)) {
 				t.Fatalf("route result: %#v", result)
 			}
 		})

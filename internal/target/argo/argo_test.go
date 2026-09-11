@@ -78,7 +78,7 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 		t.Fatalf("container platform was not lowered to node selector: %v", nodeSelector)
 	}
 	args := stepTemplate["container"].(map[string]any)["args"].([]any)
-	if !containsArgs(args, "runtime", "step") || !containsArgs(args, "--node", "merge") {
+	if !containsArgs(args, "runtime", "step") || !containsArgs(args, "--node=merge") {
 		t.Fatalf("remote runtime command missing: %v", args)
 	}
 	input := merge["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"]
@@ -232,7 +232,7 @@ func TestPythonFrontendFixtureLowersThroughArgoSchema(t *testing.T) {
 	if annotations["massive.dev/execution-status"] != "executable-dag" {
 		t.Fatal("generated Python WorkflowTemplate is not marked executable")
 	}
-	if !containsArgs(container["args"].([]any), "--node", "add_one") {
+	if !containsArgs(container["args"].([]any), "--node=add_one") {
 		t.Fatal("runtime command did not preserve the proto node id")
 	}
 }
@@ -269,6 +269,10 @@ func TestDecisionBranchesWaitForSuccessAndSelectOnlyOneOutput(t *testing.T) {
 	}
 	if !strings.Contains(accept["when"].(string), "selection") || strings.Contains(accept["when"].(string), "accepted") {
 		t.Fatalf("branch condition: %v", accept)
+	}
+	control := templateByName(t, templates, "step-route")
+	if control["metadata"].(map[string]any)["labels"].(map[string]any)["massive.dev/network-policy"] == nil {
+		t.Fatal("control task lost egress policy")
 	}
 	choose := taskByName(t, tasks, "choose")
 	depends := choose["depends"].(string)
@@ -317,7 +321,7 @@ func TestFiniteMapLowersToBoundedIndexedArgoFanoutAndCollection(t *testing.T) {
 
 	itemTemplate := templateByName(t, templates, "map-item-map-items")
 	args := itemTemplate["container"].(map[string]any)["args"].([]any)
-	if !containsArgs(args, "runtime", "map", "item") || !containsArgs(args, "--node", "map-items") {
+	if !containsArgs(args, "runtime", "map", "item") || !containsArgs(args, "--node=map-items") {
 		t.Fatalf("mapped runtime command = %v", args)
 	}
 }
