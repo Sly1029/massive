@@ -489,9 +489,10 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	itemName := argoFieldName("map-item-" + node.GetId())
 	collectName := argoFieldName("map-collect-" + node.GetId())
 	mapName := argoFieldName("map-" + node.GetId())
+	controlContract := &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef, Network: contract.Network}
 
 	expandTemplate, err := runtimePodTemplate(
-		expandName, node.GetId(), env, contract, runtimeName, nil,
+		expandName, node.GetId(), env, controlContract, runtimeName, nil,
 		[]string{"runtime", "map", "expand", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
 	)
 	if err != nil {
@@ -515,7 +516,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 		return nil, err
 	}
 	collectTemplate, err := runtimePodTemplate(
-		collectName, node.GetId(), env, contract, runtimeName, nil,
+		collectName, node.GetId(), env, controlContract, runtimeName, nil,
 		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
 	)
 	if err != nil {

@@ -2,7 +2,8 @@
 
 This is the shipped Go-backed CLI for both language adapters. Put reusable
 behavior in `../../internal/controlplane`; keep command parsing and rendering here.
-The compiler and spec-runner commands elsewhere in `cmd/` are conformance tools.
+`massive-compiler` and `massive-orchestrator` elsewhere in `cmd/` expose lower-level
+artifact boundaries used by conformance.
 
 Kong owns argument validation. Parse errors exit 2 and write only to stderr.
 Machine-readable output must remain parseable even when author code logs.

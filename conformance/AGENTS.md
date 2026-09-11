@@ -1,8 +1,10 @@
 # Shared contracts and conformance
 
-Schema sources in `schema/` define shared wire contracts. Regenerate derived
-bindings, emitted specs, and golden plans using the repository generation
-scripts; do not hand-edit generated hashes to make a failing fixture pass.
+Schema sources in `schema/` define shared wire contracts. Regenerate Protobuf
+bindings with `../scripts/generate-proto.sh`. For spec/plan fixtures, emit from
+the language frontend and compile through Go, then replace the affected fixture
+bytes. There is no golden-update script; do not hand-edit hashes to make a
+failing fixture pass.
 
 Contract migrations must update both language emitters and Go readers together.
 Keep only the current transport/version; obsolete inputs should explain that

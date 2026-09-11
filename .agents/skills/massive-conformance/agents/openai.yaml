@@ -1,0 +1,4 @@
+interface:
+  display_name: "Massive conformance"
+  short_description: "Validate Massive contracts and live Argo changes"
+  default_prompt: "Validate the current Massive change at its affected contract boundaries and complete the applicable conformance gates."
