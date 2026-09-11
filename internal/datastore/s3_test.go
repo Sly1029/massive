@@ -103,6 +103,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestS3RequiresExplicitApplicationCredentials(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY", "obsolete-alias")
+	t.Setenv("AWS_SECRET_KEY", "obsolete-alias")
 	for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI"} {
 		t.Setenv(key, "")
 	}

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -43,9 +45,12 @@ func NewS3Datastore(ctx context.Context, config S3Config) (*S3Datastore, error) 
 		return nil, err
 	}
 
-	providers := []credentials.Provider{&credentials.EnvAWS{}}
+	providers := []credentials.Provider{&credentials.Static{Value: credentials.Value{
+		AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+		SessionToken: os.Getenv("AWS_SESSION_TOKEN"), SignerType: credentials.SignatureV4,
+	}}}
 	if os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" || os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" || os.Getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") != "" {
-		providers = append(providers, &credentials.IAM{Region: config.Region})
+		providers = append(providers, &credentials.IAM{Region: config.Region, Client: &http.Client{Timeout: 30 * time.Second}})
 	}
 	provider := credentials.NewChainCredentials(providers)
 	identity, err := provider.Get()
