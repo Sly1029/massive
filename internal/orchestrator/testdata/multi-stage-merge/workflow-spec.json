@@ -8,14 +8,14 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:ade116b04dedc4186d40bff2f21e159ee6f49877dbe96fcf4c1ba2e3589ac2f3",
+  "specHash": "sha256:0ae843df03ea7a7a8275b0e23f628912937649a9873234b0a164183f5aa958aa",
   "workflow": {
     "name": "multi-stage-merge",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   },
   "graph": {
-    "irVersion": "0.1",
+    "irVersion": "0.3",
     "start": "__start",
     "end": "__end",
     "nodes": [

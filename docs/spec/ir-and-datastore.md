@@ -173,14 +173,11 @@ Canonical plans and target bundle manifests must not include wall-clock timestam
 
 ## GraphIR
 
-`WorkflowSpec` transport schema v0 carries Graph IR 0.1 static DAGs, Graph IR
-0.2 exhaustive data-only decisions and selects, and Graph IR 0.3 finite maps.
-Every graph also carries
-`irVersion`; it is the semantic Graph IR version and remains separate from the
-enclosing JSON transport `schemaVersion`. The JSON Schema accepts syntactically
-valid `0.x` versions so future artifacts remain well-formed; the Go compiler is
-the authoritative consumer and supports `>=0.1 <0.4`. Frontends may duplicate
-that check for authoring ergonomics, but cannot redefine support.
+`WorkflowSpec` transport schema v0 carries Graph IR 0.3 for static DAGs,
+exhaustive data-only decisions/selects, and finite maps. Every graph carries
+`irVersion`, separate from the enclosing transport `schemaVersion`. Both SDKs,
+the JSON Schema, compiler, and plan readers use only the current Graph IR.
+Older artifacts must be rebuilt; no version-range compatibility is retained.
 
 It includes:
 
@@ -195,7 +192,7 @@ It includes:
 - retry metadata,
 - artifact dependencies.
 
-Graph IR 0.2 additionally includes:
+Routing includes:
 
 - decision nodes with an input schema, string selector, and exhaustive
   `{tag, schema}` cases;
@@ -210,23 +207,20 @@ step or map nodes whose input schemas equal their case schemas. A select covers
 the same cases
 exactly once; each source belongs to the corresponding branch, has an ordinary
 edge to the select, and has an output schema equal to the select output schema.
-All equality is exact schema-reference equality. Graph IR 0.1 remains
-static-only, and 0.2-only node and edge fields are rejected in 0.1.
+All equality is exact schema-reference equality.
 
 The IR contains no arbitrary closures or callable predicates. Classification
 is an ordinary executable step; the decision only reads its persisted
-discriminant. The local orchestrator supports 0.2 decisions/selects and records
-the selected case durably before downstream scheduling. Argo lowering
-currently reports a precise unsupported-semantic diagnostic for these nodes
-instead of rejecting the whole IR version.
+discriminant. The local orchestrator supports decisions/selects and records
+the selected case durably before downstream scheduling. Argo lowers the same
+decisions and selects with success-aware dependencies and lazy source selection.
 
-Graph IR 0.3 additionally includes a finite, value-producing `map` node. It
+The IR also includes a finite, value-producing `map` node. It
 references one mapper symbol and execution contract, has exact list/item input
 and output schema references, and records a positive `maxConcurrency`. The
 local runtime invokes one scoped child per already-crystallized source item and
 publishes one deterministic, source-ordered list at the map node's static
-output slot. Empty input publishes `[]`. Argo rejects this semantic explicitly
-until its driver can preserve the same artifact and journal protocol.
+output slot. Empty input publishes `[]`. Argo lowers finite maps to bounded fan-out and ordered collection.
 
 Channels, multi-step map bodies, broadcast/gather, joins/reducers, and channel
 publish/read declarations remain absent from the portable schema. Target

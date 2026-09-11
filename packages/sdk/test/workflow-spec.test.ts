@@ -34,7 +34,7 @@ Deno.test("parseWorkflowSpecText accepts canonical WorkflowSpec emitted by Pytho
   assertEquals(computeSpecHash(spec), spec.specHash);
 });
 
-Deno.test("parseWorkflowSpec accepts data-only Graph IR 0.2 routing", async () => {
+Deno.test("parseWorkflowSpec accepts current Graph IR routing", async () => {
   const fixture = JSON.parse(
     await Deno.readTextFile(
       new URL(
@@ -196,3 +196,13 @@ sys.stdout.write(specification.to_json())
 
   return new TextDecoder().decode(output.stdout);
 }
+
+Deno.test("parseWorkflowSpec tells readers of obsolete IR to rebuild", async () => {
+  const fixture = JSON.parse(await Deno.readTextFile(new URL(
+    "../../../conformance/fixtures/specs/linear-chain/workflow-spec.json", import.meta.url,
+  )));
+  for (const version of ["0.1", "0.2"]) {
+    fixture.graph.irVersion = version;
+    await assertRejects(() => parseWorkflowSpec(fixture), WorkflowSpecError, "rebuild with the current SDK");
+  }
+});

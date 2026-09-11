@@ -8,14 +8,14 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:c1fafa379e23bd017aeb8507695f368bbd1f5e879367cb468419cf4a4bb7ed12",
+  "specHash": "sha256:61e82fd89e318eb4bc6dbc480e6de7f131e50a0175657fbf4849235af184d780",
   "workflow": {
     "name": "exhaustive-decision",
     "inputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670",
     "outputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670"
   },
   "graph": {
-    "irVersion": "0.2",
+    "irVersion": "0.3",
     "start": "__start",
     "end": "__end",
     "nodes": [

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
+	"github.com/Sly1029/massive/internal/irversion"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -15,6 +16,9 @@ func ParseCanonicalJSON(data []byte) (*planpb.WorkflowPlan, error) {
 	var parsed planpb.WorkflowPlan
 	if err := protojson.Unmarshal(data, &parsed); err != nil {
 		return nil, fmt.Errorf("parse workflow plan schema v1 JSON (rebuild older plans): %w", err)
+	}
+	if parsed.GetGraph().GetIrVersion() != irversion.Current {
+		return nil, fmt.Errorf("workflow plan graph.irVersion must equal %s; rebuild with the current SDK", irversion.Current)
 	}
 	return &parsed, nil
 }
@@ -66,9 +70,6 @@ func validateVersionedIdentity(plan *planpb.WorkflowPlan) error {
 	}
 	if err := validateHashingSpec(plan.GetSpecHashing(), "workflow-spec", "workflow plan specHash"); err != nil {
 		return err
-	}
-	if plan.Graph == nil || plan.Graph.IrVersion == nil || plan.Graph.GetIrVersion() == "" {
-		return fmt.Errorf("workflow plan graph.irVersion must be present")
 	}
 	if plan.Provenance == nil || plan.Provenance.CompilerName == nil || plan.Provenance.GetCompilerName() == "" || plan.Provenance.CompilerVersion == nil || plan.Provenance.GetCompilerVersion() == "" || plan.Provenance.SourceSpecHash == nil {
 		return fmt.Errorf("workflow plan provenance compiler name, version, and source spec hash must be present")

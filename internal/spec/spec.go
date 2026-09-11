@@ -256,6 +256,14 @@ func validateSchema(data []byte) error {
 	if err := schema.Validate(instance); err != nil {
 		var validation *jsonschema.ValidationError
 		if errors.As(err, &validation) {
+			var versioned struct {
+				Graph struct {
+					IRVersion string `json:"irVersion"`
+				} `json:"graph"`
+			}
+			if json.Unmarshal(data, &versioned) == nil && versioned.Graph.IRVersion != "" && versioned.Graph.IRVersion != irversion.Current {
+				return &DiagnosticsError{Diagnostics: []Diagnostic{{Path: "$.graph.irVersion", Ref: versioned.Graph.IRVersion, Message: "unsupported graph IR version; rebuild with the current SDK (requires " + irversion.Current + ")"}}}
+			}
 			if diagnostics := missingRequiredContractRefDiagnostics(data); len(diagnostics) > 0 {
 				return &DiagnosticsError{Diagnostics: diagnostics}
 			}
@@ -333,12 +341,6 @@ func collectSchemaDiagnostics(unit *jsonschema.OutputUnit, diagnostics *[]Diagno
 
 func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	var diagnostics []Diagnostic
-	version, err := irversion.Parse(parsed.Graph.IRVersion)
-	if err != nil {
-		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.irVersion", Ref: parsed.Graph.IRVersion, Message: err.Error()})
-	} else if !irversion.CompilerSupports(version) {
-		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.irVersion", Ref: parsed.Graph.IRVersion, Message: fmt.Sprintf("unsupported graph IR version; compiler supports %s", irversion.CompilerRange)})
-	}
 
 	nodeByID := make(map[string]GraphNode, len(parsed.Graph.Nodes))
 	nodeIndexes := make(map[string]int, len(parsed.Graph.Nodes))
@@ -533,18 +535,6 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 
 func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, nodeIndexes map[string]int) []Diagnostic {
 	var diagnostics []Diagnostic
-	if parsed.Graph.IRVersion == "0.1" {
-		for index, node := range parsed.Graph.Nodes {
-			if node.Kind == NodeKindDecision || node.Kind == NodeKindSelect || node.Kind == NodeKindMap {
-				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].kind", index), Ref: node.Kind, Message: "graph IR 0.1 permits only static start, step, and end nodes"})
-			}
-		}
-		for index, edge := range parsed.Graph.Edges {
-			if edge.Case != "" {
-				diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.edges[%d].case", index), Ref: edge.Case, Message: "graph IR 0.1 does not permit conditional edges"})
-			}
-		}
-	}
 
 	decisionCases := make(map[string]map[string]bool)
 	decisionCaseSchemas := make(map[string]map[string]string)
@@ -637,7 +627,7 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			continue
 		}
 		for _, edgeIndex := range conditionalTargets[target] {
-			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.edges[%d].to", edgeIndex), Ref: target, Message: "conditional branches may not share a target in graph IR 0.2"})
+			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.edges[%d].to", edgeIndex), Ref: target, Message: "conditional branches may not share a target"})
 		}
 	}
 	for _, decisionID := range sortedKeys(decisionCases) {
@@ -1138,7 +1128,7 @@ func decodeJSONPointerToken(encoded string) (string, bool) {
 	return decoded.String(), true
 }
 
-// validateExclusiveDecisionBranches keeps 0.2's activation model local: a
+// validateExclusiveDecisionBranches keeps the activation model local: a
 // decision's cases may meet only at that decision's select. Without this
 // restriction a node can be reachable through incompatible case paths, which
 // would require a lineage lattice rather than the single durable selection the
@@ -1157,7 +1147,7 @@ func validateExclusiveDecisionBranches(parsed *WorkflowSpec, decisionCases map[s
 		selects := selectsByDecision[decisionID]
 		if len(selects) != 1 {
 			index := nodeIndexes[decisionID]
-			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d]", index), Ref: decisionID, Message: "decision requires exactly one select node in graph IR 0.2"})
+			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d]", index), Ref: decisionID, Message: "decision requires exactly one select node"})
 			continue
 		}
 		selectID := selects[0]

@@ -14,14 +14,15 @@ Both authoring APIs are functional and declarative. The Python `GraphBuilder`
 is the primary v2 surface; this document retains the TypeScript forms and the
 portable semantics they share.
 
-The current TypeScript builder emits static Graph IR 0.1 workflows. It can
-parse shared 0.2/0.3 specs and its runner executes scoped map-item descriptors,
+The current TypeScript builder emits static graphs using Graph IR 0.3. It can
+parse shared 0.3 specs and its runner executes scoped map-item descriptors,
 but decision and finite-map authoring are currently Python-only surfaces.
 
 This document describes the intended author-facing model, including features
 beyond the first portable compiler wedge. `WorkflowSpec` transport schema v0
-carries Graph IR 0.1 static DAGs, Graph IR 0.2 exhaustive data-only decisions
-and selects, and Graph IR 0.3 finite single-step maps with ordered collection.
+carries Graph IR 0.3 for static DAGs, exhaustive data-only decisions
+and selects, and finite single-step maps with ordered collection. Older Graph IR
+artifacts must be rebuilt with the current SDK.
 Multi-step map bodies, broadcast/gather, and reducer-backed joins
 remain future portable-schema work even where this document sketches their
 eventual shape.
@@ -100,7 +101,7 @@ Keep transformations in ordinary named steps instead of serializing closures.
 
 ## Exhaustive Decisions
 
-Graph IR 0.2 represents routing as data. An ordinary typed step returns a
+Graph IR 0.3 represents routing as data. An ordinary typed step returns a
 Pydantic discriminated union whose variants carry string `Literal` tags. The
 author then creates a decision over that persisted output and explicitly wires
 every case:
@@ -174,7 +175,7 @@ whose input schema equals that case's schema; and a select covers every case
 with branch-local sources whose output schemas equal the select output schema.
 The whole graph must remain acyclic.
 
-The local orchestrator executes Graph IR 0.2 decisions and persists each
+The local orchestrator executes Graph IR 0.3 decisions and persists each
 selected case in the run manifest before scheduling a branch. Argo lowering
 supports decision/select nodes with validated route tasks and success-only
 branch dependencies. Target capability is therefore explicit rather than implied by

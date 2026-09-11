@@ -45,7 +45,7 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
 
     assert result.returncode == 0, result.stderr
     emitted = json.loads(spec_path.read_text())
-    assert emitted["graph"]["irVersion"] == "0.1"
+    assert emitted["graph"]["irVersion"] == "0.3"
     step = next(node for node in emitted["graph"]["nodes"] if node["kind"] == "step")
     catalog = json.loads((repository / "conformance/graph-catalog.json").read_text())
     graph_case = next(item for item in catalog["cases"] if item["id"] == "single-step")

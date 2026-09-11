@@ -22,7 +22,7 @@ The artifact body is a deterministic JSON rendering of the typed plan field tree
 - repeated fields appear only when non-empty; empty lists are omitted (a step node with no fan-in has no `mergeInputs` member). This matches `protojson`'s default marshaling, so the canonical writer is plain `protojson.Marshal` of a fully populated message,
 - plans must not contain dangling references: every step node's `contractRef` resolves to an entry in `contracts`, and every contract's `environmentRef` resolves to an entry in `environments`.
 
-Graph IR `0.2` adds only data-only exhaustive routing records. A `decision`
+Graph IR `0.3` includes data-only exhaustive routing records. A `decision`
 node carries its input schema, string `selector`, and ordered
 `cases[{tag,schema}]`; a conditional edge carries `case`; and a `select` node
 carries `decisionRef`, an output schema, and ordered
@@ -51,7 +51,7 @@ Shape:
   "planHash": "sha256:<hex>",
   "specHash": "sha256:<hex>",
   "graph": {
-    "irVersion": "0.1",
+    "irVersion": "0.3",
     "workflowName": "linear-chain",
     "inputSchema": "sha256:<hex>",
     "outputSchema": "sha256:<hex>",

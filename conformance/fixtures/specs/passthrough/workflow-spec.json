@@ -8,14 +8,14 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:475fbf8ced19b56f24e9ce8f7cb4e5c65be7caf13ef5877f288bb8e36fe282b2",
+  "specHash": "sha256:612decb8e0b55c6ef66a13b983374ad862516971c529da0dc854a98dc08f5bbb",
   "workflow": {
     "name": "passthrough",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   },
   "graph": {
-    "irVersion": "0.1",
+    "irVersion": "0.3",
     "start": "__start",
     "end": "__end",
     "nodes": [

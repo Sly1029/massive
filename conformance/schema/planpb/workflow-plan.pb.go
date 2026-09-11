@@ -408,7 +408,7 @@ type GraphNode struct {
 	Id    *string                `protobuf:"bytes,1,opt,name=id,proto3,oneof" json:"id,omitempty"`
 	// "start", "step", "decision", "select", "map", or "end". Fan-in steps list
 	// their merged upstream step ids in merge_inputs; decision/select fields are
-	// data-only route declarations for Graph IR 0.2.
+	// data-only route declarations in the current Graph IR.
 	Kind         *string         `protobuf:"bytes,2,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
 	InputSchema  *string         `protobuf:"bytes,3,opt,name=input_schema,json=inputSchema,proto3,oneof" json:"input_schema,omitempty"`
 	OutputSchema *string         `protobuf:"bytes,4,opt,name=output_schema,json=outputSchema,proto3,oneof" json:"output_schema,omitempty"`

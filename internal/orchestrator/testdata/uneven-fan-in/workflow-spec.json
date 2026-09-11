@@ -8,14 +8,14 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:1577eac301d0c113e4f4094cd45c25baec0710cf52d31911240b49f6e4850fca",
+  "specHash": "sha256:8dcc980025762583536e57faaa1cc32f55490a3b71c05a8a2c2465b1594c5e59",
   "workflow": {
     "name": "uneven-fan-in",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "outputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   },
   "graph": {
-    "irVersion": "0.1",
+    "irVersion": "0.3",
     "start": "__start",
     "end": "__end",
     "nodes": [

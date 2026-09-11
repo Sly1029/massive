@@ -41,9 +41,7 @@ _START = "__start"
 _END = "__end"
 # Graph IR versioning is independent from the outer WorkflowSpec transport
 # schema so graph evolution remains an explicit compiler contract.
-GRAPH_IR_VERSION = "0.1"
-_DECISION_GRAPH_IR_VERSION = "0.2"
-_MAP_GRAPH_IR_VERSION = "0.3"
+GRAPH_IR_VERSION = "0.3"
 DEFAULT_MAP_CONCURRENCY = 20
 MAX_MAP_CONCURRENCY = 2**32 - 1
 _MAP_CONCURRENCY: TypeAdapter[int] = TypeAdapter[int](
@@ -229,7 +227,6 @@ class EdgePath(Generic[OutputT]):
 class WorkflowSpec:
     value: dict[str, JsonValue]
     spec_hash: str
-    graph_version: str = GRAPH_IR_VERSION
 
     def to_json(self) -> str:
         return canonical_json(self.value)
@@ -839,13 +836,6 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                 if key in edge
             )
         )
-        ir_version = (
-            _MAP_GRAPH_IR_VERSION
-            if self._maps
-            else _DECISION_GRAPH_IR_VERSION
-            if self._decisions
-            else GRAPH_IR_VERSION
-        )
         value = cast(
             JsonValue,
             {
@@ -859,7 +849,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
                     "outputSchema": output_schema,
                 },
                 "graph": {
-                    "irVersion": ir_version,
+                    "irVersion": GRAPH_IR_VERSION,
                     "start": _START,
                     "end": _END,
                     "nodes": nodes,
@@ -883,7 +873,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         spec_hash = sha256_ref(canonical_json(value))
         emitted = {**cast(dict[str, JsonValue], value), "specHash": spec_hash}
         self._emitted = True
-        return WorkflowSpec(value=emitted, spec_hash=spec_hash, graph_version=ir_version)
+        return WorkflowSpec(value=emitted, spec_hash=spec_hash)
 
 
 def _direct_list_item_schema(annotation: Any, role: str) -> object:

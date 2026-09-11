@@ -82,7 +82,7 @@ func TestVerifyCanonicalJSONRequiresEveryIdentityVersion(t *testing.T) {
 		{name: "plan schema", path: []string{"schemaVersion"}, want: "schemaVersion must be present"},
 		{name: "plan hash recipe", path: []string{"hashing", "recipeVersion"}, want: "hashing descriptor must be present and complete"},
 		{name: "spec hash recipe", path: []string{"specHashing", "recipeVersion"}, want: "specHash hashing descriptor must be present and complete"},
-		{name: "graph IR", path: []string{"graph", "irVersion"}, want: "graph.irVersion must be present"},
+		{name: "graph IR", path: []string{"graph", "irVersion"}, want: "graph.irVersion must equal 0.3"},
 		{name: "spec hash", path: []string{"specHash"}, want: "specHash must be present"},
 		{name: "compiler", path: []string{"provenance", "compilerVersion"}, want: "provenance compiler name, version, and source spec hash must be present"},
 		{name: "source package hash recipe", path: []string{"sourcePackages", "0", "hashing", "recipeVersion"}, want: "sourcePackages[0] hashing descriptor must be present and complete"},
@@ -251,5 +251,18 @@ func TestVerifyCanonicalJSONRejectsTamperingAndWrongExpectedIdentity(t *testing.
 	wrongHash := "sha256:" + strings.Repeat("0", 64)
 	if _, err := VerifyCanonicalJSON(compiled.CanonicalJSON, wrongHash); err == nil || !strings.Contains(err.Error(), "does not match canonical plan content") {
 		t.Fatalf("wrong identity error = %v, want hash mismatch", err)
+	}
+}
+
+func TestPlanReaderRejectsObsoleteGraphIR(t *testing.T) {
+	data := readFixture(t, "plans", "linear-chain", "workflow-plan.json")
+	for _, version := range []string{"0.1", "0.2", "0.4"} {
+		changed := bytes.Replace(data, []byte(`"irVersion":"0.3"`), []byte(`"irVersion":"`+version+`"`), 1)
+		if bytes.Equal(changed, data) {
+			t.Fatal("test did not change IR version")
+		}
+		if _, err := ParseCanonicalJSON(changed); err == nil || !strings.Contains(err.Error(), "rebuild with the current SDK") {
+			t.Fatalf("IR %s: %v", version, err)
+		}
 	}
 }
