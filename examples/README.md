@@ -152,8 +152,8 @@ massive run examples/06-map/workflow.py --project examples/map \
   --input '{"values":[2,3,4,5]}'
 ```
 
-Finite maps run locally and lower to bounded native Argo fan-out. Maps use Graph
-IR 0.3; decisions use 0.2; ordinary TypeScript step graphs use 0.1.
+Finite maps run locally and lower to bounded native Argo fan-out. All graph shapes use
+current Graph IR 0.3; older artifacts must be rebuilt.
 
 ## 7. Package modules and resources, then collect map results
 

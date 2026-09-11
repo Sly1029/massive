@@ -35,8 +35,10 @@ export async function parseWorkflowSpec(
 async function validateWorkflowSpec(value: unknown): Promise<WorkflowSpec> {
   const validate = await compileWorkflowSpecValidator();
   if (!validate(value)) {
+    const guidance = validate.errors?.some((error) => error.instancePath === "/graph/irVersion")
+      ? "; rebuild with the current SDK" : "";
     throw new WorkflowSpecError(
-      `WorkflowSpec JSON schema violation ${formatAjvError(validate.errors)}; rebuild with the current SDK`,
+      `WorkflowSpec JSON schema violation ${formatAjvError(validate.errors)}${guidance}`,
     );
   }
 
