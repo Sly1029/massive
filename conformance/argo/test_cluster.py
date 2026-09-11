@@ -6,8 +6,10 @@ MASSIVE_PYTHON configured. The image must contain the current Massive wheel.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import secrets
 import subprocess
 import tempfile
 import time
@@ -30,12 +32,14 @@ def kubectl(*args: str, document: dict | None = None) -> dict:
     return json.loads(result.stdout) if result.stdout.strip().startswith("{") else {}
 
 
-def install_workflow(source: str) -> None:
+def install_workflow(source: str, secret_bindings: dict | None = None) -> None:
     with tempfile.TemporaryDirectory(prefix="massive-argo-") as directory:
         root = Path(directory)
         entry = root / "workflow.py"
         entry.write_text(source)
         bundle = root / "bundle"
+        bindings = root / "secret-bindings.json"
+        bindings.write_text(json.dumps(secret_bindings or {}))
         subprocess.run(
             [
                 "go",
@@ -53,6 +57,8 @@ def install_workflow(source: str) -> None:
                 "massive-datastore",
                 "--artifact-credentials-secret",
                 "massive-storage-credentials",
+                "--secret-bindings",
+                str(bindings),
             ],
             cwd=ROOT,
             check=True,
@@ -130,6 +136,34 @@ class DecisionConformance(unittest.TestCase):
             f"platform={os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
         )
         install_workflow(file_source)
+        token = secrets.token_hex(32)
+        kubectl(
+            "apply",
+            "-f",
+            "-",
+            document={
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": "application.credentials"},
+                "stringData": {".token": token},
+            },
+        )
+        secret_source = (
+            (Path(__file__).parent / "application_secrets.py")
+            .read_text()
+            .replace(
+                'IMAGE = "example.invalid/runner@sha256:" + "0" * 64',
+                f"IMAGE = {os.environ['MASSIVE_TEST_ARGO_IMAGE']!r}",
+            )
+            .replace(
+                'PLATFORM = "linux/amd64"',
+                f"PLATFORM = {os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
+            )
+        )
+        install_workflow(
+            secret_source,
+            {"service-token": {"name": "application.credentials", "key": ".token"}},
+        )
         cls.runs = {}
         for label, inputs in {
             "positive": {"score": 3},
@@ -138,6 +172,10 @@ class DecisionConformance(unittest.TestCase):
             "empty": {"score": 3, "copies": 0},
             "failure": {"score": 3, "fail": True},
             "files": {"copies": 3},
+            "secrets": {
+                "digest": hashlib.sha256(token.encode()).hexdigest(),
+                "values": [1, 2, 3],
+            },
         }.items():
             run = kubectl(
                 "create",
@@ -151,9 +189,10 @@ class DecisionConformance(unittest.TestCase):
                     "metadata": {"generateName": f"massive-{label}-"},
                     "spec": {
                         "workflowTemplateRef": {
-                            "name": "file-artifacts"
-                            if label == "files"
-                            else "argo-decisions"
+                            "name": {
+                                "files": "file-artifacts",
+                                "secrets": "argo-secrets",
+                            }.get(label, "argo-decisions")
                         },
                         "arguments": {
                             "parameters": [
@@ -235,6 +274,53 @@ class DecisionConformance(unittest.TestCase):
             result,
             {"original": "original", "reports": ["report-0", "report-1", "report-2"]},
         )
+
+    def test_application_secret_reaches_only_declared_item_pods(self) -> None:
+        self.successful("secrets", 12)
+        run = self.completed("secrets")
+        nodes = run["status"]["nodes"]
+        authenticated = [
+            node
+            for node in nodes.values()
+            if node.get("type") == "Pod"
+            and node.get("templateName") == "map-item-authenticated"
+        ]
+        self.assertEqual(len(authenticated), 3)
+        pods = kubectl(
+            "get",
+            "pods",
+            "-l",
+            f"workflows.argoproj.io/workflow={run['metadata']['name']}",
+            "-o",
+            "json",
+        )
+        self.assertEqual(
+            len(pods["items"]),
+            sum(node.get("type") == "Pod" for node in nodes.values()),
+        )
+        for pod in pods["items"]:
+            node = nodes[
+                pod["metadata"]["annotations"]["workflows.argoproj.io/node-id"]
+            ]
+            main = next(
+                container
+                for container in pod["spec"]["containers"]
+                if container["name"] == "main"
+            )
+            app_variables = [
+                variable
+                for variable in main.get("env", [])
+                if variable["name"] == "APP_TOKEN"
+            ]
+            self.assertEqual(
+                bool(app_variables),
+                node.get("templateName") == "map-item-authenticated",
+            )
+            if app_variables:
+                self.assertEqual(
+                    app_variables[0]["valueFrom"]["secretKeyRef"],
+                    {"name": "application.credentials", "key": ".token"},
+                )
 
     def test_selected_item_failure_cannot_produce_success(self) -> None:
         run = self.completed("failure")

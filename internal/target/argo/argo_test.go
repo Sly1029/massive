@@ -176,12 +176,12 @@ func TestPassthroughReturnsWorkflowInputWithoutLaunchingAPod(t *testing.T) {
 	}
 }
 
-func TestExecutableBundleRejectsUnloweredSecrets(t *testing.T) {
+func TestExecutableBundleRejectsMissingSecretBindings(t *testing.T) {
 	compiled := fixturePlan(t, "python-linear")
 	compiled.Plan.Contracts[0].Secrets = []*planpb.SecretRef{{Name: pointer("token"), Ref: pointer("secret/key")}}
 	canonicalPlan, _ := rehashPlan(t, compiled.Plan)
 	_, err := Compile(canonicalPlan, deploymentForPlan(t, canonicalPlan), runtimeAssetsForPlan(t, compiled.Plan))
-	if err == nil || !strings.Contains(err.Error(), "secret-ref lowering") {
+	if err == nil || !strings.Contains(err.Error(), "missing deployment binding") {
 		t.Fatalf("secret lowering error = %v", err)
 	}
 }
@@ -600,13 +600,18 @@ func TestArgoInvocationStorageWiring(t *testing.T) {
 	for _, fixture := range []string{"finite-map", "exhaustive-decision"} {
 		for _, secret := range []string{"", "storage-credentials"} {
 			compiled := fixturePlan(t, fixture)
-			binding := deploymentForPlan(t, compiled.CanonicalJSON)
+			for _, contract := range compiled.Plan.Contracts {
+				contract.Secrets = []*planpb.SecretRef{{Name: pointer("APP_TOKEN"), Ref: pointer("application")}}
+			}
+			canonicalPlan, _ := rehashPlan(t, compiled.Plan)
+			binding := deploymentForPlan(t, canonicalPlan)
+			binding.Profile.Target.SecretBindings = map[string]deployment.SecretKeyRef{"application": {Name: "application-credentials", Key: "token"}}
 			binding.Profile.Target.ArtifactCredentialsSecret = secret
-			binding, _, err := deployment.New(compiled.PlanHash, binding.Profile, binding.MaterializationHash)
+			binding, _, err := deployment.New(binding.PlanHash, binding.Profile, binding.MaterializationHash)
 			if err != nil {
 				t.Fatal(err)
 			}
-			bundle, err := Compile(compiled.CanonicalJSON, binding, runtimeAssetsForPlan(t, compiled.Plan))
+			bundle, err := Compile(canonicalPlan, binding, runtimeAssetsForPlan(t, compiled.Plan))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -640,7 +645,15 @@ func TestArgoInvocationStorageWiring(t *testing.T) {
 				} else if len(mounts) != 1 {
 					t.Fatalf("control %s received datastore mount", name)
 				}
-				if (invocation && secret != "") != (pod["env"] != nil) {
+				if invocation {
+					variables := pod["env"].([]any)
+					app := variables[len(variables)-1].(map[string]any)
+					ref := app["valueFrom"].(map[string]any)["secretKeyRef"].(map[string]any)
+					if app["name"] != "APP_TOKEN" || ref["name"] != "application-credentials" || ref["key"] != "token" {
+						t.Fatalf("%s app binding: %v", name, app)
+					}
+				}
+				if invocation != (pod["env"] != nil) {
 					t.Fatalf("%s credential wiring with secret %q: %v", name, secret, pod["env"])
 				}
 			}
@@ -687,5 +700,41 @@ func TestMapControlPodsDoNotReserveAuthorResources(t *testing.T) {
 	requests := container["resources"].(map[string]any)["requests"].(map[string]any)
 	if requests["cpu"] != "2" || requests["memory"] != "4Gi" {
 		t.Fatalf("item resources = %v", requests)
+	}
+}
+
+func TestSecretEnvironmentNamesCannotCollideWithRuntime(t *testing.T) {
+	for _, name := range []string{"PATH", "AWS_ACCESS_KEY_ID", "MASSIVE_PYTHON", "bad-name"} {
+		compiled := fixturePlan(t, "python-linear")
+		compiled.Plan.Contracts[0].Secrets = []*planpb.SecretRef{{Name: pointer(name), Ref: pointer("application")}}
+		data, _ := rehashPlan(t, compiled.Plan)
+		binding := deploymentForPlan(t, data)
+		binding.Profile.Target.SecretBindings = map[string]deployment.SecretKeyRef{"application": {Name: "application", Key: "token"}}
+		binding, _, err := deployment.New(binding.PlanHash, binding.Profile, binding.MaterializationHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Compile(data, binding, runtimeAssetsForPlan(t, compiled.Plan)); err == nil {
+			t.Fatalf("accepted secret environment name %q", name)
+		}
+	}
+}
+
+func TestArgoRejectsDuplicateSecretEnvironmentNames(t *testing.T) {
+	compiled := fixturePlan(t, "python-linear")
+	compiled.Plan.Contracts[0].Secrets = []*planpb.SecretRef{
+		{Name: pointer("APP_TOKEN"), Ref: pointer("application")},
+		{Name: pointer("APP_TOKEN"), Ref: pointer("application")},
+	}
+	data, _ := rehashPlan(t, compiled.Plan)
+	binding := deploymentForPlan(t, data)
+	binding.Profile.Target.SecretBindings = map[string]deployment.SecretKeyRef{"application": {Name: "application", Key: "token"}}
+	binding, _, err := deployment.New(binding.PlanHash, binding.Profile, binding.MaterializationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Compile(data, binding, runtimeAssetsForPlan(t, compiled.Plan))
+	if err == nil || !strings.Contains(err.Error(), "repeats secret environment variable") {
+		t.Fatalf("duplicate secret error = %v", err)
 	}
 }

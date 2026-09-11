@@ -39,12 +39,18 @@ type Profile struct {
 	Target               Target `json:"target"`
 }
 
+type SecretKeyRef struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
+}
+
 type Target struct {
-	Kind                      string `json:"kind"`
-	Namespace                 string `json:"namespace,omitempty"`
-	ServiceAccountName        string `json:"serviceAccountName,omitempty"`
-	WorkflowTemplateName      string `json:"workflowTemplateName,omitempty"`
-	ArtifactCredentialsSecret string `json:"artifactCredentialsSecret,omitempty"`
+	Kind                      string                  `json:"kind"`
+	Namespace                 string                  `json:"namespace,omitempty"`
+	ServiceAccountName        string                  `json:"serviceAccountName,omitempty"`
+	WorkflowTemplateName      string                  `json:"workflowTemplateName,omitempty"`
+	ArtifactCredentialsSecret string                  `json:"artifactCredentialsSecret,omitempty"`
+	SecretBindings            map[string]SecretKeyRef `json:"secretBindings,omitempty"`
 }
 
 type Diagnostic struct {
@@ -111,7 +117,7 @@ func New(planHash string, profile Profile, materializationHash string) (*Spec, [
 }
 
 func Parse(data []byte) (*Spec, error) {
-	if err := validateSchema(data); err != nil {
+	if err := validateSchema(data, ""); err != nil {
 		return nil, err
 	}
 
@@ -138,6 +144,18 @@ func Parse(data []byte) (*Spec, error) {
 	return &parsed, nil
 }
 
+// ParseSecretBindings validates the name-only deployment input used by the CLI.
+func ParseSecretBindings(data []byte) (map[string]SecretKeyRef, error) {
+	if err := validateSchema(data, "#/$defs/secretBindings"); err != nil {
+		return nil, err
+	}
+	var bindings map[string]SecretKeyRef
+	if err := json.Unmarshal(data, &bindings); err != nil {
+		return nil, err
+	}
+	return bindings, nil
+}
+
 func RecomputedHash(data []byte) (string, error) {
 	hash, err := canonical.DigestJSONWithRootMemberExcluded(data, "deploymentHash")
 	if err != nil {
@@ -146,7 +164,7 @@ func RecomputedHash(data []byte) (string, error) {
 	return hash, nil
 }
 
-func validateSchema(data []byte) error {
+func validateSchema(data []byte, fragment string) error {
 	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("decode deployment spec for schema validation: %w", err)
@@ -159,7 +177,7 @@ func validateSchema(data []byte) error {
 	if err := compiler.AddResource("deployment-spec.schema.json", document); err != nil {
 		return fmt.Errorf("register deployment spec schema: %w", err)
 	}
-	schema, err := compiler.Compile("deployment-spec.schema.json")
+	schema, err := compiler.Compile("deployment-spec.schema.json" + fragment)
 	if err != nil {
 		return fmt.Errorf("compile deployment spec schema: %w", err)
 	}

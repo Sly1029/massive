@@ -57,9 +57,9 @@ Local and Argo execution support steps, exhaustive decisions/selects, and finite
 maps. Argo requires immutable container environments and an explicit shared S3
 datastore binding. Blob/Tree file bodies are stored remotely and hydrated into
 private invocation directories. Ordinary JSON values still use Argo parameters;
-embedded plans and source archives are limited to 700 KiB. Application secret
-declarations and `egress="none"` fail the build until their enforcement can coexist
-with remote storage. See the [Argo datastore setup](../../docs/spec/argo-backend.md#shared-invocation-datastore)
+embedded plans and source archives are limited to 700 KiB. Declared application
+secrets require deployment bindings; `egress="none"` fails because tasks need
+remote storage. See the [Argo datastore setup](../../docs/spec/argo-backend.md#shared-invocation-datastore)
 for ConfigMap and credential bindings.
 
 ```python
@@ -435,10 +435,13 @@ nested module, a text resource, and ordered collection into a typed result.
 CI or the platform owns obtaining and rotating credentials. Never place their
 values in project metadata, lockfiles, source includes, or execution contracts.
 Local Python processes currently inherit the launching environment; secret
-preflight and selective task binding are not implemented. Argo rejects declared
-secrets until secret-reference lowering exists.
+preflight and selective task binding are not implemented locally. Argo binds
+logical secret references through `massive build --secret-bindings bindings.json`.
+Only steps declaring a reference receive its Kubernetes `secretKeyRef`.
+See [application secret bindings](../../docs/spec/argo-backend.md#application-secret-bindings)
+for file format, reserved environment names, and failure behavior.
 
-The intended contract is logical requirements in the workflow and concrete
+The contract is logical requirements in the workflow and concrete
 bindings in deployment configuration. See the [binding design](../../docs/spec/runtime-environment.md)
 for the distinction between declarations, bindings, and enforcement.
 
