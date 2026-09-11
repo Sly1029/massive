@@ -534,13 +534,18 @@ func TestRunFiniteMapPersistsNotStartedItemsAfterInvokerFailure(t *testing.T) {
 	}
 	manifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
 	items := *manifest.Steps[0].Items
-	failed, notStarted := 0, 0
+	failed, cancelled, notStarted := 0, 0, 0
 	for _, item := range items {
 		switch item.Status {
 		case StatusFailed:
 			failed++
-			if len(item.Attempts) != 1 || item.Attempts[0].Diagnostic != "map item did not complete" {
+			if len(item.Attempts) != 1 || item.Attempts[0].Diagnostic != "invocation infrastructure failed" {
 				t.Fatalf("started infrastructure failure = %#v", item)
+			}
+		case StatusCancelled:
+			cancelled++
+			if len(item.Attempts) != 1 || item.Attempts[0].Diagnostic != "invocation cancelled" {
+				t.Fatalf("cancelled sibling = %#v", item)
 			}
 		case StatusNotStarted:
 			notStarted++
@@ -551,7 +556,7 @@ func TestRunFiniteMapPersistsNotStartedItemsAfterInvokerFailure(t *testing.T) {
 			t.Fatalf("nonterminal item after failed map: %#v", item)
 		}
 	}
-	if failed == 0 || failed > 2 || notStarted == 0 || failed+notStarted != len(items) {
+	if failed == 0 || failed+cancelled > 2 || notStarted == 0 || failed+cancelled+notStarted != len(items) {
 		t.Fatalf("terminal item counts = failed:%d not-started:%d total:%d", failed, notStarted, len(items))
 	}
 	if body := string(getObject(t, storeRoot, result.ManifestKey).Body); strings.Contains(body, "runner-failure") {
@@ -1162,4 +1167,27 @@ func repoRootForTest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func TestCancelledBeforeDispatchCreatesNoJournal(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	result, err := Run(ctx, RunConfig{Plan: compiled.Plan, DatastoreRoot: storeRoot, ProjectID: "test/cancellation", RunID: "before-dispatch", SourcePackageRoot: sourceRoot, SourceManifests: manifests}, []byte("1"))
+	if !errors.Is(err, context.Canceled) || result != nil {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	if err := filepath.WalkDir(storeRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Name() == "run-manifest.json" {
+			t.Fatal("cancelled run published a journal")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

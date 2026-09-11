@@ -8,16 +8,15 @@ type Manifest struct {
 	ProjectKey    string        `json:"projectKey"`
 	RunID         string        `json:"runId"`
 	Status        string        `json:"status"`
+	Diagnostic    string        `json:"diagnostic,omitempty"`
 	Steps         []Step        `json:"steps"`
 	Decisions     []Decision    `json:"decisions"`
 	Result        *DataArtifact `json:"result,omitempty"`
 }
 
-// The run-manifest transport is intentionally versioned independently of the
-// graph IR. Schema v3/json-v3 adds source-indexed finite-map item records to
-// the v2 manifest-last output and durable routing journal. The local
-// orchestrator currently executes one attempt per step (attempt 1); target
-// retry scheduling and later attempt records are a subsequent slice.
+// The run journal is versioned independently of graph IR. Only v4/json-v4 is
+// accepted. Terminal runs distinguish cancelled attempts from undispatched work;
+// every planned step has a terminal status. Execution still uses one attempt.
 
 type Step struct {
 	NodeID     string      `json:"nodeId"`
@@ -85,4 +84,42 @@ type DataArtifact struct {
 	Hash        string `json:"hash"`
 	ContentType string `json:"contentType"`
 	Schema      string `json:"schema"`
+}
+
+// Terminate preserves completed work and closes every unfinished journal entry.
+// Callers reconcile actual invocation outcomes before terminating the run.
+func (manifest *Manifest) Terminate(status, diagnostic string) {
+	manifest.Status = status
+	manifest.Diagnostic = diagnostic
+	manifest.Result = nil
+	for index := range manifest.Steps {
+		step := &manifest.Steps[index]
+		switch step.Status {
+		case "pending":
+			step.Status = "not-started"
+		case "running":
+			step.Status = status
+			for attempt := range step.Attempts {
+				step.Attempts[attempt].Status = status
+				step.Attempts[attempt].Diagnostic = diagnostic
+			}
+		}
+		if step.Items == nil {
+			continue
+		}
+		for itemIndex := range *step.Items {
+			item := &(*step.Items)[itemIndex]
+			switch item.Status {
+			case "pending":
+				item.Status = "not-started"
+				item.Diagnostic = diagnostic
+			case "running":
+				item.Status = status
+				for attempt := range item.Attempts {
+					item.Attempts[attempt].Status = status
+					item.Attempts[attempt].Diagnostic = diagnostic
+				}
+			}
+		}
+	}
 }

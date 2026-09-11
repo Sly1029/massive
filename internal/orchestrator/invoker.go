@@ -19,7 +19,6 @@ import (
 const (
 	descriptorPathToken             = "{descriptor}"
 	defaultLocalProcessConcurrency  = 32
-	stepInvocationStatusCancelled   = "cancelled"
 	stepInvocationStatusInfraFailed = "infrastructure-failed"
 )
 
@@ -224,7 +223,7 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 			NodeID:   descriptor.NodeID,
 			Attempt:  descriptor.Attempt,
 			Scope:    descriptor.Scope,
-			Status:   stepInvocationStatusCancelled,
+			Status:   StatusCancelled,
 			ExitCode: -1,
 		}, contextError
 	}

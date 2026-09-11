@@ -232,7 +232,7 @@ projects/<project-key>/runs/<run-id>/steps/<step-id>/scopes/maps/<map-id>/items/
 
 Static invocations omit `scope` and retain the original static paths.
 
-`run-manifest.json` is the v3 (`schemaVersion: 3`, `encoding: "json-v3"`) run
+`run-manifest.json` is the v4 (`schemaVersion: 4`, `encoding: "json-v4"`) run
 manifest the orchestrator records when it creates a run: plan hash, run status,
 per-step attempt/artifact records, finite-map item records, and durable
 decision outcomes. A selected
@@ -252,19 +252,27 @@ content-addressed body reference.
 A map step owns a dense, source-ordered `items` array. Each item remains tied
 to its static map node by an ordered execution scope and records its own
 attempt. Successful collection is source-index ordered, never completion
-ordered. An item that was not dispatched because the map failed has terminal
+ordered. An item that was not dispatched because the map failed or was cancelled has terminal
 status `"not-started"`, zero attempts, and a safe diagnostic. A successful map
-requires every item to succeed. A failed map has no pending or running items
+requires every item to succeed. A failed or cancelled map has no pending or running items
 and never publishes the static collection manifest. An empty map succeeds with
 an empty item array and publishes canonical `[]` at the map node's static
 output slot.
+
+A failed or cancelled run requires a nonempty root `diagnostic`. Every step is
+terminal: unfinished dispatched attempts become `failed` or `cancelled`, and
+undispatched steps become `not-started` with no attempts. Completed outputs and
+recorded decisions survive termination. A cancelled invocation does not adopt an
+output manifest merely because it exists; only reported successful invocations
+have their publications verified and retained. Terminal publication uses a
+bounded context independent of execution cancellation.
 
 `result.json` is the final run result artifact the CLI surfaces as the run's
 output location. Both are canonical JSON. The local orchestrator currently
 records only attempt `1` for each node; retry scheduling is intentionally not
 implemented by this transport slice.
 
-The v3 run-manifest protocol has no compatibility reader or dual-write mode.
+The v4 run-manifest protocol has no compatibility reader or dual-write mode.
 An implementation must reject an earlier run manifest instead of guessing or
 silently upgrading its routing state. The step invocation descriptor is
 independently versioned and remains `schemaVersion: 2`, `encoding: "json-v2"`.
