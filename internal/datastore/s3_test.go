@@ -18,20 +18,19 @@ const (
 
 func TestS3DatastoreContract(t *testing.T) {
 	endpoint := startMinIO(t)
-	t.Setenv("MASSIVE_TEST_S3_ACCESS_KEY", minioAccessKey)
-	t.Setenv("MASSIVE_TEST_S3_SECRET_KEY", minioSecretKey)
+	t.Setenv("AWS_ACCESS_KEY_ID", minioAccessKey)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", minioSecretKey)
+	t.Setenv("AWS_SESSION_TOKEN", "")
 
 	RunDatastoreContract(t, func(t *testing.T) Datastore {
 		t.Helper()
 
 		store, err := NewS3Datastore(context.Background(), S3Config{
-			Endpoint:           endpoint,
-			Bucket:             "massive-datastore-contract",
-			Region:             "us-east-1",
-			Prefix:             strings.ToLower(t.Name()),
-			AccessKeyEnv:       "MASSIVE_TEST_S3_ACCESS_KEY",
-			SecretAccessKeyEnv: "MASSIVE_TEST_S3_SECRET_KEY",
-			CreateBucket:       true,
+			Endpoint:     endpoint,
+			Bucket:       "massive-datastore-contract",
+			Region:       "us-east-1",
+			Prefix:       strings.ToLower(t.Name()),
+			CreateBucket: true,
 		})
 		if err != nil {
 			t.Fatalf("new s3 datastore: %v", err)
@@ -99,24 +98,18 @@ func freeTCPPort() (int, error) {
 	return address.Port, nil
 }
 
-func TestNewS3DatastoreRequiresCredentialsFromEnv(t *testing.T) {
-	t.Setenv("MASSIVE_TEST_MISSING_ACCESS_KEY", "")
-	t.Setenv("MASSIVE_TEST_MISSING_SECRET_KEY", "")
-
-	_, err := NewS3Datastore(context.Background(), S3Config{
-		Endpoint:           "127.0.0.1:9000",
-		Bucket:             "bucket",
-		AccessKeyEnv:       "MASSIVE_TEST_MISSING_ACCESS_KEY",
-		SecretAccessKeyEnv: "MASSIVE_TEST_MISSING_SECRET_KEY",
-	})
-	if err == nil {
-		t.Fatal("expected missing credential error")
-	}
-	if !strings.Contains(err.Error(), "MASSIVE_TEST_MISSING_ACCESS_KEY") {
-		t.Fatalf("error = %v, want env var name", err)
-	}
-}
-
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
+}
+
+func TestS3RequiresExplicitApplicationCredentials(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY", "obsolete-alias")
+	t.Setenv("AWS_SECRET_KEY", "obsolete-alias")
+	for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI"} {
+		t.Setenv(key, "")
+	}
+	_, err := NewS3Datastore(context.Background(), S3Config{Endpoint: "localhost:9000", Bucket: "test", Region: "us-east-1"})
+	if err == nil || !strings.Contains(err.Error(), "bind AWS access credentials") {
+		t.Fatalf("missing credentials: %v", err)
+	}
 }

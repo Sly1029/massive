@@ -11,6 +11,7 @@ export type DeploymentTarget =
     readonly namespace: string;
     readonly serviceAccountName: string;
     readonly workflowTemplateName?: string;
+    readonly artifactCredentialsSecret?: string;
   };
 
 export interface DeploymentProfile {
@@ -59,6 +60,9 @@ export const deployment = {
         kind: "argo",
         namespace: profile.namespace,
         serviceAccountName: profile.serviceAccountName,
+        ...(profile.artifactCredentialsSecret === undefined
+          ? {}
+          : { artifactCredentialsSecret: profile.artifactCredentialsSecret }),
         ...(profile.workflowTemplateName === undefined
           ? {}
           : { workflowTemplateName: profile.workflowTemplateName }),

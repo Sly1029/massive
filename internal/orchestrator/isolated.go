@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
@@ -18,7 +17,7 @@ import (
 type IsolatedStepConfig struct {
 	Plan           *planpb.WorkflowPlan
 	NodeID         string
-	DatastoreRoot  string
+	Datastore      DatastoreDescriptor
 	ProjectID      string
 	RunID          string
 	RunnerCommand  []string
@@ -47,17 +46,13 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	if config.Plan == nil {
 		return nil, errors.New("isolated step requires a workflow plan")
 	}
-	if config.DatastoreRoot == "" || config.ProjectID == "" || config.RunID == "" {
-		return nil, errors.New("isolated step requires datastore root, project id, and run id")
+	if config.Datastore == nil || config.ProjectID == "" || config.RunID == "" {
+		return nil, errors.New("isolated step requires datastore descriptor, project id, and run id")
 	}
 	if !validSafePathSegment(config.RunID) {
 		return nil, &InvalidRunInputError{Field: "run id", Value: config.RunID, Message: "must be a safe path segment"}
 	}
-	storeRoot, err := filepath.Abs(config.DatastoreRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resolve isolated datastore root: %w", err)
-	}
-	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: storeRoot})
+	store, err := openInvocationDatastore(ctx, config.Datastore)
 	if err != nil {
 		return nil, fmt.Errorf("open isolated datastore: %w", err)
 	}
@@ -124,12 +119,11 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	if _, err := store.Put(ctx, datastore.MustKey(inputArtifact.Key), input, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
 		return nil, fmt.Errorf("write isolated step input: %w", err)
 	}
-	runConfig := RunConfig{Plan: config.Plan, DatastoreRoot: storeRoot}
 	var descriptor StepInvocationDescriptor
 	if mapItemIndex == nil {
-		descriptor, err = descriptorForStep(runConfig, projectKey, config.RunID, node, inputArtifact, index)
+		descriptor, err = descriptorForStep(config.Plan.GetPlanHash(), config.Datastore, projectKey, config.RunID, node, inputArtifact, index)
 	} else {
-		descriptor, err = descriptorForMapItem(runConfig, projectKey, config.RunID, node, inputArtifact, index, *mapItemIndex)
+		descriptor, err = descriptorForMapItem(config.Plan.GetPlanHash(), config.Datastore, projectKey, config.RunID, node, inputArtifact, index, *mapItemIndex)
 	}
 	if err != nil {
 		return nil, err

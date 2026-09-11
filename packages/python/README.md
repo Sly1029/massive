@@ -25,7 +25,8 @@ uv run massive build workflow.py \
   --target argo \
   --output .massive/argo \
   --namespace workflows \
-  --service-account massive-runner
+  --service-account massive-runner \
+  --artifact-store massive-artifacts
 ```
 
 The bundle contains the canonical workflow and deployment specifications, the
@@ -39,8 +40,6 @@ Apply and submit it with the workflow input as one JSON parameter:
 
 ```sh
 kubectl apply -f .massive/argo/runtime-configmap.json
-test ! -f .massive/argo/runtime-network-policy.json || \
-  kubectl apply -f .massive/argo/runtime-network-policy.json
 kubectl apply -f .massive/argo/workflow-template.yaml
 
 argo submit -n workflows --from workflowtemplate/double \
@@ -54,15 +53,14 @@ build time and mounted from the generated `ConfigMap`; they do not need to be
 baked into the runner image. If a container recipe supplies `command=`, that
 command must launch the Massive CLI and accept the generated runtime arguments.
 
-Local execution supports static steps, exhaustive decisions, and finite maps.
-Argo 0.1 lowering is intentionally limited to static graphs, immutable
-container environments, small JSON parameter values, and at most 700 KiB of
-embedded plan plus source archives. `network="none"` emits a matching
-`NetworkPolicy`; secret declarations and other egress policies fail during the
-build until their target lowering exists. Unsupported semantics fail rather
-than producing a behaviorally different workflow. The deployment profile keeps
-an artifact-store binding identity so larger source/value transport can move to
-S3-compatible storage later without changing authoring or plan identity.
+Local and Argo execution support steps, exhaustive decisions/selects, and finite
+maps. Argo requires immutable container environments and an explicit shared S3
+datastore binding. Blob/Tree file bodies are stored remotely and hydrated into
+private invocation directories. Ordinary JSON values still use Argo parameters;
+embedded plans and source archives are limited to 700 KiB. Application secret
+declarations and `egress="none"` fail the build until their enforcement can coexist
+with remote storage. See the [Argo datastore setup](../../docs/spec/argo-backend.md#shared-invocation-datastore)
+for ConfigMap and credential bindings.
 
 ```python
 from pydantic import BaseModel

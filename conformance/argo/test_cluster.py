@@ -30,25 +30,9 @@ def kubectl(*args: str, document: dict | None = None) -> dict:
     return json.loads(result.stdout) if result.stdout.strip().startswith("{") else {}
 
 
-@unittest.skipUnless(
-    os.environ.get("MASSIVE_TEST_ARGO_IMAGE"),
-    "requires live Argo cluster and runner image",
-)
-class DecisionConformance(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.directory = tempfile.TemporaryDirectory(prefix="massive-argo-")
-        cls.addClassCleanup(cls.directory.cleanup)
-        root = Path(cls.directory.name)
-        source = (Path(__file__).parent / "decisions.py").read_text()
-        source = source.replace(
-            'IMAGE = "example.invalid/runner@sha256:" + "0" * 64',
-            f"IMAGE = {os.environ['MASSIVE_TEST_ARGO_IMAGE']!r}",
-        )
-        source = source.replace(
-            'PLATFORM = "linux/amd64"',
-            f"PLATFORM = {os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
-        )
+def install_workflow(source: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="massive-argo-") as directory:
+        root = Path(directory)
         entry = root / "workflow.py"
         entry.write_text(source)
         bundle = root / "bundle"
@@ -65,6 +49,10 @@ class DecisionConformance(unittest.TestCase):
                 "argo",
                 "--service-account",
                 "default",
+                "--artifact-store",
+                "massive-datastore",
+                "--artifact-credentials-secret",
+                "massive-storage-credentials",
             ],
             cwd=ROOT,
             check=True,
@@ -77,6 +65,71 @@ class DecisionConformance(unittest.TestCase):
             "-f",
             str(bundle / "workflow-template.json"),
         )
+
+
+@unittest.skipUnless(
+    os.environ.get("MASSIVE_TEST_ARGO_IMAGE"),
+    "requires live Argo cluster and runner image",
+)
+class DecisionConformance(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        kubectl(
+            "apply",
+            "-f",
+            "-",
+            document={
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "massive-datastore"},
+                "data": {
+                    "datastore.json": json.dumps(
+                        {
+                            "kind": "s3",
+                            "bucket": "my-bucket",
+                            "region": "us-east-1",
+                            "prefix": "massive-conformance",
+                            "endpoint": "http://minio:9000",
+                            "forcePathStyle": True,
+                        }
+                    )
+                },
+            },
+        )
+        credentials = kubectl("get", "secret", "my-minio-cred", "-o", "json")["data"]
+        kubectl(
+            "apply",
+            "-f",
+            "-",
+            document={
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": "massive-storage-credentials"},
+                "data": {
+                    "AWS_ACCESS_KEY_ID": credentials["accesskey"],
+                    "AWS_SECRET_ACCESS_KEY": credentials["secretkey"],
+                },
+            },
+        )
+        source = (Path(__file__).parent / "decisions.py").read_text()
+        source = source.replace(
+            'IMAGE = "example.invalid/runner@sha256:" + "0" * 64',
+            f"IMAGE = {os.environ['MASSIVE_TEST_ARGO_IMAGE']!r}",
+        )
+        source = source.replace(
+            'PLATFORM = "linux/amd64"',
+            f"PLATFORM = {os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
+        )
+        install_workflow(source)
+        file_source = (ROOT / "examples/08-artifacts/workflow.py").read_text()
+        file_source = file_source.replace(
+            '"example.invalid/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"',
+            repr(os.environ["MASSIVE_TEST_ARGO_IMAGE"]),
+        ).replace(
+            'platform="linux/amd64"',
+            f"platform={os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
+        )
+        install_workflow(file_source)
         cls.runs = {}
         for label, inputs in {
             "positive": {"score": 3},
@@ -84,6 +137,7 @@ class DecisionConformance(unittest.TestCase):
             "skip": {"score": -1},
             "empty": {"score": 3, "copies": 0},
             "failure": {"score": 3, "fail": True},
+            "files": {"copies": 3},
         }.items():
             run = kubectl(
                 "create",
@@ -96,7 +150,11 @@ class DecisionConformance(unittest.TestCase):
                     "kind": "Workflow",
                     "metadata": {"generateName": f"massive-{label}-"},
                     "spec": {
-                        "workflowTemplateRef": {"name": "argo-decisions"},
+                        "workflowTemplateRef": {
+                            "name": "file-artifacts"
+                            if label == "files"
+                            else "argo-decisions"
+                        },
                         "arguments": {
                             "parameters": [
                                 {"name": "input", "value": json.dumps(inputs)}
@@ -122,7 +180,16 @@ class DecisionConformance(unittest.TestCase):
 
     def successful(self, label: str, expected: int) -> dict:
         run = self.completed(label)
-        self.assertEqual(run["status"]["phase"], "Succeeded", json.dumps(run["status"]))
+        self.assertEqual(
+            run["status"]["phase"],
+            "Succeeded",
+            str(
+                [
+                    (node["displayName"], node["phase"], node.get("message"))
+                    for node in run["status"].get("nodes", {}).values()
+                ]
+            ),
+        )
         root = run["status"]["nodes"][run["metadata"]["name"]]
         self.assertEqual(
             json.loads(root["outputs"]["parameters"][0]["value"]), expected
@@ -150,12 +217,45 @@ class DecisionConformance(unittest.TestCase):
         nodes = self.successful("zero", 0)
         self.assertEqual(nodes["evaluate"]["phase"], "Omitted")
 
+    def test_file_references_are_hydrated_across_pods(self) -> None:
+        run = self.completed("files")
+        self.assertEqual(
+            run["status"]["phase"],
+            "Succeeded",
+            str(
+                [
+                    (node["displayName"], node["phase"], node.get("message"))
+                    for node in run["status"].get("nodes", {}).values()
+                ]
+            ),
+        )
+        root = run["status"]["nodes"][run["metadata"]["name"]]
+        result = json.loads(root["outputs"]["parameters"][0]["value"])
+        self.assertEqual(
+            result,
+            {"original": "original", "reports": ["report-0", "report-1", "report-2"]},
+        )
+
     def test_selected_item_failure_cannot_produce_success(self) -> None:
         run = self.completed("failure")
-        self.assertEqual(run["status"]["phase"], "Failed", json.dumps(run["status"]))
+        self.assertEqual(
+            run["status"]["phase"],
+            "Failed",
+            str(
+                [
+                    (node["displayName"], node["phase"], node.get("message"))
+                    for node in run["status"].get("nodes", {}).values()
+                ]
+            ),
+        )
         nodes = run["status"]["nodes"].values()
         self.assertTrue(
-            any(n["phase"] == "Failed" and n.get("type") == "Pod" for n in nodes)
+            any(
+                n["phase"] == "Failed"
+                and n.get("type") == "Pod"
+                and n.get("templateName") == "map-item-evaluate"
+                for n in nodes
+            )
         )
         self.assertFalse(
             any(

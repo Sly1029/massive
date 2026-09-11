@@ -230,7 +230,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 			return nil, fmt.Errorf("write input artifact for %s: %w", nodeID, err)
 		}
 
-		descriptor, err := descriptorForStep(config, projectKey, runID, node, inputArtifact, index)
+		descriptor, err := descriptorForStep(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, inputArtifact, index)
 		if err != nil {
 			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
 		}
@@ -686,7 +686,7 @@ func recomputeSourcePackageHash(files []SourcePackageFile) (string, error) {
 	return sourceidentity.Digest(entries)
 }
 
-func descriptorForStep(config RunConfig, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex) (StepInvocationDescriptor, error) {
+func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex) (StepInvocationDescriptor, error) {
 	symbol := index.symbolsByRef[node.GetSymbolRef()]
 	if symbol == nil {
 		return StepInvocationDescriptor{}, fmt.Errorf("missing symbol %q", node.GetSymbolRef())
@@ -704,7 +704,7 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 		Kind:          "StepInvocationDescriptor",
 		SchemaVersion: 2,
 		Encoding:      "json-v2",
-		PlanHash:      config.Plan.GetPlanHash(),
+		PlanHash:      planHash,
 		ProjectKey:    projectKey,
 		RunID:         runID,
 		NodeID:        node.GetId(),
@@ -740,15 +740,12 @@ func descriptorForStep(config RunConfig, projectKey string, runID string, node *
 		},
 		ChannelReads:  []ChannelArtifactRef{},
 		ChannelWrites: []ChannelArtifactDestination{},
-		Datastore: LocalDatastoreDescriptor{
-			Kind: "local",
-			Path: config.DatastoreRoot,
-		},
+		Datastore:     binding,
 	}, nil
 }
 
-func descriptorForMapItem(config RunConfig, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex, itemIndex int) (StepInvocationDescriptor, error) {
-	descriptor, err := descriptorForStep(config, projectKey, runID, node, input, index)
+func descriptorForMapItem(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex, itemIndex int) (StepInvocationDescriptor, error) {
+	descriptor, err := descriptorForStep(planHash, binding, projectKey, runID, node, input, index)
 	if err != nil {
 		return StepInvocationDescriptor{}, err
 	}
@@ -797,7 +794,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		if _, err := store.Put(ctx, datastore.MustKey(itemInput.Key), item.Body, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
 			return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), "map item input publication failed", fmt.Errorf("write map item %d input: %w", item.Index, err))
 		}
-		descriptor, err := descriptorForMapItem(config, projectKey, runID, node, itemInput, resolution.index, item.Index)
+		descriptor, err := descriptorForMapItem(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, itemInput, resolution.index, item.Index)
 		if err != nil {
 			return nodeOutput{}, failMapNode(ctx, store, manifestKey, manifest, node.GetId(), "map item descriptor construction failed", err)
 		}

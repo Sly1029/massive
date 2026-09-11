@@ -53,6 +53,12 @@ bundle_result="$(
     --json
 )"
 
+"$python" - "$test_root" <<'PYDATASTORE'
+import json,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+(root/"local-datastore.json").write_text(json.dumps({"kind":"local","path":str(root/"remote-store")}))
+PYDATASTORE
 mkdir -p "$test_root/runtime-mount"
 "$python" - "$test_root/bundle/runtime-configmap.json" "$test_root/runtime-mount" <<'PY'
 import base64
@@ -74,7 +80,7 @@ PY
   --output "$test_root/remote-result.json" \
   --project argo/python-linear \
   --run-id isolated-wheel \
-  --store "$test_root/remote-store"
+  --datastore-config "$test_root/local-datastore.json"
 
 "$python" - "$run_result" "$bundle_result" "$test_root/bundle" <<'PY'
 import base64
@@ -129,7 +135,8 @@ assert step["nodeSelector"] == {
 assert step["container"]["command"] == ["massive"]
 assert step["container"]["args"][:2] == ["runtime", "step"]
 assert step["container"]["volumeMounts"] == [
-    {"mountPath": "/var/run/massive", "name": "massive-runtime", "readOnly": True}
+    {"mountPath": "/var/run/massive", "name": "massive-runtime", "readOnly": True},
+    {"mountPath": "/var/run/massive-datastore", "name": "massive-datastore", "readOnly": True},
 ]
 
 with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as source:
@@ -171,6 +178,7 @@ packaged_run="$(
   cd "$test_root/packaged"
   "$massive" build workflow.py \
     --output "$test_root/packaged-bundle" \
+    --artifact-store massive-artifacts \
     --namespace workflows \
     --service-account massive-runner \
     --json
@@ -184,7 +192,7 @@ mv "$test_root/packaged" "$test_root/moved-checkout"
   --output "$test_root/packaged-result.json" \
   --project argo/packaged-example \
   --run-id isolated-package \
-  --store "$test_root/packaged-remote-store"
+  --datastore-config "$test_root/local-datastore.json"
 
 "$python" - "$packaged_run" "$test_root" <<'PY'
 import json

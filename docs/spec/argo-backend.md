@@ -23,7 +23,6 @@ dist/argo/<workflow-name>/
   workflow-template.yaml
   workflow-template.json      # canonical machine-readable projection
   runtime-configmap.json
-  runtime-network-policy.json  # only for egress: none
   runtime-assets/
     source-sha256-<digest>.tar  # verified transport-neutral source package
   massive-plan.json
@@ -42,7 +41,8 @@ command is:
 massive build workflow.py \
   --output dist/argo \
   --namespace workflows \
-  --service-account massive-runner
+  --service-account massive-runner \
+  --artifact-store massive-artifacts
 ```
 
 The lower-level `massive-compiler bundle-argo` command additionally requires a
@@ -204,9 +204,9 @@ The full pipeline above is the target architecture, not the first implementation
    Emit canonical YAML, workflow.json, and bundle-manifest.json.
 ```
 
-Presets, plugins, user patches, field-level provenance explanations, and secret
-binding are deferred. A direct `NetworkPolicy` enforces `egress: none`; secret
-declarations and egress policies that cannot yet be represented fail the build.
+Presets, plugins, user patches, field-level provenance explanations, and application
+secret declarations are deferred. Storage credentials can bind to a named Secret
+or workload identity. Egress restrictions that prevent storage access fail the build.
 
 The v0 Argo step image contract is the same as the container environment
 contract: an immutable image contains the matching `massive-workflows` release.
@@ -221,8 +221,7 @@ Argo `withParam`, and collects indexed outputs in source order. Template
 empty list through Argo's loop-output aggregation without invoking user code;
 the collector publishes canonical `[]`.
 
-The compiler does not emit a one-off `Workflow`. Apply the ConfigMap, optional
-NetworkPolicy, and WorkflowTemplate, then submit it with
+The compiler does not emit a one-off `Workflow`. Apply the source ConfigMap, datastore ConfigMap, and WorkflowTemplate, then submit it with
 `argo submit --from workflowtemplate/<name> -p 'input=<json>'`.
 
 The first executable Argo wedge supports `env.container(...)` only. `env.node(...)` should be rejected for Argo with a clear target compatibility diagnostic until Node dependency environment materialization exists for Kubernetes.
@@ -360,7 +359,7 @@ control`, validates the selected case with the same schema validator as local
 execution, and emits a numeric case index. User tags never become controller
 expressions. Decision and select tasks reuse an upstream container environment
 without invoking author code or inheriting that step's resources or secrets.
-The upstream network policy remains enforced for the control task.
+Control tasks do not receive storage credentials or an author network contract.
 
 Every ordinary dependency requires `.Succeeded`. Selects wait for all branch
 sources to finish or become inactive, require at least one successful source,
@@ -393,5 +392,55 @@ this recipe with their own locked dependencies; the generic image contains only
 Massive and its runtime requirements.
 
 Source archives still use the bounded embedded transport, and ordinary values
-still pass through Argo parameters. File references require a shared datastore;
-a private pod-local store cannot hydrate another pod's Blob or Tree.
+still pass through Argo parameters. All Argo invocations use the shared datastore
+for artifact publication and Blob/Tree hydration; there is no pod-local fallback.
+
+## Shared invocation datastore
+
+`--artifact-store` is required and names a Kubernetes ConfigMap containing
+`datastore.json`. It is independent of the embedded **source** transport:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: massive-artifacts
+  namespace: workflows
+data:
+  datastore.json: |
+    {"kind":"s3","bucket":"workflow-artifacts","region":"us-east-1","prefix":"massive"}
+```
+
+For an S3-compatible service, add `endpoint` (an HTTP(S) origin) and
+`forcePathStyle: true`. The bucket must already exist. Both Go and Python use
+this same descriptor; unknown fields and credential values in the descriptor
+are rejected. File bodies, tree manifests, schemas, source packages, and step
+output manifests are published to this store. Consumers hydrate files into
+private invocation scratch directories. A forwarded reference preserves its
+original bytes even if a working copy was edited.
+
+Without `--artifact-credentials-secret`, the runtime resolves standard AWS
+credentials from the execution environment, including workload identity. The
+Go provider refreshes IAM credentials; Python uses its SDK credential chain.
+With the flag, Massive binds only `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+and optional `AWS_SESSION_TOKEN` from that Secret to user invocation containers.
+Control-only tasks never receive those storage credentials. No credential bytes
+are included in plans, descriptors, source archives, or deploy bundles.
+
+An `egress: none` execution contract cannot reach remote storage, so the Argo
+compiler rejects it. A future storage mediation implementation must provide a
+real enforcement mechanism before that combination can be supported.
+
+Rebuild existing Argo bundles: `massive runtime step` and `runtime map item` now
+require `--datastore-config <file>` instead of `--store`. There is no compatibility
+flag or default private store. The standalone isolated invocation primitive can
+also accept an explicit local descriptor for filesystem integration tests;
+normal `massive run --store` continues to select the local backend's datastore.
+
+Storage bindings must be scoped to the application trust boundary: use a dedicated
+bucket or IAM permissions restricted to its object prefix. Invocation code is
+trusted with its bound storage credentials. The Go gateway accepts explicit AWS
+keys or configured web/container workload identity and does not discover EC2 node
+credentials. Credential acquisition failures stop invocation before artifact IO.
+Automatic pod retries remain disabled until shared publication retry behavior is
+covered by live failure-injection tests.

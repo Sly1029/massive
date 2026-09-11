@@ -161,13 +161,14 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 }
 
 type ArgoBundleRequest struct {
-	Frontend             *FrontendResult
-	OutputDirectory      string
-	ProfileName          string
-	ArtifactStoreBinding string
-	Namespace            string
-	ServiceAccountName   string
-	WorkflowTemplateName string
+	Frontend                  *FrontendResult
+	OutputDirectory           string
+	ProfileName               string
+	ArtifactStoreBinding      string
+	ArtifactCredentialsSecret string
+	Namespace                 string
+	ServiceAccountName        string
+	WorkflowTemplateName      string
 }
 
 type ArgoBundleResult struct {
@@ -187,8 +188,9 @@ func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
 		Name: request.ProfileName, ArtifactStoreBinding: request.ArtifactStoreBinding,
 		Target: deployment.Target{
 			Kind: "argo", Namespace: request.Namespace,
-			ServiceAccountName:   request.ServiceAccountName,
-			WorkflowTemplateName: request.WorkflowTemplateName,
+			ServiceAccountName:        request.ServiceAccountName,
+			WorkflowTemplateName:      request.WorkflowTemplateName,
+			ArtifactCredentialsSecret: request.ArtifactCredentialsSecret,
 		},
 	})
 	if err != nil {

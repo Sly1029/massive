@@ -48,8 +48,8 @@ not an authorization policy: possession of a name does not grant access.
   yet selectively bound or preflighted.
 - Argo rejects declared secrets because secret-reference lowering is not implemented.
 - Local execution does not enforce a container, Kubernetes resources, or network policy.
-- Argo supports immutable container images, CPU/memory requirements, and limited
-  network-policy lowering; it does not implement the proposed mediation/placement model.
+- Argo supports immutable container images, CPU/memory requirements, and explicit
+  shared-storage egress validation; it does not implement the proposed mediation/placement model.
 
 Document these limitations. Do not describe a declaration as enforced merely because
 it appears in the plan.

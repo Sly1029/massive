@@ -129,6 +129,7 @@ const WorkflowPackageConfigSchema = z.object({
           namespace: z.string().min(1),
           serviceAccountName: z.string().min(1),
           workflowTemplateName: z.string().min(1).optional(),
+          artifactCredentialsSecret: z.string().min(1).optional(),
         }).strict(),
       ]),
     }).strict(),

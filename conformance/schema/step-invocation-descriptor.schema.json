@@ -92,12 +92,24 @@
     "relativePath": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?:(?!\\.{1,2}(?:/|$))[^/\\\\]+)(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*$"
+      "pattern": "^[^/\\\\]+(?:/[^/\\\\]+)*$",
+      "not": {
+        "pattern": "(^|/)\\.{1,2}(/|$)"
+      }
     },
     "modulePath": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?:\\./)?(?:(?!\\.{1,2}(?:/|$))[^/\\\\]+)(?:/(?!\\.{1,2}(?:/|$))[^/\\\\]+)*$"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/relativePath"
+        },
+        {
+          "type": "string",
+          "pattern": "^\\./[^/\\\\]+(?:/[^/\\\\]+)*$",
+          "not": {
+            "pattern": "/\\.{1,2}(/|$)"
+          }
+        }
+      ]
     },
     "datastoreKey": { "$ref": "#/$defs/relativePath" },
     "hashRef": {
@@ -218,7 +230,7 @@
         "bucket": { "$ref": "#/$defs/id" },
         "prefix": { "$ref": "#/$defs/datastoreKey" },
         "region": { "type": "string", "minLength": 1 },
-        "endpoint": { "type": "string", "minLength": 1 },
+        "endpoint": { "type": "string", "pattern": "^https?://[^/?#@\\s]+/?$" },
         "forcePathStyle": { "type": "boolean" }
       }
     }

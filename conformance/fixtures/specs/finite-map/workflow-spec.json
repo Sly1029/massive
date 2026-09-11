@@ -8,7 +8,7 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:3f45eacf7828f4fe7db6eed9e06c5c5a8fa699000d8fbcac6b1cee6039cde33e",
+  "specHash": "sha256:2d3f22f9fe9c1332f30b528022538041d5529235b6cb2a523eb8868ffd936acc",
   "workflow": {
     "name": "finite-map",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -82,7 +82,7 @@
   "contracts": {
     "sha256:8888888888888888888888888888888888888888888888888888888888888888": {
       "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
-      "network": { "egress": "none" }
+      "network": { "egress": "any" }
     }
   }
 }

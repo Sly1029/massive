@@ -27,8 +27,8 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 	if !bytes.Equal(first.ManifestJSON, second.ManifestJSON) {
 		t.Fatal("bundle manifest is not deterministic")
 	}
-	if len(first.Files) != 8 {
-		t.Fatalf("bundle file count = %d, want 8", len(first.Files))
+	if len(first.Files) != 7 {
+		t.Fatalf("bundle file count = %d, want 7", len(first.Files))
 	}
 	foundSourceArchive := false
 	for _, file := range first.Files {
@@ -86,7 +86,6 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 		t.Fatalf("ordered merge input expression = %v", input)
 	}
 	fileByPath(t, first, "runtime-configmap.json")
-	fileByPath(t, first, "runtime-network-policy.json")
 	if first.Manifest.GetBundleHash() == "" || first.Manifest.GetPlanHash() == "" || first.Manifest.GetDeploymentHash() == "" {
 		t.Fatal("manifest lacks identity hashes")
 	}
@@ -269,10 +268,6 @@ func TestDecisionBranchesWaitForSuccessAndSelectOnlyOneOutput(t *testing.T) {
 	}
 	if !strings.Contains(accept["when"].(string), "selection") || strings.Contains(accept["when"].(string), "accepted") {
 		t.Fatalf("branch condition: %v", accept)
-	}
-	control := templateByName(t, templates, "step-route")
-	if control["metadata"].(map[string]any)["labels"].(map[string]any)["massive.dev/network-policy"] == nil {
-		t.Fatal("control task lost egress policy")
 	}
 	choose := taskByName(t, tasks, "choose")
 	depends := choose["depends"].(string)
@@ -560,5 +555,109 @@ func TestTargetRejectsGeneratedTaskNameCollisions(t *testing.T) {
 	_, err := Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, result.Plan))
 	if err == nil || !strings.Contains(err.Error(), "collides") {
 		t.Fatalf("generated name collision: %v", err)
+	}
+}
+
+func TestArgoRequiresStorageEgressAndBindsCredentialsOnlyToInvocations(t *testing.T) {
+	compiled := fixturePlan(t, "exhaustive-decision")
+	binding := deploymentForPlan(t, compiled.CanonicalJSON)
+	binding.Profile.Target.ArtifactCredentialsSecret = "storage-credentials"
+	binding, _, err := deployment.New(compiled.PlanHash, binding.Profile, binding.MaterializationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := Compile(compiled.CanonicalJSON, binding, runtimeAssetsForPlan(t, compiled.Plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var template map[string]any
+	if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+		t.Fatal(err)
+	}
+	templates := template["spec"].(map[string]any)["templates"].([]any)
+	control := templateByName(t, templates, "step-route")["container"].(map[string]any)
+	if control["env"] != nil {
+		t.Fatal("control task received storage credentials")
+	}
+	step := templateByName(t, templates, "step-accept")["container"].(map[string]any)
+	if len(step["env"].([]any)) != 3 {
+		t.Fatal("invocation is missing standard AWS credential bindings")
+	}
+	if !containsArgs(step["args"].([]any), "--datastore-config", "/var/run/massive-datastore/datastore.json") {
+		t.Fatal("invocation still uses a private store")
+	}
+	for _, contract := range compiled.Plan.Contracts {
+		contract.Network = &planpb.NetworkPolicy{Egress: pointer("none")}
+	}
+	data, _ := rehashPlan(t, compiled.Plan)
+	_, err = Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, compiled.Plan))
+	if err == nil || !strings.Contains(err.Error(), "cannot access the shared datastore") {
+		t.Fatalf("incompatible egress diagnostic: %v", err)
+	}
+}
+
+func TestArgoInvocationStorageWiring(t *testing.T) {
+	for _, fixture := range []string{"finite-map", "exhaustive-decision"} {
+		for _, secret := range []string{"", "storage-credentials"} {
+			compiled := fixturePlan(t, fixture)
+			binding := deploymentForPlan(t, compiled.CanonicalJSON)
+			binding.Profile.Target.ArtifactCredentialsSecret = secret
+			binding, _, err := deployment.New(compiled.PlanHash, binding.Profile, binding.MaterializationHash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bundle, err := Compile(compiled.CanonicalJSON, binding, runtimeAssetsForPlan(t, compiled.Plan))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root map[string]any
+			if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &root); err != nil {
+				t.Fatal(err)
+			}
+			workflow := root["spec"].(map[string]any)
+			volumes := workflow["volumes"].([]any)
+			store := volumes[1].(map[string]any)
+			if store["name"] != "massive-datastore" || store["configMap"].(map[string]any)["name"] != binding.Profile.ArtifactStoreBinding {
+				t.Fatal("datastore volume lost binding")
+			}
+			for _, item := range workflow["templates"].([]any) {
+				template := item.(map[string]any)
+				pod, ok := template["container"].(map[string]any)
+				if !ok {
+					continue
+				}
+				name := template["name"].(string)
+				invocation := strings.HasPrefix(name, "map-item-") || (strings.HasPrefix(name, "step-") && name != "step-route" && name != "step-choose")
+				mounts := pod["volumeMounts"].([]any)
+				if invocation {
+					if len(mounts) != 2 {
+						t.Fatalf("%s mounts: %v", name, mounts)
+					}
+					storage := mounts[1].(map[string]any)
+					if storage["name"] != "massive-datastore" || storage["mountPath"] != "/var/run/massive-datastore" || storage["readOnly"] != true {
+						t.Fatalf("%s storage: %v", name, storage)
+					}
+				} else if len(mounts) != 1 {
+					t.Fatalf("control %s received datastore mount", name)
+				}
+				if (invocation && secret != "") != (pod["env"] != nil) {
+					t.Fatalf("%s credential wiring with secret %q: %v", name, secret, pod["env"])
+				}
+			}
+		}
+	}
+}
+
+func TestArgoRejectsInvalidArtifactConfigMapName(t *testing.T) {
+	compiled := fixturePlan(t, "linear-chain")
+	binding := deploymentForPlan(t, compiled.CanonicalJSON)
+	binding.Profile.ArtifactStoreBinding = "My_Store"
+	binding, _, err := deployment.New(compiled.PlanHash, binding.Profile, binding.MaterializationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Compile(compiled.CanonicalJSON, binding, runtimeAssetsForPlan(t, compiled.Plan))
+	if err == nil || !strings.Contains(err.Error(), "valid ConfigMap name") {
+		t.Fatalf("invalid binding: %v", err)
 	}
 }

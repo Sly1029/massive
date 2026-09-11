@@ -76,7 +76,8 @@
         "kind": { "const": "argo" },
         "namespace": { "$ref": "#/$defs/id" },
         "serviceAccountName": { "$ref": "#/$defs/id" },
-        "workflowTemplateName": { "$ref": "#/$defs/id" }
+        "workflowTemplateName": { "$ref": "#/$defs/id" },
+        "artifactCredentialsSecret": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 }
       }
     }
   }

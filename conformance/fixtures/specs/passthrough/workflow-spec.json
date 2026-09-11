@@ -8,7 +8,7 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:5d5d26dba090541886731188963f75d63d4afb6c078f2c6c32640f3c369a41a1",
+  "specHash": "sha256:475fbf8ced19b56f24e9ce8f7cb4e5c65be7caf13ef5877f288bb8e36fe282b2",
   "workflow": {
     "name": "passthrough",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -62,7 +62,7 @@
     "sha256:8888888888888888888888888888888888888888888888888888888888888888": {
       "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
       "network": {
-        "egress": "none"
+        "egress": "any"
       }
     }
   }

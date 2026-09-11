@@ -40,10 +40,11 @@ type Profile struct {
 }
 
 type Target struct {
-	Kind                 string `json:"kind"`
-	Namespace            string `json:"namespace,omitempty"`
-	ServiceAccountName   string `json:"serviceAccountName,omitempty"`
-	WorkflowTemplateName string `json:"workflowTemplateName,omitempty"`
+	Kind                      string `json:"kind"`
+	Namespace                 string `json:"namespace,omitempty"`
+	ServiceAccountName        string `json:"serviceAccountName,omitempty"`
+	WorkflowTemplateName      string `json:"workflowTemplateName,omitempty"`
+	ArtifactCredentialsSecret string `json:"artifactCredentialsSecret,omitempty"`
 }
 
 type Diagnostic struct {

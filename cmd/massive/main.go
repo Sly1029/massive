@@ -36,15 +36,16 @@ type RunCommand struct {
 }
 
 type BuildCommand struct {
-	Entry          string `arg:"" name:"entry" help:"Python workflow entrypoint, optionally followed by #export." type:"path"`
-	Target         string `help:"Deployment target." enum:"argo" default:"argo"`
-	Output         string `short:"o" help:"Bundle output directory." required:"" type:"path"`
-	Profile        string `help:"Deployment profile name." default:"argo"`
-	Namespace      string `help:"Kubernetes namespace." required:""`
-	ServiceAccount string `name:"service-account" help:"Kubernetes service account used by workflow pods." required:""`
-	ArtifactStore  string `name:"artifact-store" help:"Stable binding identity for future remote artifact transport." default:"embedded-v0"`
-	Name           string `help:"WorkflowTemplate name; defaults to the workflow name."`
-	JSON           bool   `help:"Emit one structured JSON result."`
+	ArtifactCredentialsSecret string `name:"artifact-credentials-secret" help:"Optional Secret containing standard AWS credential keys; omit for workload identity."`
+	Entry                     string `arg:"" name:"entry" help:"Python workflow entrypoint, optionally followed by #export." type:"path"`
+	Target                    string `help:"Deployment target." enum:"argo" default:"argo"`
+	Output                    string `short:"o" help:"Bundle output directory." required:"" type:"path"`
+	Profile                   string `help:"Deployment profile name." default:"argo"`
+	Namespace                 string `help:"Kubernetes namespace." required:""`
+	ServiceAccount            string `name:"service-account" help:"Kubernetes service account used by workflow pods." required:""`
+	ArtifactStore             string `name:"artifact-store" help:"ConfigMap containing the shared S3 datastore.json descriptor." required:""`
+	Name                      string `help:"WorkflowTemplate name; defaults to the workflow name."`
+	JSON                      bool   `help:"Emit one structured JSON result."`
 }
 
 type VersionCommand struct{}
@@ -94,14 +95,14 @@ type RuntimeMapCommand struct {
 }
 
 type RuntimeStepCommand struct {
-	Plan      string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
-	BundleDir string `name:"bundle-dir" help:"Directory containing mounted source archives." required:"" type:"existingdir"`
-	Node      string `help:"Static plan node to execute." required:""`
-	Input     string `help:"Canonical JSON step input." required:""`
-	Output    string `help:"Write canonical JSON result to this path." required:"" type:"path"`
-	Project   string `help:"Stable remote project identity." required:""`
-	RunID     string `name:"run-id" help:"Remote workflow run identifier." required:""`
-	Store     string `help:"Ephemeral local artifact store." default:"/tmp/massive-store" type:"path"`
+	Plan            string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
+	BundleDir       string `name:"bundle-dir" help:"Directory containing mounted source archives." required:"" type:"existingdir"`
+	Node            string `help:"Static plan node to execute." required:""`
+	Input           string `help:"Canonical JSON step input." required:""`
+	Output          string `help:"Write canonical JSON result to this path." required:"" type:"path"`
+	Project         string `help:"Stable remote project identity." required:""`
+	RunID           string `name:"run-id" help:"Remote workflow run identifier." required:""`
+	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
 }
 
 type RuntimeMapExpandCommand struct {
@@ -110,14 +111,14 @@ type RuntimeMapExpandCommand struct {
 }
 
 type RuntimeMapItemCommand struct {
-	Plan      string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
-	BundleDir string `name:"bundle-dir" help:"Directory containing mounted source archives." required:"" type:"existingdir"`
-	Node      string `help:"Static plan map node to execute." required:""`
-	Item      string `help:"Indexed Argo map item envelope." required:""`
-	Output    string `help:"Write indexed map result to this path." required:"" type:"path"`
-	Project   string `help:"Stable remote project identity." required:""`
-	RunID     string `name:"run-id" help:"Remote workflow run identifier." required:""`
-	Store     string `help:"Ephemeral local artifact store." default:"/tmp/massive-store" type:"path"`
+	Plan            string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
+	BundleDir       string `name:"bundle-dir" help:"Directory containing mounted source archives." required:"" type:"existingdir"`
+	Node            string `help:"Static plan map node to execute." required:""`
+	Item            string `help:"Indexed Argo map item envelope." required:""`
+	Output          string `help:"Write indexed map result to this path." required:"" type:"path"`
+	Project         string `help:"Stable remote project identity." required:""`
+	RunID           string `name:"run-id" help:"Remote workflow run identifier." required:""`
+	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
 }
 
 type RuntimeMapCollectCommand struct {
@@ -226,7 +227,8 @@ func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
 	result, err := controlplane.BundleArgo(controlplane.ArgoBundleRequest{
 		Frontend: frontend, OutputDirectory: output, ProfileName: command.Profile,
 		ArtifactStoreBinding: command.ArtifactStore, Namespace: command.Namespace,
-		ServiceAccountName: command.ServiceAccount, WorkflowTemplateName: command.Name,
+		ArtifactCredentialsSecret: command.ArtifactCredentialsSecret,
+		ServiceAccountName:        command.ServiceAccount, WorkflowTemplateName: command.Name,
 	})
 	if err != nil {
 		return err
@@ -249,7 +251,7 @@ func (*VersionCommand) Run(stdout io.Writer) error {
 }
 
 func (command *RuntimeStepCommand) Run(ctx context.Context) error {
-	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, command.Input, command.Project, command.RunID, command.Store, nil)
+	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, command.Input, command.Project, command.RunID, command.DatastoreConfig, nil)
 	if err != nil {
 		return err
 	}
@@ -272,7 +274,7 @@ func (command *RuntimeMapItemCommand) Run(ctx context.Context) error {
 	if empty {
 		return writeRuntimeOutput(command.Output, []byte(`{"empty":true}`))
 	}
-	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, string(item.Body), command.Project, command.RunID, command.Store, &item.Index)
+	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, string(item.Body), command.Project, command.RunID, command.DatastoreConfig, &item.Index)
 	if err != nil {
 		return err
 	}
@@ -291,7 +293,7 @@ func (command *RuntimeMapCollectCommand) Run() error {
 	return writeRuntimeOutput(command.Output, result)
 }
 
-func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, input, project, runID, store string, mapItemIndex *int) ([]byte, error) {
+func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, input, project, runID, datastoreConfig string, mapItemIndex *int) ([]byte, error) {
 	planJSON, err := os.ReadFile(planPath)
 	if err != nil {
 		return nil, fmt.Errorf("read runtime plan: %w", err)
@@ -320,8 +322,16 @@ func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, inpu
 	if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
 		runnerCommand = []string{python, "-m", "massive.runner", "{descriptor}"}
 	}
+	bindingJSON, err := os.ReadFile(datastoreConfig)
+	if err != nil {
+		return nil, fmt.Errorf("read datastore binding: %w", err)
+	}
+	binding, err := orchestrator.ParseDatastoreDescriptor(bindingJSON)
+	if err != nil {
+		return nil, err
+	}
 	config := orchestrator.IsolatedStepConfig{
-		Plan: workflowPlan, NodeID: nodeID, DatastoreRoot: store,
+		Plan: workflowPlan, NodeID: nodeID, Datastore: binding,
 		ProjectID: project, RunID: runID, RunnerCommand: runnerCommand,
 		SourceArchives: archives,
 	}
