@@ -42,20 +42,48 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve workflow entrypoint: %w", err)
 	}
-	if filepath.Ext(absolute) != ".py" {
-		return nil, fmt.Errorf("0.1 supports Python workflow entrypoints; got %q", entry)
-	}
 	resolvedEntry := absolute + strings.TrimPrefix(entry, path)
 
 	var command *exec.Cmd
-	if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
-		command = exec.CommandContext(ctx, python, "-m", "massive.frontend", "emit", resolvedEntry)
-	} else {
-		frontend := os.Getenv("MASSIVE_PYTHON_FRONTEND")
+	language := "Python"
+	packageRoot := filepath.Dir(absolute)
+	extension := filepath.Ext(absolute)
+	if info, err := os.Stat(absolute); err == nil && info.IsDir() {
+		if _, err := os.Stat(filepath.Join(absolute, "massive.config.ts")); err != nil {
+			return nil, fmt.Errorf("directory entrypoints require massive.config.ts; Python entrypoints must name a .py file: %w", err)
+		}
+		extension = ".ts"
+		packageRoot = absolute
+	}
+	switch extension {
+	case ".py":
+		if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
+			command = exec.CommandContext(ctx, python, "-m", "massive.frontend", "emit", resolvedEntry)
+		} else {
+			frontend := os.Getenv("MASSIVE_PYTHON_FRONTEND")
+			if frontend == "" {
+				frontend = "massive-python-frontend"
+			}
+			command = exec.CommandContext(ctx, frontend, "emit", resolvedEntry)
+		}
+	case ".ts":
+		language = "TypeScript"
+		frontend := os.Getenv("MASSIVE_TYPESCRIPT_FRONTEND")
 		if frontend == "" {
-			frontend = "massive-python-frontend"
+			frontend = "massive-typescript-frontend"
 		}
 		command = exec.CommandContext(ctx, frontend, "emit", resolvedEntry)
+		for directory := packageRoot; ; directory = filepath.Dir(directory) {
+			if _, err := os.Stat(filepath.Join(directory, "massive.config.ts")); err == nil {
+				packageRoot = directory
+				break
+			}
+			if filepath.Dir(directory) == directory {
+				break
+			}
+		}
+	default:
+		return nil, fmt.Errorf("unsupported workflow entrypoint %q; use a Python or TypeScript entrypoint", entry)
 	}
 	command.Dir = filepath.Dir(absolute)
 	var stdout, stderr bytes.Buffer
@@ -66,17 +94,20 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 		if diagnostic == "" {
 			diagnostic = err.Error()
 		}
-		return nil, fmt.Errorf("Python frontend failed: %s", diagnostic)
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("%s frontend unavailable; install its language adapter: %s", language, diagnostic)
+		}
+		return nil, fmt.Errorf("%s frontend failed: %s", language, diagnostic)
 	}
 	canonicalBytes := stdout.Bytes()
 	workflowSpec, err := spec.Parse(canonicalBytes)
 	if err != nil {
-		return nil, fmt.Errorf("Python frontend emitted an invalid WorkflowSpec: %w", err)
+		return nil, fmt.Errorf("%s frontend emitted an invalid WorkflowSpec: %w", language, err)
 	}
 	return &FrontendResult{
 		Spec:        workflowSpec,
 		Canonical:   append([]byte(nil), canonicalBytes...),
-		PackageRoot: filepath.Dir(absolute),
+		PackageRoot: packageRoot,
 	}, nil
 }
 
@@ -120,6 +151,10 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 	if err != nil {
 		return nil, fmt.Errorf("open local datastore: %w", err)
 	}
+	specKey := datastore.MustKey("specs/sha256-" + strings.TrimPrefix(request.Frontend.Spec.SpecHash, "sha256:") + "/workflow-spec.json")
+	if _, err := store.Put(ctx, specKey, request.Frontend.Canonical, datastore.PutOptions{ContentType: "application/json", IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
+		return nil, fmt.Errorf("persist workflow spec: %w", err)
+	}
 	planKey := datastore.MustKey("plans/sha256-" + strings.TrimPrefix(compiled.PlanHash, "sha256:") + "/workflow.json")
 	reused := false
 	if _, err := store.Put(ctx, planKey, compiled.CanonicalJSON, datastore.PutOptions{ContentType: "application/json", IfAbsent: true}); err != nil {
@@ -129,16 +164,11 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 		reused = true
 	}
 
-	runnerCommand := []string(nil)
-	if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
-		runnerCommand = []string{python, "-m", "massive.runner", "{descriptor}"}
-	}
 	runResult, runErr := orchestrator.Run(ctx, orchestrator.RunConfig{
 		Plan:              compiled.Plan,
 		DatastoreRoot:     storeRoot,
 		ProjectID:         project,
 		RunID:             request.RunID,
-		RunnerCommand:     runnerCommand,
 		RunnerWorkingDir:  request.Frontend.PackageRoot,
 		SourcePackageRoot: request.Frontend.PackageRoot,
 		SourceManifests:   sourceManifests(request.Frontend.Spec, request.Frontend.PackageRoot),

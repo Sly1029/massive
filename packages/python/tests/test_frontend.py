@@ -22,7 +22,7 @@ def test_emit_writes_a_canonical_spec_for_the_single_exported_graph(tmp_path: Pa
 
 def test_checked_python_workflow_matches_shared_conformance_fixture() -> None:
     repository = Path(__file__).resolve().parents[3]
-    workflow = repository / "packages/cli/test/fixtures/python-linear/workflow.py"
+    workflow = repository / "conformance/workflows/python-linear/workflow.py"
     expected = (
         repository
         / "conformance/fixtures/specs/python-linear/workflow-spec.json"

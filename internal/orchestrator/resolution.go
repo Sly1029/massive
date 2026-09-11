@@ -8,12 +8,13 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 type nodeOutput struct {
-	Artifact  manifestDataArtifact
-	Published manifestPublishedArtifact
+	Artifact  runjournal.DataArtifact
+	Published runjournal.PublishedArtifact
 	Body      []byte
 }
 
@@ -24,7 +25,7 @@ type executionResolver struct {
 	index         executionIndex
 	outputs       map[string]nodeOutput
 	selectedCases map[string]string
-	inactive      map[string]manifestSkipReason
+	inactive      map[string]runjournal.SkipReason
 }
 
 func newExecutionResolver(index executionIndex, graph *planpb.GraphIR, input []byte) *executionResolver {
@@ -32,7 +33,7 @@ func newExecutionResolver(index executionIndex, graph *planpb.GraphIR, input []b
 		index: index,
 		outputs: map[string]nodeOutput{
 			graph.GetStartNode(): {
-				Artifact: manifestDataArtifact{
+				Artifact: runjournal.DataArtifact{
 					Hash:        canonical.DigestBytes(input),
 					ContentType: jsonContentType,
 					Schema:      graph.GetInputSchema(),
@@ -41,7 +42,7 @@ func newExecutionResolver(index executionIndex, graph *planpb.GraphIR, input []b
 			},
 		},
 		selectedCases: make(map[string]string),
-		inactive:      make(map[string]manifestSkipReason),
+		inactive:      make(map[string]runjournal.SkipReason),
 	}
 }
 
@@ -49,7 +50,7 @@ func (r *executionResolver) setOutput(nodeID string, output nodeOutput) {
 	r.outputs[nodeID] = output
 }
 
-func (r *executionResolver) markInactive(nodeID string, reason manifestSkipReason) {
+func (r *executionResolver) markInactive(nodeID string, reason runjournal.SkipReason) {
 	r.inactive[nodeID] = reason
 }
 
@@ -184,7 +185,7 @@ func (r *executionResolver) selectOutput(node *planpb.GraphNode) error {
 // kind uses it before execution: an inactive outer branch suppresses nested
 // decisions and selects as well as ordinary steps. Selects deliberately read
 // only their chosen input; the other select inputs are inactive by design.
-func (r *executionResolver) activationSkipReason(node *planpb.GraphNode) (*manifestSkipReason, error) {
+func (r *executionResolver) activationSkipReason(node *planpb.GraphNode) (*runjournal.SkipReason, error) {
 	if node.GetKind() == "select" {
 		if reason, exists := r.inactive[node.GetDecisionRef()]; exists {
 			return &reason, nil
@@ -218,7 +219,7 @@ func (r *executionResolver) activationSkipReason(node *planpb.GraphNode) (*manif
 				return nil, fmt.Errorf("conditional node %q depends on unresolved decision %q", node.GetId(), edge.GetFrom())
 			}
 			if selectedCase != edge.GetCase() {
-				return &manifestSkipReason{Kind: "decision-not-selected", DecisionID: edge.GetFrom(), Case: edge.GetCase()}, nil
+				return &runjournal.SkipReason{Kind: "decision-not-selected", DecisionID: edge.GetFrom(), Case: edge.GetCase()}, nil
 			}
 		}
 	}
@@ -247,10 +248,10 @@ func validateJSONAgainstSchema(schemaJSON string, valueJSON []byte) error {
 
 func nodeOutputFromPublished(published artifact.PublishedJSON, body []byte) nodeOutput {
 	return nodeOutput{
-		Artifact: manifestDataArtifact{Key: published.Body.Key, Hash: published.Body.Hash, ContentType: published.Body.ContentType, Schema: published.Schema},
-		Published: manifestPublishedArtifact{
-			Manifest: manifestArtifactRef{Key: published.Manifest.Key, Hash: published.Manifest.Hash, Size: published.Manifest.Size, ContentType: published.Manifest.ContentType},
-			Body:     manifestArtifactRef{Key: published.Body.Key, Hash: published.Body.Hash, Size: published.Body.Size, ContentType: published.Body.ContentType},
+		Artifact: runjournal.DataArtifact{Key: published.Body.Key, Hash: published.Body.Hash, ContentType: published.Body.ContentType, Schema: published.Schema},
+		Published: runjournal.PublishedArtifact{
+			Manifest: runjournal.ArtifactRef{Key: published.Manifest.Key, Hash: published.Manifest.Hash, Size: published.Manifest.Size, ContentType: published.Manifest.ContentType},
+			Body:     runjournal.ArtifactRef{Key: published.Body.Key, Hash: published.Body.Hash, Size: published.Body.Size, ContentType: published.Body.ContentType},
 			Schema:   published.Schema,
 		},
 		Body: body,

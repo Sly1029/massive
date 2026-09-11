@@ -37,3 +37,8 @@ const ArgoWorkflowsCRDVersion = "v3.7.16"
 
 //go:embed argo-workflows-v3.7.16.schema.json
 var ArgoWorkflowsCRDSchemaJSON []byte
+
+// RunManifestSchemaJSON is the current durable run journal transport.
+//
+//go:embed run-manifest.schema.json
+var RunManifestSchemaJSON []byte

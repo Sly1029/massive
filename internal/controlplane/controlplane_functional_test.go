@@ -9,7 +9,9 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,7 +31,7 @@ func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
 	}
 	t.Setenv("MASSIVE_PYTHON", python)
 
-	entry := filepath.Join(repository, "packages", "cli", "test", "fixtures", "python-linear", "workflow.py")
+	entry := filepath.Join(repository, "conformance", "workflows", "python-linear", "workflow.py")
 	frontend, err := Emit(context.Background(), entry)
 	if err != nil {
 		t.Fatal(err)
@@ -196,4 +198,136 @@ func writableStoreForTest(t *testing.T) string {
 		})
 	})
 	return root
+}
+
+func TestInspectKeepsProjectsSeparateAndDoesNotWrite(t *testing.T) {
+	if _, err := exec.LookPath("deno"); err != nil {
+		t.Skip("Deno is unavailable; run pnpm check in a provisioned development environment")
+	}
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MASSIVE_TYPESCRIPT_FRONTEND", filepath.Join(repository, "scripts", "massive-typescript-frontend"))
+	t.Setenv("MASSIVE_TYPESCRIPT_RUNNER", filepath.Join(repository, "scripts", "massive-typescript-runner"))
+	if _, err := os.Stat(filepath.Join(repository, "node_modules", "zod")); err != nil {
+		t.Skip("SDK dependencies are unavailable; run pnpm install")
+	}
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "conformance", "workflows", "linear-chain"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := writableStoreForTest(t)
+	for _, project := range []string{"acme/one", "acme/two"} {
+		_, err := RunLocal(context.Background(), LocalRunRequest{Frontend: frontend, Input: []byte(`2`), Store: store, Project: project, RunID: "same"})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := map[string]string{}
+	if err := filepath.WalkDir(store, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		before[path] = string(body)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range []string{"acme/one", "acme/two"} {
+		journal, err := Inspect(context.Background(), store, project, "same")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if journal.Status != "succeeded" || journal.ProjectKey != orchestrator.NormalizeProjectKey(project) || journal.Result == nil {
+			t.Fatalf("journal: %+v", journal)
+		}
+	}
+	after := map[string]string{}
+	if err := filepath.WalkDir(store, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		after[path] = string(body)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("inspection changed stored bytes")
+	}
+	for _, runID := range []string{"../escape", "a/b", ""} {
+		if _, err := Inspect(context.Background(), store, "acme/one", runID); err == nil {
+			t.Fatalf("unsafe run %q accepted", runID)
+		}
+	}
+}
+
+func TestTypeScriptFrontendStreamsLargeSpecsAndSeparatesAuthorLogs(t *testing.T) {
+	if _, err := exec.LookPath("deno"); err != nil {
+		t.Skip("Deno is unavailable")
+	}
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repository, "node_modules", "zod")); err != nil {
+		t.Skip("run pnpm install for SDK dependencies")
+	}
+	t.Setenv("MASSIVE_TYPESCRIPT_FRONTEND", filepath.Join(repository, "scripts", "massive-typescript-frontend"))
+	entry := filepath.Join(t.TempDir(), "workflow.ts")
+	source := `import { workflow } from "@massive/sdk";
+import { z } from "zod";
+console.log("author diagnostic belongs on stderr");
+const schema = z.string().describe("x".repeat(100000));
+const flow = workflow({name:"large-spec",input:schema,output:schema});
+flow.start().to(flow.end());
+export default flow;`
+	if err := os.WriteFile(entry, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+	emitted, err := Emit(context.Background(), entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(emitted.Canonical) < 100000 || emitted.Spec.Workflow.Name != "large-spec" {
+		t.Fatal("large canonical transport was truncated")
+	}
+}
+
+func TestFrontendDiagnosticsDistinguishEntrypointsAndAuthorFailures(t *testing.T) {
+	directory := t.TempDir()
+	if _, err := Emit(context.Background(), directory); err == nil || !strings.Contains(err.Error(), "Python entrypoints must name a .py file") {
+		t.Fatalf("directory diagnostic = %v", err)
+	}
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	python := filepath.Join(repository, "packages", "python", ".venv", "bin", "python")
+	if _, err := os.Stat(python); err != nil {
+		t.Skip("Python SDK environment is unavailable")
+	}
+	t.Setenv("MASSIVE_PYTHON", python)
+	entry := filepath.Join(directory, "workflow.py")
+	if err := os.WriteFile(entry, []byte("raise RuntimeError('author failure marker')\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Emit(context.Background(), entry); err == nil || !strings.Contains(err.Error(), "author failure marker") || strings.Contains(err.Error(), "install") {
+		t.Fatalf("author diagnostic = %v", err)
+	}
 }

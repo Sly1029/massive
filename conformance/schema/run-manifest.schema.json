@@ -1,0 +1,888 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/running"
+    },
+    {
+      "$ref": "#/$defs/failed"
+    },
+    {
+      "$ref": "#/$defs/succeeded"
+    }
+  ],
+  "$defs": {
+    "running": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/kind"
+        },
+        "schemaVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "encoding": {
+          "$ref": "#/$defs/encoding"
+        },
+        "planHash": {
+          "$ref": "#/$defs/planHash"
+        },
+        "projectKey": {
+          "$ref": "#/$defs/projectKey"
+        },
+        "runId": {
+          "$ref": "#/$defs/runId"
+        },
+        "steps": {
+          "$ref": "#/$defs/steps"
+        },
+        "decisions": {
+          "$ref": "#/$defs/decisions"
+        },
+        "result": {
+          "not": {}
+        },
+        "status": {
+          "type": "string",
+          "const": "running"
+        }
+      },
+      "required": [
+        "kind",
+        "schemaVersion",
+        "encoding",
+        "planHash",
+        "projectKey",
+        "runId",
+        "steps",
+        "decisions",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "type": "string",
+      "const": "RunManifest"
+    },
+    "version": {
+      "type": "number",
+      "const": 3
+    },
+    "encoding": {
+      "type": "string",
+      "const": "json-v3"
+    },
+    "planHash": {
+      "type": "string"
+    },
+    "projectKey": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "pending"
+                  },
+                  "attempts": {
+                    "minItems": 0,
+                    "maxItems": 0,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "running"
+                  },
+                  "attempts": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "succeeded"
+                  },
+                  "attempts": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "failed"
+                  },
+                  "attempts": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "skipped"
+                  },
+                  "attempts": {
+                    "minItems": 0,
+                    "maxItems": 0,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  },
+                  "skipReason": {
+                    "$ref": "#/$defs/skipReason"
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts",
+                  "skipReason"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "pending"
+                  },
+                  "attempts": {
+                    "minItems": 0,
+                    "maxItems": 0,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/mapItem"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts",
+                  "items"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "running"
+                  },
+                  "attempts": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/mapItem"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts",
+                  "items"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "succeeded"
+                  },
+                  "attempts": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/mapItem"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts",
+                  "items"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "failed"
+                  },
+                  "attempts": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/mapItem"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts",
+                  "items"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "skipped"
+                  },
+                  "attempts": {
+                    "minItems": 0,
+                    "maxItems": 0,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/mapItem"
+                    }
+                  },
+                  "skipReason": {
+                    "$ref": "#/$defs/skipReason"
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts",
+                  "items",
+                  "skipReason"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "attempt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "attempt": {
+              "type": "number",
+              "const": 1
+            },
+            "status": {
+              "type": "string",
+              "const": "running"
+            },
+            "input": {
+              "$ref": "#/$defs/dataArtifact"
+            }
+          },
+          "required": [
+            "attempt",
+            "status",
+            "input"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "attempt": {
+              "type": "number",
+              "const": 1
+            },
+            "status": {
+              "type": "string",
+              "const": "succeeded"
+            },
+            "input": {
+              "$ref": "#/$defs/dataArtifact"
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "manifest": {
+                  "$ref": "#/$defs/artifactRef"
+                },
+                "body": {
+                  "$ref": "#/$defs/artifactRef"
+                },
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "manifest",
+                "body",
+                "schema"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "attempt",
+            "status",
+            "input",
+            "output"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "attempt": {
+              "type": "number",
+              "const": 1
+            },
+            "status": {
+              "type": "string",
+              "const": "failed"
+            },
+            "input": {
+              "$ref": "#/$defs/dataArtifact"
+            },
+            "diagnostic": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "attempt",
+            "status",
+            "input",
+            "diagnostic"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "dataArtifact": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "hash",
+        "contentType",
+        "schema"
+      ],
+      "additionalProperties": false
+    },
+    "artifactRef": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "contentType": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "hash",
+        "size",
+        "contentType"
+      ],
+      "additionalProperties": false
+    },
+    "skipReason": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "decision-not-selected"
+        },
+        "decisionId": {
+          "type": "string"
+        },
+        "case": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "decisionId",
+        "case"
+      ],
+      "additionalProperties": false
+    },
+    "mapItem": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "status": {
+              "type": "string",
+              "const": "pending"
+            },
+            "attempts": {
+              "minItems": 0,
+              "maxItems": 0,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/attempt"
+              }
+            }
+          },
+          "required": [
+            "index",
+            "status",
+            "attempts"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "status": {
+              "type": "string",
+              "const": "not-started"
+            },
+            "attempts": {
+              "minItems": 0,
+              "maxItems": 0,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/attempt"
+              }
+            },
+            "diagnostic": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "index",
+            "status",
+            "attempts",
+            "diagnostic"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "status": {
+              "type": "string",
+              "const": "running"
+            },
+            "attempts": {
+              "minItems": 1,
+              "maxItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/attempt"
+              }
+            }
+          },
+          "required": [
+            "index",
+            "status",
+            "attempts"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "status": {
+              "type": "string",
+              "const": "succeeded"
+            },
+            "attempts": {
+              "minItems": 1,
+              "maxItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/attempt"
+              }
+            }
+          },
+          "required": [
+            "index",
+            "status",
+            "attempts"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "status": {
+              "type": "string",
+              "const": "failed"
+            },
+            "attempts": {
+              "minItems": 1,
+              "maxItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/attempt"
+              }
+            }
+          },
+          "required": [
+            "index",
+            "status",
+            "attempts"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "nodeId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "selected"
+              },
+              "selectedCase": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "nodeId",
+              "status",
+              "selectedCase"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "nodeId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "failed"
+              },
+              "diagnostic": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "nodeId",
+              "status",
+              "diagnostic"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "nodeId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "skipped"
+              },
+              "skipReason": {
+                "$ref": "#/$defs/skipReason"
+              }
+            },
+            "required": [
+              "nodeId",
+              "status",
+              "skipReason"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "failed": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/kind"
+        },
+        "schemaVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "encoding": {
+          "$ref": "#/$defs/encoding"
+        },
+        "planHash": {
+          "$ref": "#/$defs/planHash"
+        },
+        "projectKey": {
+          "$ref": "#/$defs/projectKey"
+        },
+        "runId": {
+          "$ref": "#/$defs/runId"
+        },
+        "steps": {
+          "$ref": "#/$defs/steps"
+        },
+        "decisions": {
+          "$ref": "#/$defs/decisions"
+        },
+        "result": {
+          "not": {}
+        },
+        "status": {
+          "type": "string",
+          "const": "failed"
+        }
+      },
+      "required": [
+        "kind",
+        "schemaVersion",
+        "encoding",
+        "planHash",
+        "projectKey",
+        "runId",
+        "steps",
+        "decisions",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "succeeded": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/kind"
+        },
+        "schemaVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "encoding": {
+          "$ref": "#/$defs/encoding"
+        },
+        "planHash": {
+          "$ref": "#/$defs/planHash"
+        },
+        "projectKey": {
+          "$ref": "#/$defs/projectKey"
+        },
+        "runId": {
+          "$ref": "#/$defs/runId"
+        },
+        "steps": {
+          "$ref": "#/$defs/steps"
+        },
+        "decisions": {
+          "$ref": "#/$defs/decisions"
+        },
+        "result": {
+          "$ref": "#/$defs/dataArtifact"
+        },
+        "status": {
+          "type": "string",
+          "const": "succeeded"
+        }
+      },
+      "required": [
+        "kind",
+        "schemaVersion",
+        "encoding",
+        "planHash",
+        "projectKey",
+        "runId",
+        "steps",
+        "decisions",
+        "result",
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://massive.dev/conformance/schema/run-manifest.schema.json",
+  "title": "RunManifest v3"
+}

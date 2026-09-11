@@ -8,6 +8,7 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 )
 
@@ -49,7 +50,7 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	if config.Datastore == nil || config.ProjectID == "" || config.RunID == "" {
 		return nil, errors.New("isolated step requires datastore descriptor, project id, and run id")
 	}
-	if !validSafePathSegment(config.RunID) {
+	if !ValidSafePathSegment(config.RunID) {
 		return nil, &InvalidRunInputError{Field: "run id", Value: config.RunID, Message: "must be a safe path segment"}
 	}
 	store, err := openInvocationDatastore(ctx, config.Datastore)
@@ -112,7 +113,7 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 		scope = &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: node.GetId(), Index: *mapItemIndex}}}
 		inputSchema = node.GetItemInputSchema()
 	}
-	inputArtifact := manifestDataArtifact{
+	inputArtifact := runjournal.DataArtifact{
 		Key:  runInputKey(projectKey, config.RunID, node.GetId(), scope).String(),
 		Hash: canonical.DigestBytes(input), ContentType: jsonContentType, Schema: inputSchema,
 	}

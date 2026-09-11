@@ -500,3 +500,15 @@ snapshot through parallel processes and collects file reports. The
 [wire contract](../../docs/spec/file-artifacts.md) defines identity and retention
 requirements. Python currently provides hydration; TypeScript can forward the
 JSON references but has no corresponding file-handle API.
+
+Inspect a past local run without executing author code:
+
+```sh
+massive inspect <run-id> --project <project> --store <store> --json
+```
+
+The current run journal includes step attempts, decisions, ordered map items,
+and result references. Project identity is required so matching run IDs remain
+isolated. Obsolete journal transports are rejected; no compatibility reader is
+retained. The same CLI supports TypeScript through separately installed frontend
+and runner adapters.

@@ -54,3 +54,10 @@ deployment walkthrough, or [the graph examples](examples/README.md) for graph
 shapes from passthrough through decisions and maps. Direction and
 prioritization live in [the roadmap](docs/roadmap.md) and
 [the spec index](docs/spec/README.md).
+
+Inspect recorded local runs with `massive inspect <run-id> --project <project>
+--store <directory>`. Add `--json` for the validated current run journal.
+
+TypeScript authors in a source checkout use the same CLI after adding
+`$PWD/scripts` to `PATH`; Deno runs its frontend and step adapters. The former
+`deno task massive` command and its caches have been removed.

@@ -49,8 +49,8 @@ for what works today.
   independent DAG branches should share the same budget rather than multiply it.
 - Add per-task timeout, explicit retry policy, attempt accounting, and cancellation
   of child-process trees.
-- Persist bounded task logs and structured lifecycle events; bring inspection into
-  the shipped Go CLI before retiring the Deno CLI.
+- Persist bounded task logs and structured lifecycle events. Inspection is available
+  in the shipped Go CLI; the Deno CLI has been removed.
 - Treat external side effects separately from immutable artifact publication:
   retrying an output write does not make a task's API calls exactly-once.
 
@@ -93,8 +93,8 @@ validation and isolated runner tests do not replace a live cluster execution gat
   state or runtime. Ordered map collection followed by a normal typed step is the
   current reduction model.
 - Keep domain models, tools, billing, registries, triggers, and UI policy outside core.
-- Maintain one supported Python CLI path. Do not add features to the legacy CLI
-  merely to keep two implementations in sync.
+- Maintain one shipped Go-backed CLI for both language adapters. The Deno CLI and
+  its emit/toolchain caches are removed; add behavior at the shared control plane.
 - Remove unemittable public surface rather than advertising placeholder behavior:
   TypeScript channels, publication fields, and mutable step state are removed.
 
@@ -112,3 +112,8 @@ test. A normal CI job invoking `massive run` does not need a new compiler target
 
 Graph artifacts use only current IR 0.3. Both frontends emit it for all graph
 shapes; obsolete specs and plans must be rebuilt, with no compatibility reader.
+
+CLI retirement removes the Deno-only emit cache, binary build cache, store-prefix
+flags/environment aliases, and bare `-` input spelling. Use an explicit `--store`
+root and `--input` or `--input-file`; no compatibility aliases remain. Local
+execution in both languages is trusted application execution, not a sandbox.

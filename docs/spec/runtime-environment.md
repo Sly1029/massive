@@ -85,3 +85,13 @@ what ran where without making credential rotation rebuild dependency environment
 
 No first-party vault, provider plugin framework, token proxy, or generic policy renderer
 is scheduled.
+
+## Local execution trust
+
+Local workflow authoring and task processes execute trusted application code.
+Both language adapters inherit the invoking environment and may use the local
+filesystem and network. Loading a graph itself imports author code; local
+execution is not a security boundary. The old TypeScript-only Deno permission
+flags are removed rather than presented as isolation the Python path or frontend
+never provided. Use an isolated execution environment and its native access
+controls when running code that must not have host access.

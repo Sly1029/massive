@@ -20,6 +20,7 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/mapexec"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/google/uuid"
 )
@@ -38,7 +39,7 @@ func validSHA256Ref(ref string) bool {
 	return canonical.IsSHA256Ref(ref)
 }
 
-func validSafePathSegment(value string) bool {
+func ValidSafePathSegment(value string) bool {
 	if len(value) > maxSafePathSegmentLength || value == "." || value == ".." || !safePathSegmentPattern.MatchString(value) {
 		return false
 	}
@@ -98,7 +99,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 	// paths). Reject a traversal or otherwise unsafe id up front, using the same
 	// segment rules the datastore key parser enforces, before any run artifact
 	// is written. A run id must be a single normalized path segment.
-	if !validSafePathSegment(runID) {
+	if !ValidSafePathSegment(runID) {
 		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "must be a single safe path segment of at most 128 characters (datastore key segment rules)"}
 	}
 	if err := validatePlanIdentitySegments(config.Plan); err != nil {
@@ -187,7 +188,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 				markDecisionFailed(&manifest, nodeID, err.Error())
 				return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
 			}
-			manifest.Decisions = append(manifest.Decisions, manifestDecision{
+			manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
 				NodeID:       nodeID,
 				Status:       "selected",
 				SelectedCase: selectedCase,
@@ -220,7 +221,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (*RunResult, e
 			return failRun(ctx, store, manifestKey, &manifest, result, nodeID, err.Error())
 		}
 
-		inputArtifact := manifestDataArtifact{
+		inputArtifact := runjournal.DataArtifact{
 			Key:         runInputKey(projectKey, runID, nodeID, nil).String(),
 			Hash:        canonical.DigestBytes(inputBytes),
 			ContentType: jsonContentType,
@@ -294,27 +295,27 @@ func validatePlanIdentitySegments(plan *planpb.WorkflowPlan) error {
 	if graph == nil {
 		return &InvalidRunInputError{Field: "plan graph", Message: "is required"}
 	}
-	if !validSafePathSegment(graph.GetStartNode()) {
+	if !ValidSafePathSegment(graph.GetStartNode()) {
 		return invalidPlanIdentity("plan graph start node", graph.GetStartNode())
 	}
-	if !validSafePathSegment(graph.GetEndNode()) {
+	if !ValidSafePathSegment(graph.GetEndNode()) {
 		return invalidPlanIdentity("plan graph end node", graph.GetEndNode())
 	}
 	for _, node := range graph.GetNodes() {
-		if !validSafePathSegment(node.GetId()) {
+		if !ValidSafePathSegment(node.GetId()) {
 			return invalidPlanIdentity("plan graph node id", node.GetId())
 		}
 		for _, sourceID := range node.GetMergeInputs() {
-			if !validSafePathSegment(sourceID) {
+			if !ValidSafePathSegment(sourceID) {
 				return invalidPlanIdentity("plan graph node merge input", sourceID)
 			}
 		}
 	}
 	for _, edge := range graph.GetEdges() {
-		if !validSafePathSegment(edge.GetFrom()) {
+		if !ValidSafePathSegment(edge.GetFrom()) {
 			return invalidPlanIdentity("plan graph edge from", edge.GetFrom())
 		}
-		if !validSafePathSegment(edge.GetTo()) {
+		if !ValidSafePathSegment(edge.GetTo()) {
 			return invalidPlanIdentity("plan graph edge to", edge.GetTo())
 		}
 	}
@@ -686,7 +687,7 @@ func recomputeSourcePackageHash(files []SourcePackageFile) (string, error) {
 	return sourceidentity.Digest(entries)
 }
 
-func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex) (StepInvocationDescriptor, error) {
+func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input runjournal.DataArtifact, index executionIndex) (StepInvocationDescriptor, error) {
 	symbol := index.symbolsByRef[node.GetSymbolRef()]
 	if symbol == nil {
 		return StepInvocationDescriptor{}, fmt.Errorf("missing symbol %q", node.GetSymbolRef())
@@ -744,7 +745,7 @@ func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey 
 	}, nil
 }
 
-func descriptorForMapItem(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input manifestDataArtifact, index executionIndex, itemIndex int) (StepInvocationDescriptor, error) {
+func descriptorForMapItem(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input runjournal.DataArtifact, index executionIndex, itemIndex int) (StepInvocationDescriptor, error) {
 	descriptor, err := descriptorForStep(planHash, binding, projectKey, runID, node, input, index)
 	if err != nil {
 		return StepInvocationDescriptor{}, err
@@ -757,12 +758,12 @@ func descriptorForMapItem(planHash string, binding DatastoreDescriptor, projectK
 	return descriptor, nil
 }
 
-func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, projectKey string, runID string, node *planpb.GraphNode, resolution *executionResolver, manifest *runManifest, manifestKey datastore.Key) (nodeOutput, error) {
+func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, projectKey string, runID string, node *planpb.GraphNode, resolution *executionResolver, manifest *runjournal.Manifest, manifestKey datastore.Key) (nodeOutput, error) {
 	inputBytes, err := resolution.inputForNode(node)
 	if err != nil {
 		return nodeOutput{}, err
 	}
-	input := manifestDataArtifact{
+	input := runjournal.DataArtifact{
 		Key:         runInputKey(projectKey, runID, node.GetId(), nil).String(),
 		Hash:        canonical.DigestBytes(inputBytes),
 		ContentType: jsonContentType,
@@ -785,7 +786,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 	descriptors := make([]StepInvocation, 0, len(items))
 	for _, item := range items {
 		scope := &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: node.GetId(), Index: item.Index}}}
-		itemInput := manifestDataArtifact{
+		itemInput := runjournal.DataArtifact{
 			Key:         runInputKey(projectKey, runID, node.GetId(), scope).String(),
 			Hash:        canonical.DigestBytes(item.Body),
 			ContentType: jsonContentType,
@@ -824,7 +825,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		if !started {
 			continue
 		}
-		markMapItemRunning(manifest, node.GetId(), itemIndex, manifestDataArtifact{
+		markMapItemRunning(manifest, node.GetId(), itemIndex, runjournal.DataArtifact{
 			Key:         descriptor.Descriptor.Input.Artifact.Key,
 			Hash:        descriptor.Descriptor.Input.Artifact.Hash,
 			ContentType: descriptor.Descriptor.Input.Artifact.ContentType,
@@ -954,20 +955,20 @@ func resolveOutputArtifact(ctx context.Context, store datastore.Datastore, descr
 	}
 
 	return nodeOutput{
-		Artifact: manifestDataArtifact{
+		Artifact: runjournal.DataArtifact{
 			Key:         published.Body.Key,
 			Hash:        published.Body.Hash,
 			ContentType: published.Body.ContentType,
 			Schema:      descriptor.Output.Schema,
 		},
-		Published: manifestPublishedArtifact{
-			Manifest: manifestArtifactRef{
+		Published: runjournal.PublishedArtifact{
+			Manifest: runjournal.ArtifactRef{
 				Key:         published.Manifest.Key,
 				Hash:        published.Manifest.Hash,
 				Size:        published.Manifest.Size,
 				ContentType: published.Manifest.ContentType,
 			},
-			Body: manifestArtifactRef{
+			Body: runjournal.ArtifactRef{
 				Key:         published.Body.Key,
 				Hash:        published.Body.Hash,
 				Size:        published.Body.Size,
@@ -979,25 +980,25 @@ func resolveOutputArtifact(ctx context.Context, store datastore.Datastore, descr
 	}, nil
 }
 
-func resultForEnd(ctx context.Context, store datastore.Datastore, projectKey string, runID string, endNode string, index executionIndex, outputs map[string]nodeOutput) (manifestDataArtifact, error) {
+func resultForEnd(ctx context.Context, store datastore.Datastore, projectKey string, runID string, endNode string, index executionIndex, outputs map[string]nodeOutput) (runjournal.DataArtifact, error) {
 	inbound := index.inboundByTarget[endNode]
 	if len(inbound) != 1 {
-		return manifestDataArtifact{}, fmt.Errorf("local runner v0 requires exactly one input edge for %q", endNode)
+		return runjournal.DataArtifact{}, fmt.Errorf("local runner v0 requires exactly one input edge for %q", endNode)
 	}
 	output, ok := outputs[inbound[0].GetFrom()]
 	if !ok {
-		return manifestDataArtifact{}, fmt.Errorf("missing output from %q for %q", inbound[0].GetFrom(), endNode)
+		return runjournal.DataArtifact{}, fmt.Errorf("missing output from %q for %q", inbound[0].GetFrom(), endNode)
 	}
 
 	key := runResultKey(projectKey, runID)
-	result := manifestDataArtifact{
+	result := runjournal.DataArtifact{
 		Key:         key.String(),
 		Hash:        canonical.DigestBytes(output.Body),
 		ContentType: jsonContentType,
 		Schema:      output.Artifact.Schema,
 	}
 	if _, err := store.Put(ctx, key, output.Body, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
-		return manifestDataArtifact{}, fmt.Errorf("write result artifact: %w", err)
+		return runjournal.DataArtifact{}, fmt.Errorf("write result artifact: %w", err)
 	}
 	return result, nil
 }
@@ -1104,17 +1105,17 @@ func topologicalPlanOrder(graph *planpb.GraphIR) ([]string, error) {
 	return order, nil
 }
 
-func newRunManifest(planHash string, projectKey string, runID string, stepOrder []string, nodesByID map[string]*planpb.GraphNode) runManifest {
-	steps := make([]manifestStep, 0, len(stepOrder))
+func newRunManifest(planHash string, projectKey string, runID string, stepOrder []string, nodesByID map[string]*planpb.GraphNode) runjournal.Manifest {
+	steps := make([]runjournal.Step, 0, len(stepOrder))
 	for _, stepID := range stepOrder {
-		step := manifestStep{NodeID: stepID, Status: StatusPending, Attempts: []manifestAttempt{}}
+		step := runjournal.Step{NodeID: stepID, Status: StatusPending, Attempts: []runjournal.Attempt{}}
 		if nodesByID[stepID].GetKind() == "map" {
-			items := []manifestMapItem{}
+			items := []runjournal.MapItem{}
 			step.Items = &items
 		}
 		steps = append(steps, step)
 	}
-	return runManifest{
+	return runjournal.Manifest{
 		Kind:          "RunManifest",
 		SchemaVersion: 3,
 		Encoding:      "json-v3",
@@ -1123,11 +1124,11 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 		RunID:         runID,
 		Status:        StatusRunning,
 		Steps:         steps,
-		Decisions:     []manifestDecision{},
+		Decisions:     []runjournal.Decision{},
 	}
 }
 
-func findManifestStep(manifest *runManifest, nodeID string) *manifestStep {
+func findManifestStep(manifest *runjournal.Manifest, nodeID string) *runjournal.Step {
 	for index := range manifest.Steps {
 		if manifest.Steps[index].NodeID == nodeID {
 			return &manifest.Steps[index]
@@ -1136,29 +1137,29 @@ func findManifestStep(manifest *runManifest, nodeID string) *manifestStep {
 	return nil
 }
 
-func markMapItemsPending(manifest *runManifest, nodeID string, items []mapexec.Item) {
+func markMapItemsPending(manifest *runjournal.Manifest, nodeID string, items []mapexec.Item) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil {
 		return
 	}
-	journalItems := make([]manifestMapItem, len(items))
+	journalItems := make([]runjournal.MapItem, len(items))
 	for index, item := range items {
-		journalItems[index] = manifestMapItem{Index: item.Index, Status: StatusPending, Attempts: []manifestAttempt{}}
+		journalItems[index] = runjournal.MapItem{Index: item.Index, Status: StatusPending, Attempts: []runjournal.Attempt{}}
 	}
 	step.Items = &journalItems
 }
 
-func markMapItemRunning(manifest *runManifest, nodeID string, itemIndex int, input manifestDataArtifact) {
+func markMapItemRunning(manifest *runjournal.Manifest, nodeID string, itemIndex int, input runjournal.DataArtifact) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
 		return
 	}
 	item := &(*step.Items)[itemIndex]
 	item.Status = StatusRunning
-	item.Attempts = []manifestAttempt{{Attempt: 1, Status: StatusRunning, Input: input}}
+	item.Attempts = []runjournal.Attempt{{Attempt: 1, Status: StatusRunning, Input: input}}
 }
 
-func markMapItemSucceeded(manifest *runManifest, nodeID string, itemIndex int, output manifestPublishedArtifact) {
+func markMapItemSucceeded(manifest *runjournal.Manifest, nodeID string, itemIndex int, output runjournal.PublishedArtifact) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
 		return
@@ -1169,7 +1170,7 @@ func markMapItemSucceeded(manifest *runManifest, nodeID string, itemIndex int, o
 	item.Attempts[0].Output = &output
 }
 
-func markMapItemFailed(manifest *runManifest, nodeID string, itemIndex int, diagnostic string) {
+func markMapItemFailed(manifest *runjournal.Manifest, nodeID string, itemIndex int, diagnostic string) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
 		return
@@ -1177,14 +1178,14 @@ func markMapItemFailed(manifest *runManifest, nodeID string, itemIndex int, diag
 	item := &(*step.Items)[itemIndex]
 	item.Status = StatusFailed
 	if len(item.Attempts) == 0 {
-		item.Attempts = []manifestAttempt{{Attempt: 1, Status: StatusFailed, Diagnostic: diagnostic}}
+		item.Attempts = []runjournal.Attempt{{Attempt: 1, Status: StatusFailed, Diagnostic: diagnostic}}
 		return
 	}
 	item.Attempts[0].Status = StatusFailed
 	item.Attempts[0].Diagnostic = diagnostic
 }
 
-func mapHasFailedItem(manifest runManifest, nodeID string) bool {
+func mapHasFailedItem(manifest runjournal.Manifest, nodeID string) bool {
 	for _, step := range manifest.Steps {
 		if step.NodeID != nodeID || step.Items == nil {
 			continue
@@ -1198,7 +1199,7 @@ func mapHasFailedItem(manifest runManifest, nodeID string) bool {
 	return false
 }
 
-func failMapNode(ctx context.Context, store datastore.Datastore, manifestKey datastore.Key, manifest *runManifest, nodeID string, durableDiagnostic string, cause error) error {
+func failMapNode(ctx context.Context, store datastore.Datastore, manifestKey datastore.Key, manifest *runjournal.Manifest, nodeID string, durableDiagnostic string, cause error) error {
 	markUnfinishedMapItemsTerminal(manifest, nodeID)
 	markAttemptFailed(manifest, nodeID, durableDiagnostic)
 	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
@@ -1207,7 +1208,7 @@ func failMapNode(ctx context.Context, store datastore.Datastore, manifestKey dat
 	return cause
 }
 
-func markUnfinishedMapItemsTerminal(manifest *runManifest, nodeID string) {
+func markUnfinishedMapItemsTerminal(manifest *runjournal.Manifest, nodeID string) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil {
 		return
@@ -1227,13 +1228,13 @@ func markUnfinishedMapItemsTerminal(manifest *runManifest, nodeID string) {
 	}
 }
 
-func markAttemptRunning(manifest *runManifest, nodeID string, input manifestDataArtifact) {
+func markAttemptRunning(manifest *runjournal.Manifest, nodeID string, input runjournal.DataArtifact) {
 	for index := range manifest.Steps {
 		if manifest.Steps[index].NodeID != nodeID {
 			continue
 		}
 		manifest.Steps[index].Status = StatusRunning
-		manifest.Steps[index].Attempts = []manifestAttempt{{
+		manifest.Steps[index].Attempts = []runjournal.Attempt{{
 			Attempt: 1,
 			Status:  StatusRunning,
 			Input:   input,
@@ -1242,7 +1243,7 @@ func markAttemptRunning(manifest *runManifest, nodeID string, input manifestData
 	}
 }
 
-func markAttemptSucceeded(manifest *runManifest, nodeID string, output manifestPublishedArtifact) {
+func markAttemptSucceeded(manifest *runjournal.Manifest, nodeID string, output runjournal.PublishedArtifact) {
 	for index := range manifest.Steps {
 		if manifest.Steps[index].NodeID != nodeID {
 			continue
@@ -1254,14 +1255,14 @@ func markAttemptSucceeded(manifest *runManifest, nodeID string, output manifestP
 	}
 }
 
-func markAttemptFailed(manifest *runManifest, nodeID string, diagnostic string) {
+func markAttemptFailed(manifest *runjournal.Manifest, nodeID string, diagnostic string) {
 	for index := range manifest.Steps {
 		if manifest.Steps[index].NodeID != nodeID {
 			continue
 		}
 		manifest.Steps[index].Status = StatusFailed
 		if len(manifest.Steps[index].Attempts) == 0 {
-			manifest.Steps[index].Attempts = []manifestAttempt{{Attempt: 1, Status: StatusFailed, Diagnostic: diagnostic}}
+			manifest.Steps[index].Attempts = []runjournal.Attempt{{Attempt: 1, Status: StatusFailed, Diagnostic: diagnostic}}
 			return
 		}
 		manifest.Steps[index].Attempts[0].Status = StatusFailed
@@ -1270,7 +1271,7 @@ func markAttemptFailed(manifest *runManifest, nodeID string, diagnostic string) 
 	}
 }
 
-func markStepSkipped(manifest *runManifest, nodeID string, reason manifestSkipReason) {
+func markStepSkipped(manifest *runjournal.Manifest, nodeID string, reason runjournal.SkipReason) {
 	for index := range manifest.Steps {
 		if manifest.Steps[index].NodeID != nodeID {
 			continue
@@ -1281,23 +1282,23 @@ func markStepSkipped(manifest *runManifest, nodeID string, reason manifestSkipRe
 	}
 }
 
-func markDecisionFailed(manifest *runManifest, nodeID string, diagnostic string) {
-	manifest.Decisions = append(manifest.Decisions, manifestDecision{
+func markDecisionFailed(manifest *runjournal.Manifest, nodeID string, diagnostic string) {
+	manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
 		NodeID:     nodeID,
 		Status:     "failed",
 		Diagnostic: diagnostic,
 	})
 }
 
-func markDecisionSkipped(manifest *runManifest, nodeID string, reason manifestSkipReason) {
-	manifest.Decisions = append(manifest.Decisions, manifestDecision{
+func markDecisionSkipped(manifest *runjournal.Manifest, nodeID string, reason runjournal.SkipReason) {
+	manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
 		NodeID:     nodeID,
 		Status:     StatusSkipped,
 		SkipReason: &reason,
 	})
 }
 
-func failRun(ctx context.Context, store datastore.Datastore, manifestKey datastore.Key, manifest *runManifest, result *RunResult, stepID string, diagnostic string) (*RunResult, error) {
+func failRun(ctx context.Context, store datastore.Datastore, manifestKey datastore.Key, manifest *runjournal.Manifest, result *RunResult, stepID string, diagnostic string) (*RunResult, error) {
 	manifest.Status = StatusFailed
 	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
 		return nil, err
@@ -1307,7 +1308,7 @@ func failRun(ctx context.Context, store datastore.Datastore, manifestKey datasto
 	return result, &RunError{StepID: stepID, Diagnostic: diagnostic, Result: result}
 }
 
-func summariesFromManifest(manifest runManifest) []StepSummary {
+func summariesFromManifest(manifest runjournal.Manifest) []StepSummary {
 	summaries := make([]StepSummary, 0, len(manifest.Steps))
 	for _, step := range manifest.Steps {
 		diagnostic := ""
@@ -1319,7 +1320,7 @@ func summariesFromManifest(manifest runManifest) []StepSummary {
 	return summaries
 }
 
-func writeRunManifest(ctx context.Context, store datastore.Datastore, key datastore.Key, manifest runManifest) error {
+func writeRunManifest(ctx context.Context, store datastore.Datastore, key datastore.Key, manifest runjournal.Manifest) error {
 	body, err := canonical.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("marshal run manifest: %w", err)
