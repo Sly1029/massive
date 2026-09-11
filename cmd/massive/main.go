@@ -323,6 +323,7 @@ func main() {
 	}
 	parseContext, err := parser.Parse(os.Args[1:])
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "massive: %s\nRun massive --help for usage.\n", err)
 		os.Exit(2)
 	}
 	parseContext.BindTo(context.Background(), (*context.Context)(nil))

@@ -1,10 +1,46 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestCLIExplainsInvalidArguments(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "massive")
+	if output, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build CLI: %v\n%s", err, output)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"unknown flag", []string{"run", "example.py", "--invalid"}, "--invalid"},
+		{"missing build option", []string{"build", "example.py"}, "--output"},
+		{"invalid target", []string{"build", "example.py", "--target", "invalid", "--output", "bundle", "--namespace", "default", "--service-account", "runner"}, "argo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			command := exec.Command(binary, tc.args...)
+			var stdout, stderr bytes.Buffer
+			command.Stdout, command.Stderr = &stdout, &stderr
+			var exit *exec.ExitError
+			if err := command.Run(); !errors.As(err, &exit) || exit.ExitCode() != 2 {
+				t.Fatalf("exit = %v, want 2", err)
+			}
+			if !strings.Contains(stderr.String(), tc.want) {
+				t.Fatalf("stderr = %q, want diagnostic containing %q", stderr.String(), tc.want)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("argument errors wrote to stdout: %q", stdout.String())
+			}
+		})
+	}
+}
 
 func TestRunInputDefaultsToNull(t *testing.T) {
 	input, err := (&RunCommand{}).input()
