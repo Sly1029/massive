@@ -18,20 +18,19 @@ const (
 
 func TestS3DatastoreContract(t *testing.T) {
 	endpoint := startMinIO(t)
-	t.Setenv("MASSIVE_TEST_S3_ACCESS_KEY", minioAccessKey)
-	t.Setenv("MASSIVE_TEST_S3_SECRET_KEY", minioSecretKey)
+	t.Setenv("AWS_ACCESS_KEY_ID", minioAccessKey)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", minioSecretKey)
+	t.Setenv("AWS_SESSION_TOKEN", "")
 
 	RunDatastoreContract(t, func(t *testing.T) Datastore {
 		t.Helper()
 
 		store, err := NewS3Datastore(context.Background(), S3Config{
-			Endpoint:           endpoint,
-			Bucket:             "massive-datastore-contract",
-			Region:             "us-east-1",
-			Prefix:             strings.ToLower(t.Name()),
-			AccessKeyEnv:       "MASSIVE_TEST_S3_ACCESS_KEY",
-			SecretAccessKeyEnv: "MASSIVE_TEST_S3_SECRET_KEY",
-			CreateBucket:       true,
+			Endpoint:     endpoint,
+			Bucket:       "massive-datastore-contract",
+			Region:       "us-east-1",
+			Prefix:       strings.ToLower(t.Name()),
+			CreateBucket: true,
 		})
 		if err != nil {
 			t.Fatalf("new s3 datastore: %v", err)
@@ -97,24 +96,6 @@ func freeTCPPort() (int, error) {
 		return 0, fmt.Errorf("unexpected TCP address type: %T", listener.Addr())
 	}
 	return address.Port, nil
-}
-
-func TestNewS3DatastoreRequiresCredentialsFromEnv(t *testing.T) {
-	t.Setenv("MASSIVE_TEST_MISSING_ACCESS_KEY", "")
-	t.Setenv("MASSIVE_TEST_MISSING_SECRET_KEY", "")
-
-	_, err := NewS3Datastore(context.Background(), S3Config{
-		Endpoint:           "127.0.0.1:9000",
-		Bucket:             "bucket",
-		AccessKeyEnv:       "MASSIVE_TEST_MISSING_ACCESS_KEY",
-		SecretAccessKeyEnv: "MASSIVE_TEST_MISSING_SECRET_KEY",
-	})
-	if err == nil {
-		t.Fatal("expected missing credential error")
-	}
-	if !strings.Contains(err.Error(), "MASSIVE_TEST_MISSING_ACCESS_KEY") {
-		t.Fatalf("error = %v, want env var name", err)
-	}
 }
 
 func TestMain(m *testing.M) {

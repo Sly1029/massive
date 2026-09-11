@@ -27,8 +27,8 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 	if !bytes.Equal(first.ManifestJSON, second.ManifestJSON) {
 		t.Fatal("bundle manifest is not deterministic")
 	}
-	if len(first.Files) != 8 {
-		t.Fatalf("bundle file count = %d, want 8", len(first.Files))
+	if len(first.Files) != 7 {
+		t.Fatalf("bundle file count = %d, want 7", len(first.Files))
 	}
 	foundSourceArchive := false
 	for _, file := range first.Files {
@@ -86,7 +86,6 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 		t.Fatalf("ordered merge input expression = %v", input)
 	}
 	fileByPath(t, first, "runtime-configmap.json")
-	fileByPath(t, first, "runtime-network-policy.json")
 	if first.Manifest.GetBundleHash() == "" || first.Manifest.GetPlanHash() == "" || first.Manifest.GetDeploymentHash() == "" {
 		t.Fatal("manifest lacks identity hashes")
 	}
@@ -270,10 +269,6 @@ func TestDecisionBranchesWaitForSuccessAndSelectOnlyOneOutput(t *testing.T) {
 	if !strings.Contains(accept["when"].(string), "selection") || strings.Contains(accept["when"].(string), "accepted") {
 		t.Fatalf("branch condition: %v", accept)
 	}
-	control := templateByName(t, templates, "step-route")
-	if control["metadata"].(map[string]any)["labels"].(map[string]any)["massive.dev/network-policy"] == nil {
-		t.Fatal("control task lost egress policy")
-	}
 	choose := taskByName(t, tasks, "choose")
 	depends := choose["depends"].(string)
 	for _, required := range []string{"route.Succeeded", "accept.Skipped", "reject.Skipped", "accept.Omitted", "reject.Omitted"} {
@@ -391,6 +386,10 @@ func fixturePlan(t *testing.T, name string) *plan.CompileResult {
 	s, err := spec.Parse(data)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for key, contract := range s.Contracts {
+		contract.Network = &spec.NetworkPolicy{Egress: "any"}
+		s.Contracts[key] = contract
 	}
 	r, err := plan.Compile(s, data)
 	if err != nil {
@@ -560,5 +559,43 @@ func TestTargetRejectsGeneratedTaskNameCollisions(t *testing.T) {
 	_, err := Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, result.Plan))
 	if err == nil || !strings.Contains(err.Error(), "collides") {
 		t.Fatalf("generated name collision: %v", err)
+	}
+}
+
+func TestArgoRequiresStorageEgressAndBindsCredentialsOnlyToInvocations(t *testing.T) {
+	compiled := fixturePlan(t, "exhaustive-decision")
+	binding := deploymentForPlan(t, compiled.CanonicalJSON)
+	binding.Profile.Target.ArtifactCredentialsSecret = "storage-credentials"
+	binding, _, err := deployment.New(compiled.PlanHash, binding.Profile, binding.MaterializationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := Compile(compiled.CanonicalJSON, binding, runtimeAssetsForPlan(t, compiled.Plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var template map[string]any
+	if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+		t.Fatal(err)
+	}
+	templates := template["spec"].(map[string]any)["templates"].([]any)
+	control := templateByName(t, templates, "step-route")["container"].(map[string]any)
+	if control["env"] != nil {
+		t.Fatal("control task received storage credentials")
+	}
+	step := templateByName(t, templates, "step-accept")["container"].(map[string]any)
+	if len(step["env"].([]any)) != 3 {
+		t.Fatal("invocation is missing standard AWS credential bindings")
+	}
+	if !containsArgs(step["args"].([]any), "--datastore-config", "/var/run/massive-datastore/datastore.json") {
+		t.Fatal("invocation still uses a private store")
+	}
+	for _, contract := range compiled.Plan.Contracts {
+		contract.Network = &planpb.NetworkPolicy{Egress: pointer("none")}
+	}
+	data, _ := rehashPlan(t, compiled.Plan)
+	_, err = Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, compiled.Plan))
+	if err == nil || !strings.Contains(err.Error(), "cannot access the shared datastore") {
+		t.Fatalf("incompatible egress diagnostic: %v", err)
 	}
 }

@@ -14,6 +14,7 @@ cleanup() {
   if (( result != 0 )); then
     "$KUBECTL" -n argo get workflows,pods -o yaml > "$logs/resources.yaml" 2>&1 || true
     "$KUBECTL" -n argo logs deployment/workflow-controller > "$logs/controller.log" 2>&1 || true
+    "$KUBECTL" -n argo logs -l workflows.argoproj.io/workflow --all-containers --prefix --max-log-requests=50 --tail=200 > "$logs/pods.log" 2>&1 || true
   fi
   "$kind" delete cluster --name "$cluster"
   rm -rf "$scratch"
@@ -44,4 +45,5 @@ sed -i 's|argoproj/argocli:latest|argoproj/argocli:v3.7.16|g; s|argoproj/workflo
 "$KUBECTL" create namespace argo
 "$KUBECTL" apply -n argo -f "$scratch/install.yaml"
 "$KUBECTL" rollout status -n argo deployment/workflow-controller --timeout=120s
+"$KUBECTL" rollout status -n argo deployment/minio --timeout=120s
 "$MASSIVE_PYTHON" conformance/argo/test_cluster.py

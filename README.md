@@ -26,7 +26,8 @@ and `WorkflowTemplate`:
 uv run massive build workflow.py \
   --output .massive/argo \
   --namespace workflows \
-  --service-account massive-runner
+  --service-account massive-runner \
+  --artifact-store massive-artifacts
 
 kubectl apply -f .massive/argo/runtime-configmap.json
 kubectl apply -f .massive/argo/workflow-template.yaml

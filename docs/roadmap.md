@@ -70,14 +70,15 @@ Live conformance covers nested inactive branches, empty maps, and failed items.
 Remaining work:
 - deployment-bound secret references;
 - larger source/value transport;
-- shared file transport and representative application images.
+- larger source/value transport and representative application images.
 
 Reject unsupported requirements instead of silently weakening them. Schema
 validation and isolated runner tests do not replace a live cluster execution gate.
 
 ## Artifact release gates
 
-- Exercise Blob/Tree transport in live Argo pods with workload identity.
+- Blob/Tree transport is exercised across live Argo pods against MinIO. Validate
+  workload identity in a cloud cluster as a separate infrastructure gate.
 - Add streaming transfer and scratch budgets for repository-sized trees; current
   file operations buffer one file at a time.
 - Preserve reference closure before adding any retention or selective resume.

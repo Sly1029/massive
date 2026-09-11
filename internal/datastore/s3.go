@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strings"
 
@@ -15,15 +14,13 @@ import (
 )
 
 type S3Config struct {
-	Endpoint           string
-	Bucket             string
-	Region             string
-	Prefix             string
-	Secure             bool
-	AccessKeyEnv       string
-	SecretAccessKeyEnv string
-	SessionTokenEnv    string
-	CreateBucket       bool
+	Endpoint       string
+	Bucket         string
+	Region         string
+	Prefix         string
+	Secure         bool
+	ForcePathStyle *bool
+	CreateBucket   bool
 }
 
 type S3Datastore struct {
@@ -45,29 +42,19 @@ func NewS3Datastore(ctx context.Context, config S3Config) (*S3Datastore, error) 
 		return nil, err
 	}
 
-	accessKeyEnv := config.AccessKeyEnv
-	if accessKeyEnv == "" {
-		accessKeyEnv = "AWS_ACCESS_KEY_ID"
+	provider := credentials.NewChainCredentials([]credentials.Provider{&credentials.EnvAWS{}, &credentials.IAM{Region: config.Region}})
+	lookup := minio.BucketLookupAuto
+	if config.ForcePathStyle != nil {
+		lookup = minio.BucketLookupDNS
+		if *config.ForcePathStyle {
+			lookup = minio.BucketLookupPath
+		}
 	}
-	secretAccessKeyEnv := config.SecretAccessKeyEnv
-	if secretAccessKeyEnv == "" {
-		secretAccessKeyEnv = "AWS_SECRET_ACCESS_KEY"
-	}
-	sessionTokenEnv := config.SessionTokenEnv
-	if sessionTokenEnv == "" {
-		sessionTokenEnv = "AWS_SESSION_TOKEN"
-	}
-
-	accessKey := os.Getenv(accessKeyEnv)
-	secretAccessKey := os.Getenv(secretAccessKeyEnv)
-	if accessKey == "" || secretAccessKey == "" {
-		return nil, fmt.Errorf("s3 datastore credentials require %s and %s", accessKeyEnv, secretAccessKeyEnv)
-	}
-
 	client, err := minio.New(config.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(accessKey, secretAccessKey, os.Getenv(sessionTokenEnv)),
-		Region: config.Region,
-		Secure: config.Secure,
+		Creds:        provider,
+		Region:       config.Region,
+		BucketLookup: lookup,
+		Secure:       config.Secure,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create s3 datastore client: %w", err)

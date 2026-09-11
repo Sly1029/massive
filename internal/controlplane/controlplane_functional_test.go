@@ -171,7 +171,7 @@ func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
 	}
 
 	result, err := orchestrator.RunIsolatedMapItem(context.Background(), orchestrator.IsolatedStepConfig{
-		Plan: workflowPlan, NodeID: "square-items", DatastoreRoot: t.TempDir(),
+		Plan: workflowPlan, NodeID: "square-items", Datastore: orchestrator.LocalDatastoreDescriptor{Kind: "local", Path: t.TempDir()},
 		ProjectID: "argo/map-example", RunID: "mapped-python-item",
 		RunnerCommand:  []string{python, "-m", "massive.runner", "{descriptor}"},
 		SourceArchives: archives,
