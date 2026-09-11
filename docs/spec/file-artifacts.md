@@ -93,4 +93,4 @@ and hydrated input files. Its lifetime includes output serialization and file
 publication. Success, author failure, and serialization failure all remove it.
 Use Blob/Tree handles to carry files across invocations; workspace paths have no
 cross-task meaning. Process-tree cancellation and scratch quotas remain separate
-execution-policy work.
+execution-policy work. Abrupt process termination can leave local scratch behind.

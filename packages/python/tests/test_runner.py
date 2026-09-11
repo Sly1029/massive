@@ -497,6 +497,10 @@ def test_workspace_lives_through_publication_and_is_cleaned_after_invocation(
     )
     result = _run(descriptor_path)
     assert result.returncode == exit_code, result.stderr
+    if export == "workspace_failure":
+        assert "workspace failure" in result.stderr
+    elif export == "workspace_invalid_output":
+        assert "source changed" in result.stderr
     workspace = Path(json.loads(result.stdout))
     assert workspace.is_absolute()
     assert not workspace.exists()

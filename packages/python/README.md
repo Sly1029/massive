@@ -461,7 +461,7 @@ class Report(BaseModel):
 
 def inspect(ctx: StepContext[None, Checkout]) -> Report:
     root = ctx.inputs.files.path()
-    report = root / "report.txt"
+    report = ctx.workspace / "report.txt"
     report.write_text(f"Inspected revision {ctx.inputs.revision}")
     return Report(file=Blob.from_path(report))
 
@@ -477,7 +477,8 @@ Only versioned hash/size references cross graph edges; file bytes never become
 Argo parameters. Repository checkout, revision selection, and credentials remain
 ordinary application logic; directory transport needs no Git-specific serializer.
 
-`path()` lazily downloads and verifies a handle into invocation-local scratch.
+`path()` lazily downloads and verifies a handle into invocation-local hydration
+scratch, separate from the author-writable `ctx.workspace`.
 The runner removes scratch after execution. Each consumer receives an isolated
 writable copy; edits cannot change upstream artifacts or another map item.
 Returning the same handle forwards the original snapshot. Return a new
@@ -529,3 +530,4 @@ hydrated input files. It stays alive through output validation and Blob/Tree
 publication, and is removed on success or failure. Paths inside it are temporary;
 return typed artifact handles when another task needs the contents. Workspace
 cleanup does not terminate detached child processes or impose a disk quota.
+Abrupt process termination can leave local scratch behind.

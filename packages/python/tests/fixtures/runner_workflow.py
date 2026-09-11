@@ -101,6 +101,7 @@ def workspace_file(ctx: StepContext[None, Request]) -> Blob:
 
     print(json.dumps(str(ctx.workspace)))
     assert ctx.workspace != Path(__file__).parent
+    assert Path(__file__).parent not in ctx.workspace.parents
     path = ctx.workspace / "report.txt"
     path.write_text("workspace artifact")
     return Blob.from_path(path)
