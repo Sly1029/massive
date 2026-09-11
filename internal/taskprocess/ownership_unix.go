@@ -29,4 +29,7 @@ func (owner *ownership) kill() error {
 	return err
 }
 
+// Cleanup immediately after Wait: descendants keep the group identity alive,
+// but an empty group has only a numeric ID. Unix offers no portable group handle;
+// minimizing the post-reap interval limits the PID-reuse race for empty groups.
 func (owner *ownership) close() { _ = owner.kill() }

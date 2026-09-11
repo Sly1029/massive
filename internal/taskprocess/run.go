@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-const outputLimit = 1 << 20
+const (
+	outputLimit    = 1 << 20
+	pipeDrainLimit = 250 * time.Millisecond
+)
 
 // Run captures bounded combined output. A task owns its descendants: completing
 // or cancelling the adapter terminates processes still in its OS ownership group.
@@ -20,7 +23,7 @@ func Run(ctx context.Context, argv []string, directory string) (string, error) {
 	cmd.Dir = directory
 	// Bound inherited-pipe drainage even if a descendant leaves the ownership
 	// group. Local author code is trusted execution, not an OS sandbox.
-	cmd.WaitDelay = 250 * time.Millisecond
+	cmd.WaitDelay = pipeDrainLimit
 	owner, err := own(cmd)
 	if err != nil {
 		return "", err
@@ -40,7 +43,9 @@ func Run(ctx context.Context, argv []string, directory string) (string, error) {
 		return output.String(), err
 	}
 	err = cmd.Wait()
-	if ctx.Err() != nil {
+	// A successful wait is authoritative even if a sibling cancels the shared
+	// context immediately afterward. Preserve its exit status and output.
+	if err != nil && ctx.Err() != nil {
 		return output.String(), ctx.Err()
 	}
 	if errors.Is(err, exec.ErrWaitDelay) {
@@ -64,7 +69,7 @@ func (output *boundedOutput) Write(data []byte) (int, error) {
 
 func (output *boundedOutput) String() string {
 	if output.truncated {
-		return output.buffer.String() + "\n[task output truncated at 1048576 bytes]\n"
+		return output.buffer.String() + fmt.Sprintf("\n[task output truncated at %d bytes]\n", outputLimit)
 	}
 	return output.buffer.String()
 }
