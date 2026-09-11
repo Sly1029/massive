@@ -512,3 +512,20 @@ and result references. Project identity is required so matching run IDs remain
 isolated. Obsolete journal transports are rejected; no compatibility reader is
 retained. The same CLI supports TypeScript through separately installed frontend
 and runner adapters.
+
+### Temporary output files
+
+Use `ctx.workspace` for files created by a task:
+
+```python
+def render(ctx: StepContext[None, str]) -> Blob:
+    output = ctx.workspace / "report.txt"
+    output.write_text(ctx.inputs)
+    return Blob.from_path(output)
+```
+
+Each invocation receives a fresh writable directory separate from its source and
+hydrated input files. It stays alive through output validation and Blob/Tree
+publication, and is removed on success or failure. Paths inside it are temporary;
+return typed artifact handles when another task needs the contents. Workspace
+cleanup does not terminate detached child processes or impose a disk quota.

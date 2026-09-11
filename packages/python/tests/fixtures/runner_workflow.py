@@ -94,3 +94,24 @@ def changed_file(context: StepContext[None, Request]) -> Blob:
 
 async def plain_increment(context: StepContext[None, Request]) -> Result:
     return Result(value=context.inputs.value + 1)
+
+
+def workspace_file(ctx: StepContext[None, Request]) -> Blob:
+    import json
+
+    print(json.dumps(str(ctx.workspace)))
+    assert ctx.workspace != Path(__file__).parent
+    path = ctx.workspace / "report.txt"
+    path.write_text("workspace artifact")
+    return Blob.from_path(path)
+
+
+def workspace_failure(ctx: StepContext[None, Request]) -> Blob:
+    workspace_file(ctx)
+    raise RuntimeError("workspace failure")
+
+
+def workspace_invalid_output(ctx: StepContext[None, Request]) -> Blob:
+    blob = workspace_file(ctx)
+    blob.path().write_text("changed after snapshot")
+    return blob

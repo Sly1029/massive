@@ -84,3 +84,13 @@ or retention policy is introduced here.
 Functional gates cover filesystem publication, real S3-compatible storage with
 independent reader processes, the Python-to-Go-to-subprocess map path, and clean
 wheel installation. A live Argo cluster run remains a separate release gate.
+
+## Author workspace
+
+Python `StepContext.workspace` is a runner-owned writable directory for temporary
+outputs. Each invocation gets a distinct directory, separate from source archives
+and hydrated input files. Its lifetime includes output serialization and file
+publication. Success, author failure, and serialization failure all remove it.
+Use Blob/Tree handles to carry files across invocations; workspace paths have no
+cross-task meaning. Process-tree cancellation and scratch quotas remain separate
+execution-policy work.

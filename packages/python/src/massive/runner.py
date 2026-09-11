@@ -139,7 +139,11 @@ class _ResolvedStep:
     output_adapter: TypeAdapter[object]
 
     def invoke(
-        self, descriptor: StepInvocationDescriptor, input_value: object, files: ArtifactFiles
+        self,
+        descriptor: StepInvocationDescriptor,
+        input_value: object,
+        files: ArtifactFiles,
+        workspace: Path,
     ) -> bytes:
         try:
             input_value = self.input_adapter.validate_python(input_value, context=files)
@@ -148,6 +152,7 @@ class _ResolvedStep:
         context = StepContext[None, object](
             inputs=input_value,
             deps=None,
+            workspace=workspace,
             invocation=InvocationContext(
                 run_id=descriptor["runId"],
                 step_id=descriptor["nodeId"],
@@ -243,10 +248,14 @@ def _execute(descriptor: StepInvocationDescriptor) -> None:
         raise SchemaError(f"output artifact destination is invalid: {error}") from error
     input_value, _input_schema = _read_input(descriptor, datastore)
     with (
-        TemporaryDirectory(prefix="massive-files-") as scratch,
+        TemporaryDirectory(prefix="massive-invocation-") as scratch,
         _resolved_step(symbol, source_package, datastore) as step,
     ):
-        output_body = step.invoke(descriptor, input_value, ArtifactFiles(datastore, Path(scratch)))
+        workspace = Path(scratch) / "workspace"
+        workspace.mkdir()
+        output_body = step.invoke(
+            descriptor, input_value, ArtifactFiles(datastore, Path(scratch) / "files"), workspace
+        )
     try:
         ArtifactRuntime(datastore).publish_json(destination, producer, output_body)
     except (ArtifactError, PydanticValidationError) as error:
