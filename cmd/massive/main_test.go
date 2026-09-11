@@ -167,3 +167,17 @@ func TestInspectCommandRendersAndFiltersStoredJournals(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildRejectsMalformedSecretBindingsBeforeImportingCode(t *testing.T) {
+	for _, body := range []string{`not-json`, `{"github":{"name":"service","key":"token","value":"not-a-reference"}}`} {
+		path := filepath.Join(t.TempDir(), "bindings.json")
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		err := (&BuildCommand{Entry: "must-not-be-imported.py", SecretBindings: path}).Run(context.Background(), &output)
+		if err == nil || !strings.Contains(err.Error(), "invalid secret bindings") || output.Len() != 0 {
+			t.Fatalf("binding diagnostic=%v stdout=%q", err, output.String())
+		}
+	}
+}

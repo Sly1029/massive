@@ -647,10 +647,34 @@ func TestArgoInvocationStorageWiring(t *testing.T) {
 				}
 				if invocation {
 					variables := pod["env"].([]any)
-					app := variables[len(variables)-1].(map[string]any)
+					byName := map[string]map[string]any{}
+					for _, variable := range variables {
+						entry := variable.(map[string]any)
+						byName[entry["name"].(string)] = entry
+					}
+					expectedCount := 1
+					if secret != "" {
+						expectedCount += 3
+					}
+					if len(variables) != expectedCount || len(byName) != expectedCount {
+						t.Fatalf("%s variables = %v", name, variables)
+					}
+					app := byName["APP_TOKEN"]
 					ref := app["valueFrom"].(map[string]any)["secretKeyRef"].(map[string]any)
-					if app["name"] != "APP_TOKEN" || ref["name"] != "application-credentials" || ref["key"] != "token" {
+					if ref["name"] != "application-credentials" || ref["key"] != "token" {
 						t.Fatalf("%s app binding: %v", name, app)
+					}
+					if secret != "" {
+						for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+							entry := byName[key]
+							if entry == nil {
+								t.Fatalf("%s missing %s", name, key)
+							}
+							ref := entry["valueFrom"].(map[string]any)["secretKeyRef"].(map[string]any)
+							if ref["name"] != secret || ref["key"] != key || (ref["optional"] == true) != (key == "AWS_SESSION_TOKEN") {
+								t.Fatalf("%s storage binding: %v", name, entry)
+							}
+						}
 					}
 				}
 				if invocation != (pod["env"] != nil) {
@@ -714,8 +738,13 @@ func TestSecretEnvironmentNamesCannotCollideWithRuntime(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Compile(data, binding, runtimeAssetsForPlan(t, compiled.Plan)); err == nil {
-			t.Fatalf("accepted secret environment name %q", name)
+		_, err = Compile(data, binding, runtimeAssetsForPlan(t, compiled.Plan))
+		want := "is reserved by the runtime"
+		if name == "bad-name" {
+			want = "portable environment variable"
+		}
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("secret environment name %q: %v", name, err)
 		}
 	}
 }

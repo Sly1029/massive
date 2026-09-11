@@ -472,7 +472,8 @@ storage and runtime configuration, including when workload identity is selected.
 `PATH`, `HOME`, `PYTHONPATH`, `PYTHONHOME`, `TMPDIR`, `TMP`, `TEMP`, `LD_PRELOAD`,
 `LD_LIBRARY_PATH`, `LD_AUDIT`, and `NODE_OPTIONS` are also reserved. Use application
 names and explicitly configured clients for credentials outside that boundary.
-A deployment mapping can contain refs unused by a particular graph; they are
+Reserved names protect runtime configuration; they are not a security boundary
+against author code. A deployment mapping can contain refs unused by a particular graph; they are
 never injected unless a task declares them.
 
 This is native environment binding only. Local execution continues to inherit
