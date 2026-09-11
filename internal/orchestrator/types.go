@@ -12,6 +12,7 @@ const (
 	StatusRunning    = "running"
 	StatusSucceeded  = "succeeded"
 	StatusFailed     = "failed"
+	StatusCancelled  = "cancelled"
 	StatusSkipped    = "skipped"
 	StatusNotStarted = "not-started"
 )
@@ -85,12 +86,19 @@ func (e *InvalidRunInputError) Error() string {
 }
 
 type RunError struct {
+	Cause      error
 	StepID     string
 	Diagnostic string
 	Result     *RunResult
 }
 
+func (e *RunError) Unwrap() error { return e.Cause }
+
 func (e *RunError) Error() string {
+	if e.Result != nil && e.Result.Status == StatusCancelled {
+		return "run cancelled: " + e.Diagnostic
+	}
+
 	if e.StepID == "" {
 		return e.Diagnostic
 	}

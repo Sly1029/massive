@@ -41,13 +41,19 @@ func Parse(data []byte) (*Manifest, error) {
 		return nil, err
 	}
 	for _, step := range manifest.Steps {
+		if manifest.Status != "running" && (step.Status == "pending" || step.Status == "running") {
+			return nil, fmt.Errorf("terminal run has unfinished step %q", step.NodeID)
+		}
+		if manifest.Status == "succeeded" && step.Status != "succeeded" && step.Status != "skipped" {
+			return nil, fmt.Errorf("successful run has unsuccessful step %q", step.NodeID)
+		}
 		if len(step.Attempts) > 0 && step.Attempts[0].Status != step.Status {
 			return nil, fmt.Errorf("step %q attempt status differs from step status", step.NodeID)
 		}
 		if step.Items == nil {
 			continue
 		}
-		if (step.Status == "pending" || step.Status == "skipped") && len(*step.Items) != 0 {
+		if (step.Status == "pending" || step.Status == "skipped" || step.Status == "not-started") && len(*step.Items) != 0 {
 			return nil, fmt.Errorf("inactive map %q contains item records", step.NodeID)
 		}
 		for index, item := range *step.Items {
@@ -57,14 +63,14 @@ func Parse(data []byte) (*Manifest, error) {
 			if len(item.Attempts) > 0 && item.Attempts[0].Status != item.Status {
 				return nil, fmt.Errorf("map %q item %d attempt status differs", step.NodeID, index)
 			}
-			if item.Status == "not-started" && step.Status != "failed" {
-				return nil, fmt.Errorf("map %q has not-started items without failure", step.NodeID)
+			if item.Status == "not-started" && step.Status != "failed" && step.Status != "cancelled" {
+				return nil, fmt.Errorf("map %q has not-started items without termination", step.NodeID)
 			}
 			if step.Status == "succeeded" && item.Status != "succeeded" {
 				return nil, fmt.Errorf("successful map %q has unsuccessful items", step.NodeID)
 			}
-			if step.Status == "failed" && (item.Status == "pending" || item.Status == "running") {
-				return nil, fmt.Errorf("failed map %q has unfinished items", step.NodeID)
+			if (step.Status == "failed" || step.Status == "cancelled") && (item.Status == "pending" || item.Status == "running") {
+				return nil, fmt.Errorf("terminal map %q has unfinished items", step.NodeID)
 			}
 		}
 	}

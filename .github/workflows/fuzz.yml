@@ -1,4 +1,4 @@
-name: Fuzz graphs
+name: Fuzz graphs and execution journals
 
 on:
   pull_request:
@@ -14,7 +14,7 @@ permissions:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -23,14 +23,14 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/go-build/fuzz
-          key: graph-fuzz-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: graph-fuzz-${{ runner.os }}-
+          key: execution-fuzz-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: execution-fuzz-${{ runner.os }}-
       - run: ./scripts/fuzz.sh
         env:
           FUZZ_TIME: ${{ github.event_name == 'schedule' && '120s' || '15s' }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: graph-fuzz-reproducers
+          name: execution-fuzz-reproducers
           path: internal/**/testdata/fuzz/**
           if-no-files-found: ignore

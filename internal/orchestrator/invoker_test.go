@@ -187,7 +187,7 @@ func TestProcessStepInvokerStopsDispatchAfterContextCancellation(t *testing.T) {
 		t.Fatalf("outcomes = %d, started = %d", len(outcomes), started)
 	}
 	for _, outcome := range outcomes {
-		if outcome.Status != stepInvocationStatusCancelled || outcome.Diagnostic != "" {
+		if outcome.Status != StatusCancelled || outcome.Diagnostic != "" {
 			t.Fatalf("cancelled outcome = %#v, want sanitized cancelled status", outcome)
 		}
 	}

@@ -9,6 +9,9 @@
     },
     {
       "$ref": "#/$defs/succeeded"
+    },
+    {
+      "$ref": "#/$defs/cancelled"
     }
   ],
   "$defs": {
@@ -66,11 +69,11 @@
     },
     "version": {
       "type": "number",
-      "const": 3
+      "const": 4
     },
     "encoding": {
       "type": "string",
-      "const": "json-v3"
+      "const": "json-v4"
     },
     "planHash": {
       "type": "string"
@@ -218,6 +221,58 @@
                   "status",
                   "attempts",
                   "skipReason"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "not-started"
+                  },
+                  "attempts": {
+                    "minItems": 0,
+                    "maxItems": 0,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "cancelled"
+                  },
+                  "attempts": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts"
                 ],
                 "additionalProperties": false
               }
@@ -393,6 +448,72 @@
                   "skipReason"
                 ],
                 "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "not-started"
+                  },
+                  "attempts": {
+                    "minItems": 0,
+                    "maxItems": 0,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/mapItem"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts",
+                  "items"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "nodeId": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "const": "cancelled"
+                  },
+                  "attempts": {
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/attempt"
+                    }
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/mapItem"
+                    }
+                  }
+                },
+                "required": [
+                  "nodeId",
+                  "status",
+                  "attempts",
+                  "items"
+                ],
+                "additionalProperties": false
               }
             ]
           }
@@ -476,6 +597,33 @@
             "status": {
               "type": "string",
               "const": "failed"
+            },
+            "input": {
+              "$ref": "#/$defs/dataArtifact"
+            },
+            "diagnostic": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "attempt",
+            "status",
+            "input",
+            "diagnostic"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "attempt": {
+              "type": "number",
+              "const": 1
+            },
+            "status": {
+              "type": "string",
+              "const": "cancelled"
             },
             "input": {
               "$ref": "#/$defs/dataArtifact"
@@ -712,6 +860,34 @@
             "attempts"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "status": {
+              "type": "string",
+              "const": "cancelled"
+            },
+            "attempts": {
+              "minItems": 1,
+              "maxItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/attempt"
+              }
+            }
+          },
+          "required": [
+            "index",
+            "status",
+            "attempts"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -818,6 +994,10 @@
         "status": {
           "type": "string",
           "const": "failed"
+        },
+        "diagnostic": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -829,7 +1009,8 @@
         "runId",
         "steps",
         "decisions",
-        "status"
+        "status",
+        "diagnostic"
       ],
       "additionalProperties": false
     },
@@ -881,8 +1062,61 @@
         "status"
       ],
       "additionalProperties": false
+    },
+    "cancelled": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/kind"
+        },
+        "schemaVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "encoding": {
+          "$ref": "#/$defs/encoding"
+        },
+        "planHash": {
+          "$ref": "#/$defs/planHash"
+        },
+        "projectKey": {
+          "$ref": "#/$defs/projectKey"
+        },
+        "runId": {
+          "$ref": "#/$defs/runId"
+        },
+        "steps": {
+          "$ref": "#/$defs/steps"
+        },
+        "decisions": {
+          "$ref": "#/$defs/decisions"
+        },
+        "result": {
+          "not": {}
+        },
+        "status": {
+          "type": "string",
+          "const": "cancelled"
+        },
+        "diagnostic": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "schemaVersion",
+        "encoding",
+        "planHash",
+        "projectKey",
+        "runId",
+        "steps",
+        "decisions",
+        "status",
+        "diagnostic"
+      ],
+      "additionalProperties": false
     }
   },
   "$id": "https://massive.dev/conformance/schema/run-manifest.schema.json",
-  "title": "RunManifest v3"
+  "title": "RunManifest v4"
 }

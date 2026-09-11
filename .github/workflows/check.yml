@@ -45,3 +45,11 @@ jobs:
         run: go test -race -count=10 -timeout=5m ./internal/taskprocess
       - if: runner.os == 'Windows'
         run: go test -count=10 -timeout=5m ./internal/taskprocess
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --project packages/python --frozen
+      - if: runner.os != 'Windows'
+        run: go test -race -count=3 -timeout=5m ./internal/controlplane -run 'TestCancelled|TestFailedRunTerminal'
+      - if: runner.os == 'Windows'
+        run: go test -count=3 -timeout=5m ./internal/controlplane -run 'TestCancelled|TestFailedRunTerminal'

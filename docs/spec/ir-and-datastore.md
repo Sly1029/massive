@@ -298,9 +298,11 @@ projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.j
 projects/<project-key>/runs/<run-id>/result.json
 ```
 
-The run manifest is independently versioned as `schemaVersion: 3`,
-`encoding: "json-v3"`. It records durable decision selections, inactive
-branches, and source-indexed finite-map items; there is no compatibility reader
+The run manifest is independently versioned as `schemaVersion: 4`,
+`encoding: "json-v4"`. It records durable decision selections, inactive
+branches, and source-indexed finite-map items. Failed and cancelled runs have
+a root diagnostic and terminal steps; completed artifacts survive cancellation,
+while undispatched work has no attempts. There is no compatibility reader
 or dual-write mode. The step invocation descriptor below remains the separate
 v2/json-v2 transport.
 

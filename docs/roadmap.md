@@ -25,7 +25,8 @@ Implemented:
 - Top-level typed functions work with or without decorator syntax.
 - Shrinking Python graph generators exercise nested decisions through the Go
   compiler; continuous Go fuzzing covers raw parsing, DAG shapes, and exhaustive
-  decision/select semantics.
+  decision/select semantics, partial map outcome identities, journal parsing,
+  and preservation of completed artifacts during terminalization.
 
 Next:
 
@@ -48,9 +49,10 @@ for what works today.
 - Expose a run-wide worker budget. Local maps already use parallel subprocesses;
   independent DAG branches should share the same budget rather than multiply it.
 - Local task subprocesses now own ordinary descendants through OS process groups
-  or Windows jobs, with bounded pipe drainage and captured output. Add CLI signal
-  ingress and terminal cancellation journals; killing the CLI itself still does
-  not constitute graceful run cancellation.
+  or Windows jobs, with bounded pipe drainage and captured output. Context
+  cancellation persists terminal v4 journals and retains verified completed map
+  outputs. Add CLI signal ingress; killing the CLI itself still does not
+  constitute graceful run cancellation.
 - Add per-task timeout, explicit retry policy, and attempt accounting.
 - Persist bounded task logs and structured lifecycle events. Inspection is available
   in the shipped Go CLI; the Deno CLI has been removed.
