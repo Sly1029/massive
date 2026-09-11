@@ -661,3 +661,31 @@ func TestArgoRejectsInvalidArtifactConfigMapName(t *testing.T) {
 		t.Fatalf("invalid binding: %v", err)
 	}
 }
+
+func TestMapControlPodsDoNotReserveAuthorResources(t *testing.T) {
+	compiled := fixturePlan(t, "finite-map")
+	for _, contract := range compiled.Plan.Contracts {
+		contract.Resources = &planpb.ResourceRequirements{Cpu: pointer("2"), Memory: pointer("4Gi")}
+	}
+	data, _ := rehashPlan(t, compiled.Plan)
+	bundle, err := Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, compiled.Plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var template map[string]any
+	if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+		t.Fatal(err)
+	}
+	templates := template["spec"].(map[string]any)["templates"].([]any)
+	for _, name := range []string{"map-expand-map-items", "map-collect-map-items"} {
+		container := templateByName(t, templates, name)["container"].(map[string]any)
+		if container["resources"] != nil {
+			t.Fatalf("control pod %s inherited user resources: %v", name, container["resources"])
+		}
+	}
+	container := templateByName(t, templates, "map-item-map-items")["container"].(map[string]any)
+	requests := container["resources"].(map[string]any)["requests"].(map[string]any)
+	if requests["cpu"] != "2" || requests["memory"] != "4Gi" {
+		t.Fatalf("item resources = %v", requests)
+	}
+}

@@ -5,7 +5,7 @@
 - Think like a senior engineer. Optimize for maintainability and clear control flow.
 - Inline small logic until extracting a function would enclose meaningful behavior.
 - Avoid passthrough functions and abstractions that only rename behavior.
-- Prefer library primitives for validation and parsing. Use Zod, Cap'n Proto schemas, Kubernetes schema validation, and typecheckers instead of ad hoc defensive checks.
+- Prefer library primitives for validation and parsing. Use Pydantic, Zod, JSON Schema, Protobuf schemas, Kubernetes schema validation, and typecheckers instead of ad hoc defensive checks.
 - Avoid broad defensive code. Make invalid states unrepresentable where the language and validation libraries allow it.
 - Do not maintain legacy behavior or backward-compatibility paths. Migrate contracts and callers together; reject obsolete artifacts with a rebuild diagnostic.
 
@@ -21,3 +21,15 @@
 node scripts/check-no-test-mocks.mjs
 ```
 
+
+## Durable context
+
+- Read `docs/roadmap.md` when choosing the next feature; use the matching spec for
+  its acceptance criteria.
+- Put module-specific invariants in an AGENTS.md beside that code as they are
+  learned. Keep root instructions cross-cutting and remove stale guidance when
+  changing a contract. Keep chronological work logs out of these instructions.
+- For graph/IR, artifact transport, CLI distribution, or Argo validation, use
+  `.agents/skills/massive-conformance/SKILL.md`.
+- This repository is public. Keep private application names, source, deployment
+  details, credentials, and integration evidence in their owning repositories.
