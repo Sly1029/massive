@@ -68,8 +68,8 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 	main := specValue["templates"].([]any)[0].(map[string]any)
 	tasks := main["dag"].(map[string]any)["tasks"].([]any)
 	merge := taskByName(t, tasks, "merge")
-	deps := merge["dependencies"].([]any)
-	if len(deps) != 2 || deps[0] != "left" || deps[1] != "right" {
+	deps := merge["depends"]
+	if deps != "left.Succeeded && right.Succeeded" {
 		t.Fatalf("merge readiness dependencies=%v", deps)
 	}
 	stepTemplate := templateByName(t, specValue["templates"].([]any), "step-merge")
@@ -78,7 +78,7 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 		t.Fatalf("container platform was not lowered to node selector: %v", nodeSelector)
 	}
 	args := stepTemplate["container"].(map[string]any)["args"].([]any)
-	if !containsArgs(args, "runtime", "step") || !containsArgs(args, "--node", "merge") {
+	if !containsArgs(args, "runtime", "step") || !containsArgs(args, "--node=merge") {
 		t.Fatalf("remote runtime command missing: %v", args)
 	}
 	input := merge["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"]
@@ -229,10 +229,10 @@ func TestPythonFrontendFixtureLowersThroughArgoSchema(t *testing.T) {
 		t.Fatalf("generated Python step image = %v", container["image"])
 	}
 	annotations := template["metadata"].(map[string]any)["annotations"].(map[string]any)
-	if annotations["massive.dev/execution-status"] != "executable-static" {
+	if annotations["massive.dev/execution-status"] != "executable-dag" {
 		t.Fatal("generated Python WorkflowTemplate is not marked executable")
 	}
-	if !containsArgs(container["args"].([]any), "--node", "add_one") {
+	if !containsArgs(container["args"].([]any), "--node=add_one") {
 		t.Fatal("runtime command did not preserve the proto node id")
 	}
 }
@@ -255,11 +255,35 @@ func TestStaticDAGRejectsUnverifiedOrUnsupportedPlan(t *testing.T) {
 	}
 }
 
-func TestStaticDAGRejectsExhaustiveDecisionSemantics(t *testing.T) {
-	result := fixturePlan(t, "exhaustive-decision")
-	_, err := Compile(result.CanonicalJSON, deploymentForPlan(t, result.CanonicalJSON), runtimeAssetsForPlan(t, result.Plan))
-	if err == nil || !strings.Contains(err.Error(), `graph semantic "decision" is unsupported`) {
-		t.Fatalf("error=%v, want explicit decision semantic diagnostic", err)
+func TestDecisionBranchesWaitForSuccessAndSelectOnlyOneOutput(t *testing.T) {
+	bundle := compileFixture(t, "exhaustive-decision")
+	var template map[string]any
+	if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+		t.Fatal(err)
+	}
+	templates := template["spec"].(map[string]any)["templates"].([]any)
+	tasks := templates[0].(map[string]any)["dag"].(map[string]any)["tasks"].([]any)
+	accept := taskByName(t, tasks, "accept")
+	if accept["depends"] != "route.Succeeded" {
+		t.Fatalf("branch readiness: %v", accept)
+	}
+	if !strings.Contains(accept["when"].(string), "selection") || strings.Contains(accept["when"].(string), "accepted") {
+		t.Fatalf("branch condition: %v", accept)
+	}
+	control := templateByName(t, templates, "step-route")
+	if control["metadata"].(map[string]any)["labels"].(map[string]any)["massive.dev/network-policy"] == nil {
+		t.Fatal("control task lost egress policy")
+	}
+	choose := taskByName(t, tasks, "choose")
+	depends := choose["depends"].(string)
+	for _, required := range []string{"route.Succeeded", "accept.Skipped", "reject.Skipped", "accept.Omitted", "reject.Omitted"} {
+		if !strings.Contains(depends, required) {
+			t.Fatalf("select readiness missing %s: %s", required, depends)
+		}
+	}
+	input := choose["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"].(string)
+	if !strings.HasPrefix(input, "{{=") || !strings.Contains(input, " ? ") {
+		t.Fatalf("select must lazily evaluate chosen output: %s", input)
 	}
 }
 
@@ -297,7 +321,7 @@ func TestFiniteMapLowersToBoundedIndexedArgoFanoutAndCollection(t *testing.T) {
 
 	itemTemplate := templateByName(t, templates, "map-item-map-items")
 	args := itemTemplate["container"].(map[string]any)["args"].([]any)
-	if !containsArgs(args, "runtime", "map", "item") || !containsArgs(args, "--node", "map-items") {
+	if !containsArgs(args, "runtime", "map", "item") || !containsArgs(args, "--node=map-items") {
 		t.Fatalf("mapped runtime command = %v", args)
 	}
 }
@@ -482,3 +506,59 @@ func runtimeAssetsForPlan(t *testing.T, plan *planpb.WorkflowPlan) RuntimeAssets
 	return RuntimeAssets{SourceArchives: archives, MaterializationSpec: specJSON}
 }
 func pointer(v string) *string { return &v }
+
+func TestTargetRevalidatesDecisionSemanticsAfterPlanHashing(t *testing.T) {
+	for _, corrupt := range []string{"missing cases", "wrong decision", "missing selector"} {
+		t.Run(corrupt, func(t *testing.T) {
+			result := fixturePlan(t, "exhaustive-decision")
+			for _, node := range result.Plan.Graph.Nodes {
+				if node.GetKind() == "decision" && corrupt == "missing cases" {
+					node.Cases = nil
+				}
+				if node.GetKind() == "decision" && corrupt == "missing selector" {
+					node.Selector = nil
+				}
+				if node.GetKind() == "select" && corrupt == "wrong decision" {
+					node.DecisionRef = pointer("accept")
+				}
+			}
+			data, _ := rehashPlan(t, result.Plan)
+			_, err := Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, result.Plan))
+			if err == nil || !strings.Contains(err.Error(), "control flow") {
+				t.Fatalf("invalid control flow error: %v", err)
+			}
+		})
+	}
+}
+
+func TestTargetRejectsGeneratedTaskNameCollisions(t *testing.T) {
+	result := fixturePlan(t, "linear-chain")
+	replacements := map[string]string{}
+	for _, node := range result.Plan.Graph.Nodes {
+		if node.GetKind() != "step" {
+			continue
+		}
+		name := "task_name"
+		if len(replacements) == 1 {
+			name = argoFieldName(name)
+		}
+		replacements[node.GetId()] = name
+		node.Id = pointer(name)
+		if len(replacements) == 2 {
+			break
+		}
+	}
+	for _, edge := range result.Plan.Graph.Edges {
+		if name, ok := replacements[edge.GetFrom()]; ok {
+			edge.From = pointer(name)
+		}
+		if name, ok := replacements[edge.GetTo()]; ok {
+			edge.To = pointer(name)
+		}
+	}
+	data, _ := rehashPlan(t, result.Plan)
+	_, err := Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, result.Plan))
+	if err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("generated name collision: %v", err)
+	}
+}

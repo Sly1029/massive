@@ -65,12 +65,12 @@ work. This is not a general metadata database or cross-run result cache.
 
 ## 4. Complete Argo for the supported graph model
 
-Static DAGs and finite single-step maps lower to Argo today. Remaining work:
-
-- decisions/selects;
+DAGs, exhaustive decisions/selects, and finite single-step maps lower to Argo.
+Live conformance covers nested inactive branches, empty maps, and failed items.
+Remaining work:
 - deployment-bound secret references;
 - larger source/value transport;
-- real-cluster conformance runs, including empty maps and failed items.
+- shared file transport and representative application images.
 
 Reject unsupported requirements instead of silently weakening them. Schema
 validation and isolated runner tests do not replace a live cluster execution gate.

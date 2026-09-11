@@ -1486,3 +1486,41 @@ func unreachableDiagnostics(parsed *WorkflowSpec, adjacency map[string][]string,
 	}
 	return diagnostics
 }
+
+// ValidateControlFlow reuses authoring invariants at target compilation seams.
+// Callers validate basic node/edge integrity and acyclicity before this pass.
+func ValidateControlFlow(graph Graph, schemas map[string]json.RawMessage) error {
+	data, err := json.Marshal(graph)
+	if err != nil {
+		return err
+	}
+	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemacontract.WorkflowSpecSchemaJSON))
+	if err != nil {
+		return err
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("workflow-spec.schema.json", document); err != nil {
+		return err
+	}
+	schema, err := compiler.Compile("workflow-spec.schema.json#/properties/graph")
+	if err != nil {
+		return err
+	}
+	if err := schema.Validate(instance); err != nil {
+		return fmt.Errorf("compiled graph violates graph schema: %w", err)
+	}
+	nodes := make(map[string]GraphNode, len(graph.Nodes))
+	indexes := make(map[string]int, len(graph.Nodes))
+	for index, node := range graph.Nodes {
+		nodes[node.ID], indexes[node.ID] = node, index
+	}
+	diagnostics := validateDecisionAndSelectSemantics(&WorkflowSpec{Graph: graph, Schemas: schemas}, nodes, indexes)
+	if len(diagnostics) > 0 {
+		return &DiagnosticsError{Diagnostics: diagnostics}
+	}
+	return nil
+}

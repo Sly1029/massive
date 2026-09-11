@@ -49,9 +49,42 @@ type BuildCommand struct {
 
 type VersionCommand struct{}
 
+type RuntimeControlCommand struct {
+	Plan   string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
+	Node   string `help:"Decision or select node." required:""`
+	Input  string `help:"Canonical JSON control value." required:""`
+	Output string `help:"Write validated canonical JSON here." required:"" type:"path"`
+}
+
+func (command *RuntimeControlCommand) Run() error {
+	data, err := os.ReadFile(command.Plan)
+	if err != nil {
+		return err
+	}
+	parsed, err := plan.ParseCanonicalJSON(data)
+	if err != nil {
+		return err
+	}
+	verified, err := plan.VerifyCanonicalJSON(data, parsed.GetPlanHash())
+	if err != nil {
+		return err
+	}
+	result, err := orchestrator.ResolveControlValue(verified, command.Node, []byte(command.Input))
+	if err != nil {
+		return err
+	}
+	if result.CaseIndex != nil {
+		if err := writeRuntimeOutput(command.Output+".case", []byte(fmt.Sprint(*result.CaseIndex))); err != nil {
+			return err
+		}
+	}
+	return writeRuntimeOutput(command.Output, result.Value)
+}
+
 type RuntimeCommand struct {
-	Step RuntimeStepCommand `cmd:"" help:"Execute one compiled step in a remote executor."`
-	Map  RuntimeMapCommand  `cmd:"" help:"Execute finite-map transport operations."`
+	Control RuntimeControlCommand `cmd:"" help:"Validate a decision or selected value without invoking user code."`
+	Step    RuntimeStepCommand    `cmd:"" help:"Execute one compiled step in a remote executor."`
+	Map     RuntimeMapCommand     `cmd:"" help:"Execute finite-map transport operations."`
 }
 
 type RuntimeMapCommand struct {

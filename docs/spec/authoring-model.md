@@ -176,8 +176,8 @@ The whole graph must remain acyclic.
 
 The local orchestrator executes Graph IR 0.2 decisions and persists each
 selected case in the run manifest before scheduling a branch. Argo lowering
-currently rejects decision/select nodes with an explicit unsupported-semantic
-diagnostic. Target capability is therefore explicit rather than implied by
+supports decision/select nodes with validated route tasks and success-only
+branch dependencies. Target capability is therefore explicit rather than implied by
 successful portable compilation.
 
 ## Deferred Foreach And Joins
