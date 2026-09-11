@@ -1,0 +1,31 @@
+name: Argo conformance
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  argo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: astral-sh/setup-uv@v6
+      - name: Install cluster tools
+        run: |
+          curl -fsSL https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 -o /usr/local/bin/kind
+          curl -fsSL https://dl.k8s.io/release/v1.34.0/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl
+          chmod +x /usr/local/bin/kind /usr/local/bin/kubectl
+      - run: ./scripts/test-argo.sh
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: argo-conformance-diagnostics
+          path: dist/argo-test-logs/
+          if-no-files-found: ignore

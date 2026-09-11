@@ -1,14 +1,14 @@
 # Argo Backend
 
-Status: 0.1 executable static wedge
+Status: executable DAGs, decisions/selects, and finite maps
 
-The current implementation emits an executable static DAG and validates its
+The current implementation emits an executable DAG and validates its
 `WorkflowTemplate` offline against Argo Workflows v3.7.16. The bundle mounts an
 immutable ConfigMap containing the verified plan and source archives; every pod
 runs one isolated proto-described step through the same language runner used by
 local execution. Argo output parameters carry canonical JSON values between
 tasks. The template is annotated
-`massive.dev/execution-status: executable-static`.
+`massive.dev/execution-status: executable-dag`.
 
 Argo is the first non-local backend. The Argo compiler emits a deploy bundle, not only a single WorkflowTemplate.
 
@@ -40,7 +40,7 @@ command is:
 
 ```sh
 massive build workflow.py \
-  --out dist/argo \
+  --output dist/argo \
   --namespace workflows \
   --service-account massive-runner
 ```
@@ -352,3 +352,45 @@ The Argo compiler must be deterministic:
 - no timestamps in emitted artifacts,
 - sorted map keys where possible,
 - bundle hash covers IR, target config, patches, provider identities, compiler version, and materialized artifact references.
+
+## Decisions and selects
+
+Argo lowers all supported graph node kinds. A decision runs `massive runtime
+control`, validates the selected case with the same schema validator as local
+execution, and emits a numeric case index. User tags never become controller
+expressions. Decision and select tasks reuse an upstream container environment
+without invoking author code or inheriting that step's resources or secrets.
+
+Every ordinary dependency requires `.Succeeded`. Selects wait for all branch
+sources to finish or become inactive, require at least one successful source,
+and require their decision to succeed. A single lazy expression reads the chosen
+output. This preserves nested inactive regions and prevents failed branches from
+turning into successful empty results. The Argo node outputs persist the route
+index; Argo currently owns the execution journal rather than emitting the local
+`RunManifest` format.
+
+The main container does not automount the Kubernetes API token. The explicit
+`executor.serviceAccountName` supplies the Argo executor's identity; configure
+that account as described in Argo's service-account documentation, including the
+executor token and workflow-task-result permissions.
+
+## Live conformance and runner image
+
+`./scripts/test-argo.sh` builds the current wheel and a non-root runner image,
+creates a disposable kind cluster, installs Argo **v3.7.16**, and runs nested
+branches, arbitrary string tags, empty maps, and selected-item failures. It
+cleans up its cluster and retains diagnostics under `dist/argo-test-logs` on
+failure. Prerequisites: Docker, kind, kubectl, curl, Go, and uv. With snap Docker,
+set `TMPDIR` to a writable directory under your home so Docker can read the build
+context and image archive. CI runs the same script.
+
+`packages/python/Dockerfile` consumes a platform wheel and `requirements.txt`
+exported from the SDK's `uv.lock`. Its base image is digest-pinned, dependencies
+are hash-verified, and the runtime runs as UID 65532. Publish the resulting image
+and use its registry digest in `container(...)`. Application packages can extend
+this recipe with their own locked dependencies; the generic image contains only
+Massive and its runtime requirements.
+
+Source archives still use the bounded embedded transport, and ordinary values
+still pass through Argo parameters. File references require a shared datastore;
+a private pod-local store cannot hydrate another pod's Blob or Tree.

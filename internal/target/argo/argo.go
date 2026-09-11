@@ -179,10 +179,7 @@ func validateStaticGraph(p *planpb.WorkflowPlan) error {
 		return errors.New("argo target: graph must contain declared start/end sentinel nodes")
 	}
 	for _, n := range g.GetNodes() {
-		if n.GetKind() == "decision" || n.GetKind() == "select" {
-			return fmt.Errorf("argo target: graph semantic %q is unsupported; Argo lowering does not yet support decisions and selects", n.GetKind())
-		}
-		if n.GetKind() != "start" && n.GetKind() != "step" && n.GetKind() != "map" && n.GetKind() != "end" {
+		if n.GetKind() != "start" && n.GetKind() != "step" && n.GetKind() != "map" && n.GetKind() != "decision" && n.GetKind() != "select" && n.GetKind() != "end" {
 			return fmt.Errorf("argo target: node %q has unsupported kind %q", n.GetId(), n.GetKind())
 		}
 		if (n.GetKind() == "step" || n.GetKind() == "map") && (n.GetSymbolRef() == "" || n.GetContractRef() == "") {
@@ -282,6 +279,9 @@ func validateStaticGraph(p *planpb.WorkflowPlan) error {
 	if visited != len(nodes) {
 		return errors.New("argo target: graph contains a cycle")
 	}
+	if err := plan.ValidateControlFlow(p); err != nil {
+		return fmt.Errorf("argo target: invalid control flow: %w", err)
+	}
 	return nil
 }
 
@@ -306,14 +306,20 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 	}
 	executableNodes := make([]*planpb.GraphNode, 0)
 	for _, n := range g.GetNodes() {
-		if n.GetKind() == "step" || n.GetKind() == "map" {
+		if n.GetKind() != "start" && n.GetKind() != "end" {
 			executableNodes = append(executableNodes, n)
 		}
 	}
 	sort.Slice(executableNodes, func(i, j int) bool { return executableNodes[i].GetId() < executableNodes[j].GetId() })
 	taskNames := make(map[string]string, len(executableNodes))
+	occupiedNames := map[string]bool{}
 	for _, node := range executableNodes {
-		taskNames[node.GetId()] = argoFieldName(node.GetId())
+		name := argoFieldName(node.GetId())
+		if occupiedNames[name] {
+			return nil, "", false, fmt.Errorf("argo target: node %q collides with generated task name %q; rename the node", node.GetId(), name)
+		}
+		occupiedNames[name] = true
+		taskNames[node.GetId()] = name
 	}
 	dependencies := map[string][]string{}
 	inbound := map[string][]string{}
@@ -332,6 +338,15 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 	needsNetworkPolicy := false
 	for _, node := range executableNodes {
 		contract := contracts[node.GetContractRef()]
+		control := node.GetKind() == "decision" || node.GetKind() == "select"
+		if control {
+			// Control tasks execute no author code and need only a compatible
+			// Massive executable. Reuse the upstream image, not its user policy.
+			source := controlEnvironmentSource(node.GetId(), executableNodes, inbound)
+			if source != nil && contracts[source.GetContractRef()] != nil {
+				contract = &planpb.ExecutionContract{EnvironmentRef: contracts[source.GetContractRef()].EnvironmentRef}
+			}
+		}
 		if contract == nil {
 			return nil, "", false, fmt.Errorf("argo target: executable node %q references unknown contract", node.GetId())
 		}
@@ -343,6 +358,9 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			argoDependencies[index] = taskNames[dependency]
 		}
 		inputExpression, err := argoInputExpression(node, inbound[node.GetId()], g.GetStartNode(), taskNames)
+		if node.GetKind() == "select" {
+			inputExpression, err = argoSelectExpression(node, executableNodes, taskNames)
+		}
 		if err != nil {
 			return nil, "", false, err
 		}
@@ -355,9 +373,47 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": inputExpression}}},
 		}
 		if len(argoDependencies) > 0 {
-			task["dependencies"] = argoDependencies
+			readiness := make([]string, 0, len(argoDependencies)+1)
+			for _, dependency := range argoDependencies {
+				condition := dependency + ".Succeeded"
+				if node.GetKind() == "select" {
+					condition = "(" + condition + " || " + dependency + ".Skipped || " + dependency + ".Omitted)"
+				}
+				readiness = append(readiness, condition)
+			}
+			if node.GetKind() == "select" {
+				readiness = append(readiness, taskNames[node.GetDecisionRef()]+".Succeeded")
+				successfulSource := make([]string, 0, len(argoDependencies))
+				for _, dependency := range argoDependencies {
+					successfulSource = append(successfulSource, dependency+".Succeeded")
+				}
+				readiness = append(readiness, "("+strings.Join(successfulSource, " || ")+")")
+			}
+			task["depends"] = strings.Join(readiness, " && ")
+		}
+		for _, edge := range g.GetEdges() {
+			if edge.GetTo() == node.GetId() && edge.GetCase() != "" {
+				for _, decision := range executableNodes {
+					if decision.GetId() == edge.GetFrom() {
+						task["when"] = "{{=" + argoCaseExpression(decision, edge.GetCase(), taskNames) + "}}"
+					}
+				}
+			}
 		}
 		tasks = append(tasks, task)
+		if control {
+			controlTemplate, _, err := runtimePodTemplate(templateName, node.GetId(), env, contract, runtimeName,
+				[]string{"runtime", "control", "--plan", "/var/run/massive/massive-plan.json", "--node", node.GetId(), "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"})
+			if err != nil {
+				return nil, "", false, err
+			}
+			if node.GetKind() == "decision" {
+				outputs := controlTemplate["outputs"].(map[string]any)
+				outputs["parameters"] = append(outputs["parameters"].([]any), map[string]any{"name": "selection", "valueFrom": map[string]any{"path": "/tmp/massive/result.json.case"}})
+			}
+			templates = append(templates, controlTemplate)
+			continue
+		}
 		if node.GetKind() == "map" {
 			mapTemplates, networkPolicy, err := argoMapTemplates(node, env, contract, runtimeName, name)
 			if err != nil {
@@ -374,7 +430,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 				"--plan", "/var/run/massive/massive-plan.json",
 				"--bundle-dir", "/var/run/massive",
 				"--node", node.GetId(),
-				"--input", "{{inputs.parameters.input}}",
+				"--input={{inputs.parameters.input}}",
 				"--output", "/tmp/massive/result.json",
 				"--project", "argo/" + name,
 				"--run-id", "{{workflow.uid}}",
@@ -403,18 +459,27 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 		}}},
 	}
 	templates = append([]any{main}, templates...)
+	occupiedNames = map[string]bool{}
+	for _, item := range templates {
+		templateName := item.(map[string]any)["name"].(string)
+		if occupiedNames[templateName] {
+			return nil, "", false, fmt.Errorf("argo target: generated template name %q collides; rename the contributing nodes", templateName)
+		}
+		occupiedNames[templateName] = true
+	}
 	return map[string]any{
 		"apiVersion": "argoproj.io/v1alpha1", "kind": "WorkflowTemplate",
 		"metadata": map[string]any{
 			"name": name, "namespace": d.Profile.Target.Namespace,
 			"annotations": map[string]string{
 				"massive.dev/plan-hash": p.GetPlanHash(), "massive.dev/deployment-hash": d.DeploymentHash,
-				"massive.dev/execution-status": "executable-static", "massive.dev/runtime-transport": RuntimeTransport,
+				"massive.dev/execution-status": "executable-dag", "massive.dev/runtime-transport": RuntimeTransport,
 			},
 		},
 		"spec": map[string]any{
 			"entrypoint": "main", "serviceAccountName": d.Profile.Target.ServiceAccountName,
 			"automountServiceAccountToken": false,
+			"executor":                     map[string]any{"serviceAccountName": d.Profile.Target.ServiceAccountName},
 			"arguments":                    map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "null"}}},
 			"volumes":                      []any{map[string]any{"name": "massive-runtime", "configMap": map[string]any{"name": runtimeName}}},
 			"templates":                    templates,
@@ -430,7 +495,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 
 	expandTemplate, expandNetwork, err := runtimePodTemplate(
 		expandName, node.GetId(), env, contract, runtimeName,
-		[]string{"runtime", "map", "expand", "--input", "{{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
+		[]string{"runtime", "map", "expand", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
 	)
 	if err != nil {
 		return nil, false, err
@@ -454,7 +519,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	}
 	collectTemplate, collectNetwork, err := runtimePodTemplate(
 		collectName, node.GetId(), env, contract, runtimeName,
-		[]string{"runtime", "map", "collect", "--input", "{{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
+		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
 	)
 	if err != nil {
 		return nil, false, err

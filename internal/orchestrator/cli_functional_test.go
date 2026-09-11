@@ -150,7 +150,7 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(template, []byte("massive.dev/execution-status: executable-static")) || !bytes.Contains(template, []byte("serviceAccountName: massive-runner")) {
+	if !bytes.Contains(template, []byte("massive.dev/execution-status: executable-dag")) || !bytes.Contains(template, []byte("serviceAccountName: massive-runner")) {
 		t.Fatalf("generated WorkflowTemplate lacks executable status or workload identity:\n%s", template)
 	}
 	manifestJSON, err := os.ReadFile(filepath.Join(bundleDir, "bundle-manifest.json"))

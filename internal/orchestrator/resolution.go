@@ -114,6 +114,17 @@ func (r *executionResolver) routeDecision(node *planpb.GraphNode) (string, error
 		return "", fmt.Errorf("decision %q input schema %q does not match declared schema %q", node.GetId(), input.Artifact.Schema, node.GetInputSchema())
 	}
 
+	tag, err := decisionCaseForValue(node, inputBytes, r.index.schemaJSON)
+	if err != nil {
+		return "", err
+	}
+	r.selectedCases[node.GetId()] = tag
+	r.outputs[node.GetId()] = input
+	return tag, nil
+}
+
+// decisionCaseForValue is shared by local resolution and remote control tasks.
+func decisionCaseForValue(node *planpb.GraphNode, inputBytes []byte, schemas map[string]string) (string, error) {
 	var value map[string]json.RawMessage
 	if err := json.Unmarshal(inputBytes, &value); err != nil {
 		return "", fmt.Errorf("decision %q selector %q requires a JSON object: %w", node.GetId(), node.GetSelector(), err)
@@ -130,7 +141,7 @@ func (r *executionResolver) routeDecision(node *planpb.GraphNode) (string, error
 		if decisionCase.GetTag() != tag {
 			continue
 		}
-		schema := r.index.schemaJSON[decisionCase.GetSchema()]
+		schema := schemas[decisionCase.GetSchema()]
 		if schema == "" {
 			return "", fmt.Errorf("decision %q case %q references unavailable schema %q", node.GetId(), tag, decisionCase.GetSchema())
 		}
@@ -140,8 +151,6 @@ func (r *executionResolver) routeDecision(node *planpb.GraphNode) (string, error
 			// route identity without copying classified data into its diagnostic.
 			return "", fmt.Errorf("decision %q selected case %q does not satisfy its schema", node.GetId(), tag)
 		}
-		r.selectedCases[node.GetId()] = tag
-		r.outputs[node.GetId()] = input
 		return tag, nil
 	}
 	return "", fmt.Errorf("decision %q selector %q selected an undeclared case", node.GetId(), node.GetSelector())
