@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -42,7 +43,15 @@ func NewS3Datastore(ctx context.Context, config S3Config) (*S3Datastore, error) 
 		return nil, err
 	}
 
-	provider := credentials.NewChainCredentials([]credentials.Provider{&credentials.EnvAWS{}, &credentials.IAM{Region: config.Region}})
+	providers := []credentials.Provider{&credentials.EnvAWS{}}
+	if os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" || os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" || os.Getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") != "" {
+		providers = append(providers, &credentials.IAM{Region: config.Region})
+	}
+	provider := credentials.NewChainCredentials(providers)
+	identity, err := provider.Get()
+	if err != nil || identity.AccessKeyID == "" || identity.SecretAccessKey == "" {
+		return nil, fmt.Errorf("S3 credentials are unavailable; bind AWS access credentials or configure web/container workload identity")
+	}
 	lookup := minio.BucketLookupAuto
 	if config.ForcePathStyle != nil {
 		lookup = minio.BucketLookupDNS

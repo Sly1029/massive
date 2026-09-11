@@ -101,3 +101,13 @@ func freeTCPPort() (int, error) {
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
+
+func TestS3RequiresExplicitApplicationCredentials(t *testing.T) {
+	for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI"} {
+		t.Setenv(key, "")
+	}
+	_, err := NewS3Datastore(context.Background(), S3Config{Endpoint: "localhost:9000", Bucket: "test", Region: "us-east-1"})
+	if err == nil || !strings.Contains(err.Error(), "bind AWS access credentials") {
+		t.Fatalf("missing credentials: %v", err)
+	}
+}

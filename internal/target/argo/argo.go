@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -70,6 +69,9 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 	}
 	if deploymentSpec.Profile.Target.Kind != Kind {
 		return nil, fmt.Errorf("argo target: deployment target is %q, expected argo", deploymentSpec.Profile.Target.Kind)
+	}
+	if name := deploymentSpec.Profile.ArtifactStoreBinding; len(name) > 63 || !argoFieldNamePattern.MatchString(name) {
+		return nil, fmt.Errorf("argo target: artifactStoreBinding must be a lowercase DNS label of at most 63 characters; choose a valid ConfigMap name")
 	}
 	p, err := plan.VerifyCanonicalJSON(planJSON, deploymentSpec.PlanHash)
 	if err != nil {
@@ -403,7 +405,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 		}
 		tasks = append(tasks, task)
 		if control {
-			controlTemplate, err := runtimePodTemplate(templateName, node.GetId(), env, contract, runtimeName,
+			controlTemplate, err := runtimePodTemplate(templateName, node.GetId(), env, contract, runtimeName, nil,
 				[]string{"runtime", "control", "--plan", "/var/run/massive/massive-plan.json", "--node=" + node.GetId(), "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"})
 			if err != nil {
 				return nil, "", err
@@ -416,7 +418,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			continue
 		}
 		if node.GetKind() == "map" {
-			mapTemplates, err := argoMapTemplates(node, env, contract, runtimeName, name)
+			mapTemplates, err := argoMapTemplates(node, env, contract, runtimeName, name, &d.Profile.Target)
 			if err != nil {
 				return nil, "", err
 			}
@@ -424,7 +426,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			continue
 		}
 		stepTemplate, err := runtimePodTemplate(
-			templateName, node.GetId(), env, contract, runtimeName,
+			templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target,
 			[]string{
 				"runtime", "step",
 				"--plan", "/var/run/massive/massive-plan.json",
@@ -460,17 +462,6 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 	templates = append([]any{main}, templates...)
 	occupiedNames = map[string]bool{}
 	for _, item := range templates {
-		template := item.(map[string]any)
-		if pod, ok := template["container"].(map[string]any); ok && slices.Contains(pod["args"].([]string), "--datastore-config") {
-			pod["volumeMounts"] = append(pod["volumeMounts"].([]any), map[string]any{"name": "massive-datastore", "mountPath": "/var/run/massive-datastore", "readOnly": true})
-			if secret := d.Profile.Target.ArtifactCredentialsSecret; secret != "" {
-				variables := []any{}
-				for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
-					variables = append(variables, map[string]any{"name": key, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secret, "key": key, "optional": key == "AWS_SESSION_TOKEN"}}})
-				}
-				pod["env"] = variables
-			}
-		}
 		templateName := item.(map[string]any)["name"].(string)
 		if occupiedNames[templateName] {
 			return nil, "", fmt.Errorf("argo target: generated template name %q collides; rename the contributing nodes", templateName)
@@ -500,21 +491,21 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 	}, runtimeName, nil
 }
 
-func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string) ([]any, error) {
+func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target) ([]any, error) {
 	expandName := argoFieldName("map-expand-" + node.GetId())
 	itemName := argoFieldName("map-item-" + node.GetId())
 	collectName := argoFieldName("map-collect-" + node.GetId())
 	mapName := argoFieldName("map-" + node.GetId())
 
 	expandTemplate, err := runtimePodTemplate(
-		expandName, node.GetId(), env, contract, runtimeName,
+		expandName, node.GetId(), env, contract, runtimeName, nil,
 		[]string{"runtime", "map", "expand", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
 	)
 	if err != nil {
 		return nil, err
 	}
 	itemTemplate, err := runtimePodTemplate(
-		itemName, node.GetId(), env, contract, runtimeName,
+		itemName, node.GetId(), env, contract, runtimeName, storage,
 		[]string{
 			"runtime", "map", "item",
 			"--plan", "/var/run/massive/massive-plan.json",
@@ -531,7 +522,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 		return nil, err
 	}
 	collectTemplate, err := runtimePodTemplate(
-		collectName, node.GetId(), env, contract, runtimeName,
+		collectName, node.GetId(), env, contract, runtimeName, nil,
 		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
 	)
 	if err != nil {
@@ -564,7 +555,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	return []any{mapTemplate, expandTemplate, itemTemplate, collectTemplate}, nil
 }
 
-func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName string, args []string) (map[string]any, error) {
+func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName string, storage *deployment.Target, args []string) (map[string]any, error) {
 	if env.GetContainer().GetImage() == "" {
 		return nil, fmt.Errorf("argo target: executable node %q requires an immutable container requirement", nodeID)
 	}
@@ -579,6 +570,16 @@ func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement,
 	container := map[string]any{
 		"image": runtime.GetImage(), "command": command, "args": args,
 		"volumeMounts": []any{map[string]any{"name": "massive-runtime", "mountPath": "/var/run/massive", "readOnly": true}},
+	}
+	if storage != nil {
+		container["volumeMounts"] = append(container["volumeMounts"].([]any), map[string]any{"name": "massive-datastore", "mountPath": "/var/run/massive-datastore", "readOnly": true})
+		if secret := storage.ArtifactCredentialsSecret; secret != "" {
+			variables := []any{}
+			for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+				variables = append(variables, map[string]any{"name": key, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secret, "key": key, "optional": key == "AWS_SESSION_TOKEN"}}})
+			}
+			container["env"] = variables
+		}
 	}
 	if runtime.GetWorkingDirectory() != "" {
 		container["workingDir"] = runtime.GetWorkingDirectory()
@@ -601,7 +602,7 @@ func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement,
 		}}},
 		"container": container,
 	}
-	if network := contract.GetNetwork(); network != nil {
+	if network := contract.GetNetwork(); storage != nil && network != nil {
 		switch network.GetEgress() {
 		case "none":
 			return nil, fmt.Errorf("argo target: executable node %q declares egress none, which cannot access the shared datastore; choose an egress policy that permits storage", nodeID)

@@ -167,9 +167,11 @@ class S3Datastore:
         self.bucket = descriptor["bucket"]
         prefix = descriptor.get("prefix", "")
         self.prefix = _normalize_prefix(prefix)
-        config = (
-            Config(s3={"addressing_style": "path"}) if descriptor.get("forcePathStyle") else None
-        )
+        config = None
+        if "forcePathStyle" in descriptor:
+            config = Config(
+                s3={"addressing_style": "path" if descriptor["forcePathStyle"] else "virtual"}
+            )
         self.client = cast(
             "S3Client",
             get_session().create_client(

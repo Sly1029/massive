@@ -77,14 +77,6 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	compileDir := t.TempDir()
 	workspace := prepareRunWorkspace(t, "diamond", "diamond")
 	specPath := filepath.Join(workspace, "workflow-spec.json")
-	sourceSpec, err := os.ReadFile(specPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sourceSpec = bytes.ReplaceAll(sourceSpec, []byte(`"egress":"none"`), []byte(`"egress":"any"`))
-	if err := os.WriteFile(specPath, resignWorkflowSpec(t, sourceSpec), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	compiled := runCommand(t, "go", "run", "./cmd/massive-compiler", "compile", "--spec", specPath, "--out", compileDir)
 	if compiled.err != nil {
 		t.Fatalf("compiler failed\nstdout:\n%s\nstderr:\n%s\nerror: %v", compiled.stdout, compiled.stderr, compiled.err)

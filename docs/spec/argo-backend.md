@@ -359,7 +359,7 @@ control`, validates the selected case with the same schema validator as local
 execution, and emits a numeric case index. User tags never become controller
 expressions. Decision and select tasks reuse an upstream container environment
 without invoking author code or inheriting that step's resources or secrets.
-The upstream network policy remains enforced for the control task.
+Control tasks do not receive storage credentials or an author network contract.
 
 Every ordinary dependency requires `.Succeeded`. Selects wait for all branch
 sources to finish or become inactive, require at least one successful source,
@@ -436,3 +436,11 @@ require `--datastore-config <file>` instead of `--store`. There is no compatibil
 flag or default private store. The standalone isolated invocation primitive can
 also accept an explicit local descriptor for filesystem integration tests;
 normal `massive run --store` continues to select the local backend's datastore.
+
+Storage bindings must be scoped to the application trust boundary: use a dedicated
+bucket or IAM permissions restricted to its object prefix. Invocation code is
+trusted with its bound storage credentials. The Go gateway accepts explicit AWS
+keys or configured web/container workload identity and does not discover EC2 node
+credentials. Credential acquisition failures stop invocation before artifact IO.
+Automatic pod retries remain disabled until shared publication retry behavior is
+covered by live failure-injection tests.

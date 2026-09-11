@@ -387,10 +387,6 @@ func fixturePlan(t *testing.T, name string) *plan.CompileResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for key, contract := range s.Contracts {
-		contract.Network = &spec.NetworkPolicy{Egress: "any"}
-		s.Contracts[key] = contract
-	}
 	r, err := plan.Compile(s, data)
 	if err != nil {
 		t.Fatal(err)
@@ -597,5 +593,71 @@ func TestArgoRequiresStorageEgressAndBindsCredentialsOnlyToInvocations(t *testin
 	_, err = Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, compiled.Plan))
 	if err == nil || !strings.Contains(err.Error(), "cannot access the shared datastore") {
 		t.Fatalf("incompatible egress diagnostic: %v", err)
+	}
+}
+
+func TestArgoInvocationStorageWiring(t *testing.T) {
+	for _, fixture := range []string{"finite-map", "exhaustive-decision"} {
+		for _, secret := range []string{"", "storage-credentials"} {
+			compiled := fixturePlan(t, fixture)
+			binding := deploymentForPlan(t, compiled.CanonicalJSON)
+			binding.Profile.Target.ArtifactCredentialsSecret = secret
+			binding, _, err := deployment.New(compiled.PlanHash, binding.Profile, binding.MaterializationHash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bundle, err := Compile(compiled.CanonicalJSON, binding, runtimeAssetsForPlan(t, compiled.Plan))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root map[string]any
+			if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &root); err != nil {
+				t.Fatal(err)
+			}
+			workflow := root["spec"].(map[string]any)
+			volumes := workflow["volumes"].([]any)
+			store := volumes[1].(map[string]any)
+			if store["name"] != "massive-datastore" || store["configMap"].(map[string]any)["name"] != binding.Profile.ArtifactStoreBinding {
+				t.Fatal("datastore volume lost binding")
+			}
+			for _, item := range workflow["templates"].([]any) {
+				template := item.(map[string]any)
+				pod, ok := template["container"].(map[string]any)
+				if !ok {
+					continue
+				}
+				name := template["name"].(string)
+				invocation := strings.HasPrefix(name, "map-item-") || (strings.HasPrefix(name, "step-") && name != "step-route" && name != "step-choose")
+				mounts := pod["volumeMounts"].([]any)
+				if invocation {
+					if len(mounts) != 2 {
+						t.Fatalf("%s mounts: %v", name, mounts)
+					}
+					storage := mounts[1].(map[string]any)
+					if storage["name"] != "massive-datastore" || storage["mountPath"] != "/var/run/massive-datastore" || storage["readOnly"] != true {
+						t.Fatalf("%s storage: %v", name, storage)
+					}
+				} else if len(mounts) != 1 {
+					t.Fatalf("control %s received datastore mount", name)
+				}
+				if (invocation && secret != "") != (pod["env"] != nil) {
+					t.Fatalf("%s credential wiring with secret %q: %v", name, secret, pod["env"])
+				}
+			}
+		}
+	}
+}
+
+func TestArgoRejectsInvalidArtifactConfigMapName(t *testing.T) {
+	compiled := fixturePlan(t, "linear-chain")
+	binding := deploymentForPlan(t, compiled.CanonicalJSON)
+	binding.Profile.ArtifactStoreBinding = "My_Store"
+	binding, _, err := deployment.New(compiled.PlanHash, binding.Profile, binding.MaterializationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Compile(compiled.CanonicalJSON, binding, runtimeAssetsForPlan(t, compiled.Plan))
+	if err == nil || !strings.Contains(err.Error(), "valid ConfigMap name") {
+		t.Fatalf("invalid binding: %v", err)
 	}
 }

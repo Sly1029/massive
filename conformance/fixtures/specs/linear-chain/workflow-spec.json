@@ -8,7 +8,7 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:3bea40169d1d78ae92d0ff7c345e26b1d1a4644cc421fdaed86df0fa06829f40",
+  "specHash": "sha256:f4edde0cd25648a35c6c08521fd74f6c45514c47fa763987cdc1b320da6b9f4b",
   "workflow": {
     "name": "linear-chain",
     "inputSchema": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -115,7 +115,7 @@
         "memory": "512Mi"
       },
       "network": {
-        "egress": "none"
+        "egress": "any"
       }
     }
   }

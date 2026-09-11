@@ -8,7 +8,7 @@
     "recipe": "workflow-spec",
     "recipeVersion": 1
   },
-  "specHash": "sha256:5cee880f2f7767f0e8ff84d18d45b81be9b84a957b25ff49bbbd047cf761eca3",
+  "specHash": "sha256:c1fafa379e23bd017aeb8507695f368bbd1f5e879367cb468419cf4a4bb7ed12",
   "workflow": {
     "name": "exhaustive-decision",
     "inputSchema": "sha256:f0765dbf409c74f001806c446f2cf171d8c46b5b15779d54423dde921a4b0670",
@@ -159,7 +159,7 @@
   "contracts": {
     "sha256:8888888888888888888888888888888888888888888888888888888888888888": {
       "environmentRef": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
-      "network": { "egress": "none" }
+      "network": { "egress": "any" }
     }
   }
 }
