@@ -44,47 +44,39 @@ graph = GraphBuilder(
 )
 
 
-@graph.step()
-def double(context: StepContext[None, Request]) -> Result:
+def double(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value * 2)
 
 
-@graph.step()
-async def increment(context: StepContext[None, Request]) -> Result:
+async def increment(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
-@graph.step()
-def capture_sync_invocation(context: StepContext[None, Request]) -> InvocationResult:
+def capture_sync_invocation(context: StepContext[Request]) -> InvocationResult:
     return InvocationResult(idempotency_key=context.invocation.idempotency_key)
 
 
-@graph.step()
-async def capture_async_invocation(context: StepContext[None, Request]) -> InvocationResult:
+async def capture_async_invocation(context: StepContext[Request]) -> InvocationResult:
     return InvocationResult(idempotency_key=context.invocation.idempotency_key)
 
 
-@graph.step()
-def explode(context: StepContext[None, Request]) -> Result:
+def explode(context: StepContext[Request]) -> Result:
     raise RuntimeError("intentional runner failure")
 
 
-@graph.step()
-def invalid_output(context: StepContext[None, Request]) -> Result:
+def invalid_output(context: StepContext[Request]) -> Result:
     return {"value": -1}  # type: ignore[return-value]
 
 
-@graph.step()
-def decimal_result(context: StepContext[None, Request]) -> DecimalResult:
+def decimal_result(context: StepContext[Request]) -> DecimalResult:
     return DecimalResult(value=Decimal(context.inputs.value) / Decimal(2))
 
 
-@graph.step()
-def decimal_echo(context: StepContext[None, DecimalResult]) -> DecimalResult:
+def decimal_echo(context: StepContext[DecimalResult]) -> DecimalResult:
     return context.inputs
 
 
-def changed_file(context: StepContext[None, Request]) -> Blob:
+def changed_file(context: StepContext[Request]) -> Blob:
     path = context.workspace / "output.txt"
     path.write_text("snapshot")
     result = Blob.from_path(path)
@@ -92,11 +84,11 @@ def changed_file(context: StepContext[None, Request]) -> Blob:
     return result
 
 
-async def plain_increment(context: StepContext[None, Request]) -> Result:
+async def plain_increment(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
-def workspace_file(ctx: StepContext[None, Request]) -> Blob:
+def workspace_file(ctx: StepContext[Request]) -> Blob:
     import json
 
     print(json.dumps(str(ctx.workspace)))
@@ -107,12 +99,12 @@ def workspace_file(ctx: StepContext[None, Request]) -> Blob:
     return Blob.from_path(path)
 
 
-def workspace_failure(ctx: StepContext[None, Request]) -> Blob:
+def workspace_failure(ctx: StepContext[Request]) -> Blob:
     workspace_file(ctx)
     raise RuntimeError("workspace failure")
 
 
-def workspace_invalid_output(ctx: StepContext[None, Request]) -> Blob:
+def workspace_invalid_output(ctx: StepContext[Request]) -> Blob:
     blob = workspace_file(ctx)
     blob.path().write_text("changed after snapshot")
     return blob

@@ -168,6 +168,24 @@ def test_runner_uses_descriptor_exit_code_for_invalid_descriptor(tmp_path: Path)
     assert result.returncode == 64
 
 
+@pytest.mark.parametrize("field", ["channelReads", "channelWrites"])
+def test_runner_rejects_removed_channel_fields(tmp_path: Path, field: str) -> None:
+    descriptor_path, descriptor, _store = _descriptor(tmp_path, export="double")
+    descriptor[field] = []
+    descriptor_path.write_text(json.dumps(descriptor))
+    result = _run(descriptor_path)
+    assert result.returncode == 64
+
+
+def test_runner_requires_obsolete_descriptors_to_be_rebuilt(tmp_path: Path) -> None:
+    descriptor_path, descriptor, _store = _descriptor(tmp_path, export="double")
+    descriptor.update(schemaVersion=2, encoding="json-v2")
+    descriptor_path.write_text(json.dumps(descriptor))
+    result = _run(descriptor_path)
+    assert result.returncode == 64
+    assert "rebuild with the current Massive release" in result.stderr
+
+
 def test_runner_reports_malformed_schema_as_schema_failure(tmp_path: Path) -> None:
     descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
     schema_ref = descriptor["input"]["schema"]
@@ -376,8 +394,8 @@ def _descriptor(
     package_hash = "sha256:" + "d" * 64
     descriptor: dict[str, Any] = {
         "kind": "StepInvocationDescriptor",
-        "schemaVersion": 2,
-        "encoding": "json-v2",
+        "schemaVersion": 3,
+        "encoding": "json-v3",
         "planHash": "sha256:" + "a" * 64,
         "projectKey": PROJECT_KEY,
         "runId": "python-runner-test",

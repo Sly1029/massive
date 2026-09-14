@@ -127,8 +127,8 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 	// Assert their distinct provenance on the un-normalized descriptor.
 	planPackageHash := compiled.Plan.GetSourcePackages()[0].GetPackageHash()
 	descriptor := invoker.descriptors[0]
-	if descriptor.SchemaVersion != 2 || descriptor.Encoding != "json-v2" {
-		t.Fatalf("descriptor protocol = (%d, %q), want v2/json-v2", descriptor.SchemaVersion, descriptor.Encoding)
+	if descriptor.SchemaVersion != 3 || descriptor.Encoding != "json-v3" {
+		t.Fatalf("descriptor protocol = (%d, %q), want v3/json-v3", descriptor.SchemaVersion, descriptor.Encoding)
 	}
 	if descriptor.ProjectKey != NormalizeProjectKey("acme/security-workflows") {
 		t.Fatalf("descriptor projectKey = %q", descriptor.ProjectKey)

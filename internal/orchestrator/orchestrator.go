@@ -760,8 +760,8 @@ func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey 
 
 	return StepInvocationDescriptor{
 		Kind:          "StepInvocationDescriptor",
-		SchemaVersion: 2,
-		Encoding:      "json-v2",
+		SchemaVersion: 3,
+		Encoding:      "json-v3",
 		PlanHash:      planHash,
 		ProjectKey:    projectKey,
 		RunID:         runID,
@@ -796,9 +796,7 @@ func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey 
 			ManifestKey: runOutputManifestKey(projectKey, runID, node.GetId(), nil, 1).String(),
 			Schema:      node.GetOutputSchema(),
 		},
-		ChannelReads:  []ChannelArtifactRef{},
-		ChannelWrites: []ChannelArtifactDestination{},
-		Datastore:     binding,
+		Datastore: binding,
 	}, nil
 }
 

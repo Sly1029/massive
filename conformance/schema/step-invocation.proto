@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-package massive.runtime.v2;
+package massive.runtime.v3;
 
 option go_package = "github.com/Sly1029/massive/conformance/schema/runtimepb;runtimepb";
 
-// Runner boundary owned by Massive rather than any language SDK. The v2 wire
+// Runner boundary owned by Massive rather than any language SDK. The v3 wire
 // format is the canonical proto-JSON projection of this message, followed by
 // canonical-json-v0 key ordering. All required scalars use explicit presence;
 // the frozen JSON Schema applies value and conditional datastore constraints.
@@ -23,8 +23,8 @@ message StepInvocationDescriptor {
   optional string environment_ref = 12;
   optional DataArtifactRef input = 13;
   optional DataArtifactManifestDestination output = 14;
-  repeated ChannelArtifactRef channel_reads = 15;
-  repeated ChannelArtifactDestination channel_writes = 16;
+  reserved 15, 16;
+  reserved "channel_reads", "channel_writes";
   optional Datastore datastore = 17;
 }
 
@@ -59,11 +59,6 @@ message ArtifactRef {
   optional string content_type = 3;
 }
 
-message ArtifactDestination {
-  optional string key = 1;
-  optional string content_type = 2;
-}
-
 message DataArtifactRef {
   optional ArtifactRef artifact = 1;
   optional string schema = 2;
@@ -74,19 +69,7 @@ message DataArtifactManifestDestination {
   optional string schema = 2;
 }
 
-message ChannelArtifactRef {
-  optional string channel_name = 1;
-  optional ArtifactRef artifact = 2;
-  optional string schema = 3;
-}
-
-message ChannelArtifactDestination {
-  optional string channel_name = 1;
-  optional ArtifactDestination artifact = 2;
-  optional string schema = 3;
-}
-
-// The v2 JSON projection predates this proto and uses a flat tagged union.
+// The JSON projection uses a flat tagged datastore union.
 // kind selects the valid field set; the JSON Schema rejects mixed variants.
 message Datastore {
   optional string kind = 1;

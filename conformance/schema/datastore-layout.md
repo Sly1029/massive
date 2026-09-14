@@ -275,7 +275,7 @@ implemented by this transport slice.
 The v4 run-manifest protocol has no compatibility reader or dual-write mode.
 An implementation must reject an earlier run manifest instead of guessing or
 silently upgrading its routing state. The step invocation descriptor is
-independently versioned and remains `schemaVersion: 2`, `encoding: "json-v2"`.
+independently versioned and remains `schemaVersion: 3`, `encoding: "json-v3"`.
 
 Examples:
 

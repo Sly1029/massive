@@ -26,8 +26,8 @@ from pydantic import ValidationError as PydanticValidationError
 from pydantic_core import PydanticSerializationError
 from referencing.exceptions import Unresolvable
 
+from ._step import StepDefinition
 from .artifact import ArtifactError, ArtifactRuntime, Destination, Producer
-from .builder import StepDefinition
 from .canonical import (
     CanonicalJsonError,
     JsonValue,
@@ -54,7 +54,7 @@ _DESCRIPTOR_EXIT = 64
 _SCHEMA_EXIT = 65
 _STEP_EXIT = 66
 
-type StepFunction = Callable[[StepContext[None, object]], object | Awaitable[object]]
+type StepFunction = Callable[[StepContext[object]], object | Awaitable[object]]
 
 
 class ArtifactRef(TypedDict):
@@ -100,8 +100,8 @@ class SourcePackageDescriptor(TypedDict):
 
 class StepInvocationDescriptor(TypedDict):
     kind: Literal["StepInvocationDescriptor"]
-    schemaVersion: Literal[2]
-    encoding: Literal["json-v2"]
+    schemaVersion: Literal[3]
+    encoding: Literal["json-v3"]
     planHash: str
     projectKey: str
     runId: str
@@ -149,9 +149,8 @@ class _ResolvedStep:
             input_value = self.input_adapter.validate_python(input_value, context=files)
         except PydanticValidationError as error:
             raise SchemaError(f"input does not satisfy the step input type: {error}") from error
-        context = StepContext[None, object](
+        context = StepContext[object](
             inputs=input_value,
-            deps=None,
             workspace=workspace,
             invocation=InvocationContext(
                 run_id=descriptor["runId"],
@@ -229,7 +228,7 @@ def _load_descriptor(path: Path) -> StepInvocationDescriptor:
     try:
         _descriptor_validator().validate(descriptor)
     except JsonSchemaValidationError as error:
-        raise DescriptorError(f"descriptor does not satisfy its JSON Schema: {error}") from error
+        raise DescriptorError(f"descriptor does not satisfy its JSON Schema; rebuild with the current Massive release: {error}") from error
     return cast(StepInvocationDescriptor, descriptor)
 
 
@@ -403,17 +402,12 @@ def _load_step(symbol: SymbolDescriptor, source_root: Path) -> _ResolvedStep:
         except Exception as error:
             raise DescriptorError(f"cannot import {module_name}: {error}") from error
     exported = getattr(module, export, None)
-    if isinstance(exported, StepDefinition):
-        step = cast(StepDefinition[None, object, object], exported)
-    elif callable(exported):
-        try:
-            step = StepDefinition[None, object, object].from_callable(cast(StepFunction, exported))
-        except (TypeError, ValueError, NameError) as error:
-            raise DescriptorError(f"export {export!r} is not a typed step: {error}") from error
-    else:
+    if not callable(exported):
         raise DescriptorError(f"export {export!r} is not a step function")
-    if step.deps_type is not type(None):
-        raise DescriptorError("Python runner does not support dependency bindings")
+    try:
+        step = StepDefinition[object, object].from_callable(cast(StepFunction, exported))
+    except (TypeError, ValueError, NameError) as error:
+        raise DescriptorError(f"export {export!r} is not a typed step: {error}") from error
     return _ResolvedStep(
         function=step.function,
         input_adapter=TypeAdapter[object](step.input_type),

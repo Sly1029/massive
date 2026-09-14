@@ -24,16 +24,14 @@ graph = GraphBuilder(
 )
 
 
-@graph.step()
-def unpack(context: StepContext[None, Request]) -> list[int]:
+def unpack(context: StepContext[Request]) -> list[int]:
     return context.inputs.values
 
 
-format_item = graph.step()(format_value)
+format_item = format_value
 
 
-@graph.step()
-def collect(context: StepContext[None, list[str]]) -> Result:
+def collect(context: StepContext[list[str]]) -> Result:
     return Result(labels=context.inputs)
 
 

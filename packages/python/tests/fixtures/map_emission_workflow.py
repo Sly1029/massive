@@ -21,11 +21,11 @@ class Result(BaseModel):
     label: str
 
 
-def load_items(context: StepContext[None, Request]) -> list[Item]:
+def load_items(context: StepContext[Request]) -> list[Item]:
     return [Item(detail=Detail(value=context.inputs.value))]
 
 
-def render_item(context: StepContext[None, Item]) -> Result:
+def render_item(context: StepContext[Item]) -> Result:
     return Result(label=str(context.inputs.detail.value))
 
 
@@ -40,7 +40,7 @@ graph = GraphBuilder(
         )
     ),
 )
-items = graph.add(graph.step()(load_items))
-results = graph.map(items, graph.step()(render_item), id="render-items", concurrency=3)
+items = graph.add(load_items)
+results = graph.map(items, render_item, id="render-items", concurrency=3)
 graph.edge_from(graph.start).to(items)
 graph.edge_from(results).to(graph.end)

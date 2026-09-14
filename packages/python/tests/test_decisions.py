@@ -66,63 +66,63 @@ class ManualReview(BaseModel):
 InnerRoute = Annotated[FastTrack | ManualReview, Field(discriminator="kind")]
 
 
-def classify(context: StepContext[None, Request]) -> Route:
+def classify(context: StepContext[Request]) -> Route:
     return Approved(kind="approved", value=context.inputs.value)
 
 
-def classify_without_discriminator(context: StepContext[None, Request]) -> Approved | Rejected:
+def classify_without_discriminator(context: StepContext[Request]) -> Approved | Rejected:
     return Approved(kind="approved", value=context.inputs.value)
 
 
-def classify_unicode(context: StepContext[None, Request]) -> UnicodeRoute:
+def classify_unicode(context: StepContext[Request]) -> UnicodeRoute:
     return Astral(kind="\U00010000")
 
 
-def classify_multi_tag(context: StepContext[None, Request]) -> MultiTagRoute:
+def classify_multi_tag(context: StepContext[Request]) -> MultiTagRoute:
     return MultiTagged(kind="approved", value=context.inputs.value)
 
 
-def approve(context: StepContext[None, Approved]) -> Result:
+def approve(context: StepContext[Approved]) -> Result:
     return Result(value=context.inputs.value)
 
 
-def reject(context: StepContext[None, Rejected]) -> Result:
+def reject(context: StepContext[Rejected]) -> Result:
     return Result(value=0)
 
 
-def astral(context: StepContext[None, Astral]) -> Result:
+def astral(context: StepContext[Astral]) -> Result:
     return Result(value=1)
 
 
-def private_use(context: StepContext[None, PrivateUse]) -> Result:
+def private_use(context: StepContext[PrivateUse]) -> Result:
     return Result(value=2)
 
 
-def review(context: StepContext[None, Approved]) -> InnerRoute:
+def review(context: StepContext[Approved]) -> InnerRoute:
     return FastTrack(kind="fast", value=context.inputs.value)
 
 
-def fast_track(context: StepContext[None, FastTrack]) -> Result:
+def fast_track(context: StepContext[FastTrack]) -> Result:
     return Result(value=context.inputs.value)
 
 
-def manual_review(context: StepContext[None, ManualReview]) -> Result:
+def manual_review(context: StepContext[ManualReview]) -> Result:
     return Result(value=context.inputs.value)
 
 
-def approved_items(context: StepContext[None, Approved]) -> list[Approved]:
+def approved_items(context: StepContext[Approved]) -> list[Approved]:
     return [context.inputs]
 
 
-def map_approved(context: StepContext[None, Approved]) -> Result:
+def map_approved(context: StepContext[Approved]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
-def collect_approved_results(context: StepContext[None, list[Result]]) -> Result:
+def collect_approved_results(context: StepContext[list[Result]]) -> Result:
     return context.inputs[0]
 
 
-def rejected_results(context: StepContext[None, Rejected]) -> list[Result]:
+def rejected_results(context: StepContext[Rejected]) -> list[Result]:
     return [Result(value=0)]
 
 
@@ -133,9 +133,9 @@ def test_emit_serializes_an_exhaustive_pydantic_decision_as_data_only_ir() -> No
         output_type=Result,
         defaults=_defaults(),
     )
-    classified = graph.add(graph.step()(classify))
-    approved = graph.add(graph.step()(approve))
-    rejected = graph.add(graph.step()(reject))
+    classified = graph.add(classify)
+    approved = graph.add(approve)
+    rejected = graph.add(reject)
 
     route = graph.decision(classified, on="kind", id="review-route")
     approved_input = route.case(Approved)
@@ -175,11 +175,11 @@ def test_map_can_follow_a_decision_branch_and_select_its_downstream_result() -> 
         output_type=Result,
         defaults=_defaults(),
     )
-    classified = graph.add(graph.step()(classify))
-    approved_source = graph.add(graph.step()(approved_items))
-    approved_map = graph.map(approved_source, graph.step()(map_approved), id="map-approved")
-    approved_result = graph.add(graph.step()(collect_approved_results))
-    rejected_result = graph.add(graph.step()(reject))
+    classified = graph.add(classify)
+    approved_source = graph.add(approved_items)
+    approved_map = graph.map(approved_source, map_approved, id="map-approved")
+    approved_result = graph.add(collect_approved_results)
+    rejected_result = graph.add(reject)
     route = graph.decision(classified, on="kind", id="review-route")
     approved_input = route.case(Approved)
     rejected_input = route.case(Rejected)
@@ -204,10 +204,10 @@ def test_select_accepts_a_direct_map_result_with_a_synthesized_list_output_type(
         output_type=list[Result],
         defaults=_defaults(),
     )
-    classified = graph.add(graph.step()(classify))
-    approved_source = graph.add(graph.step()(approved_items))
-    approved_map = graph.map(approved_source, graph.step()(map_approved), id="map-approved")
-    rejected_result = graph.add(graph.step()(rejected_results))
+    classified = graph.add(classify)
+    approved_source = graph.add(approved_items)
+    approved_map = graph.map(approved_source, map_approved, id="map-approved")
+    rejected_result = graph.add(rejected_results)
     route = graph.decision(classified, on="kind", id="review-route")
     approved_input = route.case(Approved)
     rejected_input = route.case(Rejected)
@@ -230,12 +230,12 @@ def test_decision_rejects_nonportable_or_ambiguous_authoring_forms() -> None:
         output_type=Result,
         defaults=_defaults(),
     )
-    undecorated = graph.add(graph.step()(classify_without_discriminator))
+    undecorated = graph.add(classify_without_discriminator)
 
     with pytest.raises(TypeError, match="Pydantic discriminated union"):
         graph.decision(undecorated, on="kind", id="undecorated")
 
-    classified = graph.add(graph.step()(classify))
+    classified = graph.add(classify)
     with pytest.raises(TypeError, match="does not match"):
         graph.decision(classified, on="route", id="wrong-selector")
 
@@ -250,7 +250,7 @@ def test_decision_rejects_a_model_with_multiple_discriminator_tags() -> None:
         output_type=Result,
         defaults=_defaults(),
     )
-    classified = graph.add(graph.step()(classify_multi_tag))
+    classified = graph.add(classify_multi_tag)
 
     with pytest.raises(
         TypeError,
@@ -269,9 +269,9 @@ def test_decision_requires_exactly_one_connected_case_and_matching_selected_outp
         output_type=Result,
         defaults=_defaults(),
     )
-    classified = graph.add(graph.step()(classify))
-    approved = graph.add(graph.step()(approve))
-    rejected = graph.add(graph.step()(reject))
+    classified = graph.add(classify)
+    approved = graph.add(approve)
+    rejected = graph.add(reject)
     route = graph.decision(classified, on="kind", id="case-errors")
 
     approved_input = route.case(Approved)
@@ -298,9 +298,9 @@ def test_decision_cases_and_select_inputs_use_utf16_ordering() -> None:
         output_type=Result,
         defaults=_defaults(),
     )
-    classified = graph.add(graph.step()(classify_unicode))
-    astral_result = graph.add(graph.step()(astral))
-    private_use_result = graph.add(graph.step()(private_use))
+    classified = graph.add(classify_unicode)
+    astral_result = graph.add(astral)
+    private_use_result = graph.add(private_use)
     route = graph.decision(classified, on="kind", id="unicode-route")
     graph.edge_from(graph.start).to(classified)
     graph.edge_from(route.case(Astral)).to(astral_result)
@@ -334,11 +334,11 @@ def test_emit_allows_an_outer_select_to_choose_a_nested_select() -> None:
         output_type=Result,
         defaults=_defaults(),
     )
-    classified = graph.add(graph.step()(classify))
-    reviewed = graph.add(graph.step()(review))
-    fast_result = graph.add(graph.step()(fast_track))
-    manual_result = graph.add(graph.step()(manual_review))
-    rejected_result = graph.add(graph.step()(reject))
+    classified = graph.add(classify)
+    reviewed = graph.add(review)
+    fast_result = graph.add(fast_track)
+    manual_result = graph.add(manual_review)
+    rejected_result = graph.add(reject)
 
     outer = graph.decision(classified, on="kind", id="outer")
     graph.edge_from(graph.start).to(classified)
@@ -371,11 +371,11 @@ def test_outer_select_rejects_a_source_from_only_one_nested_case() -> None:
         output_type=Result,
         defaults=_defaults(),
     )
-    classified = graph.add(graph.step()(classify))
-    reviewed = graph.add(graph.step()(review))
-    fast_result = graph.add(graph.step()(fast_track))
-    manual_result = graph.add(graph.step()(manual_review))
-    rejected_result = graph.add(graph.step()(reject))
+    classified = graph.add(classify)
+    reviewed = graph.add(review)
+    fast_result = graph.add(fast_track)
+    manual_result = graph.add(manual_review)
+    rejected_result = graph.add(reject)
 
     outer = graph.decision(classified, on="kind", id="outer")
     graph.edge_from(graph.start).to(classified)
@@ -404,7 +404,7 @@ def _defaults():
     )
 
 
-def _emit(graph: GraphBuilder[Any, Any, Any]):
+def _emit(graph: GraphBuilder[Any, Any]):
     return graph.emit(
         source=source_package(
             root=Path(__file__).parent,

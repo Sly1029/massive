@@ -1,4 +1,4 @@
-name: Fuzz graphs and execution journals
+name: Fuzz graphs, journals, and invocation protocols
 
 on:
   pull_request:
@@ -32,5 +32,7 @@ jobs:
         if: failure()
         with:
           name: execution-fuzz-reproducers
-          path: internal/**/testdata/fuzz/**
+          path: |
+            internal/**/testdata/fuzz/**
+            conformance/schema/testdata/fuzz/**
           if-no-files-found: ignore

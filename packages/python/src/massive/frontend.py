@@ -48,7 +48,7 @@ class EntrypointRequest:
 
 @dataclass(frozen=True, slots=True)
 class GraphSelection:
-    graph: GraphBuilder[Any, Any, Any]
+    graph: GraphBuilder[Any, Any]
     export_name: str
 
 
@@ -98,10 +98,10 @@ def _write_diagnostic(message: str) -> None:
 
 
 def _select_graph(request: EntrypointRequest, module: ModuleType) -> GraphSelection:
-    graphs: dict[str, GraphBuilder[Any, Any, Any]] = {}
+    graphs: dict[str, GraphBuilder[Any, Any]] = {}
     for name, value in vars(module).items():
         if isinstance(value, GraphBuilder):
-            graphs[name] = cast(GraphBuilder[Any, Any, Any], value)
+            graphs[name] = cast(GraphBuilder[Any, Any], value)
     if request.selector is not None:
         selected = graphs.get(request.selector)
         if selected is None:

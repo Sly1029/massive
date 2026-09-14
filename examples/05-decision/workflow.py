@@ -27,7 +27,7 @@ class Result(BaseModel):
     message: str
 
 
-graph: GraphBuilder[None, Request, Result] = GraphBuilder(
+graph: GraphBuilder[Request, Result] = GraphBuilder(
     name="decision-example",
     input_type=Request,
     output_type=Result,
@@ -40,20 +40,17 @@ graph: GraphBuilder[None, Request, Result] = GraphBuilder(
 )
 
 
-@graph.step()
-def classify(context: StepContext[None, Request]) -> Classification:
+def classify(context: StepContext[Request]) -> Classification:
     if context.inputs.score >= 70:
         return Approved(score=context.inputs.score)
     return Rejected(reason="score below threshold")
 
 
-@graph.step()
-def approve(context: StepContext[None, Approved]) -> Result:
+def approve(context: StepContext[Approved]) -> Result:
     return Result(message=f"approved:{context.inputs.score}")
 
 
-@graph.step()
-def reject(context: StepContext[None, Rejected]) -> Result:
+def reject(context: StepContext[Rejected]) -> Result:
     return Result(message=f"rejected:{context.inputs.reason}")
 
 

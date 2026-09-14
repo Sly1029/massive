@@ -32,19 +32,19 @@ class Right(BaseModel):
 Route = Annotated[Left | Right, Field(discriminator="kind")]
 
 
-def classify(ctx: StepContext[None, Value]) -> Route:
+def classify(ctx: StepContext[Value]) -> Route:
     return Left(kind="left", value=ctx.inputs.value)
 
 
-def left(ctx: StepContext[None, Left]) -> Value:
+def left(ctx: StepContext[Left]) -> Value:
     return Value(value=ctx.inputs.value)
 
 
-def right(ctx: StepContext[None, Right]) -> Value:
+def right(ctx: StepContext[Right]) -> Value:
     return Value(value=ctx.inputs.value)
 
 
-def identity(ctx: StepContext[None, Value]) -> Value:
+def identity(ctx: StepContext[Value]) -> Value:
     return ctx.inputs
 
 
@@ -87,15 +87,15 @@ def test_generated_nested_decisions_compile(compiler: Path, shape) -> None:
     def build(graph, source, shape, prefix):
         if isinstance(shape, int):
             for i in range(shape):
-                target = graph.add(graph.step()(identity), id=f"{prefix}-task-{i}")
+                target = graph.add(identity, id=f"{prefix}-task-{i}")
                 graph.edge_from(source).to(target)
                 source = target
             return source
-        classifier = graph.add(graph.step()(classify), id=f"{prefix}-classify")
+        classifier = graph.add(classify, id=f"{prefix}-classify")
         graph.edge_from(source).to(classifier)
         route = graph.decision(classifier, on="kind", id=f"{prefix}-route")
-        a = graph.add(graph.step()(left), id=f"{prefix}-left")
-        b = graph.add(graph.step()(right), id=f"{prefix}-right")
+        a = graph.add(left, id=f"{prefix}-left")
+        b = graph.add(right, id=f"{prefix}-right")
         graph.edge_from(route.case(Left)).to(a)
         graph.edge_from(route.case(Right)).to(b)
         a = build(graph, a, shape[0], f"{prefix}-a")
@@ -128,8 +128,8 @@ def test_generated_nested_decisions_compile(compiler: Path, shape) -> None:
 )
 def test_handles_cannot_cross_graphs_with_colliding_ids(node_id: str, endpoint: str) -> None:
     a, b = new_graph(), new_graph()
-    local = a.add(a.step()(identity), id=node_id)
-    foreign = b.add(b.step()(identity), id=node_id)
+    local = a.add(identity, id=node_id)
+    foreign = b.add(identity, id=node_id)
     with pytest.raises(ValueError, match="different graph"):
         if endpoint == "source":
             a.edge_from(foreign)
@@ -169,14 +169,14 @@ def test_generated_tree_shapes_roundtrip(paths) -> None:
 
 def test_decisions_and_selects_reject_foreign_handles_with_matching_ids() -> None:
     a, b = new_graph(), new_graph()
-    sources = [g.add(g.step()(classify), id="classifier") for g in (a, b)]
+    sources = [g.add(classify, id="classifier") for g in (a, b)]
     with pytest.raises(ValueError, match="different graph"):
         a.decision(sources[1], on="kind", id="foreign")
     routes = [g.decision(source, on="kind", id="route") for g, source in zip((a, b), sources)]
     lefts, rights, cases = [], [], []
     for graph, route in zip((a, b), routes):
-        first = graph.add(graph.step()(left), id="left")
-        second = graph.add(graph.step()(right), id="right")
+        first = graph.add(left, id="left")
+        second = graph.add(right, id="right")
         case = route.case(Left)
         graph.edge_from(case).to(first)
         graph.edge_from(route.case(Right)).to(second)
@@ -191,7 +191,7 @@ def test_decisions_and_selects_reject_foreign_handles_with_matching_ids() -> Non
 
 def test_emission_freezes_previously_created_edge_paths() -> None:
     graph = new_graph()
-    node = graph.add(graph.step()(identity))
+    node = graph.add(identity)
     path = graph.edge_from(graph.start)
     path.to(node).to(graph.end)
     graph.emit(

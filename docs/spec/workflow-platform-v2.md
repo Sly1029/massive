@@ -143,57 +143,15 @@ first-class decisions, maps, broadcasts, and joins. Massive must own persistence
 durability, artifact handling, and compilation because Pydantic Graph does not
 provide those contracts.
 
-The following is a forward-looking sketch of the intended reducer tier. It is
-not executable against the current SDK: finite `map()` returning an ordered
-`list[R]` is implemented, while dependency injection, reducer contexts, and
-`reduce()` remain future work.
+The executable authoring interface is documented in the
+[Python guide](../../packages/python/README.md). Register ordinary top-level
+functions with `graph.add(function, contract=...)` or
+`graph.map(source, function, id=..., contract=...)`. `StepContext[Input]` carries
+inputs and invocation facilities. `GraphBuilder[Input, Output]` has no dependency
+or mutable-state type parameter. Finite maps return ordered lists; a normal step
+can reduce that list.
 
-```python
-from pydantic import BaseModel
-from massive import GraphBuilder, ReducerContext, StepContext, execution
-
-
-class Item(BaseModel):
-    key: str
-
-
-class Finding(BaseModel):
-    item: Item
-    count: int
-
-
-scan = execution(
-    environment="native-tools",
-    resources={"cpu": 2, "memory": "4Gi"},
-    timeout="20m",
-)
-
-g = GraphBuilder(deps_type=Services)
-
-
-@g.step(contract=scan)
-async def enumerate_items(ctx: StepContext[Services, Request]) -> list[Item]:
-    return await ctx.deps.catalog.items(ctx.inputs)
-
-
-@g.step(contract=scan)
-def inspect(ctx: StepContext[Services, Item]) -> Finding:
-    return run_inspection(ctx.inputs)
-
-
-@g.reducer(initial=0)
-def total(ctx: ReducerContext[Services, int, Finding]) -> int:
-    return ctx.accumulator + ctx.item.count
-
-
-items = g.add(enumerate_items)
-findings = g.map(items, inspect, concurrency=20)
-result = g.reduce(findings, total)
-g.add(g.edge_from(result).to(g.end))
-```
-
-The reducer syntax may change after prototypes and real workflow rewrites. The
-following properties are not optional:
+The following properties are not optional:
 
 - topology is explicit and inspectable before execution;
 - step inputs and outputs are statically typed and validated at runtime;
@@ -207,15 +165,14 @@ following properties are not optional:
 
 `StepContext.workspace` is a writable invocation directory for generated files;
 its lifetime and cleanup are defined in [file artifacts](file-artifacts.md#author-workspace).
-`StepContext.inputs` carries workflow data. `StepContext.deps` contains typed
-service or capability handles only. Dependencies must not become an invisible
-second dataflow channel. Their deployment binding and cache participation are
-explicit.
+`StepContext.inputs` carries workflow data. Construct task-local service clients
+from deployment-bound configuration in application code. Injecting arbitrary
+Python objects into isolated workers is not part of the portable runtime.
 
-The decorator should remain small. A step references a reusable execution
-contract and may set the few semantic behaviors that belong to the node. CPU,
-memory, secrets, network, timeout, retry limits, environment, executor, and
-capabilities belong in the contract, with workflow defaults and step overlays.
+Registration keeps the original function callable. Execution requirements belong
+to graph placement, so one function can be reused with different contracts. The
+current contract contains environment, CPU, memory, secrets, and network intent;
+timeout and retry policy remain roadmap work.
 
 ## Graph semantics
 

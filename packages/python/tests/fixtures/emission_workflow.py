@@ -28,8 +28,7 @@ graph = GraphBuilder(
 )
 
 
-@graph.step()
-def increment(context: StepContext[None, Request]) -> Result:
+def increment(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 

@@ -22,11 +22,6 @@ export interface ArtifactRef {
   readonly contentType: string;
 }
 
-export interface ArtifactDestination {
-  readonly key: string;
-  readonly contentType: string;
-}
-
 export interface DataArtifactRef {
   readonly artifact: ArtifactRef;
   readonly schema: HashRef;
@@ -34,18 +29,6 @@ export interface DataArtifactRef {
 
 export interface DataArtifactManifestDestination {
   readonly manifestKey: string;
-  readonly schema: HashRef;
-}
-
-export interface ChannelArtifactRef {
-  readonly channelName: string;
-  readonly artifact: ArtifactRef;
-  readonly schema: HashRef;
-}
-
-export interface ChannelArtifactDestination {
-  readonly channelName: string;
-  readonly artifact: ArtifactDestination;
   readonly schema: HashRef;
 }
 
@@ -77,8 +60,8 @@ export type DatastoreDescriptor =
 
 export interface StepInvocationDescriptor {
   readonly kind: "StepInvocationDescriptor";
-  readonly schemaVersion: 2;
-  readonly encoding: "json-v2";
+  readonly schemaVersion: 3;
+  readonly encoding: "json-v3";
   readonly planHash: HashRef;
   readonly projectKey: string;
   readonly runId: string;
@@ -90,8 +73,6 @@ export interface StepInvocationDescriptor {
   readonly environmentRef: HashRef;
   readonly input: DataArtifactRef;
   readonly output: DataArtifactManifestDestination;
-  readonly channelReads: readonly ChannelArtifactRef[];
-  readonly channelWrites: readonly ChannelArtifactDestination[];
   readonly datastore: DatastoreDescriptor;
 }
 
@@ -115,7 +96,7 @@ export async function parseStepInvocationDescriptor(
     throw new DescriptorError(
       `StepInvocationDescriptor JSON schema violation ${
         formatAjvError(validate.errors)
-      }`,
+      }; rebuild with the current Massive release`,
     );
   }
 
@@ -151,16 +132,6 @@ export async function parseStepInvocationDescriptor(
       manifestKey: descriptor.output.manifestKey,
       schema: descriptor.output.schema,
     },
-    channelReads: [...(descriptor.channelReads ?? [])].map((channel) => ({
-      channelName: channel.channelName,
-      artifact: { ...channel.artifact },
-      schema: channel.schema,
-    })),
-    channelWrites: [...(descriptor.channelWrites ?? [])].map((channel) => ({
-      channelName: channel.channelName,
-      artifact: { ...channel.artifact },
-      schema: channel.schema,
-    })),
     datastore: decodeDatastore(descriptor.datastore),
   };
 }

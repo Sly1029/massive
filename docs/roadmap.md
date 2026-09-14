@@ -22,7 +22,8 @@ Implemented:
 - Python `Blob` and `Tree` references transport files through the existing
   filesystem/S3 datastore, including ordered subprocess maps. Hydration is
   invocation-local; explicit snapshots publish mutations.
-- Top-level typed functions work with or without decorator syntax.
+- Top-level typed functions register directly through `add()` and `map()`.
+  `StepContext[Input]` exposes only implemented invocation capabilities.
 - Shrinking Python graph generators exercise nested decisions through the Go
   compiler; continuous Go fuzzing covers raw parsing, DAG shapes, and exhaustive
   decision/select semantics, partial map outcome identities, journal parsing,
@@ -122,3 +123,10 @@ CLI retirement removes the Deno-only emit cache, binary build cache, store-prefi
 flags/environment aliases, and bare `-` input spelling. Use an explicit `--store`
 root and `--input` or `--input-file`; no compatibility aliases remain. Local
 execution in both languages is trusted application execution, not a sandbox.
+
+Python authoring keeps Pydantic-style explicit typed edges, decisions, and maps.
+Registration preserves ordinary functions; execution contracts belong to their
+uses in a graph. Dependency generics, step decorators, and container-plan aliases
+are removed. Invocation descriptors use only v3/json-v3, without channel fields;
+old descriptors must be rebuilt. Materialization selections have one supported
+container field rather than a single-variant union, preserving their JSON shape.

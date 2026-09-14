@@ -133,20 +133,17 @@ class Result(BaseModel):
     value: int
 
 
-@graph.step()
-async def classify(context: StepContext[None, Input]) -> Route:
+async def classify(context: StepContext[Input]) -> Route:
     if context.inputs.value >= 0:
         return Approved(kind="approved", value=context.inputs.value)
     return Rejected(kind="rejected", reason="negative value")
 
 
-@graph.step()
-def approve(context: StepContext[None, Approved]) -> Result:
+def approve(context: StepContext[Approved]) -> Result:
     return Result(value=context.inputs.value)
 
 
-@graph.step()
-def reject(context: StepContext[None, Rejected]) -> Result:
+def reject(context: StepContext[Rejected]) -> Result:
     return Result(value=0)
 
 classified = graph.add(classify)

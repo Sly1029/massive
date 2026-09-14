@@ -13,17 +13,15 @@ from typing import (
     Generic,
     TypeVar,
     cast,
-    get_args,
-    get_origin,
-    get_type_hints,
     overload,
 )
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, TypeAdapter, model_validator
 from typing_extensions import TypeForm
 
+from ._step import StepDefinition
 from .canonical import JsonValue, canonical_json, sha256_ref
-from .context import DepsT, InputT, StepContext
+from .context import InputT, StepContext
 from .contracts import ExecutionContract
 from .hashing import SOURCE_PACKAGE_HASHING, WORKFLOW_SPEC_HASHING
 from .identity import SAFE_PATH_SEGMENT, SafePathSegment
@@ -80,42 +78,6 @@ class _MapIdentity(BaseModel):
 
 
 @dataclass(frozen=True, slots=True)
-class StepDefinition(Generic[DepsT, InputT, OutputT]):
-    function: Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]]
-    input_type: Any
-    output_type: Any
-    deps_type: Any
-    contract: ExecutionContract | None
-
-    @classmethod
-    def from_callable(
-        cls,
-        function: Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]],
-        *,
-        contract: ExecutionContract | None = None,
-    ) -> StepDefinition[DepsT, InputT, OutputT]:
-        if "<locals>" in function.__qualname__ or function.__name__ == "<lambda>":
-            raise TypeError("workflow steps must be top-level named functions")
-        hints = get_type_hints(function, include_extras=True)
-        parameters = list(inspect.signature(function).parameters)
-        if len(parameters) != 1 or parameters[0] not in hints:
-            raise TypeError("a workflow step requires one annotated StepContext parameter")
-        context_type = hints[parameters[0]]
-        if get_origin(context_type) is not StepContext:
-            raise TypeError("a workflow step parameter must be StepContext[Deps, Input]")
-        declared_deps, input_type = get_args(context_type)
-        if hints.get("return", inspect.Signature.empty) is inspect.Signature.empty:
-            raise TypeError("a workflow step requires a return annotation")
-        return cls(
-            function=function,
-            input_type=input_type,
-            output_type=hints["return"],
-            deps_type=declared_deps,
-            contract=contract,
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class NodeHandle(Generic[OutputT]):
     graph_token: object = field(repr=False, compare=False)
     node_id: str
@@ -151,13 +113,13 @@ class _SelectDefinition:
 class _MapDefinition:
     id: str
     source: _StartHandle[Any] | NodeHandle[Any]
-    mapper: StepDefinition[Any, Any, Any]
+    mapper: StepDefinition[Any, Any]
     handle: NodeHandle[Any]
     concurrency: int
 
 
 class DecisionHandle(Generic[OutputT]):
-    def __init__(self, graph: GraphBuilder[Any, Any, Any], definition: _DecisionDefinition) -> None:
+    def __init__(self, graph: GraphBuilder[Any, Any], definition: _DecisionDefinition) -> None:
         self._graph = graph
         self._definition = definition
 
@@ -232,7 +194,7 @@ class WorkflowSpec:
         return canonical_json(self.value)
 
 
-class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
+class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
     def __init__(
         self,
         *,
@@ -240,12 +202,10 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         input_type: type[WorkflowInputT],
         output_type: type[WorkflowOutputT],
         defaults: ExecutionContract,
-        deps_type: type[DepsT] | None = None,
     ) -> None:
         self.name = _WorkflowIdentity(name=name).name
         self.input_type = input_type
         self.output_type = output_type
-        self.deps_type = deps_type
         self.defaults = defaults
         self._graph_token = object()
         self.start = _StartHandle[WorkflowInputT](
@@ -255,7 +215,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         self.end = _EndHandle[WorkflowOutputT](
             input_type=output_type, graph_token=self._graph_token
         )
-        self._nodes: dict[str, tuple[StepDefinition[Any, Any, Any], NodeHandle[Any]]] = {}
+        self._nodes: dict[str, tuple[StepDefinition[Any, Any], NodeHandle[Any]]] = {}
         self._handles: dict[str, NodeHandle[Any]] = {}
         self._edges: set[tuple[str, str]] = set()
         self._conditional_edges: set[tuple[str, str, str]] = set()
@@ -264,43 +224,16 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         self._maps: dict[str, _MapDefinition] = {}
         self._emitted = False
 
-    def step(
-        self, *, contract: ExecutionContract | None = None
-    ) -> Callable[
-        [Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]]],
-        StepDefinition[DepsT, InputT, OutputT],
-    ]:
-        def register(
-            function: Callable[[StepContext[DepsT, InputT]], OutputT | Awaitable[OutputT]],
-        ) -> StepDefinition[DepsT, InputT, OutputT]:
-            step = StepDefinition[DepsT, InputT, OutputT].from_callable(function, contract=contract)
-            if self.deps_type is None and step.deps_type is not type(None):
-                raise TypeError("this graph does not permit dependencies")
-            if self.deps_type is not None and step.deps_type != self.deps_type:
-                raise TypeError("step dependency type differs from the graph dependency type")
-            return step
-
-        return register
-
-    @overload
     def add(
-        self, item: StepDefinition[Any, Any, OutputT], *, id: str | None = None
-    ) -> NodeHandle[OutputT]: ...
-
-    @overload
-    def add(self, item: EdgePath[Any], *, id: None = None) -> None: ...
-
-    def add(
-        self, item: StepDefinition[Any, Any, OutputT] | EdgePath[Any], *, id: str | None = None
-    ) -> NodeHandle[OutputT] | None:
-        if isinstance(item, EdgePath):
-            if id is not None:
-                raise TypeError("an edge path does not accept an id")
-            return None
+        self,
+        function: Callable[[StepContext[InputT]], OutputT | Awaitable[OutputT]],
+        *,
+        id: str | None = None,
+        contract: ExecutionContract | None = None,
+    ) -> NodeHandle[OutputT]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        if item.deps_type != (type(None) if self.deps_type is None else self.deps_type):
-            raise TypeError("step dependency type differs from the graph dependency type")
+        item = StepDefinition[InputT, OutputT].from_callable(function, contract=contract)
         node_id = SAFE_PATH_SEGMENT.validate_python(id or item.function.__name__)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved step id {node_id!r}")
@@ -318,32 +251,36 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
     def map(
         self,
         source: _StartHandle[list[ItemT]],
-        mapper: StepDefinition[DepsT, ItemT, ResultT],
+        mapper: Callable[[StepContext[ItemT]], ResultT | Awaitable[ResultT]],
         *,
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
+        contract: ExecutionContract | None = None,
     ) -> NodeHandle[list[ResultT]]: ...
 
     @overload
     def map(
         self,
         source: NodeHandle[list[ItemT]],
-        mapper: StepDefinition[DepsT, ItemT, ResultT],
+        mapper: Callable[[StepContext[ItemT]], ResultT | Awaitable[ResultT]],
         *,
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
+        contract: ExecutionContract | None = None,
     ) -> NodeHandle[list[ResultT]]: ...
 
     def map(
         self,
         source: _StartHandle[Any] | NodeHandle[Any],
-        mapper: StepDefinition[Any, Any, ResultT],
+        mapper: Callable[[StepContext[Any]], ResultT | Awaitable[ResultT]],
         *,
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
+        contract: ExecutionContract | None = None,
     ) -> NodeHandle[list[ResultT]]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
+        step = StepDefinition[Any, ResultT].from_callable(mapper, contract=contract)
         source_id = _START if isinstance(source, _StartHandle) else source.node_id
         if isinstance(source, _StartHandle) and source.graph_token is not self._graph_token:
             raise ValueError(f"map source {source_id!r} belongs to a different graph")
@@ -353,7 +290,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
             source.output_type,
             f"map source {source_id!r}",
         )
-        if source_item_schema != _normalized_core_schema(mapper.input_type):
+        if source_item_schema != _normalized_core_schema(step.input_type):
             raise TypeError(f"map source {source_id!r} item type does not match mapper input type")
         identity = _MapIdentity(
             id=id,
@@ -362,7 +299,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         map_id = identity.id
         if map_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved map id {map_id!r}")
-        output_type = list[mapper.output_type]
+        output_type = list[step.output_type]
         handle = NodeHandle[list[ResultT]](
             graph_token=self._graph_token,
             node_id=map_id,
@@ -372,7 +309,7 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
         self._maps[map_id] = _MapDefinition(
             id=map_id,
             source=source,
-            mapper=mapper,
+            mapper=step,
             handle=cast(NodeHandle[Any], handle),
             concurrency=identity.concurrency,
         )
@@ -625,8 +562,6 @@ class GraphBuilder(Generic[DepsT, WorkflowInputT, WorkflowOutputT]):
     def emit(self, *, source: SourcePackage) -> WorkflowSpec:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        if self.deps_type is not None:
-            raise ValueError("dependency providers are not part of the v0 invocation protocol")
         if not self._nodes and not self._maps:
             raise ValueError("workflow must contain at least one step")
         if not any(source_id == _START for source_id, _ in self._edges):

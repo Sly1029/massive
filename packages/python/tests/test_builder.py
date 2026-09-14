@@ -113,93 +113,101 @@ class RecursiveItem(BaseModel):
     children: list[RecursiveItem]
 
 
-def needs_services(context: StepContext[dict[str, str], Request]) -> Result:
+def identity(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value)
 
 
-def identity(context: StepContext[None, Request]) -> Result:
+def keyword_only_step(*, context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value)
 
 
-def decimal_result(context: StepContext[None, Request]) -> DecimalResult:
+def test_step_registration_rejects_a_signature_the_runner_cannot_call() -> None:
+    graph = GraphBuilder(
+        name="invalid-signature", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    with pytest.raises(TypeError, match="positional StepContext"):
+        graph.add(keyword_only_step)
+
+
+def decimal_result(context: StepContext[Request]) -> DecimalResult:
     return DecimalResult(value=Decimal(context.inputs.value) / Decimal(2))
 
 
-def decimal_echo(context: StepContext[None, DecimalResult]) -> DecimalResult:
+def decimal_echo(context: StepContext[DecimalResult]) -> DecimalResult:
     return context.inputs
 
 
-def nested_decimal_echo(context: StepContext[None, NestedDecimalInput]) -> NestedDecimalInput:
+def nested_decimal_echo(context: StepContext[NestedDecimalInput]) -> NestedDecimalInput:
     return context.inputs
 
 
-def float_input(context: StepContext[None, float]) -> Request:
+def float_input(context: StepContext[float]) -> Request:
     return Request(value=int(context.inputs))
 
 
-def nested_decimal_result(context: StepContext[None, Request]) -> NestedDecimalResult:
+def nested_decimal_result(context: StepContext[Request]) -> NestedDecimalResult:
     return NestedDecimalResult(values=[float(context.inputs.value)])
 
 
-def referenced_decimal_result(context: StepContext[None, Request]) -> ReferencedDecimalResult:
+def referenced_decimal_result(context: StepContext[Request]) -> ReferencedDecimalResult:
     return ReferencedDecimalResult(measurement=DecimalMeasurement(value=context.inputs.value))
 
 
-def float_enum_result(context: StepContext[None, Request]) -> FloatEnumResult:
+def float_enum_result(context: StepContext[Request]) -> FloatEnumResult:
     return FloatEnumResult(value=1.5)
 
 
-def canonical_shape_identity(context: StepContext[None, CanonicalShape]) -> CanonicalShape:
+def canonical_shape_identity(context: StepContext[CanonicalShape]) -> CanonicalShape:
     return context.inputs
 
 
 def portable_metadata_identity(
-    context: StepContext[None, PortableMetadata],
+    context: StepContext[PortableMetadata],
 ) -> PortableMetadata:
     return context.inputs
 
 
-def any_result(context: StepContext[None, Request]) -> AnyResult:
+def any_result(context: StepContext[Request]) -> AnyResult:
     return AnyResult(value=context.inputs.value)
 
 
-def any_mapping_result(context: StepContext[None, Request]) -> AnyMappingResult:
+def any_mapping_result(context: StepContext[Request]) -> AnyMappingResult:
     return AnyMappingResult(values={"value": context.inputs.value})
 
 
-def any_list_result(context: StepContext[None, Request]) -> AnyListResult:
+def any_list_result(context: StepContext[Request]) -> AnyListResult:
     return AnyListResult(values=[context.inputs.value])
 
 
-def extra_allowed_result(context: StepContext[None, Request]) -> ExtraAllowedResult:
+def extra_allowed_result(context: StepContext[Request]) -> ExtraAllowedResult:
     return ExtraAllowedResult(value=context.inputs.value)
 
 
-def load_requests(context: StepContext[None, Request]) -> list[Request]:
+def load_requests(context: StepContext[Request]) -> list[Request]:
     return [context.inputs]
 
 
-def increment_request(context: StepContext[None, Request]) -> Result:
+def increment_request(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
-def load_any_requests(context: StepContext[None, Request]) -> list[Any]:
+def load_any_requests(context: StepContext[Request]) -> list[Any]:
     return [context.inputs]
 
 
-def result_identity(context: StepContext[None, Result]) -> Result:
+def result_identity(context: StepContext[Result]) -> Result:
     return context.inputs
 
 
-def list_result_identity(context: StepContext[None, list[Result]]) -> list[Result]:
+def list_result_identity(context: StepContext[list[Result]]) -> list[Result]:
     return context.inputs
 
 
-def load_results(context: StepContext[None, Request]) -> list[Result]:
+def load_results(context: StepContext[Request]) -> list[Result]:
     return [Result(value=context.inputs.value)]
 
 
-def load_recursive_items(context: StepContext[None, Request]) -> list[RecursiveItem]:
+def load_recursive_items(context: StepContext[Request]) -> list[RecursiveItem]:
     leaf = RecursiveItem(
         left=SharedChild(value=context.inputs.value),
         right=SharedChild(value=context.inputs.value),
@@ -208,25 +216,30 @@ def load_recursive_items(context: StepContext[None, Request]) -> list[RecursiveI
     return [leaf]
 
 
-def recursive_item_identity(context: StepContext[None, RecursiveItem]) -> RecursiveItem:
+def recursive_item_identity(context: StepContext[RecursiveItem]) -> RecursiveItem:
     return context.inputs
 
 
-def test_graph_without_dependencies_rejects_a_step_that_declares_them() -> None:
+def test_plain_functions_can_be_reused_with_independent_execution_settings() -> None:
     graph = GraphBuilder(
-        name="no-deps",
-        input_type=Request,
-        output_type=Result,
-        defaults=execution(
-            environment=container(
-                "example.invalid/no-deps@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                platform="linux/amd64",
-            )
-        ),
+        name="plain-functions", input_type=Request, output_type=list[Result], defaults=_defaults()
     )
-
-    with pytest.raises(TypeError, match="does not permit dependencies"):
-        graph.step()(needs_services)
+    source = graph.add(
+        load_requests, contract=execution(environment=_defaults().environment, cpu="2")
+    )
+    mapped = graph.map(
+        source,
+        increment_request,
+        id="items",
+        contract=execution(environment=_defaults().environment, memory="1Gi"),
+    )
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(mapped).to(graph.end)
+    spec = _emit(graph).value
+    nodes = {node["id"]: node for node in spec["graph"]["nodes"]}
+    assert spec["contracts"][nodes["load_requests"]["contractRef"]]["resources"] == {"cpu": "2"}
+    assert spec["contracts"][nodes["items"]["contractRef"]]["resources"] == {"memory": "1Gi"}
+    assert callable(load_requests)
 
 
 def test_end_is_terminal() -> None:
@@ -242,7 +255,7 @@ def test_end_is_terminal() -> None:
         ),
     )
 
-    node = graph.add(graph.step()(identity))
+    node = graph.add(identity)
 
     assert graph.edge_from(graph.start).to(node).to(graph.end) is None
 
@@ -254,8 +267,8 @@ def test_map_emits_one_ordered_collection_node_with_its_registered_mapper() -> N
         output_type=list[Result],
         defaults=_defaults(),
     )
-    requests = graph.add(graph.step()(load_requests))
-    mapped = graph.map(requests, graph.step()(increment_request), id="increment-all", concurrency=3)
+    requests = graph.add(load_requests)
+    mapped = graph.map(requests, increment_request, id="increment-all", concurrency=3)
     graph.edge_from(graph.start).to(requests)
     graph.edge_from(mapped).to(graph.end)
 
@@ -316,7 +329,7 @@ def test_map_can_be_the_only_node_and_uses_the_shared_default_concurrency() -> N
         output_type=list[Result],
         defaults=_defaults(),
     )
-    mapped = graph.map(graph.start, graph.step()(increment_request), id="increment-items")
+    mapped = graph.map(graph.start, increment_request, id="increment-items")
     graph.edge_from(mapped).to(graph.end)
 
     nodes = {node["id"]: node for node in _emit(graph).value["graph"]["nodes"]}
@@ -331,9 +344,9 @@ def test_map_allows_fan_out_to_multiple_list_consumers() -> None:
         output_type=list[Result],
         defaults=_defaults(),
     )
-    mapped = graph.map(graph.start, graph.step()(result_identity), id="copy-items")
-    first = graph.add(graph.step()(list_result_identity), id="first")
-    second = graph.add(graph.step()(list_result_identity), id="second")
+    mapped = graph.map(graph.start, result_identity, id="copy-items")
+    first = graph.add(list_result_identity, id="first")
+    second = graph.add(list_result_identity, id="second")
     graph.edge_from(mapped).to(first).to(graph.end)
     graph.edge_from(mapped).to(second).to(graph.end)
 
@@ -350,8 +363,8 @@ def test_map_accepts_recursive_and_reused_model_item_schemas() -> None:
         output_type=list[RecursiveItem],
         defaults=_defaults(),
     )
-    source = graph.add(graph.step()(load_recursive_items))
-    mapped = graph.map(source, graph.step()(recursive_item_identity), id="copy-recursive")
+    source = graph.add(load_recursive_items)
+    mapped = graph.map(source, recursive_item_identity, id="copy-recursive")
     graph.edge_from(graph.start).to(source)
     graph.edge_from(mapped).to(graph.end)
 
@@ -367,14 +380,14 @@ def test_map_uses_pydantic_validation_for_concurrency() -> None:
     )
 
     with pytest.raises(ValidationError, match="greater than or equal to 1"):
-        graph.map(graph.start, graph.step()(increment_request), id="invalid-concurrency", concurrency=0)
+        graph.map(graph.start, increment_request, id="invalid-concurrency", concurrency=0)
 
     with pytest.raises(ValidationError, match="valid integer"):
-        graph.map(graph.start, graph.step()(increment_request), id="boolean-concurrency", concurrency=True)
+        graph.map(graph.start, increment_request, id="boolean-concurrency", concurrency=True)
 
     graph.map(
         graph.start,
-        graph.step()(increment_request),
+        increment_request,
         id="maximum-concurrency",
         concurrency=MAX_MAP_CONCURRENCY,
     )
@@ -382,7 +395,7 @@ def test_map_uses_pydantic_validation_for_concurrency() -> None:
     with pytest.raises(ValidationError, match="less than or equal to 4294967295"):
         graph.map(
             graph.start,
-            graph.step()(increment_request),
+            increment_request,
             id="overflow-concurrency",
             concurrency=MAX_MAP_CONCURRENCY + 1,
         )
@@ -395,11 +408,11 @@ def test_map_rejects_duplicate_ids_and_cross_graph_sources() -> None:
         output_type=list[Result],
         defaults=_defaults(),
     )
-    source = graph.add(graph.step()(load_requests))
-    graph.map(source, graph.step()(increment_request), id="duplicate")
+    source = graph.add(load_requests)
+    graph.map(source, increment_request, id="duplicate")
 
     with pytest.raises(ValueError, match="duplicate or reserved map id 'duplicate'"):
-        graph.map(source, graph.step()(increment_request), id="duplicate")
+        graph.map(source, increment_request, id="duplicate")
 
     other_graph = GraphBuilder(
         name="other-map-identities",
@@ -407,10 +420,10 @@ def test_map_rejects_duplicate_ids_and_cross_graph_sources() -> None:
         output_type=list[Result],
         defaults=_defaults(),
     )
-    other_source = other_graph.add(other_graph.step()(load_requests))
+    other_source = other_graph.add(load_requests)
 
     with pytest.raises(ValueError, match="map source 'load_requests' belongs to a different graph"):
-        graph.map(other_source, graph.step()(increment_request), id="foreign")
+        graph.map(other_source, increment_request, id="foreign")
 
 
 def test_map_uses_the_mapper_symbol_and_contract_override() -> None:
@@ -420,17 +433,15 @@ def test_map_uses_the_mapper_symbol_and_contract_override() -> None:
         output_type=list[Result],
         defaults=_defaults(),
     )
-    source = graph.add(graph.step()(load_requests))
-    mapper = graph.step(
-        contract=execution(
-            environment=container(
-                "example.invalid/map-override@sha256:"
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                platform="linux/amd64",
-            )
+    source = graph.add(load_requests)
+    contract = execution(
+        environment=container(
+            "example.invalid/map-override@sha256:"
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            platform="linux/amd64",
         )
-    )(increment_request)
-    mapped = graph.map(source, mapper, id="overridden")
+    )
+    mapped = graph.map(source, increment_request, id="overridden", contract=contract)
     graph.edge_from(graph.start).to(source)
     graph.edge_from(mapped).to(graph.end)
 
@@ -450,11 +461,11 @@ def test_map_emit_requires_a_direct_concrete_list_source() -> None:
         output_type=list[Result],
         defaults=_defaults(),
     )
-    source = graph.add(graph.step()(identity))
+    source = graph.add(identity)
     with pytest.raises(
         TypeError, match=r"map source 'identity' must be a direct concrete list\[T\]"
     ):
-        graph.map(source, graph.step()(increment_request), id="not-a-list")
+        graph.map(source, increment_request, id="not-a-list")
 
 
 def test_map_emit_rejects_unconstrained_list_items() -> None:
@@ -464,11 +475,11 @@ def test_map_emit_rejects_unconstrained_list_items() -> None:
         output_type=list[Result],
         defaults=_defaults(),
     )
-    source = graph.add(graph.step()(load_any_requests))
+    source = graph.add(load_any_requests)
     with pytest.raises(
         TypeError, match=r"map source 'load_any_requests' must be a direct concrete list\[T\]"
     ):
-        graph.map(source, graph.step()(increment_request), id="any-items")
+        graph.map(source, increment_request, id="any-items")
 
 
 def test_map_emit_requires_the_source_item_type_to_match_the_mapper_input() -> None:
@@ -478,12 +489,12 @@ def test_map_emit_requires_the_source_item_type_to_match_the_mapper_input() -> N
         output_type=list[Result],
         defaults=_defaults(),
     )
-    source = graph.add(graph.step()(load_requests))
+    source = graph.add(load_requests)
     with pytest.raises(
         TypeError,
         match="map source 'load_requests' item type does not match mapper input type",
     ):
-        graph.map(source, graph.step()(result_identity), id="wrong-item")
+        graph.map(source, result_identity, id="wrong-item")
 
 
 def test_map_allows_sequential_composition() -> None:
@@ -493,9 +504,9 @@ def test_map_allows_sequential_composition() -> None:
         output_type=list[Result],
         defaults=_defaults(),
     )
-    source = graph.add(graph.step()(load_requests))
-    mapped = graph.map(source, graph.step()(increment_request), id="first-map")
-    remapped = graph.map(mapped, graph.step()(result_identity), id="second-map")
+    source = graph.add(load_requests)
+    mapped = graph.map(source, increment_request, id="first-map")
+    remapped = graph.map(mapped, result_identity, id="second-map")
     graph.edge_from(graph.start).to(source)
     graph.edge_from(remapped).to(graph.end)
 
@@ -511,9 +522,9 @@ def test_map_emit_requires_an_outgoing_edge() -> None:
         output_type=list[Result],
         defaults=_defaults(),
     )
-    source = graph.add(graph.step()(load_requests))
-    graph.map(source, graph.step()(increment_request), id="increment-all")
-    alternate_result = graph.add(graph.step()(load_results))
+    source = graph.add(load_requests)
+    graph.map(source, increment_request, id="increment-all")
+    alternate_result = graph.add(load_results)
     graph.edge_from(graph.start).to(source)
     graph.edge_from(graph.start).to(alternate_result).to(graph.end)
 
@@ -528,9 +539,9 @@ def test_map_emit_requires_exactly_one_incoming_edge() -> None:
         output_type=list[Result],
         defaults=_defaults(),
     )
-    source = graph.add(graph.step()(load_requests), id="first-source")
-    additional_source = graph.add(graph.step()(load_requests), id="second-source")
-    mapped = graph.map(source, graph.step()(increment_request), id="increment-all")
+    source = graph.add(load_requests, id="first-source")
+    additional_source = graph.add(load_requests, id="second-source")
+    mapped = graph.map(source, increment_request, id="increment-all")
     graph.edge_from(graph.start).to(source)
     graph.edge_from(graph.start).to(additional_source)
     graph.edge_from(additional_source).to(mapped)
@@ -565,7 +576,7 @@ def test_emit_rejects_schemas_that_admit_non_integer_json_numbers(
             )
         ),
     )
-    node = graph.add(graph.step()(step))
+    node = graph.add(step)
     graph.edge_from(graph.start).to(node).to(graph.end)
 
     with pytest.raises(ValueError, match=message + ".*integer-only"):
@@ -585,7 +596,7 @@ def test_emit_uses_validation_schemas_for_inputs_and_serialization_schemas_for_o
         output_type=DecimalResult,
         defaults=_defaults(),
     )
-    node = graph.add(graph.step()(decimal_result))
+    node = graph.add(decimal_result)
     graph.edge_from(graph.start).to(node).to(graph.end)
 
     specification = _emit(graph)
@@ -621,13 +632,15 @@ def test_emit_accepts_decimal_string_transport_between_steps() -> None:
         output_type=DecimalResult,
         defaults=_defaults(),
     )
-    first = graph.add(graph.step()(decimal_result))
-    second = graph.add(graph.step()(decimal_echo))
+    first = graph.add(decimal_result)
+    second = graph.add(decimal_echo)
     graph.edge_from(graph.start).to(first).to(second).to(graph.end)
 
     specification = _emit(graph)
     schemas = specification.value["schemas"]
-    step = next(node for node in specification.value["graph"]["nodes"] if node["id"] == "decimal_echo")
+    step = next(
+        node for node in specification.value["graph"]["nodes"] if node["id"] == "decimal_echo"
+    )
 
     assert schemas[step["inputSchema"]]["properties"]["value"]["anyOf"] == [
         {"type": "number"},
@@ -647,19 +660,23 @@ def test_emit_accepts_nested_decimal_validation_inputs_by_their_serialized_shape
         output_type=NestedDecimalInput,
         defaults=_defaults(),
     )
-    node = graph.add(graph.step()(nested_decimal_echo))
+    node = graph.add(nested_decimal_echo)
     graph.edge_from(graph.start).to(node).to(graph.end)
 
     specification = _emit(graph)
     schemas = specification.value["schemas"]
     workflow = specification.value["workflow"]
 
-    assert schemas[workflow["inputSchema"]]["$defs"]["DecimalInput"]["properties"]["value"][
-        "anyOf"
-    ][1]["type"] == "string"
-    assert schemas[workflow["outputSchema"]]["$defs"]["DecimalInput"]["properties"]["value"][
-        "type"
-    ] == "string"
+    assert (
+        schemas[workflow["inputSchema"]]["$defs"]["DecimalInput"]["properties"]["value"]["anyOf"][
+            1
+        ]["type"]
+        == "string"
+    )
+    assert (
+        schemas[workflow["outputSchema"]]["$defs"]["DecimalInput"]["properties"]["value"]["type"]
+        == "string"
+    )
 
 
 def test_emit_rejects_bare_float_workflow_and_registered_step_inputs() -> None:
@@ -669,7 +686,7 @@ def test_emit_rejects_bare_float_workflow_and_registered_step_inputs() -> None:
         output_type=Request,
         defaults=_defaults(),
     )
-    workflow_float_node = workflow_float.add(workflow_float.step()(float_input))
+    workflow_float_node = workflow_float.add(float_input)
     workflow_float.edge_from(workflow_float.start).to(workflow_float_node).to(workflow_float.end)
 
     with pytest.raises(ValueError, match="workflow input schema.*integer-only"):
@@ -684,7 +701,7 @@ def test_emit_rejects_bare_float_workflow_and_registered_step_inputs() -> None:
     # Keep the float step disconnected so a safe workflow input cannot mask its
     # role-specific diagnostic. Emission validates every registered step; the
     # compiler separately owns reachability validation.
-    step_float.add(step_float.step()(float_input))
+    step_float.add(float_input)
     assert step_float.edge_from(step_float.start).to(step_float.end) is None
 
     with pytest.raises(ValueError, match="step 'float_input' input schema.*integer-only"):
@@ -714,7 +731,7 @@ def test_graph_rejects_node_ids_that_cannot_be_used_as_safe_wire_segments(identi
     )
 
     with pytest.raises(ValidationError):
-        graph.add(graph.step()(identity), id=identifier)
+        graph.add(identity, id=identifier)
 
 
 @pytest.mark.parametrize("identifier", ["_step", ".hidden"])
@@ -726,7 +743,7 @@ def test_graph_accepts_safe_wire_segment_identifiers(identifier: str) -> None:
         defaults=_defaults(),
     )
 
-    node = graph.add(graph.step()(identity), id=identifier)
+    node = graph.add(identity, id=identifier)
 
     assert node.node_id == identifier
 
@@ -746,7 +763,7 @@ def test_emit_rejects_step_schemas_with_float_constants_or_enums(
         output_type=FloatEnumResult,
         defaults=_defaults(),
     )
-    node = graph.add(graph.step()(step), id=step.__name__.removesuffix("_result").replace("_", "-"))
+    node = graph.add(step, id=step.__name__.removesuffix("_result").replace("_", "-"))
     graph.edge_from(graph.start).to(node).to(graph.end)
 
     with pytest.raises(ValueError, match="workflow output schema.*canonical-json-v0"):
@@ -771,7 +788,7 @@ def test_emit_rejects_an_unconstrained_pydantic_any_schema(
         output_type=output_type,
         defaults=_defaults(),
     )
-    node = graph.add(graph.step()(step), id=step_id)
+    node = graph.add(step, id=step_id)
     graph.edge_from(graph.start).to(node).to(graph.end)
 
     with pytest.raises(ValueError, match="workflow output schema.*unconstrained"):
@@ -785,7 +802,7 @@ def test_emit_accepts_supported_integer_and_string_json_shapes() -> None:
         output_type=CanonicalShape,
         defaults=_defaults(),
     )
-    node = graph.add(graph.step()(canonical_shape_identity))
+    node = graph.add(canonical_shape_identity)
     graph.edge_from(graph.start).to(node).to(graph.end)
 
     specification = _emit(graph)
@@ -800,7 +817,7 @@ def test_public_json_value_models_portable_escape_hatches() -> None:
         output_type=PortableMetadata,
         defaults=_defaults(),
     )
-    node = graph.add(graph.step()(portable_metadata_identity))
+    node = graph.add(portable_metadata_identity)
     graph.edge_from(graph.start).to(node).to(graph.end)
 
     specification = _emit(graph)
@@ -810,9 +827,7 @@ def test_public_json_value_models_portable_escape_hatches() -> None:
 
 def test_schema_validation_rejects_a_float_constant_with_step_role_diagnostics() -> None:
     with pytest.raises(ValueError, match="step 'float-constant' output schema.*canonical-json-v0"):
-        _assert_canonical_json_schema(
-            {"const": 1.5}, "step 'float-constant' output schema"
-        )
+        _assert_canonical_json_schema({"const": 1.5}, "step 'float-constant' output schema")
 
 
 @pytest.mark.parametrize(
@@ -870,7 +885,7 @@ def test_schema_validation_rejects_true_boolean_child_schemas(schema: dict[str, 
     ],
 )
 def test_schema_validation_keeps_false_and_polarity_sensitive_children_safe(
-    schema: dict[str, Any]
+    schema: dict[str, Any],
 ) -> None:
     _assert_canonical_json_schema(schema, "step 'safe' output schema")
 
@@ -885,7 +900,7 @@ def _defaults():
     )
 
 
-def _emit(graph: GraphBuilder[Any, Any, Any]):
+def _emit(graph: GraphBuilder[Any, Any]):
     return graph.emit(
         source=source_package(
             root=Path(__file__).parent,

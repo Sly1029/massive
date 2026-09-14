@@ -28,23 +28,23 @@ class Request(BaseModel):
 class Item(Request):
     index: int
 
-def prepare(ctx: StepContext[None, Request]) -> list[Item]:
+def prepare(ctx: StepContext[Request]) -> list[Item]:
     return [Item(ready=ctx.inputs.ready, index=index) for index in range(5)]
 
-def work(ctx: StepContext[None, Item]) -> int:
+def work(ctx: StepContext[Item]) -> int:
     if ctx.inputs.index == 1:
         Path(ctx.inputs.ready).write_text("started")
         time.sleep(60)
     return ctx.inputs.index
 
-def collect(ctx: StepContext[None, list[int]]) -> int:
+def collect(ctx: StepContext[list[int]]) -> int:
     return sum(ctx.inputs)
 
 graph = GraphBuilder(name="cancellation", input_type=Request, output_type=int,
     defaults=execution(environment=container("example.invalid/runner@sha256:"+"1"*64, platform="linux/amd64")))
-prepared = graph.add(graph.step()(prepare))
-items = graph.map(prepared, graph.step()(work), id="workers", concurrency=1)
-collected = graph.add(graph.step()(collect))
+prepared = graph.add(prepare)
+items = graph.map(prepared, work, id="workers", concurrency=1)
+collected = graph.add(collect)
 graph.edge_from(graph.start).to(prepared)
 graph.edge_from(items).to(collected)
 graph.edge_from(collected).to(graph.end)
@@ -203,29 +203,29 @@ class Active(Request):
     kind: Literal["active"] = "active"
 class Inactive(Request):
     kind: Literal["inactive"] = "inactive"
-def classify(ctx: StepContext[None, Request]) -> Annotated[Active | Inactive, Field(discriminator="kind")]:
+def classify(ctx: StepContext[Request]) -> Annotated[Active | Inactive, Field(discriminator="kind")]:
     return Active(ready=ctx.inputs.ready)
-def work(ctx: StepContext[None, Active]) -> int:
+def work(ctx: StepContext[Active]) -> int:
     Path(ctx.inputs.ready).write_text("started")
     time.sleep(60)
     return 1
-def other(ctx: StepContext[None, Inactive]) -> int:
+def other(ctx: StepContext[Inactive]) -> int:
     Path(ctx.inputs.ready + ".inactive").write_text("must not run")
     return 2
-def linear(ctx: StepContext[None, Request]) -> int:
+def linear(ctx: StepContext[Request]) -> int:
     Path(ctx.inputs.ready).write_text("started")
     time.sleep(60)
     return 1
-def collect(ctx: StepContext[None, int]) -> int:
+def collect(ctx: StepContext[int]) -> int:
     return ctx.inputs
 graph = GraphBuilder(name="cancellation", input_type=Request, output_type=int,
     defaults=execution(environment=container("example.invalid/runner@sha256:"+"1"*64, platform="linux/amd64")))
-collected = graph.add(graph.step()(collect))
+collected = graph.add(collect)
 `
 			if decision {
-				source += `classified = graph.add(graph.step()(classify))
-active = graph.add(graph.step()(work))
-inactive = graph.add(graph.step()(other))
+				source += `classified = graph.add(classify)
+active = graph.add(work)
+inactive = graph.add(other)
 route = graph.decision(classified, on="kind", id="route")
 active_input = route.case(Active)
 inactive_input = route.case(Inactive)
@@ -236,7 +236,7 @@ graph.edge_from(inactive_input).to(inactive)
 graph.edge_from(selected).to(collected)
 `
 			} else {
-				source += `blocked = graph.add(graph.step()(linear))
+				source += `blocked = graph.add(linear)
 graph.edge_from(graph.start).to(blocked)
 graph.edge_from(blocked).to(collected)
 `
@@ -324,14 +324,14 @@ func TestFailedRunTerminalJournalExcludesRunnerOutput(t *testing.T) {
 	useCancellationPython(t)
 	entry := filepath.Join(t.TempDir(), "workflow.py")
 	source := `from massive import GraphBuilder, StepContext, container, execution
-def fail(ctx: StepContext[None, int]) -> int:
+def fail(ctx: StepContext[int]) -> int:
     raise RuntimeError("private-runner-output-sentinel")
-def next_step(ctx: StepContext[None, int]) -> int:
+def next_step(ctx: StepContext[int]) -> int:
     return ctx.inputs
 graph = GraphBuilder(name="failure", input_type=int, output_type=int,
     defaults=execution(environment=container("example.invalid/runner@sha256:"+"1"*64, platform="linux/amd64")))
-failed = graph.add(graph.step()(fail))
-next_node = graph.add(graph.step()(next_step))
+failed = graph.add(fail)
+next_node = graph.add(next_step)
 graph.edge_from(graph.start).to(failed)
 graph.edge_from(failed).to(next_node)
 graph.edge_from(next_node).to(graph.end)

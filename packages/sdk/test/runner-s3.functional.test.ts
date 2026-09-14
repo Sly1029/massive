@@ -41,8 +41,8 @@ const valueSchema = {
 Deno.test("S3 invocation descriptors carry transport but no credentials", async () => {
   const descriptor = await parseStepInvocationDescriptor({
     kind: "StepInvocationDescriptor",
-    schemaVersion: 2,
-    encoding: "json-v2",
+    schemaVersion: 3,
+    encoding: "json-v3",
     planHash:
       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     projectKey: artifactProjectKey,
@@ -138,8 +138,8 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
     const inputText = stableStringify({ value: 21 });
     const descriptor = await parseStepInvocationDescriptor({
       kind: "StepInvocationDescriptor",
-      schemaVersion: 2,
-      encoding: "json-v2",
+      schemaVersion: 3,
+      encoding: "json-v3",
       planHash:
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       projectKey: artifactProjectKey,

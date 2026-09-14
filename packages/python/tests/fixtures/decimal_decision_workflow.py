@@ -42,20 +42,17 @@ graph = GraphBuilder(
 )
 
 
-@graph.step()
-def classify(context: StepContext[None, Request]) -> Route:
+def classify(context: StepContext[Request]) -> Route:
     if context.inputs.amount >= 0:
         return Accepted(amount=context.inputs.amount)
     return Rejected(reason="negative amount")
 
 
-@graph.step()
-def accept(context: StepContext[None, Accepted]) -> Result:
+def accept(context: StepContext[Accepted]) -> Result:
     return Result(message=str(context.inputs.amount))
 
 
-@graph.step()
-def reject(context: StepContext[None, Rejected]) -> Result:
+def reject(context: StepContext[Rejected]) -> Result:
     return Result(message=context.inputs.reason)
 
 
