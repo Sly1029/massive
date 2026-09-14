@@ -109,18 +109,20 @@ Keep task functions in ordinary importable modules. A composition module registe
 them and chooses their execution requirements:
 
 ```python
+from dataclasses import replace
 from tasks import inspect
-
-environment = container("registry.example/worker@sha256:" + "0123456789abcdef" * 4)
 inspection = graph.add(
     inspect,
     id="inspect",
-    contract=execution(environment=environment, cpu="2", memory="4Gi"),
+    contract=replace(graph.defaults, cpu="2", memory="4Gi"),
 )
 ```
 
 `contract=` on `add()` or `map()` selects the complete contract for that use;
-omitting it uses the graph defaults. It is not a field-by-field overlay. Reuse
+omitting it uses the graph defaults. Use `dataclasses.replace(graph.defaults, ...)`
+to change selected fields while preserving secrets and network intent. Passing
+a fresh `execution(...)` intentionally selects a complete different contract,
+just as registering an explicit contract does in the TypeScript SDK. Reuse
 one immutable `Container` across resource or secret configurations. The compiler
 owns environment identity; there is no separate author-side container plan.
 Task imports should not require the deployment settings used to assemble a graph.

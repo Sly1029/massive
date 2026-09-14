@@ -84,8 +84,10 @@ def changed_file(context: StepContext[Request]) -> Blob:
     return result
 
 
-async def plain_increment(context: StepContext[Request]) -> Result:
-    return Result(value=context.inputs.value + 1)
+async def lazy_increment(context: StepContext[Request]) -> Result:
+    from lazy_step_helper import increment_value
+
+    return Result(value=increment_value(context.inputs.value))
 
 
 def workspace_file(ctx: StepContext[Request]) -> Blob:

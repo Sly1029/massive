@@ -204,42 +204,23 @@ This keeps the linear path readable while avoiding a fluent API that becomes con
 
 ## Execution Contracts In Authoring
 
-Execution contracts are declared inline by default, with reusable fragments for common cases.
+Execution contracts belong to a function's use in a graph. Omit `contract=` to
+use graph defaults, pass a complete contract to replace them, or use Python's
+`dataclasses.replace` to derive a contract while preserving every other field:
 
-```ts
-const baseContract = contract({
-  env: env.node({
-    version: "22.12.0",
-    packageManager: "pnpm",
-    lockfile: "pnpm-lock.yaml",
-  }),
-  resources: { cpu: "0.5", memory: "512Mi" },
-  network: net.denyAll(),
-});
+```python
+from dataclasses import replace
 
-const callOpenAI = baseContract.extend({
-  secrets: [secret.ref("OPENAI_API_KEY")],
-  network: net.allow("api.openai.com"),
-});
-
-const summarize = g.step("summarize", {
-  input: ScanResult,
-  output: Summary,
-  contract: callOpenAI,
-  run: async ({ input, deps }) => deps.openAI.summarize(input.findings),
-});
+summarize_node = graph.add(
+    summarize,
+    contract=replace(graph.defaults, cpu="2", memory="4Gi"),
+)
 ```
 
-Workflows may define defaults. Step contracts override defaults at compile time.
-
-```ts
-const g = workflow({
-  name: "repo-triage",
-  state: State,
-  output: Summary,
-  defaults: baseContract,
-});
-```
+The TypeScript SDK offers `baseContract.extend(...)` for explicit derivation;
+registering an explicit contract replaces graph defaults in both SDKs. Secrets
+are logical deployment references. Task code constructs its own service clients;
+there is no injected dependency object or shared mutable workflow state.
 
 ## Closure Boundary
 

@@ -20,7 +20,7 @@ func FuzzInvocationProjection(f *testing.F) {
 		}
 		f.Add(data)
 	}
-	f.Add([]byte(`{"channelReads":[]}`))
+	f.Add([]byte(`{"kind":"StepInvocationDescriptor","schemaVersion":3,"encoding":"json-v3"}`))
 	f.Add([]byte(`{"scope":{"frames":[{"kind":"map-item","mapId":"items","index":4294967295}]}}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > 64*1024 {

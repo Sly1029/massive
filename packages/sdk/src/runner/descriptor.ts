@@ -93,10 +93,14 @@ export async function parseStepInvocationDescriptor(
 ): Promise<StepInvocationDescriptor> {
   const validate = await compileStepInvocationDescriptorValidator();
   if (!validate(value)) {
+    const rebuild = validate.errors?.some((error) =>
+      error.keyword === "additionalProperties" ||
+      ["/kind", "/schemaVersion", "/encoding"].includes(error.instancePath)
+    ) ? "; rebuild with the current Massive release" : "";
     throw new DescriptorError(
       `StepInvocationDescriptor JSON schema violation ${
         formatAjvError(validate.errors)
-      }; rebuild with the current Massive release`,
+      }${rebuild}`,
     );
   }
 

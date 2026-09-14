@@ -228,7 +228,15 @@ def _load_descriptor(path: Path) -> StepInvocationDescriptor:
     try:
         _descriptor_validator().validate(descriptor)
     except JsonSchemaValidationError as error:
-        raise DescriptorError(f"descriptor does not satisfy its JSON Schema; rebuild with the current Massive release: {error}") from error
+        hint = (
+            "; rebuild with the current Massive release"
+            if error.validator == "additionalProperties"
+            or list(error.absolute_path) in [["kind"], ["schemaVersion"], ["encoding"]]
+            else ""
+        )
+        raise DescriptorError(
+            f"descriptor does not satisfy its JSON Schema{hint}: {error}"
+        ) from error
     return cast(StepInvocationDescriptor, descriptor)
 
 
@@ -385,22 +393,24 @@ def _resolved_step(
     source_package: SourcePackageDescriptor,
     datastore: Datastore,
 ) -> Generator[_ResolvedStep, None, None]:
-    with _source_root(source_package, datastore) as source_root:
-        yield _load_step(symbol, source_root)
+    with (
+        _source_root(source_package, datastore) as source_root,
+        _source_import_path(source_root),
+    ):
+        yield _load_step(symbol)
 
 
-def _load_step(symbol: SymbolDescriptor, source_root: Path) -> _ResolvedStep:
+def _load_step(symbol: SymbolDescriptor) -> _ResolvedStep:
     module_name = symbol["module"]
     if not module_name or any(not part.isidentifier() for part in module_name.split(".")):
         raise DescriptorError("Python module must be a dotted identifier")
     export = symbol["export"]
     if not export.isidentifier():
         raise DescriptorError("Python export must be an identifier")
-    with _source_import_path(source_root):
-        try:
-            module = importlib.import_module(module_name)
-        except Exception as error:
-            raise DescriptorError(f"cannot import {module_name}: {error}") from error
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as error:
+        raise DescriptorError(f"cannot import {module_name}: {error}") from error
     exported = getattr(module, export, None)
     if not callable(exported):
         raise DescriptorError(f"export {export!r} is not a step function")

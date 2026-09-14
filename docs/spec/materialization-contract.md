@@ -18,7 +18,7 @@ contracts:
 
 - **MaterializationSpec** selects an existing immutable image/platform for each
   compiled environment reference and records each source package's archive digest.
-  Its `existingContainer` oneof is the only supported mode. The selection must
+  Its `existingContainer` field records the supported container selection. The selection must
   exactly match the workflow's pinned container requirement; it cannot override
   the workflow image, platform, command, or working directory.
 - **MaterializationManifest** records the independently checked inputs,

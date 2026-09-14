@@ -26,7 +26,7 @@ PROJECT_KEY = "sha256-" + "b" * 64
 
 @pytest.mark.parametrize(
     ("export", "expected"),
-    [("double", {"value": 42}), ("increment", {"value": 22}), ("plain_increment", {"value": 22})],
+    [("double", {"value": 42}), ("increment", {"value": 22}), ("lazy_increment", {"value": 22})],
 )
 def test_runner_executes_sync_and_async_python_steps_via_descriptor(
     tmp_path: Path, export: str, expected: dict[str, int]
@@ -463,7 +463,9 @@ def _write(root: Path, key: str, body: str) -> None:
     path.write_text(body)
 
 
-def _source_archive(source_root: Path, entries: tuple[str, ...] = ("runner_workflow.py",)) -> bytes:
+def _source_archive(
+    source_root: Path, entries: tuple[str, ...] = ("runner_workflow.py", "lazy_step_helper.py")
+) -> bytes:
     buffer = BytesIO()
     with tarfile.open(fileobj=buffer, mode="w", format=tarfile.USTAR_FORMAT) as archive:
         for name in entries:

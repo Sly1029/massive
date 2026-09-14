@@ -20,3 +20,6 @@ models in application packages. Typed artifacts are the composition boundary;
 implicit mutable instance state and pickle codecs are not runtime contracts.
 Test real publication and hydration with the submission archive removed, and
 cover the installed wheel as well as editable SDK imports.
+
+Keep the extracted source directory importable throughout invocation and output
+serialization; ordinary functions and validators may lazily import sibling modules.

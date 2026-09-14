@@ -80,7 +80,7 @@ Deno.test("runner descriptor parser rejects malformed descriptors with a precise
   assertInstanceOf(thrown, DescriptorError);
   assertEquals(
     thrown.message,
-    'StepInvocationDescriptor JSON schema violation at /planHash: must match pattern "^sha256:[0-9a-f]{64}$"; rebuild with the current Massive release',
+    'StepInvocationDescriptor JSON schema violation at /planHash: must match pattern "^sha256:[0-9a-f]{64}$"',
   );
 });
 

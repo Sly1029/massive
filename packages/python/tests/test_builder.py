@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
+from functools import partial
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
@@ -220,7 +222,7 @@ def recursive_item_identity(context: StepContext[RecursiveItem]) -> RecursiveIte
     return context.inputs
 
 
-def test_plain_functions_can_be_reused_with_independent_execution_settings() -> None:
+def test_plain_functions_carry_execution_settings_at_registration() -> None:
     graph = GraphBuilder(
         name="plain-functions", input_type=Request, output_type=list[Result], defaults=_defaults()
     )
@@ -240,6 +242,68 @@ def test_plain_functions_can_be_reused_with_independent_execution_settings() -> 
     assert spec["contracts"][nodes["load_requests"]["contractRef"]]["resources"] == {"cpu": "2"}
     assert spec["contracts"][nodes["items"]["contractRef"]]["resources"] == {"memory": "1Gi"}
     assert callable(load_requests)
+
+
+def test_one_function_can_have_two_node_identities_and_contracts() -> None:
+    defaults = execution(
+        environment=_defaults().environment, secrets={"TOKEN": "service"}, network="none"
+    )
+    graph = GraphBuilder(
+        name="reused-function", input_type=Result, output_type=Result, defaults=defaults
+    )
+    first = graph.add(result_identity, id="first", contract=replace(defaults, cpu="2"))
+    second = graph.add(result_identity, id="second", contract=replace(defaults, memory="1Gi"))
+    graph.edge_from(graph.start).to(first).to(second).to(graph.end)
+    spec = _emit(graph).value
+    nodes = {node["id"]: node for node in spec["graph"]["nodes"]}
+    assert nodes["first"]["symbolRef"] == nodes["second"]["symbolRef"]
+    assert nodes["first"]["contractRef"] != nodes["second"]["contractRef"]
+    for name, resources in [("first", {"cpu": "2"}), ("second", {"memory": "1Gi"})]:
+        contract = spec["contracts"][nodes[name]["contractRef"]]
+        assert contract["resources"] == resources
+        assert contract["secrets"] == [{"name": "TOKEN", "ref": "service"}]
+        assert contract["network"] == {"egress": "none"}
+
+
+class NonportableStep:
+    def __call__(self, context: StepContext[Request]) -> Result:
+        return identity(context)
+
+    def method(self, context: StepContext[Request]) -> Result:
+        return identity(context)
+
+    @staticmethod
+    def static(context: StepContext[Request]) -> Result:
+        return identity(context)
+
+
+@pytest.mark.parametrize(
+    "function",
+    [
+        lambda context: context,
+        NonportableStep(),
+        NonportableStep().method,
+        NonportableStep.static,
+        partial(identity),
+    ],
+)
+def test_registration_rejects_nonportable_callables(function) -> None:
+    graph = GraphBuilder(
+        name="nonportable", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    with pytest.raises(TypeError, match="top-level named functions"):
+        graph.add(function)
+
+
+def test_registration_rejects_a_nested_function() -> None:
+    def nested(context: StepContext[Request]) -> Result:
+        return identity(context)
+
+    graph = GraphBuilder(
+        name="nested", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    with pytest.raises(TypeError, match="top-level named functions"):
+        graph.add(nested)
 
 
 def test_end_is_terminal() -> None:
