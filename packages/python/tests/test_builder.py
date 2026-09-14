@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
-from functools import partial
 from decimal import Decimal
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
