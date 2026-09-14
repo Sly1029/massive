@@ -40,7 +40,7 @@ class ExecutionContract:
     cpu: str | None = None
     memory: str | None = None
     network: Literal["none", "any"] | None = None
-    secrets: Mapping[str, str] = field(default_factory=dict)
+    secrets: Mapping[str, str] = field(default_factory=dict[str, str])
 
     def __post_init__(self) -> None:
         if any(not name or not ref for name, ref in self.secrets.items()):
