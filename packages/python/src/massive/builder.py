@@ -19,7 +19,7 @@ from typing import (
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, TypeAdapter, model_validator
 from typing_extensions import TypeForm
 
-from ._step import StepDefinition
+from ._step import StepDefinition as _Step
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InputT, StepContext
 from .contracts import ExecutionContract
@@ -113,7 +113,7 @@ class _SelectDefinition:
 class _MapDefinition:
     id: str
     source: _StartHandle[Any] | NodeHandle[Any]
-    mapper: StepDefinition[Any, Any]
+    mapper: _Step[Any, Any]
     handle: NodeHandle[Any]
     concurrency: int
 
@@ -215,7 +215,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self.end = _EndHandle[WorkflowOutputT](
             input_type=output_type, graph_token=self._graph_token
         )
-        self._nodes: dict[str, tuple[StepDefinition[Any, Any], NodeHandle[Any]]] = {}
+        self._nodes: dict[str, tuple[_Step[Any, Any], NodeHandle[Any]]] = {}
         self._handles: dict[str, NodeHandle[Any]] = {}
         self._edges: set[tuple[str, str]] = set()
         self._conditional_edges: set[tuple[str, str, str]] = set()
@@ -233,7 +233,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
     ) -> NodeHandle[OutputT]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        item = StepDefinition[InputT, OutputT].from_callable(function, contract=contract)
+        item = _Step[InputT, OutputT].from_callable(function, contract=contract)
         node_id = SAFE_PATH_SEGMENT.validate_python(id or item.function.__name__)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved step id {node_id!r}")
@@ -280,7 +280,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
     ) -> NodeHandle[list[ResultT]]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        step = StepDefinition[Any, ResultT].from_callable(mapper, contract=contract)
+        step = _Step[Any, ResultT].from_callable(mapper, contract=contract)
         source_id = _START if isinstance(source, _StartHandle) else source.node_id
         if isinstance(source, _StartHandle) and source.graph_token is not self._graph_token:
             raise ValueError(f"map source {source_id!r} belongs to a different graph")
