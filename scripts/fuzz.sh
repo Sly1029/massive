@@ -11,3 +11,5 @@ for target in FuzzJournalParsing FuzzJournalTermination; do
 done
 go test ./internal/orchestrator -run '^$' -fuzz '^FuzzPartialMapOutcomes$' \
   -fuzztime="${FUZZ_TIME:-30s}" -parallel="${FUZZ_WORKERS:-2}"
+go test ./conformance/schema -run '^$' -fuzz '^FuzzInvocationProjection$' \
+  -fuzzminimizetime=1s -fuzztime="${FUZZ_TIME:-30s}" -parallel="${FUZZ_WORKERS:-2}"

@@ -17,8 +17,6 @@ type StepInvocationDescriptor struct {
 	EnvironmentRef string                          `json:"environmentRef"`
 	Input          DataArtifactRef                 `json:"input"`
 	Output         DataArtifactManifestDestination `json:"output"`
-	ChannelReads   []ChannelArtifactRef            `json:"channelReads"`
-	ChannelWrites  []ChannelArtifactDestination    `json:"channelWrites"`
 	Datastore      DatastoreDescriptor             `json:"datastore"`
 }
 
@@ -46,11 +44,6 @@ type ArtifactRef struct {
 	ContentType string `json:"contentType"`
 }
 
-type ArtifactDestination struct {
-	Key         string `json:"key"`
-	ContentType string `json:"contentType"`
-}
-
 type DataArtifactRef struct {
 	Artifact ArtifactRef `json:"artifact"`
 	Schema   string      `json:"schema"`
@@ -63,18 +56,6 @@ type DataArtifactRef struct {
 type DataArtifactManifestDestination struct {
 	ManifestKey string `json:"manifestKey"`
 	Schema      string `json:"schema"`
-}
-
-type ChannelArtifactRef struct {
-	ChannelName string      `json:"channelName"`
-	Artifact    ArtifactRef `json:"artifact"`
-	Schema      string      `json:"schema"`
-}
-
-type ChannelArtifactDestination struct {
-	ChannelName string              `json:"channelName"`
-	Artifact    ArtifactDestination `json:"artifact"`
-	Schema      string              `json:"schema"`
 }
 
 // DatastoreDescriptor is the portable descriptor union. Local orchestration

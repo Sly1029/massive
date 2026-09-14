@@ -56,9 +56,9 @@ func ForPlan(plan *planpb.WorkflowPlan, archives map[string][]byte) (*pb.Materia
 		environments[ref] = true
 		result.Environments = append(result.Environments, &pb.EnvironmentSelection{
 			EnvironmentRef: proto.String(ref),
-			Mode: &pb.EnvironmentSelection_ExistingContainer{ExistingContainer: &pb.ExistingContainer{
+			ExistingContainer: &pb.ExistingContainer{
 				Image: proto.String(image), Platform: proto.String(container.GetPlatform()),
-			}},
+			},
 		})
 	}
 	sort.Slice(result.Environments, func(i, j int) bool {

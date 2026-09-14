@@ -17,9 +17,7 @@ message MaterializationSpec {
 
 message EnvironmentSelection {
   optional string environment_ref = 1;
-  oneof mode {
-    ExistingContainer existing_container = 2;
-  }
+  optional ExistingContainer existing_container = 2;
 }
 
 // An externally supplied immutable image, not a build recipe. Command and

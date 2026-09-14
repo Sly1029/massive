@@ -7,15 +7,12 @@ from .builder import (
     DecisionHandle,
     GraphBuilder,
     NodeHandle,
-    StepDefinition,
     WorkflowSpec,
 )
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InvocationContext, StepContext
 from .contracts import (
-    ContainerEnvironment,
-    ContainerInvocationPlan,
-    ContainerRecipe,
+    Container,
     ExecutionContract,
     container,
     execution,
@@ -29,9 +26,7 @@ __all__ = [
     "ArtifactFiles",
     "Blob",
     "CaseHandle",
-    "ContainerEnvironment",
-    "ContainerInvocationPlan",
-    "ContainerRecipe",
+    "Container",
     "DecisionHandle",
     "ExecutionContract",
     "GraphBuilder",
@@ -40,7 +35,6 @@ __all__ = [
     "NodeHandle",
     "SourcePackage",
     "StepContext",
-    "StepDefinition",
     "Tree",
     "WorkflowSpec",
     "canonical_json",

@@ -15,3 +15,8 @@ not only the parser's tolerance of random JSON.
 Fixtures describe real executable requirements. Change a fixture at its source
 when its environment or network intent changes; tests must not silently rewrite
 those requirements just to get through a target compiler.
+
+Invocation descriptors are current-only v3/json-v3. Channel fields are absent,
+including empty arrays; validate and reject them before user code runs. The
+materialization container selection is a plain field: preserve its proto-JSON
+projection and identity when changing generated implementation types.

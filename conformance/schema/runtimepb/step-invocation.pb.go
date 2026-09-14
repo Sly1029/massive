@@ -21,7 +21,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Runner boundary owned by Massive rather than any language SDK. The v2 wire
+// Runner boundary owned by Massive rather than any language SDK. The v3 wire
 // format is the canonical proto-JSON projection of this message, followed by
 // canonical-json-v0 key ordering. All required scalars use explicit presence;
 // the frozen JSON Schema applies value and conditional datastore constraints.
@@ -41,8 +41,6 @@ type StepInvocationDescriptor struct {
 	EnvironmentRef *string                          `protobuf:"bytes,12,opt,name=environment_ref,json=environmentRef,proto3,oneof" json:"environment_ref,omitempty"`
 	Input          *DataArtifactRef                 `protobuf:"bytes,13,opt,name=input,proto3,oneof" json:"input,omitempty"`
 	Output         *DataArtifactManifestDestination `protobuf:"bytes,14,opt,name=output,proto3,oneof" json:"output,omitempty"`
-	ChannelReads   []*ChannelArtifactRef            `protobuf:"bytes,15,rep,name=channel_reads,json=channelReads,proto3" json:"channel_reads,omitempty"`
-	ChannelWrites  []*ChannelArtifactDestination    `protobuf:"bytes,16,rep,name=channel_writes,json=channelWrites,proto3" json:"channel_writes,omitempty"`
 	Datastore      *Datastore                       `protobuf:"bytes,17,opt,name=datastore,proto3,oneof" json:"datastore,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -172,20 +170,6 @@ func (x *StepInvocationDescriptor) GetInput() *DataArtifactRef {
 func (x *StepInvocationDescriptor) GetOutput() *DataArtifactManifestDestination {
 	if x != nil {
 		return x.Output
-	}
-	return nil
-}
-
-func (x *StepInvocationDescriptor) GetChannelReads() []*ChannelArtifactRef {
-	if x != nil {
-		return x.ChannelReads
-	}
-	return nil
-}
-
-func (x *StepInvocationDescriptor) GetChannelWrites() []*ChannelArtifactDestination {
-	if x != nil {
-		return x.ChannelWrites
 	}
 	return nil
 }
@@ -505,58 +489,6 @@ func (x *ArtifactRef) GetContentType() string {
 	return ""
 }
 
-type ArtifactDestination struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           *string                `protobuf:"bytes,1,opt,name=key,proto3,oneof" json:"key,omitempty"`
-	ContentType   *string                `protobuf:"bytes,2,opt,name=content_type,json=contentType,proto3,oneof" json:"content_type,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ArtifactDestination) Reset() {
-	*x = ArtifactDestination{}
-	mi := &file_step_invocation_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ArtifactDestination) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ArtifactDestination) ProtoMessage() {}
-
-func (x *ArtifactDestination) ProtoReflect() protoreflect.Message {
-	mi := &file_step_invocation_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ArtifactDestination.ProtoReflect.Descriptor instead.
-func (*ArtifactDestination) Descriptor() ([]byte, []int) {
-	return file_step_invocation_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *ArtifactDestination) GetKey() string {
-	if x != nil && x.Key != nil {
-		return *x.Key
-	}
-	return ""
-}
-
-func (x *ArtifactDestination) GetContentType() string {
-	if x != nil && x.ContentType != nil {
-		return *x.ContentType
-	}
-	return ""
-}
-
 type DataArtifactRef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Artifact      *ArtifactRef           `protobuf:"bytes,1,opt,name=artifact,proto3,oneof" json:"artifact,omitempty"`
@@ -567,7 +499,7 @@ type DataArtifactRef struct {
 
 func (x *DataArtifactRef) Reset() {
 	*x = DataArtifactRef{}
-	mi := &file_step_invocation_proto_msgTypes[7]
+	mi := &file_step_invocation_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -579,7 +511,7 @@ func (x *DataArtifactRef) String() string {
 func (*DataArtifactRef) ProtoMessage() {}
 
 func (x *DataArtifactRef) ProtoReflect() protoreflect.Message {
-	mi := &file_step_invocation_proto_msgTypes[7]
+	mi := &file_step_invocation_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -592,7 +524,7 @@ func (x *DataArtifactRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataArtifactRef.ProtoReflect.Descriptor instead.
 func (*DataArtifactRef) Descriptor() ([]byte, []int) {
-	return file_step_invocation_proto_rawDescGZIP(), []int{7}
+	return file_step_invocation_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *DataArtifactRef) GetArtifact() *ArtifactRef {
@@ -619,7 +551,7 @@ type DataArtifactManifestDestination struct {
 
 func (x *DataArtifactManifestDestination) Reset() {
 	*x = DataArtifactManifestDestination{}
-	mi := &file_step_invocation_proto_msgTypes[8]
+	mi := &file_step_invocation_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -631,7 +563,7 @@ func (x *DataArtifactManifestDestination) String() string {
 func (*DataArtifactManifestDestination) ProtoMessage() {}
 
 func (x *DataArtifactManifestDestination) ProtoReflect() protoreflect.Message {
-	mi := &file_step_invocation_proto_msgTypes[8]
+	mi := &file_step_invocation_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -644,7 +576,7 @@ func (x *DataArtifactManifestDestination) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataArtifactManifestDestination.ProtoReflect.Descriptor instead.
 func (*DataArtifactManifestDestination) Descriptor() ([]byte, []int) {
-	return file_step_invocation_proto_rawDescGZIP(), []int{8}
+	return file_step_invocation_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DataArtifactManifestDestination) GetManifestKey() string {
@@ -661,127 +593,7 @@ func (x *DataArtifactManifestDestination) GetSchema() string {
 	return ""
 }
 
-type ChannelArtifactRef struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ChannelName   *string                `protobuf:"bytes,1,opt,name=channel_name,json=channelName,proto3,oneof" json:"channel_name,omitempty"`
-	Artifact      *ArtifactRef           `protobuf:"bytes,2,opt,name=artifact,proto3,oneof" json:"artifact,omitempty"`
-	Schema        *string                `protobuf:"bytes,3,opt,name=schema,proto3,oneof" json:"schema,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ChannelArtifactRef) Reset() {
-	*x = ChannelArtifactRef{}
-	mi := &file_step_invocation_proto_msgTypes[9]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ChannelArtifactRef) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ChannelArtifactRef) ProtoMessage() {}
-
-func (x *ChannelArtifactRef) ProtoReflect() protoreflect.Message {
-	mi := &file_step_invocation_proto_msgTypes[9]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ChannelArtifactRef.ProtoReflect.Descriptor instead.
-func (*ChannelArtifactRef) Descriptor() ([]byte, []int) {
-	return file_step_invocation_proto_rawDescGZIP(), []int{9}
-}
-
-func (x *ChannelArtifactRef) GetChannelName() string {
-	if x != nil && x.ChannelName != nil {
-		return *x.ChannelName
-	}
-	return ""
-}
-
-func (x *ChannelArtifactRef) GetArtifact() *ArtifactRef {
-	if x != nil {
-		return x.Artifact
-	}
-	return nil
-}
-
-func (x *ChannelArtifactRef) GetSchema() string {
-	if x != nil && x.Schema != nil {
-		return *x.Schema
-	}
-	return ""
-}
-
-type ChannelArtifactDestination struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ChannelName   *string                `protobuf:"bytes,1,opt,name=channel_name,json=channelName,proto3,oneof" json:"channel_name,omitempty"`
-	Artifact      *ArtifactDestination   `protobuf:"bytes,2,opt,name=artifact,proto3,oneof" json:"artifact,omitempty"`
-	Schema        *string                `protobuf:"bytes,3,opt,name=schema,proto3,oneof" json:"schema,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ChannelArtifactDestination) Reset() {
-	*x = ChannelArtifactDestination{}
-	mi := &file_step_invocation_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ChannelArtifactDestination) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ChannelArtifactDestination) ProtoMessage() {}
-
-func (x *ChannelArtifactDestination) ProtoReflect() protoreflect.Message {
-	mi := &file_step_invocation_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ChannelArtifactDestination.ProtoReflect.Descriptor instead.
-func (*ChannelArtifactDestination) Descriptor() ([]byte, []int) {
-	return file_step_invocation_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *ChannelArtifactDestination) GetChannelName() string {
-	if x != nil && x.ChannelName != nil {
-		return *x.ChannelName
-	}
-	return ""
-}
-
-func (x *ChannelArtifactDestination) GetArtifact() *ArtifactDestination {
-	if x != nil {
-		return x.Artifact
-	}
-	return nil
-}
-
-func (x *ChannelArtifactDestination) GetSchema() string {
-	if x != nil && x.Schema != nil {
-		return *x.Schema
-	}
-	return ""
-}
-
-// The v2 JSON projection predates this proto and uses a flat tagged union.
+// The JSON projection uses a flat tagged datastore union.
 // kind selects the valid field set; the JSON Schema rejects mixed variants.
 type Datastore struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -798,7 +610,7 @@ type Datastore struct {
 
 func (x *Datastore) Reset() {
 	*x = Datastore{}
-	mi := &file_step_invocation_proto_msgTypes[11]
+	mi := &file_step_invocation_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -810,7 +622,7 @@ func (x *Datastore) String() string {
 func (*Datastore) ProtoMessage() {}
 
 func (x *Datastore) ProtoReflect() protoreflect.Message {
-	mi := &file_step_invocation_proto_msgTypes[11]
+	mi := &file_step_invocation_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -823,7 +635,7 @@ func (x *Datastore) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Datastore.ProtoReflect.Descriptor instead.
 func (*Datastore) Descriptor() ([]byte, []int) {
-	return file_step_invocation_proto_rawDescGZIP(), []int{11}
+	return file_step_invocation_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *Datastore) GetKind() string {
@@ -879,7 +691,7 @@ var File_step_invocation_proto protoreflect.FileDescriptor
 
 const file_step_invocation_proto_rawDesc = "" +
 	"\n" +
-	"\x15step-invocation.proto\x12\x12massive.runtime.v2\"\xdb\b\n" +
+	"\x15step-invocation.proto\x12\x12massive.runtime.v3\"\xe2\a\n" +
 	"\x18StepInvocationDescriptor\x12\x17\n" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12*\n" +
 	"\x0eschema_version\x18\x02 \x01(\rH\x01R\rschemaVersion\x88\x01\x01\x12\x1f\n" +
@@ -890,17 +702,15 @@ const file_step_invocation_proto_rawDesc = "" +
 	"\x06run_id\x18\x06 \x01(\tH\x05R\x05runId\x88\x01\x01\x12\x1c\n" +
 	"\anode_id\x18\a \x01(\tH\x06R\x06nodeId\x88\x01\x01\x12\x1d\n" +
 	"\aattempt\x18\b \x01(\rH\aR\aattempt\x88\x01\x01\x12=\n" +
-	"\x05scope\x18\t \x01(\v2\".massive.runtime.v2.ExecutionScopeH\bR\x05scope\x88\x01\x01\x12;\n" +
+	"\x05scope\x18\t \x01(\v2\".massive.runtime.v3.ExecutionScopeH\bR\x05scope\x88\x01\x01\x12;\n" +
 	"\x06symbol\x18\n" +
-	" \x01(\v2\x1e.massive.runtime.v2.StepSymbolH\tR\x06symbol\x88\x01\x01\x12M\n" +
-	"\x0esource_package\x18\v \x01(\v2!.massive.runtime.v2.SourcePackageH\n" +
+	" \x01(\v2\x1e.massive.runtime.v3.StepSymbolH\tR\x06symbol\x88\x01\x01\x12M\n" +
+	"\x0esource_package\x18\v \x01(\v2!.massive.runtime.v3.SourcePackageH\n" +
 	"R\rsourcePackage\x88\x01\x01\x12,\n" +
 	"\x0fenvironment_ref\x18\f \x01(\tH\vR\x0eenvironmentRef\x88\x01\x01\x12>\n" +
-	"\x05input\x18\r \x01(\v2#.massive.runtime.v2.DataArtifactRefH\fR\x05input\x88\x01\x01\x12P\n" +
-	"\x06output\x18\x0e \x01(\v23.massive.runtime.v2.DataArtifactManifestDestinationH\rR\x06output\x88\x01\x01\x12K\n" +
-	"\rchannel_reads\x18\x0f \x03(\v2&.massive.runtime.v2.ChannelArtifactRefR\fchannelReads\x12U\n" +
-	"\x0echannel_writes\x18\x10 \x03(\v2..massive.runtime.v2.ChannelArtifactDestinationR\rchannelWrites\x12@\n" +
-	"\tdatastore\x18\x11 \x01(\v2\x1d.massive.runtime.v2.DatastoreH\x0eR\tdatastore\x88\x01\x01B\a\n" +
+	"\x05input\x18\r \x01(\v2#.massive.runtime.v3.DataArtifactRefH\fR\x05input\x88\x01\x01\x12P\n" +
+	"\x06output\x18\x0e \x01(\v23.massive.runtime.v3.DataArtifactManifestDestinationH\rR\x06output\x88\x01\x01\x12@\n" +
+	"\tdatastore\x18\x11 \x01(\v2\x1d.massive.runtime.v3.DatastoreH\x0eR\tdatastore\x88\x01\x01B\a\n" +
 	"\x05_kindB\x11\n" +
 	"\x0f_schema_versionB\v\n" +
 	"\t_encodingB\f\n" +
@@ -919,9 +729,9 @@ const file_step_invocation_proto_rawDesc = "" +
 	"\x06_inputB\t\n" +
 	"\a_outputB\f\n" +
 	"\n" +
-	"_datastore\"O\n" +
+	"_datastoreJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11R\rchannel_readsR\x0echannel_writes\"O\n" +
 	"\x0eExecutionScope\x12=\n" +
-	"\x06frames\x18\x01 \x03(\v2%.massive.runtime.v2.MapItemScopeFrameR\x06frames\"\x81\x01\n" +
+	"\x06frames\x18\x01 \x03(\v2%.massive.runtime.v3.MapItemScopeFrameR\x06frames\"\x81\x01\n" +
 	"\x11MapItemScopeFrame\x12\x17\n" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12\x1a\n" +
 	"\x06map_id\x18\x02 \x01(\tH\x01R\x05mapId\x88\x01\x01\x12\x19\n" +
@@ -945,8 +755,8 @@ const file_step_invocation_proto_rawDesc = "" +
 	"package_id\x18\x01 \x01(\tH\x00R\tpackageId\x88\x01\x01\x12\x1f\n" +
 	"\blanguage\x18\x02 \x01(\tH\x01R\blanguage\x88\x01\x01\x12&\n" +
 	"\fpackage_hash\x18\x03 \x01(\tH\x02R\vpackageHash\x88\x01\x01\x12K\n" +
-	"\x0esource_archive\x18\x04 \x01(\v2\x1f.massive.runtime.v2.ArtifactRefH\x03R\rsourceArchive\x88\x01\x01\x12@\n" +
-	"\bmanifest\x18\x05 \x01(\v2\x1f.massive.runtime.v2.ArtifactRefH\x04R\bmanifest\x88\x01\x01B\r\n" +
+	"\x0esource_archive\x18\x04 \x01(\v2\x1f.massive.runtime.v3.ArtifactRefH\x03R\rsourceArchive\x88\x01\x01\x12@\n" +
+	"\bmanifest\x18\x05 \x01(\v2\x1f.massive.runtime.v3.ArtifactRefH\x04R\bmanifest\x88\x01\x01B\r\n" +
 	"\v_package_idB\v\n" +
 	"\t_languageB\x0f\n" +
 	"\r_package_hashB\x11\n" +
@@ -958,14 +768,9 @@ const file_step_invocation_proto_rawDesc = "" +
 	"\fcontent_type\x18\x03 \x01(\tH\x02R\vcontentType\x88\x01\x01B\x06\n" +
 	"\x04_keyB\a\n" +
 	"\x05_hashB\x0f\n" +
-	"\r_content_type\"m\n" +
-	"\x13ArtifactDestination\x12\x15\n" +
-	"\x03key\x18\x01 \x01(\tH\x00R\x03key\x88\x01\x01\x12&\n" +
-	"\fcontent_type\x18\x02 \x01(\tH\x01R\vcontentType\x88\x01\x01B\x06\n" +
-	"\x04_keyB\x0f\n" +
 	"\r_content_type\"\x88\x01\n" +
 	"\x0fDataArtifactRef\x12@\n" +
-	"\bartifact\x18\x01 \x01(\v2\x1f.massive.runtime.v2.ArtifactRefH\x00R\bartifact\x88\x01\x01\x12\x1b\n" +
+	"\bartifact\x18\x01 \x01(\v2\x1f.massive.runtime.v3.ArtifactRefH\x00R\bartifact\x88\x01\x01\x12\x1b\n" +
 	"\x06schema\x18\x02 \x01(\tH\x01R\x06schema\x88\x01\x01B\v\n" +
 	"\t_artifactB\t\n" +
 	"\a_schema\"\x82\x01\n" +
@@ -973,20 +778,6 @@ const file_step_invocation_proto_rawDesc = "" +
 	"\fmanifest_key\x18\x01 \x01(\tH\x00R\vmanifestKey\x88\x01\x01\x12\x1b\n" +
 	"\x06schema\x18\x02 \x01(\tH\x01R\x06schema\x88\x01\x01B\x0f\n" +
 	"\r_manifest_keyB\t\n" +
-	"\a_schema\"\xc4\x01\n" +
-	"\x12ChannelArtifactRef\x12&\n" +
-	"\fchannel_name\x18\x01 \x01(\tH\x00R\vchannelName\x88\x01\x01\x12@\n" +
-	"\bartifact\x18\x02 \x01(\v2\x1f.massive.runtime.v2.ArtifactRefH\x01R\bartifact\x88\x01\x01\x12\x1b\n" +
-	"\x06schema\x18\x03 \x01(\tH\x02R\x06schema\x88\x01\x01B\x0f\n" +
-	"\r_channel_nameB\v\n" +
-	"\t_artifactB\t\n" +
-	"\a_schema\"\xd4\x01\n" +
-	"\x1aChannelArtifactDestination\x12&\n" +
-	"\fchannel_name\x18\x01 \x01(\tH\x00R\vchannelName\x88\x01\x01\x12H\n" +
-	"\bartifact\x18\x02 \x01(\v2'.massive.runtime.v2.ArtifactDestinationH\x01R\bartifact\x88\x01\x01\x12\x1b\n" +
-	"\x06schema\x18\x03 \x01(\tH\x02R\x06schema\x88\x01\x01B\x0f\n" +
-	"\r_channel_nameB\v\n" +
-	"\t_artifactB\t\n" +
 	"\a_schema\"\xb9\x02\n" +
 	"\tDatastore\x12\x17\n" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12\x17\n" +
@@ -1016,41 +807,34 @@ func file_step_invocation_proto_rawDescGZIP() []byte {
 	return file_step_invocation_proto_rawDescData
 }
 
-var file_step_invocation_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_step_invocation_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_step_invocation_proto_goTypes = []any{
-	(*StepInvocationDescriptor)(nil),        // 0: massive.runtime.v2.StepInvocationDescriptor
-	(*ExecutionScope)(nil),                  // 1: massive.runtime.v2.ExecutionScope
-	(*MapItemScopeFrame)(nil),               // 2: massive.runtime.v2.MapItemScopeFrame
-	(*StepSymbol)(nil),                      // 3: massive.runtime.v2.StepSymbol
-	(*SourcePackage)(nil),                   // 4: massive.runtime.v2.SourcePackage
-	(*ArtifactRef)(nil),                     // 5: massive.runtime.v2.ArtifactRef
-	(*ArtifactDestination)(nil),             // 6: massive.runtime.v2.ArtifactDestination
-	(*DataArtifactRef)(nil),                 // 7: massive.runtime.v2.DataArtifactRef
-	(*DataArtifactManifestDestination)(nil), // 8: massive.runtime.v2.DataArtifactManifestDestination
-	(*ChannelArtifactRef)(nil),              // 9: massive.runtime.v2.ChannelArtifactRef
-	(*ChannelArtifactDestination)(nil),      // 10: massive.runtime.v2.ChannelArtifactDestination
-	(*Datastore)(nil),                       // 11: massive.runtime.v2.Datastore
+	(*StepInvocationDescriptor)(nil),        // 0: massive.runtime.v3.StepInvocationDescriptor
+	(*ExecutionScope)(nil),                  // 1: massive.runtime.v3.ExecutionScope
+	(*MapItemScopeFrame)(nil),               // 2: massive.runtime.v3.MapItemScopeFrame
+	(*StepSymbol)(nil),                      // 3: massive.runtime.v3.StepSymbol
+	(*SourcePackage)(nil),                   // 4: massive.runtime.v3.SourcePackage
+	(*ArtifactRef)(nil),                     // 5: massive.runtime.v3.ArtifactRef
+	(*DataArtifactRef)(nil),                 // 6: massive.runtime.v3.DataArtifactRef
+	(*DataArtifactManifestDestination)(nil), // 7: massive.runtime.v3.DataArtifactManifestDestination
+	(*Datastore)(nil),                       // 8: massive.runtime.v3.Datastore
 }
 var file_step_invocation_proto_depIdxs = []int32{
-	1,  // 0: massive.runtime.v2.StepInvocationDescriptor.scope:type_name -> massive.runtime.v2.ExecutionScope
-	3,  // 1: massive.runtime.v2.StepInvocationDescriptor.symbol:type_name -> massive.runtime.v2.StepSymbol
-	4,  // 2: massive.runtime.v2.StepInvocationDescriptor.source_package:type_name -> massive.runtime.v2.SourcePackage
-	7,  // 3: massive.runtime.v2.StepInvocationDescriptor.input:type_name -> massive.runtime.v2.DataArtifactRef
-	8,  // 4: massive.runtime.v2.StepInvocationDescriptor.output:type_name -> massive.runtime.v2.DataArtifactManifestDestination
-	9,  // 5: massive.runtime.v2.StepInvocationDescriptor.channel_reads:type_name -> massive.runtime.v2.ChannelArtifactRef
-	10, // 6: massive.runtime.v2.StepInvocationDescriptor.channel_writes:type_name -> massive.runtime.v2.ChannelArtifactDestination
-	11, // 7: massive.runtime.v2.StepInvocationDescriptor.datastore:type_name -> massive.runtime.v2.Datastore
-	2,  // 8: massive.runtime.v2.ExecutionScope.frames:type_name -> massive.runtime.v2.MapItemScopeFrame
-	5,  // 9: massive.runtime.v2.SourcePackage.source_archive:type_name -> massive.runtime.v2.ArtifactRef
-	5,  // 10: massive.runtime.v2.SourcePackage.manifest:type_name -> massive.runtime.v2.ArtifactRef
-	5,  // 11: massive.runtime.v2.DataArtifactRef.artifact:type_name -> massive.runtime.v2.ArtifactRef
-	5,  // 12: massive.runtime.v2.ChannelArtifactRef.artifact:type_name -> massive.runtime.v2.ArtifactRef
-	6,  // 13: massive.runtime.v2.ChannelArtifactDestination.artifact:type_name -> massive.runtime.v2.ArtifactDestination
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	1,  // 0: massive.runtime.v3.StepInvocationDescriptor.scope:type_name -> massive.runtime.v3.ExecutionScope
+	3,  // 1: massive.runtime.v3.StepInvocationDescriptor.symbol:type_name -> massive.runtime.v3.StepSymbol
+	4,  // 2: massive.runtime.v3.StepInvocationDescriptor.source_package:type_name -> massive.runtime.v3.SourcePackage
+	6,  // 3: massive.runtime.v3.StepInvocationDescriptor.input:type_name -> massive.runtime.v3.DataArtifactRef
+	7,  // 4: massive.runtime.v3.StepInvocationDescriptor.output:type_name -> massive.runtime.v3.DataArtifactManifestDestination
+	8,  // 5: massive.runtime.v3.StepInvocationDescriptor.datastore:type_name -> massive.runtime.v3.Datastore
+	2,  // 6: massive.runtime.v3.ExecutionScope.frames:type_name -> massive.runtime.v3.MapItemScopeFrame
+	5,  // 7: massive.runtime.v3.SourcePackage.source_archive:type_name -> massive.runtime.v3.ArtifactRef
+	5,  // 8: massive.runtime.v3.SourcePackage.manifest:type_name -> massive.runtime.v3.ArtifactRef
+	5,  // 9: massive.runtime.v3.DataArtifactRef.artifact:type_name -> massive.runtime.v3.ArtifactRef
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_step_invocation_proto_init() }
@@ -1066,16 +850,13 @@ func file_step_invocation_proto_init() {
 	file_step_invocation_proto_msgTypes[6].OneofWrappers = []any{}
 	file_step_invocation_proto_msgTypes[7].OneofWrappers = []any{}
 	file_step_invocation_proto_msgTypes[8].OneofWrappers = []any{}
-	file_step_invocation_proto_msgTypes[9].OneofWrappers = []any{}
-	file_step_invocation_proto_msgTypes[10].OneofWrappers = []any{}
-	file_step_invocation_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_step_invocation_proto_rawDesc), len(file_step_invocation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

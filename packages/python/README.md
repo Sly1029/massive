@@ -89,8 +89,7 @@ graph = GraphBuilder(
 )
 
 
-@graph.step()
-async def double(context: StepContext[None, Request]) -> Result:
+async def double(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value * 2)
 
 
@@ -98,9 +97,35 @@ node = graph.add(double)
 graph.edge_from(graph.start).to(node).to(graph.end)
 ```
 
-`GraphBuilder.step` accepts synchronous and asynchronous top-level functions.
+`GraphBuilder.add` and `GraphBuilder.map` accept synchronous and asynchronous
+top-level functions directly. Functions remain callable and reusable across
+graphs; registration attaches execution settings without changing the function.
 The type of `node` is `NodeHandle[Result]` in either form, so the graph's edge
 types still follow the value a step produces rather than its coroutine.
+
+## Reusable functions and execution settings
+
+Keep task functions in ordinary importable modules. A composition module registers
+them and chooses their execution requirements:
+
+```python
+from dataclasses import replace
+from tasks import inspect
+inspection = graph.add(
+    inspect,
+    id="inspect",
+    contract=replace(graph.defaults, cpu="2", memory="4Gi"),
+)
+```
+
+`contract=` on `add()` or `map()` selects the complete contract for that use;
+omitting it uses the graph defaults. Use `dataclasses.replace(graph.defaults, ...)`
+to change selected fields while preserving secrets and network intent. Passing
+a fresh `execution(...)` intentionally selects a complete different contract,
+just as registering an explicit contract does in the TypeScript SDK. Reuse
+one immutable `Container` across resource or secret configurations. The compiler
+owns environment identity; there is no separate author-side container plan.
+Task imports should not require the deployment settings used to assemble a graph.
 
 ## Exhaustive decisions
 
@@ -126,7 +151,7 @@ class Rejected(BaseModel):
 
 Review = Annotated[Approved | Rejected, Field(discriminator="kind")]
 
-decision_graph: GraphBuilder[None, Request, Result] = GraphBuilder(
+decision_graph: GraphBuilder[Request, Result] = GraphBuilder(
     name="review",
     input_type=Request,
     output_type=Result,
@@ -134,20 +159,17 @@ decision_graph: GraphBuilder[None, Request, Result] = GraphBuilder(
 )
 
 
-@decision_graph.step()
-def classify(context: StepContext[None, Request]) -> Review:
+def classify(context: StepContext[Request]) -> Review:
     if context.inputs.value >= 0:
         return Approved(value=context.inputs.value)
     return Rejected(reason="negative value")
 
 
-@decision_graph.step()
-async def approve(context: StepContext[None, Approved]) -> Result:
+async def approve(context: StepContext[Approved]) -> Result:
     return Result(value=context.inputs.value)
 
 
-@decision_graph.step()
-def reject(context: StepContext[None, Rejected]) -> Result:
+def reject(context: StepContext[Rejected]) -> Result:
     return Result(value=0)
 
 
@@ -185,15 +207,12 @@ the nested classifier, decision, branches, and select are all skipped as one
 control region. Sync and async classification or branch steps may be mixed
 freely.
 
-Exhaustive decisions execute through `massive run`'s local compiled path today.
-The Argo target deliberately rejects decision/select plans with an explicit
-unsupported-graph-semantic diagnostic; it does not emit a template with altered
-branch semantics. Argo lowering will be enabled only when it can preserve these
-same exhaustive, skip, and select guarantees.
+Exhaustive decisions execute locally and on Argo with the same routing and
+artifact-selection semantics. Live conformance exercises nested inactive branches.
 
 ## Finite maps
 
-Map a concrete list produced by an earlier node with one decorated step. The
+Map a concrete list produced by an earlier node with one ordinary function. The
 returned handle is the ordered `list[Result]`, including the empty-list case;
 there is no separate gather or collect call.
 
@@ -210,13 +229,11 @@ map_graph = GraphBuilder(
 )
 
 
-@map_graph.step()
-def unpack(context: StepContext[None, Batch]) -> list[Request]:
+def unpack(context: StepContext[Batch]) -> list[Request]:
     return context.inputs.values
 
 
-@map_graph.step()
-def increment_item(context: StepContext[None, Request]) -> Result:
+def increment_item(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
@@ -298,9 +315,10 @@ isolated Argo-step paths.
 
 The graph is static: define all nodes and edges during authoring rather than
 creating graph structure from step results. Step inputs and outputs must be
-canonical JSON values representable by their Pydantic schemas. Dependency
-providers (`deps_type`) are intentionally not part of the invocation protocol
-yet, so use explicit JSON inputs until that surface is designed. Python is the
+canonical JSON values representable by their Pydantic schemas.
+`StepContext[Input]` provides typed inputs, invocation metadata, and a workspace.
+Create service clients inside task code from deployment-bound configuration;
+live Python objects are not transported between workers. Python is the
 primary SDK; the artifact manifest protocol is shared with the other Massive
 runtimes.
 
@@ -462,14 +480,14 @@ class Checkout(BaseModel):
 class Report(BaseModel):
     file: Blob
 
-def inspect(ctx: StepContext[None, Checkout]) -> Report:
+def inspect(ctx: StepContext[Checkout]) -> Report:
     root = ctx.inputs.files.path()
     report = ctx.workspace / "report.txt"
     report.write_text(f"Inspected revision {ctx.inputs.revision}")
     return Report(file=Blob.from_path(report))
 
-# Register an ordinary top-level function; the decorator is optional.
-inspection = graph.add(graph.step()(inspect))
+# Register the ordinary function directly.
+inspection = graph.add(inspect)
 ```
 
 Create a snapshot with `Tree.from_path(directory)` or `Blob.from_path(file)`.
@@ -522,7 +540,7 @@ and runner adapters.
 Use `ctx.workspace` for files created by a task:
 
 ```python
-def render(ctx: StepContext[None, str]) -> Blob:
+def render(ctx: StepContext[str]) -> Blob:
     output = ctx.workspace / "report.txt"
     output.write_text(ctx.inputs)
     return Blob.from_path(output)

@@ -186,8 +186,7 @@ class Result(BaseModel):
 )
 
 
-@{export}.step()
-def identity(context: StepContext[None, Request]) -> Result:
+def identity(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value)
 
 

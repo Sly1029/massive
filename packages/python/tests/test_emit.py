@@ -86,7 +86,8 @@ def test_emits_a_canonical_python_workflow_spec_accepted_by_go_compiler(tmp_path
         == emitted["sourcePackages"]["python-main"]["hashing"]
     )
     assert compiled["graph"]["workflowName"] == "python-emission"
-    environment_identity = module.graph.defaults.environment.plan().identity
+    # Compiler environment ref for this fixture image and invocation settings.
+    environment_identity = "sha256:9c2d0504ccd8d3845f791856fa4e393efa09c9d42f25814c7cbbeb7b515e3c67"
     assert compiled["environments"] == [
         {
             "envRef": environment_identity,

@@ -36,7 +36,7 @@ class Rejected(BaseModel):
 Route = Annotated[Approved | Rejected, Field(discriminator="kind")]
 
 
-graph: GraphBuilder[None, Request, Result] = GraphBuilder(
+graph: GraphBuilder[Request, Result] = GraphBuilder(
     name="typed-authoring",
     input_type=Request,
     output_type=Result,
@@ -49,13 +49,11 @@ graph: GraphBuilder[None, Request, Result] = GraphBuilder(
 )
 
 
-@graph.step()
-def increment(context: StepContext[None, Request]) -> Result:
+def increment(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
-@graph.step()
-async def increment_async(context: StepContext[None, Request]) -> Result:
+async def increment_async(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
@@ -64,7 +62,7 @@ async_node: NodeHandle[Result] = graph.add(increment_async)
 graph.edge_from(graph.start).to(sync_node).to(async_node).to(graph.end)
 
 
-map_graph: GraphBuilder[None, BatchRequest, list[Result]] = GraphBuilder(
+map_graph: GraphBuilder[BatchRequest, list[Result]] = GraphBuilder(
     name="typed-map",
     input_type=BatchRequest,
     output_type=list[Result],
@@ -72,13 +70,11 @@ map_graph: GraphBuilder[None, BatchRequest, list[Result]] = GraphBuilder(
 )
 
 
-@map_graph.step()
-def unpack(context: StepContext[None, BatchRequest]) -> list[Request]:
+def unpack(context: StepContext[BatchRequest]) -> list[Request]:
     return context.inputs.values
 
 
-@map_graph.step()
-def increment_item(context: StepContext[None, Request]) -> Result:
+def increment_item(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
@@ -88,7 +84,7 @@ map_graph.edge_from(map_graph.start).to(requests)
 map_graph.edge_from(mapped).to(map_graph.end)
 
 
-decision_graph: GraphBuilder[None, Request, Result] = GraphBuilder(
+decision_graph: GraphBuilder[Request, Result] = GraphBuilder(
     name="typed-decisions",
     input_type=Request,
     output_type=Result,
@@ -101,18 +97,15 @@ decision_graph: GraphBuilder[None, Request, Result] = GraphBuilder(
 )
 
 
-@decision_graph.step()
-def classify(context: StepContext[None, Request]) -> Route:
+def classify(context: StepContext[Request]) -> Route:
     return Approved(kind="approved", value=context.inputs.value)
 
 
-@decision_graph.step()
-def approve(context: StepContext[None, Approved]) -> Result:
+def approve(context: StepContext[Approved]) -> Result:
     return Result(value=context.inputs.value)
 
 
-@decision_graph.step()
-def reject(context: StepContext[None, Rejected]) -> Result:
+def reject(context: StepContext[Rejected]) -> Result:
     return Result(value=0)
 
 
@@ -131,7 +124,7 @@ selected: NodeHandle[Result] = route.select(
 decision_graph.edge_from(selected).to(decision_graph.end)
 
 
-map_select_graph: GraphBuilder[None, Request, list[Result]] = GraphBuilder(
+map_select_graph: GraphBuilder[Request, list[Result]] = GraphBuilder(
     name="typed-map-select",
     input_type=Request,
     output_type=list[Result],
@@ -139,23 +132,19 @@ map_select_graph: GraphBuilder[None, Request, list[Result]] = GraphBuilder(
 )
 
 
-@map_select_graph.step()
-def classify_for_map(context: StepContext[None, Request]) -> Route:
+def classify_for_map(context: StepContext[Request]) -> Route:
     return Approved(kind="approved", value=context.inputs.value)
 
 
-@map_select_graph.step()
-def approved_items(context: StepContext[None, Approved]) -> list[Approved]:
+def approved_items(context: StepContext[Approved]) -> list[Approved]:
     return [context.inputs]
 
 
-@map_select_graph.step()
-def increment_approved(context: StepContext[None, Approved]) -> Result:
+def increment_approved(context: StepContext[Approved]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
-@map_select_graph.step()
-def rejected_items(context: StepContext[None, Rejected]) -> list[Result]:
+def rejected_items(context: StepContext[Rejected]) -> list[Result]:
     return [Result(value=0)]
 
 
@@ -178,8 +167,8 @@ map_select_graph.edge_from(selected_map).to(map_select_graph.end)
 
 
 
-def ordinary_increment(context: StepContext[None, Request]) -> Result:
+def ordinary_increment(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
 
-ordinary_node: NodeHandle[Result] = graph.add(graph.step()(ordinary_increment))
+ordinary_node: NodeHandle[Result] = graph.add(ordinary_increment)

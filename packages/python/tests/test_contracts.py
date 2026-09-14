@@ -1,41 +1,44 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from massive import container, execution
 
 
-def test_container_recipe_composes_invocation_fields_into_a_canonical_plan() -> None:
-    base = container(
-        "registry.example/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+def test_derived_contract_accepts_secret_mappings_without_mutating_its_base() -> None:
+    base = execution(
+        environment=container("registry.example/python@sha256:" + "0123456789abcdef" * 4),
+        cpu="2",
+        secrets={"BASE_TOKEN": "base"},
     )
+    refs = {"Z_TOKEN": "last", "A_TOKEN": "first"}
+    derived = replace(base, secrets=refs)
+    refs["A_TOKEN"] = "changed"
+    assert derived.as_json()["secrets"] == [
+        {"name": "A_TOKEN", "ref": "first"},
+        {"name": "Z_TOKEN", "ref": "last"},
+    ]
+    assert base.as_json()["secrets"] == [{"name": "BASE_TOKEN", "ref": "base"}]
+    assert derived.as_json()["resources"] == {"cpu": "2"}
+    with pytest.raises(ValueError, match="secret names and refs"):
+        replace(base, secrets={"TOKEN": ""})
 
-    recipe = base.extend(command=("python", "-m", "worker"), working_directory="app")
-    plan = recipe.plan()
 
-    assert base.as_json() == {
+def test_container_records_invocation_requirements() -> None:
+    environment = container(
+        "registry.example/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        command=("python", "-m", "worker"),
+        working_directory="app",
+    )
+    assert environment.as_json() == {
         "kind": "container",
         "image": "registry.example/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "platform": "linux/amd64",
+        "command": ["python", "-m", "worker"],
+        "workingDirectory": "app",
     }
-    assert plan.canonical_json == (
-        '{"container":{"command":["python","-m","worker"],'
-        '"image":"registry.example/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",'
-        '"platform":"linux/amd64","workingDirectory":"app"}}'
-    )
-    assert plan.identity == "sha256:25b23f1859f62339edaa0e5c9d48b4cb448b76a1b8c2895be896e33e48fb3e19"
-
-
-def test_resources_and_secret_refs_do_not_change_container_plan_identity() -> None:
-    recipe = container(
-        "registry.example/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    )
-
-    first = execution(environment=recipe, cpu="1", secrets={"TOKEN": "secret/first"})
-    second = execution(environment=recipe, memory="4Gi", secrets={"TOKEN": "secret/second"})
-
-    assert first.as_json() != second.as_json()
-    assert first.environment.plan().identity == second.environment.plan().identity
 
 
 @pytest.mark.parametrize("image", ["registry.example/python:3.12", "registry.example/python"])

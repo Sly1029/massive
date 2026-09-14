@@ -20,7 +20,7 @@ func (descriptor StepInvocationDescriptor) MarshalJSON() ([]byte, error) {
 
 func descriptorToProto(descriptor StepInvocationDescriptor) (*runtimepb.StepInvocationDescriptor, error) {
 	if descriptor.Attempt < 0 || uint64(descriptor.Attempt) > math.MaxUint32 {
-		return nil, fmt.Errorf("descriptor attempt %d exceeds the proto v2 uint32 range", descriptor.Attempt)
+		return nil, fmt.Errorf("descriptor attempt %d exceeds the proto v3 uint32 range", descriptor.Attempt)
 	}
 	scope, err := executionScopeToProto(descriptor.Scope)
 	if err != nil {
@@ -29,24 +29,6 @@ func descriptorToProto(descriptor StepInvocationDescriptor) (*runtimepb.StepInvo
 	datastore, err := datastoreToProto(descriptor.Datastore)
 	if err != nil {
 		return nil, err
-	}
-	channelReads := make([]*runtimepb.ChannelArtifactRef, 0, len(descriptor.ChannelReads))
-	for _, channel := range descriptor.ChannelReads {
-		channelReads = append(channelReads, &runtimepb.ChannelArtifactRef{
-			ChannelName: pointer(channel.ChannelName),
-			Artifact:    artifactRefToProto(channel.Artifact),
-			Schema:      pointer(channel.Schema),
-		})
-	}
-	channelWrites := make([]*runtimepb.ChannelArtifactDestination, 0, len(descriptor.ChannelWrites))
-	for _, channel := range descriptor.ChannelWrites {
-		channelWrites = append(channelWrites, &runtimepb.ChannelArtifactDestination{
-			ChannelName: pointer(channel.ChannelName),
-			Artifact: &runtimepb.ArtifactDestination{
-				Key: pointer(channel.Artifact.Key), ContentType: pointer(channel.Artifact.ContentType),
-			},
-			Schema: pointer(channel.Schema),
-		})
 	}
 	sourcePackage := &runtimepb.SourcePackage{
 		PackageId:     pointer(descriptor.SourcePackage.PackageID),
@@ -83,9 +65,7 @@ func descriptorToProto(descriptor StepInvocationDescriptor) (*runtimepb.StepInvo
 			ManifestKey: pointer(descriptor.Output.ManifestKey),
 			Schema:      pointer(descriptor.Output.Schema),
 		},
-		ChannelReads:  channelReads,
-		ChannelWrites: channelWrites,
-		Datastore:     datastore,
+		Datastore: datastore,
 	}, nil
 }
 
@@ -96,7 +76,7 @@ func executionScopeToProto(scope *ExecutionScope) (*runtimepb.ExecutionScope, er
 	frames := make([]*runtimepb.MapItemScopeFrame, 0, len(scope.Frames))
 	for _, frame := range scope.Frames {
 		if frame.Index < 0 || uint64(frame.Index) > math.MaxUint32 {
-			return nil, fmt.Errorf("map index %d exceeds the proto v2 uint32 range", frame.Index)
+			return nil, fmt.Errorf("map index %d exceeds the proto v3 uint32 range", frame.Index)
 		}
 		frames = append(frames, &runtimepb.MapItemScopeFrame{
 			Kind: pointer(frame.Kind), MapId: pointer(frame.MapID), Index: pointer(uint32(frame.Index)),

@@ -38,35 +38,35 @@ Outer = Annotated[Work | Skip, Field(discriminator="kind")]
 Inner = Annotated[Positive | Zero, Field(discriminator="kind")]
 
 
-def classify(ctx: StepContext[None, Request]) -> Outer:
+def classify(ctx: StepContext[Request]) -> Outer:
     return Work(request=ctx.inputs) if ctx.inputs.score >= 0 else Skip()
 
 
-def classify_inner(ctx: StepContext[None, Work]) -> Inner:
+def classify_inner(ctx: StepContext[Work]) -> Inner:
     return (
         Positive(request=ctx.inputs.request) if ctx.inputs.request.score > 0 else Zero()
     )
 
 
-def prepare(ctx: StepContext[None, Positive]) -> list[Request]:
+def prepare(ctx: StepContext[Positive]) -> list[Request]:
     return [ctx.inputs.request] * ctx.inputs.request.copies
 
 
-def evaluate(ctx: StepContext[None, Request]) -> int:
+def evaluate(ctx: StepContext[Request]) -> int:
     if ctx.inputs.fail:
         raise ValueError("Deliberate conformance failure")
     return ctx.inputs.score
 
 
-def collect(ctx: StepContext[None, list[int]]) -> int:
+def collect(ctx: StepContext[list[int]]) -> int:
     return sum(ctx.inputs)
 
 
-def zero(ctx: StepContext[None, Zero]) -> int:
+def zero(ctx: StepContext[Zero]) -> int:
     return 0
 
 
-def skip(ctx: StepContext[None, Skip]) -> int:
+def skip(ctx: StepContext[Skip]) -> int:
     return -1
 
 
@@ -76,15 +76,15 @@ graph = GraphBuilder(
     output_type=int,
     defaults=execution(environment=container(IMAGE, platform=PLATFORM)),
 )
-outer_value = graph.add(graph.step()(classify), id="-classify")
+outer_value = graph.add(classify, id="-classify")
 outer = graph.decision(outer_value, on="kind", id="outer")
-inner_value = graph.add(graph.step()(classify_inner))
+inner_value = graph.add(classify_inner)
 inner = graph.decision(inner_value, on="kind", id="inner")
-items = graph.add(graph.step()(prepare))
-mapped = graph.map(items, graph.step()(evaluate), id="evaluate", concurrency=2)
-total = graph.add(graph.step()(collect))
-zero_value = graph.add(graph.step()(zero))
-skip_value = graph.add(graph.step()(skip))
+items = graph.add(prepare)
+mapped = graph.map(items, evaluate, id="evaluate", concurrency=2)
+total = graph.add(collect)
+zero_value = graph.add(zero)
+skip_value = graph.add(skip)
 graph.edge_from(graph.start).to(outer_value)
 graph.edge_from(outer.case(Work)).to(inner_value)
 graph.edge_from(outer.case(Skip)).to(skip_value)

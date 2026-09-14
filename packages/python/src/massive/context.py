@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
 
-DepsT = TypeVar("DepsT")
 InputT = TypeVar("InputT")
 
 
@@ -16,8 +15,7 @@ class InvocationContext:
 
 
 @dataclass(frozen=True, slots=True)
-class StepContext(Generic[DepsT, InputT]):
+class StepContext(Generic[InputT]):
     inputs: InputT
-    deps: DepsT
     invocation: InvocationContext
     workspace: Path

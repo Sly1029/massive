@@ -304,7 +304,7 @@ branches, and source-indexed finite-map items. Failed and cancelled runs have
 a root diagnostic and terminal steps; completed artifacts survive cancellation,
 while undispatched work has no attempts. There is no compatibility reader
 or dual-write mode. The step invocation descriptor below remains the separate
-v2/json-v2 transport.
+v3/json-v3 transport.
 
 The exact path format should be specified in the proto-typed JSON manifest, not hardcoded by backend runners.
 
@@ -344,11 +344,9 @@ The step invocation descriptor is the narrow runtime protocol between Go orchest
 
 V2 serializes this descriptor as JSON for ease of implementation in TypeScript and Python. The descriptor must still be defined as a shared schema message, not as an adapter-private JSON shape, so a future transport can reuse the same semantics.
 
-The `json-v2` descriptor release is coupled to the v2 rewrite, so
-pre-release tightening of identity-segment validation needs no transport bump.
-The Graph IR remains explicitly unstable at `0.x`; v2 workflows are rewritten
-rather than run through a compatibility mode. After release, an incompatible
-change must use the relevant versioning rules.
+The current descriptor is v3/json-v3. It has one input reference and one output
+manifest destination, with no channel fields. Older descriptors must be rebuilt;
+runners do not accept compatibility fields.
 
 It includes:
 
@@ -375,8 +373,8 @@ Example:
 ```json
 {
   "kind": "StepInvocationDescriptor",
-  "schemaVersion": 2,
-  "encoding": "json-v2",
+  "schemaVersion": 3,
+  "encoding": "json-v3",
   "planHash": "sha256:...",
   "projectKey": "sha256-...",
   "runId": "run-...",
@@ -412,8 +410,6 @@ Example:
     "manifestKey": "projects/.../runs/.../steps/double/scopes/maps/fanout/items/0/1/output-manifest.json",
     "schema": "sha256:..."
   },
-  "channelReads": [],
-  "channelWrites": [],
   "datastore": { "kind": "local", "path": "/tmp/massive-store" }
 }
 ```

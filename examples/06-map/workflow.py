@@ -17,7 +17,7 @@ class Result(BaseModel):
     squared: int
 
 
-graph: GraphBuilder[None, Batch, list[Result]] = GraphBuilder(
+graph: GraphBuilder[Batch, list[Result]] = GraphBuilder(
     name="map-example",
     input_type=Batch,
     output_type=list[Result],
@@ -30,13 +30,11 @@ graph: GraphBuilder[None, Batch, list[Result]] = GraphBuilder(
 )
 
 
-@graph.step()
-def unpack(context: StepContext[None, Batch]) -> list[Item]:
+def unpack(context: StepContext[Batch]) -> list[Item]:
     return [Item(value=value) for value in context.inputs.values]
 
 
-@graph.step()
-def square(context: StepContext[None, Item]) -> Result:
+def square(context: StepContext[Item]) -> Result:
     return Result(source=context.inputs.value, squared=context.inputs.value**2)
 
 

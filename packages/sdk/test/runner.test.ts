@@ -55,7 +55,7 @@ Deno.test("runner descriptor parser accepts every conformance descriptor fixture
       JSON.parse(await Deno.readTextFile(path)),
     );
     assertEquals(descriptor.kind, "StepInvocationDescriptor");
-    assertEquals(descriptor.schemaVersion, 2);
+    assertEquals(descriptor.schemaVersion, 3);
   }
 });
 
@@ -82,6 +82,23 @@ Deno.test("runner descriptor parser rejects malformed descriptors with a precise
     thrown.message,
     'StepInvocationDescriptor JSON schema violation at /planHash: must match pattern "^sha256:[0-9a-f]{64}$"',
   );
+});
+
+Deno.test("runner rejects obsolete descriptors and removed channel fields", async () => {
+  const fixture = JSON.parse(await Deno.readTextFile(new URL(
+    "../../../conformance/fixtures/descriptors/linear-chain/descriptor.json", import.meta.url,
+  )));
+  for (const removed of [
+    { schemaVersion: 2, encoding: "json-v2" },
+    { channelReads: [] },
+    { channelWrites: [] },
+  ]) {
+    await assertRejects(
+      () => parseStepInvocationDescriptor({ ...fixture, ...removed }),
+      DescriptorError,
+      "rebuild with the current Massive release",
+    );
+  }
 });
 
 Deno.test("runner executes a real fixture step end to end against a temp local datastore", async () => {
@@ -417,8 +434,8 @@ async function withRunnerFixture(
     const inputText = stableStringify(options.input);
     const descriptor = await parseStepInvocationDescriptor({
       kind: "StepInvocationDescriptor",
-      schemaVersion: 2,
-      encoding: "json-v2",
+      schemaVersion: 3,
+      encoding: "json-v3",
       planHash:
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       projectKey:
@@ -458,8 +475,6 @@ async function withRunnerFixture(
         manifestKey: outputManifestKey(),
         schema: schemaRef(),
       },
-      channelReads: [],
-      channelWrites: [],
       datastore: {
         kind: "local",
         path: join(root, "store"),

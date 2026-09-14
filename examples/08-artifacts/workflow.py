@@ -37,7 +37,7 @@ graph = GraphBuilder(
 )
 
 
-def capture(ctx: StepContext[None, Request]) -> list[Snapshot]:
+def capture(ctx: StepContext[Request]) -> list[Snapshot]:
     root = ctx.workspace / "checkout"
     root.mkdir()
     (root / "source.txt").write_text("original")
@@ -48,7 +48,7 @@ def capture(ctx: StepContext[None, Request]) -> list[Snapshot]:
     return [Snapshot(checkout=tree, index=i) for i in range(ctx.inputs.copies)]
 
 
-def inspect(ctx: StepContext[None, Snapshot]) -> Inspection:
+def inspect(ctx: StepContext[Snapshot]) -> Inspection:
     root = ctx.inputs.checkout.path()
     assert (root / "empty").is_dir()
     assert (root / "tool").stat().st_mode & 0o111
@@ -59,7 +59,7 @@ def inspect(ctx: StepContext[None, Snapshot]) -> Inspection:
     return Inspection(original=ctx.inputs.checkout, report=Blob.from_path(report))
 
 
-def summarize(ctx: StepContext[None, list[Inspection]]) -> Summary:
+def summarize(ctx: StepContext[list[Inspection]]) -> Summary:
     return Summary(
         reports=[item.report.path().read_text() for item in ctx.inputs],
         original=(ctx.inputs[0].original.path() / "source.txt").read_text()
@@ -69,8 +69,8 @@ def summarize(ctx: StepContext[None, list[Inspection]]) -> Summary:
 
 
 # Registration works without decorators, so reusable ordinary functions compose cleanly.
-source = graph.add(graph.step()(capture))
-items = graph.map(source, graph.step()(inspect), id="inspect-files", concurrency=2)
-result = graph.add(graph.step()(summarize))
+source = graph.add(capture)
+items = graph.map(source, inspect, id="inspect-files", concurrency=2)
+result = graph.add(summarize)
 graph.edge_from(graph.start).to(source)
 graph.edge_from(items).to(result).to(graph.end)

@@ -1,7 +1,7 @@
 {
   "kind": "StepInvocationDescriptor",
-  "schemaVersion": 2,
-  "encoding": "json-v2",
+  "schemaVersion": 3,
+  "encoding": "json-v3",
   "planHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "projectKey": "sha256-9999999999999999999999999999999999999999999999999999999999999999",
   "runId": "run-map-item-0001",
@@ -24,7 +24,5 @@
     "manifestKey": "projects/sha256-9999999999999999999999999999999999999999999999999999999999999999/runs/run-map-item-0001/steps/double/scopes/maps/fanout/items/0/1/output-manifest.json",
     "schema": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
   },
-  "channelReads": [],
-  "channelWrites": [],
   "datastore": { "kind": "local", "path": "/tmp/massive-conformance-store" }
 }

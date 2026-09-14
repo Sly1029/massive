@@ -142,14 +142,11 @@ func (x *MaterializationSpec) GetSourceArchives() []*SourceArchive {
 }
 
 type EnvironmentSelection struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	EnvironmentRef *string                `protobuf:"bytes,1,opt,name=environment_ref,json=environmentRef,proto3,oneof" json:"environment_ref,omitempty"`
-	// Types that are valid to be assigned to Mode:
-	//
-	//	*EnvironmentSelection_ExistingContainer
-	Mode          isEnvironmentSelection_Mode `protobuf_oneof:"mode"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	EnvironmentRef    *string                `protobuf:"bytes,1,opt,name=environment_ref,json=environmentRef,proto3,oneof" json:"environment_ref,omitempty"`
+	ExistingContainer *ExistingContainer     `protobuf:"bytes,2,opt,name=existing_container,json=existingContainer,proto3,oneof" json:"existing_container,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *EnvironmentSelection) Reset() {
@@ -189,31 +186,12 @@ func (x *EnvironmentSelection) GetEnvironmentRef() string {
 	return ""
 }
 
-func (x *EnvironmentSelection) GetMode() isEnvironmentSelection_Mode {
-	if x != nil {
-		return x.Mode
-	}
-	return nil
-}
-
 func (x *EnvironmentSelection) GetExistingContainer() *ExistingContainer {
 	if x != nil {
-		if x, ok := x.Mode.(*EnvironmentSelection_ExistingContainer); ok {
-			return x.ExistingContainer
-		}
+		return x.ExistingContainer
 	}
 	return nil
 }
-
-type isEnvironmentSelection_Mode interface {
-	isEnvironmentSelection_Mode()
-}
-
-type EnvironmentSelection_ExistingContainer struct {
-	ExistingContainer *ExistingContainer `protobuf:"bytes,2,opt,name=existing_container,json=existingContainer,proto3,oneof"`
-}
-
-func (*EnvironmentSelection_ExistingContainer) isEnvironmentSelection_Mode() {}
 
 // An externally supplied immutable image, not a build recipe. Command and
 // working directory remain execution requirements in the plan.
@@ -496,12 +474,12 @@ const file_materialization_proto_rawDesc = "" +
 	"\x0fsource_archives\x18\x04 \x03(\v2).massive.materialization.v0.SourceArchiveR\x0esourceArchivesB\x11\n" +
 	"\x0f_schema_versionB\f\n" +
 	"\n" +
-	"_spec_hash\"\xc0\x01\n" +
+	"_spec_hash\"\xd2\x01\n" +
 	"\x14EnvironmentSelection\x12,\n" +
-	"\x0fenvironment_ref\x18\x01 \x01(\tH\x01R\x0eenvironmentRef\x88\x01\x01\x12^\n" +
-	"\x12existing_container\x18\x02 \x01(\v2-.massive.materialization.v0.ExistingContainerH\x00R\x11existingContainerB\x06\n" +
-	"\x04modeB\x12\n" +
-	"\x10_environment_ref\"f\n" +
+	"\x0fenvironment_ref\x18\x01 \x01(\tH\x00R\x0eenvironmentRef\x88\x01\x01\x12a\n" +
+	"\x12existing_container\x18\x02 \x01(\v2-.massive.materialization.v0.ExistingContainerH\x01R\x11existingContainer\x88\x01\x01B\x12\n" +
+	"\x10_environment_refB\x15\n" +
+	"\x13_existing_container\"f\n" +
 	"\x11ExistingContainer\x12\x19\n" +
 	"\x05image\x18\x01 \x01(\tH\x00R\x05image\x88\x01\x01\x12\x1f\n" +
 	"\bplatform\x18\x02 \x01(\tH\x01R\bplatform\x88\x01\x01B\b\n" +
@@ -583,9 +561,7 @@ func file_materialization_proto_init() {
 		return
 	}
 	file_materialization_proto_msgTypes[0].OneofWrappers = []any{}
-	file_materialization_proto_msgTypes[1].OneofWrappers = []any{
-		(*EnvironmentSelection_ExistingContainer)(nil),
-	}
+	file_materialization_proto_msgTypes[1].OneofWrappers = []any{}
 	file_materialization_proto_msgTypes[2].OneofWrappers = []any{}
 	file_materialization_proto_msgTypes[3].OneofWrappers = []any{}
 	file_materialization_proto_msgTypes[4].OneofWrappers = []any{}
