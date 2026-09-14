@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal
 
 from .canonical import JsonValue
@@ -39,7 +40,18 @@ class ExecutionContract:
     cpu: str | None = None
     memory: str | None = None
     network: Literal["none", "any"] | None = None
-    secrets: tuple[tuple[str, str], ...] = ()
+    secrets: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if any(not name or not ref for name, ref in self.secrets.items()):
+            raise ValueError("secret names and refs must be non-empty strings")
+        refs = dict(
+            sorted(
+                self.secrets.items(),
+                key=lambda pair: (pair[0].encode("utf-16-be"), pair[1].encode("utf-16-be")),
+            )
+        )
+        object.__setattr__(self, "secrets", MappingProxyType(refs))
 
     def as_json(self) -> dict[str, object]:
         value: dict[str, object] = {"environment": self.environment.as_json()}
@@ -53,7 +65,7 @@ class ExecutionContract:
         if self.network is not None:
             value["network"] = {"egress": self.network}
         if self.secrets:
-            value["secrets"] = [{"name": name, "ref": ref} for name, ref in self.secrets]
+            value["secrets"] = [{"name": name, "ref": ref} for name, ref in self.secrets.items()]
         return value
 
 
@@ -88,22 +100,10 @@ def execution(
     network: Literal["none", "any"] | None = None,
     secrets: Mapping[str, str] | None = None,
 ) -> ExecutionContract:
-    secret_pairs = (
-        ()
-        if secrets is None
-        else tuple(
-            sorted(
-                secrets.items(),
-                key=lambda pair: (pair[0].encode("utf-16-be"), pair[1].encode("utf-16-be")),
-            )
-        )
-    )
-    if any(not name or not ref for name, ref in secret_pairs):
-        raise ValueError("secret names and refs must be non-empty strings")
     return ExecutionContract(
         environment=environment,
         cpu=cpu,
         memory=memory,
         network=network,
-        secrets=secret_pairs,
+        secrets={} if secrets is None else secrets,
     )
