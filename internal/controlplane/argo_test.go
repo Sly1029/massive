@@ -100,7 +100,7 @@ func TestPortableArgoRejectsInvalidMaterializationInputs(t *testing.T) {
 		{"wrong-hash", func(s *pb.MaterializationSpec) { s.SpecHash = proto.String("sha256:" + strings.Repeat("0", 64)) }},
 		{"missing-environment", func(s *pb.MaterializationSpec) { s.Environments = nil }},
 		{"duplicate-environment", func(s *pb.MaterializationSpec) { s.Environments = append(s.Environments, s.Environments[0]) }},
-		{"absent-mode", func(s *pb.MaterializationSpec) { s.Environments[0].Mode = nil }},
+		{"absent-container", func(s *pb.MaterializationSpec) { s.Environments[0].ExistingContainer = nil }},
 		{"image-override", func(s *pb.MaterializationSpec) {
 			s.Environments[0].GetExistingContainer().Image = proto.String("runner:latest")
 		}},
