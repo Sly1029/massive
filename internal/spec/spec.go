@@ -134,9 +134,21 @@ type Environment struct {
 
 type ExecutionContract struct {
 	EnvironmentRef string                `json:"environmentRef"`
+	Retry          *RetryPolicy          `json:"retry,omitempty"`
+	TimeoutSeconds uint32                `json:"timeoutSeconds,omitempty"`
 	Resources      *ResourceRequirements `json:"resources,omitempty"`
 	Secrets        []SecretRef           `json:"secrets,omitempty"`
 	Network        *NetworkPolicy        `json:"network,omitempty"`
+}
+
+// RetryPolicy bounds how often one logical invocation may be re-executed.
+// The delay before attempt n (n >= 2) is
+// min(delaySeconds * backoffFactor^(n-2), maxDelaySeconds).
+type RetryPolicy struct {
+	MaxAttempts     uint32 `json:"maxAttempts"`
+	DelaySeconds    uint32 `json:"delaySeconds"`
+	BackoffFactor   uint32 `json:"backoffFactor"`
+	MaxDelaySeconds uint32 `json:"maxDelaySeconds"`
 }
 
 type ResourceRequirements struct {
@@ -498,6 +510,9 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	for contractRef, contract := range parsed.Contracts {
 		if _, exists := parsed.Environments[contract.EnvironmentRef]; !exists {
 			diagnostics = append(diagnostics, Diagnostic{Path: "$.contracts." + contractRef + ".environmentRef", Ref: contract.EnvironmentRef, Message: "contract environment reference does not exist"})
+		}
+		if contract.Retry != nil && contract.Retry.MaxDelaySeconds < contract.Retry.DelaySeconds {
+			diagnostics = append(diagnostics, Diagnostic{Path: "$.contracts." + contractRef + ".retry.maxDelaySeconds", Ref: contractRef, Message: "retry maxDelaySeconds must be at least delaySeconds"})
 		}
 	}
 	for environmentRef, environment := range parsed.Environments {

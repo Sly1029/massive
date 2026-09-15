@@ -7,6 +7,7 @@
   "runId": "run-linear-chain-0001",
   "nodeId": "double",
   "attempt": 1,
+  "maxAttempts": 1,
   "symbol": {
     "packageId": "ts-main",
     "language": "typescript",

@@ -54,7 +54,9 @@ for what works today.
   cancellation persists terminal v4 journals and retains verified completed map
   outputs. Add CLI signal ingress; killing the CLI itself still does not
   constitute graceful run cancellation.
-- Add per-task timeout, explicit retry policy, and attempt accounting.
+- Per-task timeout, bounded retry with backoff, a non-retryable author signal,
+  and per-attempt journal accounting are part of `ExecutionContract` and run on
+  both the local and Argo targets.
 - Persist bounded task logs and structured lifecycle events. Inspection is available
   in the shipped Go CLI; the Deno CLI has been removed.
 - Treat external side effects separately from immutable artifact publication:

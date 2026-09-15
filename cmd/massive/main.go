@@ -106,6 +106,7 @@ type RuntimeStepCommand struct {
 	Project         string `help:"Stable remote project identity." required:""`
 	RunID           string `name:"run-id" help:"Remote workflow run identifier." required:""`
 	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
+	RetryCount      int    `name:"retry-count" help:"Retries already attempted by the target scheduler; the attempt is retry-count + 1." default:"0"`
 }
 
 type RuntimeMapExpandCommand struct {
@@ -122,6 +123,7 @@ type RuntimeMapItemCommand struct {
 	Project         string `help:"Stable remote project identity." required:""`
 	RunID           string `name:"run-id" help:"Remote workflow run identifier." required:""`
 	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
+	RetryCount      int    `name:"retry-count" help:"Retries already attempted by the target scheduler; the attempt is retry-count + 1." default:"0"`
 }
 
 type RuntimeMapCollectCommand struct {
@@ -266,7 +268,7 @@ func (*VersionCommand) Run(stdout io.Writer) error {
 }
 
 func (command *RuntimeStepCommand) Run(ctx context.Context) error {
-	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, command.Input, command.Project, command.RunID, command.DatastoreConfig, nil)
+	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, command.Input, command.Project, command.RunID, command.DatastoreConfig, command.RetryCount, nil)
 	if err != nil {
 		return err
 	}
@@ -289,7 +291,7 @@ func (command *RuntimeMapItemCommand) Run(ctx context.Context) error {
 	if empty {
 		return writeRuntimeOutput(command.Output, []byte(`{"empty":true}`))
 	}
-	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, string(item.Body), command.Project, command.RunID, command.DatastoreConfig, &item.Index)
+	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, string(item.Body), command.Project, command.RunID, command.DatastoreConfig, command.RetryCount, &item.Index)
 	if err != nil {
 		return err
 	}
@@ -308,7 +310,10 @@ func (command *RuntimeMapCollectCommand) Run() error {
 	return writeRuntimeOutput(command.Output, result)
 }
 
-func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, input, project, runID, datastoreConfig string, mapItemIndex *int) ([]byte, error) {
+func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, input, project, runID, datastoreConfig string, retryCount int, mapItemIndex *int) ([]byte, error) {
+	if retryCount < 0 {
+		return nil, fmt.Errorf("retry count %d must be nonnegative", retryCount)
+	}
 	planJSON, err := os.ReadFile(planPath)
 	if err != nil {
 		return nil, fmt.Errorf("read runtime plan: %w", err)
@@ -344,7 +349,7 @@ func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, inpu
 	config := orchestrator.IsolatedStepConfig{
 		Plan: workflowPlan, NodeID: nodeID, Datastore: binding,
 		ProjectID: project, RunID: runID,
-		SourceArchives: archives,
+		SourceArchives: archives, Attempt: retryCount + 1,
 	}
 	if mapItemIndex != nil {
 		return orchestrator.RunIsolatedMapItem(ctx, config, []byte(input), *mapItemIndex)
@@ -384,6 +389,25 @@ func main() {
 	parseContext.BindTo(os.Stdout, (*io.Writer)(nil))
 	if err := parseContext.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ %s\n", strings.TrimSpace(err.Error()))
-		os.Exit(1)
+		os.Exit(exitCodeFor(err))
 	}
 }
+
+// exitCodeFor lets a target scheduler classify a failed runtime attempt from
+// the process exit alone: runner exit codes pass through, and a per-attempt
+// timeout exits 124 like timeout(1).
+func exitCodeFor(err error) int {
+	var failure *orchestrator.InvocationFailure
+	if !errors.As(err, &failure) {
+		return 1
+	}
+	if failure.TimedOutAfter > 0 {
+		return runtimeExitTimeout
+	}
+	if failure.ExitCode > 0 {
+		return failure.ExitCode
+	}
+	return 1
+}
+
+const runtimeExitTimeout = 124

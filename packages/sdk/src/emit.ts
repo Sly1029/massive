@@ -8,7 +8,9 @@ import {
   net,
   type NetworkSpec,
   type ResourceSpec,
+  type RetrySpec,
   type SecretRef,
+  validateExecutionPolicy,
 } from "./contract.ts";
 import type { WorkflowPackageConfig } from "./config.ts";
 import { GraphValidationError } from "./errors.ts";
@@ -143,6 +145,8 @@ export interface WorkflowSpecExecutionContract {
   readonly resources?: ResourceSpec;
   readonly secrets?: readonly SecretRef[];
   readonly network?: NetworkSpec;
+  readonly retry?: RetrySpec;
+  readonly timeoutSeconds?: number;
 }
 
 const DEFAULT_CONTRACT = contract({
@@ -329,6 +333,7 @@ function registerContract(
       "Execution contract is missing an environment",
     );
   }
+  validateExecutionPolicy(spec);
 
   const environment = lowerEnvironment(spec.env);
   const environmentRef = sha256RefText(stableStringify(environment));
@@ -343,6 +348,17 @@ function registerContract(
       ? {}
       : { secrets: [...spec.secrets] }),
     ...(spec.network === undefined ? {} : { network: spec.network }),
+    ...(spec.retry === undefined ? {} : {
+      retry: {
+        maxAttempts: spec.retry.maxAttempts,
+        delaySeconds: spec.retry.delaySeconds,
+        backoffFactor: spec.retry.backoffFactor,
+        maxDelaySeconds: spec.retry.maxDelaySeconds,
+      },
+    }),
+    ...(spec.timeoutSeconds === undefined
+      ? {}
+      : { timeoutSeconds: spec.timeoutSeconds }),
   };
   const contractRef = sha256RefText(stableStringify(contractSpec));
   contracts.set(contractRef, contractSpec);

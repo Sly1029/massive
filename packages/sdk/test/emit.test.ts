@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertNotEquals,
   assertRejects,
+  assertThrows,
 } from "jsr:@std/assert";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema, ValidateFunction } from "ajv/dist/2020.js";
@@ -14,6 +15,7 @@ import {
   emitWorkflowSpec,
   env,
   net,
+  retry,
   secret,
   workflow,
   type WorkflowSpec,
@@ -204,6 +206,151 @@ Deno.test("contract merge emits effective contract refs and dedupes environments
       secret.ref("BASE_TOKEN"),
       secret.ref("OTHER_TOKEN"),
     ]);
+  });
+});
+
+Deno.test("contract retry and timeout emit per step and validate against the WorkflowSpec schema", async () => {
+  const validate = await compileWorkflowSpecValidator();
+
+  await withSourcePackage(async (root) => {
+    const g = workflow({
+      name: "retries",
+      input: z.int(),
+      output: z.int(),
+      defaults: contract({
+        retry: retry({
+          attempts: 3,
+          delaySeconds: 5,
+          backoffFactor: 3,
+          maxDelaySeconds: 60,
+        }),
+        timeoutSeconds: 300,
+      }),
+    });
+    const noRetry = g.step("noRetry", {
+      input: z.int(),
+      output: z.int(),
+      contract: { retry: retry({ attempts: 1 }) },
+      run: ({ input }) => input + 1,
+    });
+    const shortTimeout = g.step("shortTimeout", {
+      input: z.int(),
+      output: z.int(),
+      contract: { timeoutSeconds: 60 },
+      run: ({ input }) => input + 1,
+    });
+    g.start().to(noRetry).to(shortTimeout).to(g.end());
+
+    const spec = await emitWorkflowSpec(g, {
+      source: { root, include: ["workflow.ts"] },
+    });
+    assert(validate(spec), JSON.stringify(validate.errors));
+    const contractFor = (id: string) => {
+      const node = spec.graph.nodes.find((candidate) => candidate.id === id);
+      return spec.contracts[node?.kind === "step" ? node.contractRef : ""]!;
+    };
+
+    // A step retry replaces the default policy as a unit.
+    assertEquals(contractFor("noRetry").retry, {
+      maxAttempts: 1,
+      delaySeconds: 10,
+      backoffFactor: 2,
+      maxDelaySeconds: 600,
+    });
+    assertEquals(contractFor("noRetry").timeoutSeconds, 300);
+    assertEquals(contractFor("shortTimeout").retry, {
+      maxAttempts: 3,
+      delaySeconds: 5,
+      backoffFactor: 3,
+      maxDelaySeconds: 60,
+    });
+    assertEquals(contractFor("shortTimeout").timeoutSeconds, 60);
+  });
+});
+
+Deno.test("contracts without retry or timeout emit neither field", async () => {
+  await withSourcePackage(async (root) => {
+    const spec = await emitWorkflowSpec(graphCases[2]!.build(), {
+      source: { root, include: ["workflow.ts"] },
+    });
+
+    for (const emitted of Object.values(spec.contracts)) {
+      assertEquals("retry" in emitted, false);
+      assertEquals("timeoutSeconds" in emitted, false);
+    }
+  });
+});
+
+Deno.test("ExecutionContract.extend replaces retry whole and overrides timeout field-wise", () => {
+  const base = contract({
+    retry: retry({
+      attempts: 5,
+      delaySeconds: 1,
+      backoffFactor: 3,
+      maxDelaySeconds: 30,
+    }),
+    timeoutSeconds: 120,
+  });
+
+  assertEquals(base.extend({ retry: retry({ attempts: 2 }) }).spec, {
+    retry: {
+      maxAttempts: 2,
+      delaySeconds: 10,
+      backoffFactor: 2,
+      maxDelaySeconds: 600,
+    },
+    timeoutSeconds: 120,
+  });
+  assertEquals(base.extend({ timeoutSeconds: 10 }).spec, {
+    retry: base.spec.retry,
+    timeoutSeconds: 10,
+  });
+});
+
+Deno.test("retry and timeout policies reject values outside the WorkflowSpec bounds", async () => {
+  assertEquals(retry({ attempts: 4 }), {
+    maxAttempts: 4,
+    delaySeconds: 10,
+    backoffFactor: 2,
+    maxDelaySeconds: 600,
+  });
+  for (
+    const [options, message] of [
+      [{ attempts: 0 }, "retry() attempts must be an integer from 1 to 100, got 0"],
+      [{ attempts: 101 }, "retry() attempts must be an integer from 1 to 100"],
+      [{ attempts: 1.5 }, "retry() attempts must be an integer"],
+      [{ attempts: 2, delaySeconds: -1 }, "retry() delaySeconds must be an integer from 0 to 86400"],
+      [{ attempts: 2, backoffFactor: 0 }, "retry() backoffFactor must be an integer from 1 to 10"],
+      [{ attempts: 2, backoffFactor: 11 }, "retry() backoffFactor must be an integer from 1 to 10"],
+      [{ attempts: 2, maxDelaySeconds: 86_401 }, "retry() maxDelaySeconds must be an integer from 0 to 86400"],
+      [{ attempts: 2, delaySeconds: 700 }, "retry() maxDelaySeconds (600) must be at least delaySeconds (700)"],
+    ] as const
+  ) {
+    assertThrows(() => retry(options), Error, message);
+  }
+  for (const timeoutSeconds of [0, 604_801, 2.5]) {
+    assertThrows(
+      () => contract({ timeoutSeconds }),
+      Error,
+      "contract timeoutSeconds must be an integer from 1 to 604800",
+    );
+  }
+
+  await withSourcePackage(async (root) => {
+    const g = workflow({ name: "invalid-timeout", input: z.int(), output: z.int() });
+    const step = g.step("step", {
+      input: z.int(),
+      output: z.int(),
+      contract: { timeoutSeconds: 0 },
+      run: ({ input }) => input,
+    });
+    g.start().to(step).to(g.end());
+    await assertRejects(
+      () =>
+        emitWorkflowSpec(g, { source: { root, include: ["workflow.ts"] } }),
+      Error,
+      "contract timeoutSeconds must be an integer from 1 to 604800",
+    );
   });
 });
 

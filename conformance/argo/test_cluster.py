@@ -164,6 +164,19 @@ class DecisionConformance(unittest.TestCase):
             secret_source,
             {"service-token": {"name": "application.credentials", "key": ".token"}},
         )
+        retry_source = (
+            (Path(__file__).parent / "retries.py")
+            .read_text()
+            .replace(
+                'IMAGE = "example.invalid/runner@sha256:" + "0" * 64',
+                f"IMAGE = {os.environ['MASSIVE_TEST_ARGO_IMAGE']!r}",
+            )
+            .replace(
+                'PLATFORM = "linux/amd64"',
+                f"PLATFORM = {os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
+            )
+        )
+        install_workflow(retry_source)
         cls.runs = {}
         for label, inputs in {
             "positive": {"score": 3},
@@ -176,6 +189,8 @@ class DecisionConformance(unittest.TestCase):
                 "digest": hashlib.sha256(token.encode()).hexdigest(),
                 "values": [1, 2, 3],
             },
+            "retry": {"permanent": False},
+            "nonretryable": {"permanent": True},
         }.items():
             run = kubectl(
                 "create",
@@ -192,6 +207,8 @@ class DecisionConformance(unittest.TestCase):
                             "name": {
                                 "files": "file-artifacts",
                                 "secrets": "argo-secrets",
+                                "retry": "argo-retries",
+                                "nonretryable": "argo-retries",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -321,6 +338,29 @@ class DecisionConformance(unittest.TestCase):
                     app_variables[0]["valueFrom"]["secretKeyRef"],
                     {"name": "application.credentials", "key": ".token"},
                 )
+
+    def pods(self, run: dict, template: str) -> list[dict]:
+        return [
+            node
+            for node in run["status"]["nodes"].values()
+            if node.get("type") == "Pod" and node.get("templateName") == template
+        ]
+
+    def test_retryable_failures_publish_new_attempts(self) -> None:
+        # Items resolve from attempt 2: (1 * 2) + (2 * 2).
+        self.successful("retry", 6)
+        run = self.completed("retry")
+        for template, attempts in {"step-flaky": 2, "map-item-guarded": 4}.items():
+            phases = sorted(node["phase"] for node in self.pods(run, template))
+            self.assertEqual(
+                phases, ["Failed"] * (attempts // 2) + ["Succeeded"] * (attempts // 2)
+            )
+
+    def test_non_retryable_failure_is_not_retried(self) -> None:
+        run = self.completed("nonretryable")
+        self.assertEqual(run["status"]["phase"], "Failed")
+        items = self.pods(run, "map-item-guarded")
+        self.assertEqual([node["phase"] for node in items], ["Failed", "Failed"])
 
     def test_selected_item_failure_cannot_produce_success(self) -> None:
         run = self.completed("failure")

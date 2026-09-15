@@ -127,6 +127,36 @@ one immutable `Container` across resource or secret configurations. The compiler
 owns environment identity; there is no separate author-side container plan.
 Task imports should not require the deployment settings used to assemble a graph.
 
+### Retries and timeouts
+
+Set graph-wide retries and a per-attempt timeout on the defaults, and override
+them for a single use:
+
+```python
+from datetime import timedelta
+from massive import NonRetryableError, execution, retry
+
+graph = GraphBuilder(
+    ...,
+    defaults=execution(environment=image, retry=retry(3), timeout=timedelta(minutes=30)),
+)
+report = graph.add(build_report, retry=retry(5, delay=timedelta(seconds=30)), timeout=timedelta(hours=2))
+charge = graph.add(charge_card, retry=retry(1))  # not idempotent: run once
+```
+
+`retry=` and `timeout=` on `add()` or `map()` replace only those fields of the
+selected contract (`contract=` or the graph defaults), keeping its environment,
+resources, and secrets. `retry(attempts, delay=10s, backoff=2, max_delay=10m)`
+waits `min(delay * backoff ** (n - 2), max_delay)` before attempt `n`;
+`retry(1)` disables retries.
+
+Step exceptions, timeouts, and crashes such as out-of-memory kills are retried.
+Input and output schema failures, cancellation, and `NonRetryableError` (or a
+subclass) are not; raise `NonRetryableError(...) from error` when another attempt
+cannot succeed. `ctx.invocation.attempt` (1-based) and `max_attempts` describe the
+current attempt, while `ctx.invocation.idempotency_key` stays the same across
+attempts so a retry can recognize side effects an earlier attempt committed.
+
 ## Exhaustive decisions
 
 Use a Pydantic discriminated union when a step chooses one of a finite set of
@@ -286,7 +316,8 @@ The important runtime categories are:
   immutable object already exists with different bytes or metadata.
 
 At the command boundary, descriptor errors exit 64, schema/artifact failures
-exit 65, and a user-step exception exits 66. Datastore outages are deliberately
+exit 65, a user-step exception exits 66, and a `NonRetryableError` exits 67 so
+the orchestrator does not retry it. Datastore outages are deliberately
 not rewritten as artifact conflicts so retry policy can recognize them as
 transient infrastructure failures.
 

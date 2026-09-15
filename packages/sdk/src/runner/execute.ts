@@ -7,6 +7,7 @@ import {
   type DatastoreClient,
   DatastoreNotFoundError,
 } from "../datastore/types.ts";
+import { NonRetryableError } from "../errors.ts";
 import {
   CanonicalJsonError,
   decodeCanonicalUtf8,
@@ -20,6 +21,7 @@ import type { StepInvocationDescriptor } from "./descriptor.ts";
 import {
   DescriptorError,
   descriptorResolutionFailure,
+  nonRetryableStepFailure,
   RUNNER_EXIT_CODES,
   schemaValidationFailure,
   StepExecutionError,
@@ -67,10 +69,13 @@ export async function executeStep(
           context: {
             runId: descriptor.runId,
             stepId: descriptor.nodeId,
+            attempt: descriptor.attempt,
+            maxAttempts: descriptor.maxAttempts,
             idempotencyKey: invocationIdempotencyKey(descriptor),
           },
         });
       } catch (error) {
+        if (error instanceof NonRetryableError) throw error;
         const message = error instanceof Error ? error.message : String(error);
         throw new StepExecutionError(message);
       }
@@ -108,6 +113,9 @@ export async function executeStep(
     if (error instanceof StepExecutionError) {
       return stepExecutionFailure(error);
     }
+    if (error instanceof NonRetryableError) {
+      return nonRetryableStepFailure(error);
+    }
     if (error instanceof ArtifactError || error instanceof CanonicalJsonError) {
       return schemaValidationFailure(
         new StepSchemaValidationError("output", error.message),
@@ -124,14 +132,14 @@ export async function executeStep(
 function invocationIdempotencyKey(
   descriptor: StepInvocationDescriptor,
 ): string {
-  const parts = ["massive-invocation-v1", descriptor.runId, descriptor.nodeId];
+  // Stable across attempts so external side effects can dedupe retries.
+  const parts = ["massive-invocation-v2", descriptor.runId, descriptor.nodeId];
   if (descriptor.scope !== undefined) {
     parts.push("scope");
     for (const frame of descriptor.scope.frames) {
       parts.push("maps", frame.mapId, "items", String(frame.index));
     }
   }
-  parts.push("attempt", String(descriptor.attempt));
   return parts.join("/");
 }
 

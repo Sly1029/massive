@@ -61,13 +61,19 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
             "capture_sync_invocation",
             {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 0}]},
             1,
-            "massive-invocation-v1/python-runner-test/capture_sync_invocation/scope/maps/fanout/items/0/attempt/1",
+            "massive-invocation-v2/python-runner-test/capture_sync_invocation/scope/maps/fanout/items/0",
+        ),
+        (
+            "capture_sync_invocation",
+            {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 0}]},
+            3,
+            "massive-invocation-v2/python-runner-test/capture_sync_invocation/scope/maps/fanout/items/0",
         ),
         (
             "capture_sync_invocation",
             {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 1}]},
             1,
-            "massive-invocation-v1/python-runner-test/capture_sync_invocation/scope/maps/fanout/items/1/attempt/1",
+            "massive-invocation-v2/python-runner-test/capture_sync_invocation/scope/maps/fanout/items/1",
         ),
         (
             "capture_async_invocation",
@@ -78,7 +84,7 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
                 ]
             },
             2,
-            "massive-invocation-v1/python-runner-test/capture_async_invocation/scope/maps/outer/items/0/maps/inner/items/3/attempt/2",
+            "massive-invocation-v2/python-runner-test/capture_async_invocation/scope/maps/outer/items/0/maps/inner/items/3",
         ),
         (
             "capture_async_invocation",
@@ -89,11 +95,11 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
                 ]
             },
             2,
-            "massive-invocation-v1/python-runner-test/capture_async_invocation/scope/maps/inner/items/3/maps/outer/items/0/attempt/2",
+            "massive-invocation-v2/python-runner-test/capture_async_invocation/scope/maps/inner/items/3/maps/outer/items/0",
         ),
     ],
 )
-def test_runner_exposes_collision_free_scoped_idempotency_keys(
+def test_runner_exposes_collision_free_attempt_stable_idempotency_keys(
     tmp_path: Path, export: str, scope: dict[str, object], attempt: int, expected_key: str
 ) -> None:
     output_schema = {
@@ -107,6 +113,7 @@ def test_runner_exposes_collision_free_scoped_idempotency_keys(
     )
     descriptor["scope"] = scope
     descriptor["attempt"] = attempt
+    descriptor["maxAttempts"] = 3
     scope_path = "/scopes" + "".join(
         f"/maps/{frame['mapId']}/items/{frame['index']}" for frame in scope["frames"]
     )
@@ -157,6 +164,65 @@ def test_runner_uses_protocol_exit_codes_for_schema_and_step_failures(
     result = _run(descriptor_path)
 
     assert result.returncode == expected_exit
+
+
+@pytest.mark.parametrize("export", ["refuse", "refuse_subclass", "refuse_from_cause"])
+def test_runner_reports_non_retryable_step_failures_with_their_own_exit_code(
+    tmp_path: Path, export: str
+) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export=export)
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 67, result.stderr
+    assert "non-retryable-step-failure: request is permanently invalid" in result.stderr
+    assert not (store / descriptor["output"]["manifestKey"]).exists()
+
+
+def test_runner_exposes_the_attempt_and_its_limit_to_step_code(tmp_path: Path) -> None:
+    output_schema: dict[str, JsonValue] = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["attempt", "max_attempts"],
+        "properties": {"attempt": {"type": "integer"}, "max_attempts": {"type": "integer"}},
+    }
+    descriptor_path, descriptor, store = _descriptor(
+        tmp_path, export="capture_attempt", output_schema=output_schema
+    )
+    descriptor.update(attempt=2, maxAttempts=4)
+    descriptor["output"]["manifestKey"] = (
+        f"projects/{PROJECT_KEY}/runs/python-runner-test/steps/capture_attempt/2/output-manifest.json"
+    )
+    descriptor_path.write_text(canonical_json(cast(JsonValue, descriptor)))
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 0, result.stderr
+    _publication, body = ArtifactRuntime(LocalDatastore(store)).resolve_json(
+        Destination(
+            manifest_key=descriptor["output"]["manifestKey"],
+            schema_ref=descriptor["output"]["schema"],
+        ),
+        Producer(
+            project_key=descriptor["projectKey"],
+            plan_hash=descriptor["planHash"],
+            run_id=descriptor["runId"],
+            node_id=descriptor["nodeId"],
+            attempt=2,
+        ),
+    )
+    assert body == b'{"attempt":2,"max_attempts":4}'
+
+
+def test_runner_requires_the_attempt_limit_in_descriptors(tmp_path: Path) -> None:
+    descriptor_path, descriptor, _store = _descriptor(tmp_path, export="double")
+    del descriptor["maxAttempts"]
+    descriptor_path.write_text(json.dumps(descriptor))
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 64
+    assert "maxAttempts" in result.stderr
 
 
 def test_runner_uses_descriptor_exit_code_for_invalid_descriptor(tmp_path: Path) -> None:
@@ -401,6 +467,7 @@ def _descriptor(
         "runId": "python-runner-test",
         "nodeId": export,
         "attempt": 1,
+        "maxAttempts": 1,
         "symbol": {
             "packageId": "python-main",
             "language": "python",

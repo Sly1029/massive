@@ -349,6 +349,18 @@
       "required": ["environmentRef"],
       "properties": {
         "environmentRef": { "$ref": "#/$defs/hashRef" },
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxAttempts", "delaySeconds", "backoffFactor", "maxDelaySeconds"],
+          "properties": {
+            "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "delaySeconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
+            "backoffFactor": { "type": "integer", "minimum": 1, "maximum": 10 },
+            "maxDelaySeconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
+          }
+        },
+        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 604800 },
         "resources": {
           "type": "object",
           "additionalProperties": false,

@@ -156,6 +156,19 @@ message ExecutionContract {
   optional ResourceRequirements resources = 3;
   repeated SecretRef secrets = 4;
   optional NetworkPolicy network = 5;
+  // Absent retry means one attempt. Absent timeout_seconds means no
+  // per-attempt deadline.
+  optional RetryPolicy retry = 6;
+  optional uint32 timeout_seconds = 7;
+}
+
+// Delay before attempt n (n >= 2) is
+// min(delay_seconds * backoff_factor^(n-2), max_delay_seconds).
+message RetryPolicy {
+  optional uint32 max_attempts = 1;
+  optional uint32 delay_seconds = 2;
+  optional uint32 backoff_factor = 3;
+  optional uint32 max_delay_seconds = 4;
 }
 
 message ResourceRequirements {

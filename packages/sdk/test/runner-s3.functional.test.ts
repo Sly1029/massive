@@ -49,6 +49,7 @@ Deno.test("S3 invocation descriptors carry transport but no credentials", async 
     runId: "run-s3-descriptor-0001",
     nodeId: "task",
     attempt: 1,
+    maxAttempts: 1,
     symbol: {
       packageId: "ts-main",
       language: "typescript",
@@ -146,6 +147,7 @@ Deno.test("runner process reads and writes a descriptor-backed S3 datastore", as
       runId: "run-s3-runner-fixture-0001",
       nodeId: "double",
       attempt: 1,
+      maxAttempts: 1,
       symbol: {
         packageId: "ts-main",
         language: "typescript",

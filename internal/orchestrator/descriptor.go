@@ -11,6 +11,7 @@ type StepInvocationDescriptor struct {
 	RunID          string                          `json:"runId"`
 	NodeID         string                          `json:"nodeId"`
 	Attempt        int                             `json:"attempt"`
+	MaxAttempts    int                             `json:"maxAttempts"`
 	Scope          *ExecutionScope                 `json:"scope,omitempty"`
 	Symbol         StepSymbolRef                   `json:"symbol"`
 	SourcePackage  SourcePackageRef                `json:"sourcePackage"`

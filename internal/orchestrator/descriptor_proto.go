@@ -22,6 +22,9 @@ func descriptorToProto(descriptor StepInvocationDescriptor) (*runtimepb.StepInvo
 	if descriptor.Attempt < 0 || uint64(descriptor.Attempt) > math.MaxUint32 {
 		return nil, fmt.Errorf("descriptor attempt %d exceeds the proto v3 uint32 range", descriptor.Attempt)
 	}
+	if descriptor.MaxAttempts < 0 || uint64(descriptor.MaxAttempts) > math.MaxUint32 {
+		return nil, fmt.Errorf("descriptor maxAttempts %d exceeds the proto v3 uint32 range", descriptor.MaxAttempts)
+	}
 	scope, err := executionScopeToProto(descriptor.Scope)
 	if err != nil {
 		return nil, err
@@ -48,6 +51,7 @@ func descriptorToProto(descriptor StepInvocationDescriptor) (*runtimepb.StepInvo
 		RunId:         pointer(descriptor.RunID),
 		NodeId:        pointer(descriptor.NodeID),
 		Attempt:       pointer(uint32(descriptor.Attempt)),
+		MaxAttempts:   pointer(uint32(descriptor.MaxAttempts)),
 		Scope:         scope,
 		Symbol: &runtimepb.StepSymbol{
 			PackageId: pointer(descriptor.Symbol.PackageID),

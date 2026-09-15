@@ -10,12 +10,14 @@ from .builder import (
     WorkflowSpec,
 )
 from .canonical import JsonValue, canonical_json, sha256_ref
-from .context import InvocationContext, StepContext
+from .context import InvocationContext, NonRetryableError, StepContext
 from .contracts import (
     Container,
     ExecutionContract,
+    Retry,
     container,
     execution,
+    retry,
 )
 from .files import ArtifactFiles, Blob, Tree
 from .source_package import SourcePackage, source_package
@@ -33,6 +35,8 @@ __all__ = [
     "InvocationContext",
     "JsonValue",
     "NodeHandle",
+    "NonRetryableError",
+    "Retry",
     "SourcePackage",
     "StepContext",
     "Tree",
@@ -40,6 +44,7 @@ __all__ = [
     "canonical_json",
     "container",
     "execution",
+    "retry",
     "sha256_ref",
     "source_package",
 ]

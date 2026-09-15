@@ -423,7 +423,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 		}
 		stepTemplate, err := runtimePodTemplate(
 			templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target,
-			[]string{
+			append([]string{
 				"runtime", "step",
 				"--plan", "/var/run/massive/massive-plan.json",
 				"--bundle-dir", "/var/run/massive",
@@ -433,11 +433,12 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 				"--project", "argo/" + name,
 				"--run-id", "{{workflow.uid}}",
 				"--datastore-config", "/var/run/massive-datastore/datastore.json",
-			},
+			}, retryArgs(contract)...),
 		)
 		if err != nil {
 			return nil, "", err
 		}
+		applyRetryStrategy(stepTemplate, contract)
 		templates = append(templates, stepTemplate)
 	}
 	endInbound := inbound[g.GetEndNode()]
@@ -503,7 +504,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	}
 	itemTemplate, err := runtimePodTemplate(
 		itemName, node.GetId(), env, contract, runtimeName, storage,
-		[]string{
+		append([]string{
 			"runtime", "map", "item",
 			"--plan", "/var/run/massive/massive-plan.json",
 			"--bundle-dir", "/var/run/massive",
@@ -513,11 +514,12 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 			"--project", "argo/" + workflowName,
 			"--run-id", "{{workflow.uid}}",
 			"--datastore-config", "/var/run/massive-datastore/datastore.json",
-		},
+		}, retryArgs(contract)...),
 	)
 	if err != nil {
 		return nil, err
 	}
+	applyRetryStrategy(itemTemplate, contract)
 	collectTemplate, err := runtimePodTemplate(
 		collectName, node.GetId(), env, controlContract, runtimeName, nil,
 		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
@@ -767,3 +769,45 @@ func buildBundle(p *planpb.WorkflowPlan, d *deployment.Spec, files []File) (*Bun
 func str(s string) *string { return &s }
 func u32(v uint32) *uint32 { return &v }
 func boolp(v bool) *bool   { return &v }
+
+// runnerNonRetryableExitCodes mirrors the executor's retry classification:
+// descriptor and schema failures are deterministic, and 67 is the author's
+// explicit opt-out. Timeouts (124), author exceptions (66), and pod errors retry.
+var runnerNonRetryableExitCodes = []string{"64", "65", "67"}
+
+// retryArgs tells the runtime which attempt Argo is dispatching so descriptors,
+// manifest slots, and step context agree with the scheduler's retry count.
+func retryArgs(contract *planpb.ExecutionContract) []string {
+	if contract.GetRetry().GetMaxAttempts() <= 1 {
+		return nil
+	}
+	return []string{"--retry-count={{retries}}"}
+}
+
+// applyRetryStrategy lowers a contract retry policy onto one user-code pod
+// template. The per-attempt timeout stays inside the runtime rather than
+// activeDeadlineSeconds so a timed-out attempt reports its own exit code.
+func applyRetryStrategy(template map[string]any, contract *planpb.ExecutionContract) {
+	retry := contract.GetRetry()
+	if retry.GetMaxAttempts() <= 1 {
+		return
+	}
+	quoted := make([]string, len(runnerNonRetryableExitCodes))
+	for index, code := range runnerNonRetryableExitCodes {
+		quoted[index] = "'" + code + "'"
+	}
+	// Argo's pinned schema types limit and factor as IntOrString strings.
+	strategy := map[string]any{
+		"limit":       fmt.Sprint(retry.GetMaxAttempts() - 1),
+		"retryPolicy": "Always",
+		"expression":  "!(lastRetry.exitCode in [" + strings.Join(quoted, ", ") + "])",
+	}
+	if retry.GetDelaySeconds() > 0 {
+		strategy["backoff"] = map[string]any{
+			"duration": fmt.Sprintf("%ds", retry.GetDelaySeconds()),
+			"factor":   fmt.Sprint(retry.GetBackoffFactor()),
+			"cap":      fmt.Sprintf("%ds", retry.GetMaxDelaySeconds()),
+		}
+	}
+	template["retryStrategy"] = strategy
+}

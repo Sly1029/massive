@@ -68,6 +68,7 @@ func (command *InspectCommand) Run(ctx context.Context, stdout io.Writer) error 
 
 func renderAttempts(stdout io.Writer, attempts []runjournal.Attempt, indent string) {
 	for _, attempt := range attempts {
+		fmt.Fprintf(stdout, "%sattempt %d  %s\n", indent, attempt.Attempt, attempt.Status)
 		fmt.Fprintf(stdout, "%sinput %s  %s\n", indent, attempt.Input.Key, attempt.Input.Hash)
 		if attempt.Output != nil {
 			fmt.Fprintf(stdout, "%soutput %s  %s\n", indent, attempt.Output.Manifest.Key, attempt.Output.Manifest.Hash)

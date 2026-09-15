@@ -272,62 +272,80 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			return nil, fmt.Errorf("write input artifact for %s: %w", nodeID, err)
 		}
 
-		descriptor, err := descriptorForStep(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, inputArtifact, index)
-		if err != nil {
-			return nil, err
-		}
+		policy := policyForContract(index.contractsByRef[node.GetContractRef()])
+		for attempt := 1; ; attempt++ {
+			descriptor, err := descriptorForStep(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, inputArtifact, index, attempt)
+			if err != nil {
+				return nil, err
+			}
 
-		markAttemptRunning(&manifest, nodeID, inputArtifact)
-		if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-			return nil, err
-		}
+			markAttemptRunning(&manifest, nodeID, attempt, inputArtifact)
+			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+				return nil, err
+			}
 
-		outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor}}})
-		if len(outcomes) != 1 {
-			if len(outcomes) == 0 && invokeErr != nil {
-				step := findManifestStep(&manifest, nodeID)
-				step.Status, step.Attempts = StatusNotStarted, []runjournal.Attempt{}
-				return nil, invokeErr
+			outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}})
+			if len(outcomes) != 1 {
+				if len(outcomes) == 0 && invokeErr != nil {
+					// Drop the undispatched attempt. Earlier failed attempts keep
+					// the step running so terminalization records the run status.
+					step := findManifestStep(&manifest, nodeID)
+					step.Attempts = step.Attempts[:len(step.Attempts)-1]
+					if len(step.Attempts) == 0 {
+						step.Status = StatusNotStarted
+					}
+					return nil, invokeErr
+				}
+				return nil, fmt.Errorf("step invoker returned %d outcomes, want 1", len(outcomes))
 			}
-			return nil, fmt.Errorf("step invoker returned %d outcomes, want 1", len(outcomes))
-		}
-		outcome := outcomes[0]
-		if outcome.Status != StatusSucceeded {
-			status, diagnostic := StatusFailed, durableRunnerDiagnostic(outcome)
-			if outcome.Status == StatusCancelled {
-				status, diagnostic = StatusCancelled, "invocation cancelled"
+			outcome := outcomes[0]
+			if outcome.Status != StatusSucceeded {
+				status, diagnostic := StatusFailed, durableRunnerDiagnostic(outcome)
+				if outcome.Status == StatusCancelled {
+					status, diagnostic = StatusCancelled, "invocation cancelled"
+				}
+				if outcome.Status == stepInvocationStatusInfraFailed {
+					diagnostic = "invocation infrastructure failed"
+				}
+				if invokeErr == nil && attempt < policy.maxAttempts && retryableOutcome(outcome) {
+					markAttemptRetrying(&manifest, nodeID, diagnostic)
+					if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+						return nil, err
+					}
+					if err := waitBeforeRetry(ctx, policy.delayBefore(attempt+1)); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				markAttemptTerminal(&manifest, nodeID, status, diagnostic)
+				if invokeErr != nil {
+					return nil, invokeErr
+				}
+				if outcome.Status == StatusCancelled && ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				return nil, errors.New(runnerDiagnostic(outcome) + attemptSuffix(attempt, policy))
 			}
-			if outcome.Status == stepInvocationStatusInfraFailed {
-				diagnostic = "invocation infrastructure failed"
+			// A successful outcome remains useful even if cancellation arrived as
+			// the invoker returned. Verify its published artifacts before stopping.
+			output, err := settleInvocation(ctx, store, descriptor, index, config.Hooks)
+			if err != nil {
+				markAttemptTerminal(&manifest, nodeID, StatusFailed, "output verification failed")
+				return nil, err
 			}
-			markAttemptTerminal(&manifest, nodeID, status, diagnostic)
+			resolution.setOutput(nodeID, output)
+			markAttemptSucceeded(&manifest, nodeID, output.Published)
+			publicationContext, finishPublication := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			err = writeRunManifest(publicationContext, store, manifestKey, manifest)
+			finishPublication()
+			if err != nil {
+				return nil, err
+			}
 			if invokeErr != nil {
 				return nil, invokeErr
 			}
-			if outcome.Status == StatusCancelled && ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return nil, errors.New(runnerDiagnostic(outcome))
+			break
 		}
-		// A successful outcome remains useful even if cancellation arrived as
-		// the invoker returned. Verify its published artifacts before stopping.
-		output, err := settleInvocation(ctx, store, descriptor, index, config.Hooks)
-		if err != nil {
-			markAttemptTerminal(&manifest, nodeID, StatusFailed, "output verification failed")
-			return nil, err
-		}
-		resolution.setOutput(nodeID, output)
-		markAttemptSucceeded(&manifest, nodeID, output.Published)
-		publicationContext, finishPublication := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		err = writeRunManifest(publicationContext, store, manifestKey, manifest)
-		finishPublication()
-		if err != nil {
-			return nil, err
-		}
-		if invokeErr != nil {
-			return nil, invokeErr
-		}
-
 	}
 
 	activeNodeID = ""
@@ -744,7 +762,7 @@ func recomputeSourcePackageHash(files []SourcePackageFile) (string, error) {
 	return sourceidentity.Digest(entries)
 }
 
-func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input runjournal.DataArtifact, index executionIndex) (StepInvocationDescriptor, error) {
+func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input runjournal.DataArtifact, index executionIndex, attempt int) (StepInvocationDescriptor, error) {
 	symbol := index.symbolsByRef[node.GetSymbolRef()]
 	if symbol == nil {
 		return StepInvocationDescriptor{}, fmt.Errorf("missing symbol %q", node.GetSymbolRef())
@@ -766,7 +784,8 @@ func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey 
 		ProjectKey:    projectKey,
 		RunID:         runID,
 		NodeID:        node.GetId(),
-		Attempt:       1,
+		Attempt:       attempt,
+		MaxAttempts:   policyForContract(contract).maxAttempts,
 		Symbol: StepSymbolRef{
 			PackageID: symbol.GetPackageId(),
 			Language:  symbol.GetLanguage(),
@@ -793,15 +812,15 @@ func descriptorForStep(planHash string, binding DatastoreDescriptor, projectKey 
 			Schema: input.Schema,
 		},
 		Output: DataArtifactManifestDestination{
-			ManifestKey: runOutputManifestKey(projectKey, runID, node.GetId(), nil, 1).String(),
+			ManifestKey: runOutputManifestKey(projectKey, runID, node.GetId(), nil, attempt).String(),
 			Schema:      node.GetOutputSchema(),
 		},
 		Datastore: binding,
 	}, nil
 }
 
-func descriptorForMapItem(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input runjournal.DataArtifact, index executionIndex, itemIndex int) (StepInvocationDescriptor, error) {
-	descriptor, err := descriptorForStep(planHash, binding, projectKey, runID, node, input, index)
+func descriptorForMapItem(planHash string, binding DatastoreDescriptor, projectKey string, runID string, node *planpb.GraphNode, input runjournal.DataArtifact, index executionIndex, itemIndex int, attempt int) (StepInvocationDescriptor, error) {
+	descriptor, err := descriptorForStep(planHash, binding, projectKey, runID, node, input, index, attempt)
 	if err != nil {
 		return StepInvocationDescriptor{}, err
 	}
@@ -809,7 +828,7 @@ func descriptorForMapItem(planHash string, binding DatastoreDescriptor, projectK
 	descriptor.Scope = scope
 	descriptor.Input.Schema = node.GetItemInputSchema()
 	descriptor.Output.Schema = node.GetItemOutputSchema()
-	descriptor.Output.ManifestKey = runOutputManifestKey(projectKey, runID, node.GetId(), scope, 1).String()
+	descriptor.Output.ManifestKey = runOutputManifestKey(projectKey, runID, node.GetId(), scope, attempt).String()
 	return descriptor, nil
 }
 
@@ -828,7 +847,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		return nodeOutput{}, fmt.Errorf("write map input artifact for %s: %w", node.GetId(), err)
 	}
 
-	markAttemptRunning(manifest, node.GetId(), input)
+	markAttemptRunning(manifest, node.GetId(), 1, input)
 	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
 		return nodeOutput{}, err
 	}
@@ -838,7 +857,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 	}
 	markMapItemsPending(manifest, node.GetId(), items)
 
-	descriptors := make([]StepInvocation, 0, len(items))
+	itemInputs := make([]runjournal.DataArtifact, len(items))
 	for _, item := range items {
 		scope := &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: node.GetId(), Index: item.Index}}}
 		itemInput := runjournal.DataArtifact{
@@ -850,11 +869,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		if _, err := store.Put(ctx, datastore.MustKey(itemInput.Key), item.Body, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
 			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map item input publication failed", fmt.Errorf("write map item %d input: %w", item.Index, err))
 		}
-		descriptor, err := descriptorForMapItem(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, itemInput, resolution.index, item.Index)
-		if err != nil {
-			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map item descriptor construction failed", err)
-		}
-		descriptors = append(descriptors, StepInvocation{Descriptor: descriptor})
+		itemInputs[item.Index] = itemInput
 	}
 	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
 		return nodeOutput{}, err
@@ -867,67 +882,110 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 			fmt.Errorf("map maxConcurrency %d exceeds the local executor integer range", node.GetMaxConcurrency()),
 		)
 	}
-	outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: descriptors, MaxConcurrency: int(node.GetMaxConcurrency())})
-	byIndex, err := mapOutcomesByIndex(node.GetId(), outcomes, len(items), invokeErr == nil)
-	if err != nil {
-		return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map invocation protocol failed", err)
-	}
-
-	// Record every reported dispatch before verification can fail. Otherwise a
-	// publication error on an early item would mislabel later started items as
-	// never dispatched when the root journal is terminalized.
-	for itemIndex, outcome := range byIndex {
-		descriptor := descriptors[itemIndex].Descriptor
-		markMapItemRunning(manifest, node.GetId(), itemIndex, runjournal.DataArtifact{
-			Key:         descriptor.Input.Artifact.Key,
-			Hash:        descriptor.Input.Artifact.Hash,
-			ContentType: descriptor.Input.Artifact.ContentType,
-			Schema:      descriptor.Input.Schema,
-		})
-		if outcome.Status == StatusCancelled {
-			markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusCancelled, "invocation cancelled")
-		}
-		if outcome.Status == stepInvocationStatusInfraFailed {
-			markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "invocation infrastructure failed")
-		}
-	}
+	policy := policyForContract(resolution.index.contractsByRef[node.GetContractRef()])
 	results := make([]mapexec.Result, 0, len(items))
 	firstRunnerFailure := ""
-	for itemIndex, descriptor := range descriptors {
-		outcome, started := byIndex[itemIndex]
-		if !started {
-			continue
+	pending := make([]int, len(items))
+	for index := range pending {
+		pending[index] = index
+	}
+	// Retries run in rounds: each round re-dispatches only the items whose
+	// previous attempt failed retryably, under the same concurrency bound.
+	for attempt := 1; len(pending) > 0; attempt++ {
+		if attempt > 1 {
+			if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+				return nodeOutput{}, err
+			}
+			if err := waitBeforeRetry(ctx, policy.delayBefore(attempt)); err != nil {
+				return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map execution cancelled", err)
+			}
 		}
-		if outcome.Status != StatusSucceeded {
-			if outcome.Status == StatusCancelled || outcome.Status == stepInvocationStatusInfraFailed {
+		invocations := make([]StepInvocation, 0, len(pending))
+		for _, itemIndex := range pending {
+			descriptor, err := descriptorForMapItem(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, itemInputs[itemIndex], resolution.index, itemIndex, attempt)
+			if err != nil {
+				return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map item descriptor construction failed", err)
+			}
+			invocations = append(invocations, StepInvocation{Descriptor: descriptor, Timeout: policy.timeout})
+		}
+		outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: invocations, MaxConcurrency: int(node.GetMaxConcurrency())})
+		byIndex, err := mapOutcomesByIndex(node.GetId(), attempt, outcomes, pending, invokeErr == nil)
+		if err != nil {
+			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map invocation protocol failed", err)
+		}
+
+		// Record every reported dispatch before verification can fail. Otherwise a
+		// publication error on an early item would mislabel later started items as
+		// never dispatched when the root journal is terminalized.
+		for _, itemIndex := range pending {
+			outcome, started := byIndex[itemIndex]
+			if !started {
 				continue
 			}
-			if firstRunnerFailure == "" {
-				firstRunnerFailure = runnerDiagnostic(outcome)
+			markMapItemRunning(manifest, node.GetId(), itemIndex, attempt, itemInputs[itemIndex])
+			if outcome.Status == StatusCancelled {
+				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusCancelled, "invocation cancelled")
 			}
-			markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, durableRunnerDiagnostic(outcome))
-			continue
-		}
-		output, err := settleInvocation(ctx, store, descriptor.Descriptor, resolution.index, config.Hooks)
-		if err != nil {
-			if firstRunnerFailure == "" {
-				firstRunnerFailure = err.Error()
+			if outcome.Status == stepInvocationStatusInfraFailed {
+				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "invocation infrastructure failed")
 			}
-			markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "map item output verification failed")
-			continue
 		}
-		markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
-		results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
-	}
-	if invokeErr != nil {
-		diagnostic := "map invocation infrastructure failed"
-		if ctx.Err() != nil && errors.Is(invokeErr, ctx.Err()) {
-			diagnostic = "map execution cancelled"
+		retry := make([]int, 0, len(pending))
+		retryDiagnostics := make(map[int]string, len(pending))
+		terminalFailure := false
+		for position, itemIndex := range pending {
+			outcome, started := byIndex[itemIndex]
+			if !started {
+				continue
+			}
+			if outcome.Status != StatusSucceeded {
+				if outcome.Status == StatusCancelled || outcome.Status == stepInvocationStatusInfraFailed {
+					continue
+				}
+				diagnostic := durableRunnerDiagnostic(outcome)
+				if attempt < policy.maxAttempts && retryableOutcome(outcome) {
+					markMapItemRetrying(manifest, node.GetId(), itemIndex, diagnostic)
+					retry = append(retry, itemIndex)
+					retryDiagnostics[itemIndex] = diagnostic
+					continue
+				}
+				terminalFailure = true
+				if firstRunnerFailure == "" {
+					firstRunnerFailure = runnerDiagnostic(outcome) + attemptSuffix(attempt, policy)
+				}
+				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, diagnostic)
+				continue
+			}
+			output, err := settleInvocation(ctx, store, invocations[position].Descriptor, resolution.index, config.Hooks)
+			if err != nil {
+				terminalFailure = true
+				if firstRunnerFailure == "" {
+					firstRunnerFailure = err.Error()
+				}
+				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "map item output verification failed")
+				continue
+			}
+			markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
+			results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
 		}
-		return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), diagnostic, invokeErr)
-	}
-	if err := ctx.Err(); err != nil {
-		return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map execution cancelled", err)
+		if invokeErr != nil {
+			diagnostic := "map invocation infrastructure failed"
+			if ctx.Err() != nil && errors.Is(invokeErr, ctx.Err()) {
+				diagnostic = "map execution cancelled"
+			}
+			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), diagnostic, invokeErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map execution cancelled", err)
+		}
+		if terminalFailure {
+			// The map already fails; spending retries on siblings cannot change that.
+			for _, itemIndex := range retry {
+				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, retryDiagnostics[itemIndex])
+			}
+			retry = nil
+		}
+		pending = retry
 	}
 
 	if mapHasFailedItem(*manifest, node.GetId()) {
@@ -966,17 +1024,22 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 	return output, nil
 }
 
-func mapOutcomesByIndex(mapID string, outcomes []StepInvocationOutcome, itemCount int, requireComplete bool) (map[int]StepInvocationOutcome, error) {
+func mapOutcomesByIndex(mapID string, attempt int, outcomes []StepInvocationOutcome, dispatched []int, requireComplete bool) (map[int]StepInvocationOutcome, error) {
+	itemCount := len(dispatched)
 	if requireComplete && len(outcomes) != itemCount {
 		return nil, fmt.Errorf("map invoker returned %d outcomes, want %d", len(outcomes), itemCount)
 	}
+	wanted := make(map[int]bool, itemCount)
+	for _, itemIndex := range dispatched {
+		wanted[itemIndex] = true
+	}
 	byIndex := make(map[int]StepInvocationOutcome, itemCount)
 	for _, outcome := range outcomes {
-		if outcome.NodeID != mapID || outcome.Attempt != 1 || outcome.Scope == nil || len(outcome.Scope.Frames) != 1 {
+		if outcome.NodeID != mapID || outcome.Attempt != attempt || outcome.Scope == nil || len(outcome.Scope.Frames) != 1 {
 			return nil, fmt.Errorf("map invoker returned an outcome without the expected scoped identity")
 		}
 		frame := outcome.Scope.Frames[0]
-		if frame.Kind != "map-item" || frame.MapID != mapID || frame.Index < 0 || frame.Index >= itemCount {
+		if frame.Kind != "map-item" || frame.MapID != mapID || !wanted[frame.Index] {
 			return nil, fmt.Errorf("map invoker returned an outcome outside the map item scope")
 		}
 		if _, exists := byIndex[frame.Index]; exists {
@@ -1222,14 +1285,27 @@ func markMapItemsPending(manifest *runjournal.Manifest, nodeID string, items []m
 	step.Items = &journalItems
 }
 
-func markMapItemRunning(manifest *runjournal.Manifest, nodeID string, itemIndex int, input runjournal.DataArtifact) {
+func markMapItemRunning(manifest *runjournal.Manifest, nodeID string, itemIndex int, attempt int, input runjournal.DataArtifact) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
 		return
 	}
 	item := &(*step.Items)[itemIndex]
 	item.Status = StatusRunning
-	item.Attempts = []runjournal.Attempt{{Attempt: 1, Status: StatusRunning, Input: input}}
+	item.Attempts = append(item.Attempts, runjournal.Attempt{Attempt: attempt, Status: StatusRunning, Input: input})
+}
+
+// markMapItemRetrying closes the latest attempt as failed while the item stays
+// running until a later attempt settles it.
+func markMapItemRetrying(manifest *runjournal.Manifest, nodeID string, itemIndex int, diagnostic string) {
+	step := findManifestStep(manifest, nodeID)
+	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
+		return
+	}
+	item := &(*step.Items)[itemIndex]
+	if last := lastAttempt(item.Attempts); last != nil {
+		last.Status, last.Diagnostic = StatusFailed, diagnostic
+	}
 }
 
 func markMapItemSucceeded(manifest *runjournal.Manifest, nodeID string, itemIndex int, output runjournal.PublishedArtifact) {
@@ -1239,8 +1315,9 @@ func markMapItemSucceeded(manifest *runjournal.Manifest, nodeID string, itemInde
 	}
 	item := &(*step.Items)[itemIndex]
 	item.Status = StatusSucceeded
-	item.Attempts[0].Status = StatusSucceeded
-	item.Attempts[0].Output = &output
+	last := lastAttempt(item.Attempts)
+	last.Status = StatusSucceeded
+	last.Output = &output
 }
 
 func markMapItemTerminal(manifest *runjournal.Manifest, nodeID string, itemIndex int, status, diagnostic string) {
@@ -1254,8 +1331,16 @@ func markMapItemTerminal(manifest *runjournal.Manifest, nodeID string, itemIndex
 		item.Attempts = []runjournal.Attempt{{Attempt: 1, Status: status, Diagnostic: diagnostic}}
 		return
 	}
-	item.Attempts[0].Status = status
-	item.Attempts[0].Diagnostic = diagnostic
+	last := lastAttempt(item.Attempts)
+	last.Status = status
+	last.Diagnostic = diagnostic
+}
+
+func lastAttempt(attempts []runjournal.Attempt) *runjournal.Attempt {
+	if len(attempts) == 0 {
+		return nil
+	}
+	return &attempts[len(attempts)-1]
 }
 
 func mapHasFailedItem(manifest runjournal.Manifest, nodeID string) bool {
@@ -1296,53 +1381,64 @@ func markUnfinishedMapItemsTerminal(manifest *runjournal.Manifest, nodeID, statu
 		}
 		if item.Status == StatusRunning {
 			item.Status = status
-			item.Attempts[0].Status = status
-			item.Attempts[0].Diagnostic = "map item did not complete"
+			// An item waiting for a retry already recorded its failed attempt.
+			if last := lastAttempt(item.Attempts); last != nil && last.Status == StatusRunning {
+				last.Status = status
+				last.Diagnostic = "map item did not complete"
+			}
 		}
 	}
 }
 
-func markAttemptRunning(manifest *runjournal.Manifest, nodeID string, input runjournal.DataArtifact) {
-	for index := range manifest.Steps {
-		if manifest.Steps[index].NodeID != nodeID {
-			continue
-		}
-		manifest.Steps[index].Status = StatusRunning
-		manifest.Steps[index].Attempts = []runjournal.Attempt{{
-			Attempt: 1,
-			Status:  StatusRunning,
-			Input:   input,
-		}}
+func markAttemptRunning(manifest *runjournal.Manifest, nodeID string, attempt int, input runjournal.DataArtifact) {
+	step := findManifestStep(manifest, nodeID)
+	if step == nil {
 		return
+	}
+	step.Status = StatusRunning
+	step.Attempts = append(step.Attempts, runjournal.Attempt{
+		Attempt: attempt,
+		Status:  StatusRunning,
+		Input:   input,
+	})
+}
+
+// markAttemptRetrying closes the latest attempt as failed while the step stays
+// running until a later attempt settles it.
+func markAttemptRetrying(manifest *runjournal.Manifest, nodeID, diagnostic string) {
+	step := findManifestStep(manifest, nodeID)
+	if step == nil {
+		return
+	}
+	if last := lastAttempt(step.Attempts); last != nil {
+		last.Status, last.Diagnostic = StatusFailed, diagnostic
 	}
 }
 
 func markAttemptSucceeded(manifest *runjournal.Manifest, nodeID string, output runjournal.PublishedArtifact) {
-	for index := range manifest.Steps {
-		if manifest.Steps[index].NodeID != nodeID {
-			continue
-		}
-		manifest.Steps[index].Status = StatusSucceeded
-		manifest.Steps[index].Attempts[0].Status = StatusSucceeded
-		manifest.Steps[index].Attempts[0].Output = &output
+	step := findManifestStep(manifest, nodeID)
+	if step == nil {
 		return
 	}
+	step.Status = StatusSucceeded
+	last := lastAttempt(step.Attempts)
+	last.Status = StatusSucceeded
+	last.Output = &output
 }
 
 func markAttemptTerminal(manifest *runjournal.Manifest, nodeID, status, diagnostic string) {
-	for index := range manifest.Steps {
-		if manifest.Steps[index].NodeID != nodeID {
-			continue
-		}
-		manifest.Steps[index].Status = status
-		if len(manifest.Steps[index].Attempts) == 0 {
-			manifest.Steps[index].Attempts = []runjournal.Attempt{{Attempt: 1, Status: status, Diagnostic: diagnostic}}
-			return
-		}
-		manifest.Steps[index].Attempts[0].Status = status
-		manifest.Steps[index].Attempts[0].Diagnostic = diagnostic
+	step := findManifestStep(manifest, nodeID)
+	if step == nil {
 		return
 	}
+	step.Status = status
+	if len(step.Attempts) == 0 {
+		step.Attempts = []runjournal.Attempt{{Attempt: 1, Status: status, Diagnostic: diagnostic}}
+		return
+	}
+	last := lastAttempt(step.Attempts)
+	last.Status = status
+	last.Diagnostic = diagnostic
 }
 
 func markStepSkipped(manifest *runjournal.Manifest, nodeID string, reason runjournal.SkipReason) {
@@ -1376,8 +1472,8 @@ func summariesFromManifest(manifest runjournal.Manifest) []StepSummary {
 	summaries := make([]StepSummary, 0, len(manifest.Steps))
 	for _, step := range manifest.Steps {
 		diagnostic := ""
-		if len(step.Attempts) > 0 {
-			diagnostic = step.Attempts[0].Diagnostic
+		if last := lastAttempt(step.Attempts); last != nil {
+			diagnostic = last.Diagnostic
 		}
 		summaries = append(summaries, StepSummary{NodeID: step.NodeID, Status: step.Status, Diagnostic: diagnostic})
 	}
@@ -1396,30 +1492,32 @@ func writeRunManifest(ctx context.Context, store datastore.Datastore, key datast
 }
 
 func runnerDiagnostic(outcome StepInvocationOutcome) string {
-	label := "runner failed"
-	switch outcome.ExitCode {
-	case 64:
-		label = "descriptor-resolution-failure"
-	case 65:
-		label = "schema-validation-failure"
-	case 66:
-		label = "step-execution-failure"
-	}
+	summary := runnerFailureSummary(outcome, "runner failed")
 	if outcome.Diagnostic == "" {
-		return fmt.Sprintf("%s (exit %d)", label, outcome.ExitCode)
+		return summary
 	}
-	return fmt.Sprintf("%s (exit %d): %s", label, outcome.ExitCode, outcome.Diagnostic)
+	return summary + ": " + outcome.Diagnostic
 }
 
+// durableRunnerDiagnostic omits runner output, which may contain user data.
 func durableRunnerDiagnostic(outcome StepInvocationOutcome) string {
-	label := "runner-failure"
+	return runnerFailureSummary(outcome, "runner-failure")
+}
+
+func runnerFailureSummary(outcome StepInvocationOutcome, fallback string) string {
+	if outcome.TimedOutAfter > 0 {
+		return fmt.Sprintf("step-timeout (timed out after %s)", outcome.TimedOutAfter)
+	}
+	label := fallback
 	switch outcome.ExitCode {
-	case 64:
+	case runnerExitDescriptorResolution:
 		label = "descriptor-resolution-failure"
-	case 65:
+	case runnerExitSchemaValidation:
 		label = "schema-validation-failure"
-	case 66:
+	case runnerExitStepExecution:
 		label = "step-execution-failure"
+	case runnerExitNonRetryable:
+		label = "non-retryable-step-failure"
 	}
 	return fmt.Sprintf("%s (exit %d)", label, outcome.ExitCode)
 }

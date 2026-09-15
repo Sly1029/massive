@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from functools import partial
@@ -11,6 +12,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 import pytest
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from massive import (
@@ -21,6 +23,7 @@ from massive import (
     StepContext,
     container,
     execution,
+    retry,
     source_package,
 )
 from massive.builder import _assert_canonical_json_schema
@@ -263,6 +266,89 @@ def test_one_function_can_have_two_node_identities_and_contracts() -> None:
         assert contract["resources"] == resources
         assert contract["secrets"] == [{"name": "TOKEN", "ref": "service"}]
         assert contract["network"] == {"egress": "none"}
+
+
+def test_retry_and_timeout_override_only_those_fields_of_the_graph_defaults() -> None:
+    defaults = execution(
+        environment=_defaults().environment,
+        cpu="2",
+        network="none",
+        secrets={"TOKEN": "service"},
+        retry=retry(3),
+        timeout=timedelta(minutes=30),
+    )
+    graph = GraphBuilder(
+        name="retry-defaults", input_type=Request, output_type=list[Result], defaults=defaults
+    )
+    source = graph.add(load_requests, retry=retry(5, delay=timedelta(seconds=30)))
+    mapped = graph.map(source, increment_request, id="items", timeout=timedelta(hours=2))
+    graph.edge_from(graph.start).to(source)
+    graph.edge_from(mapped).to(graph.end)
+
+    spec = _emit(graph).value
+
+    _validate_workflow_spec(spec)
+    nodes = {node["id"]: node for node in spec["graph"]["nodes"]}
+    shared = {
+        "environmentRef": spec["contracts"][nodes["items"]["contractRef"]]["environmentRef"],
+        "resources": {"cpu": "2"},
+        "network": {"egress": "none"},
+        "secrets": [{"name": "TOKEN", "ref": "service"}],
+    }
+    assert spec["contracts"][nodes["load_requests"]["contractRef"]] == {
+        **shared,
+        "retry": {"maxAttempts": 5, "delaySeconds": 30, "backoffFactor": 2, "maxDelaySeconds": 600},
+        "timeoutSeconds": 1800,
+    }
+    assert spec["contracts"][nodes["items"]["contractRef"]] == {
+        **shared,
+        "retry": {"maxAttempts": 3, "delaySeconds": 10, "backoffFactor": 2, "maxDelaySeconds": 600},
+        "timeoutSeconds": 7200,
+    }
+    assert graph.defaults is defaults
+
+
+def test_retry_and_timeout_override_an_explicit_contract() -> None:
+    graph = GraphBuilder(
+        name="retry-contract", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    node = graph.add(
+        identity,
+        contract=replace(_defaults(), memory="1Gi", timeout=timedelta(minutes=1)),
+        retry=retry(1),
+    )
+    graph.edge_from(graph.start).to(node).to(graph.end)
+
+    spec = _emit(graph).value
+
+    _validate_workflow_spec(spec)
+    (step,) = [node for node in spec["graph"]["nodes"] if node["id"] == "identity"]
+    contract = spec["contracts"][step["contractRef"]]
+    assert contract["resources"] == {"memory": "1Gi"}
+    assert contract["retry"]["maxAttempts"] == 1
+    assert contract["timeoutSeconds"] == 60
+
+
+def test_steps_without_retry_or_timeout_emit_neither() -> None:
+    graph = GraphBuilder(
+        name="no-retry", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    node = graph.add(identity)
+    graph.edge_from(graph.start).to(node).to(graph.end)
+
+    spec = _emit(graph).value
+
+    _validate_workflow_spec(spec)
+    (contract,) = spec["contracts"].values()
+    assert "retry" not in contract
+    assert "timeoutSeconds" not in contract
+
+
+def _validate_workflow_spec(spec: dict[str, Any]) -> None:
+    schema_path = (
+        Path(__file__).resolve().parents[3] / "conformance/schema/workflow-spec.schema.json"
+    )
+    Draft202012Validator(json.loads(schema_path.read_text())).validate(spec)
 
 
 class NonportableStep:

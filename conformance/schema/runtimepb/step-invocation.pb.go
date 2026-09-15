@@ -42,6 +42,7 @@ type StepInvocationDescriptor struct {
 	Input          *DataArtifactRef                 `protobuf:"bytes,13,opt,name=input,proto3,oneof" json:"input,omitempty"`
 	Output         *DataArtifactManifestDestination `protobuf:"bytes,14,opt,name=output,proto3,oneof" json:"output,omitempty"`
 	Datastore      *Datastore                       `protobuf:"bytes,17,opt,name=datastore,proto3,oneof" json:"datastore,omitempty"`
+	MaxAttempts    *uint32                          `protobuf:"varint,18,opt,name=max_attempts,json=maxAttempts,proto3,oneof" json:"max_attempts,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -179,6 +180,13 @@ func (x *StepInvocationDescriptor) GetDatastore() *Datastore {
 		return x.Datastore
 	}
 	return nil
+}
+
+func (x *StepInvocationDescriptor) GetMaxAttempts() uint32 {
+	if x != nil && x.MaxAttempts != nil {
+		return *x.MaxAttempts
+	}
+	return 0
 }
 
 type ExecutionScope struct {
@@ -691,7 +699,7 @@ var File_step_invocation_proto protoreflect.FileDescriptor
 
 const file_step_invocation_proto_rawDesc = "" +
 	"\n" +
-	"\x15step-invocation.proto\x12\x12massive.runtime.v3\"\xe2\a\n" +
+	"\x15step-invocation.proto\x12\x12massive.runtime.v3\"\x9b\b\n" +
 	"\x18StepInvocationDescriptor\x12\x17\n" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12*\n" +
 	"\x0eschema_version\x18\x02 \x01(\rH\x01R\rschemaVersion\x88\x01\x01\x12\x1f\n" +
@@ -710,7 +718,8 @@ const file_step_invocation_proto_rawDesc = "" +
 	"\x0fenvironment_ref\x18\f \x01(\tH\vR\x0eenvironmentRef\x88\x01\x01\x12>\n" +
 	"\x05input\x18\r \x01(\v2#.massive.runtime.v3.DataArtifactRefH\fR\x05input\x88\x01\x01\x12P\n" +
 	"\x06output\x18\x0e \x01(\v23.massive.runtime.v3.DataArtifactManifestDestinationH\rR\x06output\x88\x01\x01\x12@\n" +
-	"\tdatastore\x18\x11 \x01(\v2\x1d.massive.runtime.v3.DatastoreH\x0eR\tdatastore\x88\x01\x01B\a\n" +
+	"\tdatastore\x18\x11 \x01(\v2\x1d.massive.runtime.v3.DatastoreH\x0eR\tdatastore\x88\x01\x01\x12&\n" +
+	"\fmax_attempts\x18\x12 \x01(\rH\x0fR\vmaxAttempts\x88\x01\x01B\a\n" +
 	"\x05_kindB\x11\n" +
 	"\x0f_schema_versionB\v\n" +
 	"\t_encodingB\f\n" +
@@ -729,7 +738,8 @@ const file_step_invocation_proto_rawDesc = "" +
 	"\x06_inputB\t\n" +
 	"\a_outputB\f\n" +
 	"\n" +
-	"_datastoreJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11R\rchannel_readsR\x0echannel_writes\"O\n" +
+	"_datastoreB\x0f\n" +
+	"\r_max_attemptsJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11R\rchannel_readsR\x0echannel_writes\"O\n" +
 	"\x0eExecutionScope\x12=\n" +
 	"\x06frames\x18\x01 \x03(\v2%.massive.runtime.v3.MapItemScopeFrameR\x06frames\"\x81\x01\n" +
 	"\x11MapItemScopeFrame\x12\x17\n" +
