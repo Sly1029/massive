@@ -238,7 +238,19 @@ They include:
 - network/egress intents,
 - storage/artifact requirements,
 - observability requirements,
-- runtime mediation mode.
+- runtime mediation mode,
+- retry policy and per-attempt timeout.
+
+`retry` requires `maxAttempts` (1-100), `delaySeconds`, `backoffFactor`, and
+`maxDelaySeconds`; the delay before attempt `n` is
+`min(delaySeconds * backoffFactor^(n-2), maxDelaySeconds)`. `timeoutSeconds`
+bounds each attempt, not the whole step. Omitting either field keeps the
+contract hash unchanged and means one attempt with no deadline.
+
+Retryable failures are author exceptions (runner exit 66), timeouts, and runner
+crashes. Descriptor (64) and schema (65) failures are deterministic, and authors
+raise `NonRetryableError` (exit 67) to stop retries. Output verification
+failures and infrastructure errors are not retried.
 
 Contracts are merged from workflow defaults and step overrides. Effective contracts are deduped in the compiled plan by content hash.
 
@@ -302,7 +314,9 @@ The run manifest is independently versioned as `schemaVersion: 4`,
 `encoding: "json-v4"`. It records durable decision selections, inactive
 branches, and source-indexed finite-map items. Failed and cancelled runs have
 a root diagnostic and terminal steps; completed artifacts survive cancellation,
-while undispatched work has no attempts. There is no compatibility reader
+while undispatched work has no attempts. Attempts are dense and 1-based; every
+attempt before the last failed, and the last attempt carries the entry status.
+There is no compatibility reader
 or dual-write mode. The step invocation descriptor below remains the separate
 v3/json-v3 transport.
 
@@ -354,7 +368,7 @@ It includes:
 - plan hash,
 - run ID,
 - node ID,
-- attempt number and optional ordered execution scope (outer-to-inner map-item frames),
+- attempt number, the contract's `maxAttempts`, and optional ordered execution scope (outer-to-inner map-item frames),
 - symbol reference,
 - source package reference,
 - environment reference,
@@ -364,9 +378,10 @@ It includes:
 
 Language runners expose this identity to step code as the unambiguous
 idempotency key
-`massive-invocation-v1/<runId>/<nodeId>[/scope/maps/<mapId>/items/<index>...]/attempt/<attempt>`.
+`massive-invocation-v2/<runId>/<nodeId>[/scope/maps/<mapId>/items/<index>...]`.
 Scope frames remain ordered outer-to-inner. Static invocations omit the scope
-portion but retain the required attempt suffix.
+portion. The key omits the attempt so every retry of one logical invocation
+shares it; step code reads `attempt` and `maxAttempts` separately.
 
 Example:
 
@@ -380,6 +395,7 @@ Example:
   "runId": "run-...",
   "nodeId": "double",
   "attempt": 1,
+  "maxAttempts": 3,
   "scope": { "frames": [{ "kind": "map-item", "mapId": "fanout", "index": 0 }] },
   "symbol": {
     "packageId": "ts-main",
@@ -414,7 +430,7 @@ Example:
 }
 ```
 
-Any future descriptor transport should reuse the same logical fields. Runtime adapters should isolate descriptor parsing from step execution so the JSON transport can be replaced without rewriting symbol loading or step invocation logic. The local orchestrator emits one descriptor attempt (`attempt: 1`) per executed step; retry scheduling is not yet implemented.
+Any future descriptor transport should reuse the same logical fields. Runtime adapters should isolate descriptor parsing from step execution so the JSON transport can be replaced without rewriting symbol loading or step invocation logic. The local orchestrator emits one descriptor per attempt, each with its own output-manifest slot. Static steps retry in place; map items retry in rounds limited to the failed items, and a terminal item failure stops further map retries.
 
 ## Runtime Data Artifacts
 

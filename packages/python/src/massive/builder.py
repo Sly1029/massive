@@ -3,7 +3,8 @@ from __future__ import annotations
 import inspect
 import sys
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 from types import ModuleType
@@ -22,7 +23,7 @@ from typing_extensions import TypeForm
 from ._step import StepDefinition as _Step
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InputT, StepContext
-from .contracts import ExecutionContract
+from .contracts import ExecutionContract, Retry
 from .hashing import SOURCE_PACKAGE_HASHING, WORKFLOW_SPEC_HASHING
 from .identity import SAFE_PATH_SEGMENT, SafePathSegment
 from .source_package import SourcePackage
@@ -230,10 +231,14 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         *,
         id: str | None = None,
         contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
     ) -> NodeHandle[OutputT]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        item = _Step[InputT, OutputT].from_callable(function, contract=contract)
+        item = _Step[InputT, OutputT].from_callable(
+            function, contract=self._registration_contract(contract, retry, timeout)
+        )
         node_id = SAFE_PATH_SEGMENT.validate_python(id or item.function.__name__)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved step id {node_id!r}")
@@ -256,6 +261,8 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
         contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
     ) -> NodeHandle[list[ResultT]]: ...
 
     @overload
@@ -267,6 +274,8 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
         contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
     ) -> NodeHandle[list[ResultT]]: ...
 
     def map(
@@ -277,10 +286,14 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
         contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
     ) -> NodeHandle[list[ResultT]]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        step = _Step[Any, ResultT].from_callable(mapper, contract=contract)
+        step = _Step[Any, ResultT].from_callable(
+            mapper, contract=self._registration_contract(contract, retry, timeout)
+        )
         source_id = _START if isinstance(source, _StartHandle) else source.node_id
         if isinstance(source, _StartHandle) and source.graph_token is not self._graph_token:
             raise ValueError(f"map source {source_id!r} belongs to a different graph")
@@ -459,6 +472,22 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
             self._conditional_edges.add((source, target, case))
             return
         self._edges.add((source, target))
+
+    def _registration_contract(
+        self,
+        contract: ExecutionContract | None,
+        retry: Retry | None,
+        timeout: timedelta | None,
+    ) -> ExecutionContract | None:
+        """Override only the given retry/timeout fields of the selected contract."""
+        if retry is None and timeout is None:
+            return contract
+        base = contract or self.defaults
+        return replace(
+            base,
+            retry=base.retry if retry is None else retry,
+            timeout=base.timeout if timeout is None else timeout,
+        )
 
     def _known_node_ids(self) -> set[str]:
         return {_START, _END, *self._nodes, *self._decisions, *self._selects, *self._maps}

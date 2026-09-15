@@ -19,9 +19,11 @@ import {
   type StepInvocationDescriptor,
 } from "../src/runner/descriptor.ts";
 import { executeStep } from "../src/runner/execute.ts";
+import { NonRetryableError } from "../src/errors.ts";
 import { runStep } from "../src/runner/main.ts";
 import {
   DescriptorError,
+  formatOutcomeDiagnostic,
   RUNNER_EXIT_CODES,
   StepExecutionError,
   StepSchemaValidationError,
@@ -387,6 +389,102 @@ Deno.test("runner reports step-execution failures with exit 66", async () => {
   );
 });
 
+Deno.test("runner reports NonRetryableError subclasses with exit 67", async () => {
+  await withRunnerFixture(
+    { input: { value: 1 }, stepExport: "rejectPermanently" },
+    async ({ descriptor }) => {
+      const outcome = await executeStep(descriptor);
+
+      assertEquals(outcome.kind, "non-retryable-step-failure");
+      assertEquals(outcome.exitCode, RUNNER_EXIT_CODES.nonRetryableStepFailure);
+      assertEquals(outcome.exitCode, 67);
+      if (outcome.kind !== "non-retryable-step-failure") return;
+      assertInstanceOf(outcome.error, NonRetryableError);
+      assertEquals(
+        formatOutcomeDiagnostic(outcome),
+        "non-retryable-step-failure: PermanentInputError: fixture input is permanently invalid",
+      );
+    },
+  );
+});
+
+Deno.test("runner process exits 67 with a non-retryable diagnostic", async () => {
+  await withRunnerFixture(
+    { input: { value: 1 }, stepExport: "rejectPermanently" },
+    async ({ descriptorPath }) => {
+      const child = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--config",
+          "deno.json",
+          "--allow-read",
+          "--allow-write",
+          "packages/sdk/src/runner/main.ts",
+          descriptorPath,
+        ],
+        cwd: fileURLToPath(new URL("../../../", import.meta.url)),
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const stderr = new TextDecoder().decode(child.stderr);
+
+      assertEquals(child.code, 67, stderr);
+      assert(
+        stderr.includes(
+          "non-retryable-step-failure: PermanentInputError: fixture input is permanently invalid",
+        ),
+        stderr,
+      );
+    },
+  );
+});
+
+Deno.test("runner passes attempt identity to step code with an attempt-stable idempotency key", async () => {
+  await withRunnerFixture(
+    { input: { value: 1 }, stepExport: "assertAttemptContext" },
+    async ({ descriptor, store }) => {
+      const retried = {
+        ...descriptor,
+        attempt: 2,
+        maxAttempts: 3,
+        output: {
+          ...descriptor.output,
+          manifestKey: `${runPrefix()}/steps/double/2/output-manifest.json`,
+        },
+      };
+      const outcome = await executeStep(retried);
+
+      assertEquals(outcome.kind, "success", JSON.stringify(outcome));
+      if (outcome.kind !== "success") return;
+      assertEquals(outcome.attempt, 2);
+      const resolved = await new ArtifactRuntime(
+        new LocalDatastoreClient({ path: store.root }),
+      ).resolveJson(
+        {
+          manifestKey: Key.parse(retried.output.manifestKey),
+          schema: retried.output.schema,
+        },
+        producerFor(retried),
+      );
+      assertEquals(new TextDecoder().decode(resolved.body), '{"value":23}');
+    },
+  );
+});
+
+Deno.test("runner rejects descriptors without maxAttempts", async () => {
+  await withRunnerFixture(
+    { input: { value: 1 }, stepExport: "double" },
+    async ({ descriptor }) => {
+      const { maxAttempts: _maxAttempts, ...withoutMaxAttempts } = descriptor;
+      await assertRejects(
+        () => parseStepInvocationDescriptor(withoutMaxAttempts),
+        DescriptorError,
+        'missing required property "maxAttempts"',
+      );
+    },
+  );
+});
+
 Deno.test("runner rejects verified unsafe, corrupted, and trailing source archives", async () => {
   const unsafe = ustar([{
     path: "../escape.ts",
@@ -443,6 +541,7 @@ async function withRunnerFixture(
       runId: "run-runner-fixture-0001",
       nodeId: "double",
       attempt: 1,
+      maxAttempts: 1,
       symbol: {
         packageId: "ts-main",
         language: "typescript",

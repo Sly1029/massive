@@ -14,6 +14,7 @@
     "runId",
     "nodeId",
     "attempt",
+    "maxAttempts",
     "symbol",
     "sourcePackage",
     "environmentRef",
@@ -33,6 +34,11 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 4294967295
+    },
+    "maxAttempts": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
     },
     "scope": { "$ref": "#/$defs/executionScope" },
     "symbol": { "$ref": "#/$defs/symbol" },

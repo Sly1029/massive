@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
@@ -24,6 +25,29 @@ type IsolatedStepConfig struct {
 	RunnerCommand  []string
 	WorkingDir     string
 	SourceArchives map[string][]byte
+	// Attempt is the 1-based attempt the target is dispatching. Zero means 1.
+	// Targets own retry scheduling; this primitive runs exactly one attempt.
+	Attempt int
+}
+
+// InvocationFailure reports a runner attempt that completed unsuccessfully, so
+// a target entrypoint can surface the runner exit code to its own scheduler.
+type InvocationFailure struct {
+	NodeID        string
+	Attempt       int
+	MaxAttempts   int
+	ExitCode      int
+	TimedOutAfter time.Duration
+	Diagnostic    string
+}
+
+func (failure *InvocationFailure) Error() string {
+	return fmt.Sprintf("isolated step %s failed: %s", failure.NodeID, failure.Diagnostic)
+}
+
+// Retryable reports whether the target may schedule another attempt.
+func (failure *InvocationFailure) Retryable() bool {
+	return failure.Attempt < failure.MaxAttempts && retryableOutcome(StepInvocationOutcome{Status: StatusFailed, ExitCode: failure.ExitCode})
 }
 
 // RunIsolatedStep executes exactly one static step through the same descriptor
@@ -68,6 +92,11 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 			kind = "map"
 		}
 		return nil, fmt.Errorf("isolated node %q is not a plan %s", config.NodeID, kind)
+	}
+	policy := policyForContract(index.contractsByRef[node.GetContractRef()])
+	attempt := max(config.Attempt, 1)
+	if attempt > policy.maxAttempts {
+		return nil, fmt.Errorf("isolated node %s attempt %d exceeds its retry policy of %d attempts", node.GetId(), attempt, policy.maxAttempts)
 	}
 	for _, schema := range config.Plan.GetSchemas() {
 		body := []byte(schema.GetCanonicalJson())
@@ -122,21 +151,25 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	}
 	var descriptor StepInvocationDescriptor
 	if mapItemIndex == nil {
-		descriptor, err = descriptorForStep(config.Plan.GetPlanHash(), config.Datastore, projectKey, config.RunID, node, inputArtifact, index)
+		descriptor, err = descriptorForStep(config.Plan.GetPlanHash(), config.Datastore, projectKey, config.RunID, node, inputArtifact, index, attempt)
 	} else {
-		descriptor, err = descriptorForMapItem(config.Plan.GetPlanHash(), config.Datastore, projectKey, config.RunID, node, inputArtifact, index, *mapItemIndex)
+		descriptor, err = descriptorForMapItem(config.Plan.GetPlanHash(), config.Datastore, projectKey, config.RunID, node, inputArtifact, index, *mapItemIndex, attempt)
 	}
 	if err != nil {
 		return nil, err
 	}
 	invoker := ProcessStepInvoker{CommandTemplate: config.RunnerCommand, WorkingDir: config.WorkingDir, ProcessLimit: 1}
-	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor}}, MaxConcurrency: 1})
+	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, MaxConcurrency: 1})
 	if err != nil {
 		return nil, err
 	}
 	if len(outcomes) != 1 || outcomes[0].Status != StatusSucceeded {
 		if len(outcomes) == 1 {
-			return nil, fmt.Errorf("isolated step %s failed: %s", node.GetId(), outcomes[0].Diagnostic)
+			return nil, &InvocationFailure{
+				NodeID: node.GetId(), Attempt: attempt, MaxAttempts: policy.maxAttempts,
+				ExitCode: outcomes[0].ExitCode, TimedOutAfter: outcomes[0].TimedOutAfter,
+				Diagnostic: runnerDiagnostic(outcomes[0]) + attemptSuffix(attempt, policy),
+			}
 		}
 		return nil, fmt.Errorf("isolated step %s produced no outcome", node.GetId())
 	}

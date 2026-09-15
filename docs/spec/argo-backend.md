@@ -442,8 +442,21 @@ bucket or IAM permissions restricted to its object prefix. Invocation code is
 trusted with its bound storage credentials. The Go gateway accepts explicit AWS
 keys or configured web/container workload identity and does not discover EC2 node
 credentials. Credential acquisition failures stop invocation before artifact IO.
-Automatic pod retries remain disabled until shared publication retry behavior is
-covered by live failure-injection tests.
+## Retries and timeouts
+
+A contract's `retry` lowers to a `retryStrategy` on runner templates only
+(static steps and map items); decision, expansion, and collection control pods
+never retry. The strategy uses `limit: maxAttempts - 1`, `retryPolicy: Always`,
+and `expression: "!(lastRetry.exitCode in ['64', '65', '67'])"`, so descriptor,
+schema, and author non-retryable failures stop immediately. A nonzero
+`delaySeconds` adds `backoff{duration, factor, cap}`. The runtime receives
+`--retry-count={{retries}}` and derives `attempt = retries + 1`, so every retry
+publishes to its own attempt slot and keeps the same idempotency key.
+
+`timeoutSeconds` is enforced inside the runtime process rather than through
+`activeDeadlineSeconds`, so a timed-out attempt exits with 124 and stays
+retryable. Argo retries map items independently; the local orchestrator stops
+scheduling retries once any item fails terminally.
 
 
 ## Application secret bindings

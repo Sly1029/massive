@@ -1,8 +1,11 @@
+import type { NonRetryableError } from "../errors.ts";
+
 export const RUNNER_EXIT_CODES = {
   success: 0,
   descriptorResolutionFailure: 64,
   schemaValidationFailure: 65,
   stepExecutionFailure: 66,
+  nonRetryableStepFailure: 67,
 } as const;
 
 export class DescriptorError extends Error {
@@ -77,11 +80,18 @@ export interface StepExecutionFailure {
   readonly error: StepExecutionError;
 }
 
+export interface NonRetryableStepFailure {
+  readonly kind: "non-retryable-step-failure";
+  readonly exitCode: typeof RUNNER_EXIT_CODES.nonRetryableStepFailure;
+  readonly error: NonRetryableError;
+}
+
 export type StepOutcome =
   | StepSuccess
   | DescriptorResolutionFailure
   | SchemaValidationFailure
-  | StepExecutionFailure;
+  | StepExecutionFailure
+  | NonRetryableStepFailure;
 
 export function descriptorResolutionFailure(
   error: DescriptorError | SymbolResolutionError,
@@ -109,6 +119,16 @@ export function stepExecutionFailure(
   return {
     kind: "step-execution-failure",
     exitCode: RUNNER_EXIT_CODES.stepExecutionFailure,
+    error,
+  };
+}
+
+export function nonRetryableStepFailure(
+  error: NonRetryableError,
+): NonRetryableStepFailure {
+  return {
+    kind: "non-retryable-step-failure",
+    exitCode: RUNNER_EXIT_CODES.nonRetryableStepFailure,
     error,
   };
 }

@@ -129,7 +129,7 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 						return
 					}
 					started[index] = true
-					outcome, err := i.invokeOne(batchContext, descriptorDir, batch.Steps[index].Descriptor)
+					outcome, err := i.invokeOne(batchContext, descriptorDir, batch.Steps[index])
 					outcomes[index] = outcome
 					if err != nil {
 						firstErrorOnce.Do(func() {
@@ -169,7 +169,8 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 	return completed, nil
 }
 
-func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string, descriptor StepInvocationDescriptor) (StepInvocationOutcome, error) {
+func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string, invocation StepInvocation) (StepInvocationOutcome, error) {
+	descriptor := invocation.Descriptor
 	infrastructureFailure := func(err error) (StepInvocationOutcome, error) {
 		return StepInvocationOutcome{
 			NodeID:   descriptor.NodeID,
@@ -205,7 +206,13 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 	} else {
 		argv = substituteDescriptorPath(i.CommandTemplate, descriptorPath)
 	}
-	output, err := taskprocess.Run(ctx, argv, i.WorkingDir)
+	attemptContext := ctx
+	if invocation.Timeout > 0 {
+		var stop context.CancelFunc
+		attemptContext, stop = context.WithTimeout(ctx, invocation.Timeout)
+		defer stop()
+	}
+	output, err := taskprocess.Run(attemptContext, argv, i.WorkingDir)
 	diagnostic := strings.TrimSpace(output)
 
 	if err == nil {
@@ -226,6 +233,19 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 			Status:   StatusCancelled,
 			ExitCode: -1,
 		}, contextError
+	}
+	// The deadline belongs to this attempt only. It kills the runner's process
+	// group and becomes an ordinary retryable failure, not cancellation.
+	if errors.Is(attemptContext.Err(), context.DeadlineExceeded) {
+		return StepInvocationOutcome{
+			NodeID:        descriptor.NodeID,
+			Attempt:       descriptor.Attempt,
+			Scope:         descriptor.Scope,
+			Status:        StatusFailed,
+			ExitCode:      -1,
+			Diagnostic:    diagnostic,
+			TimedOutAfter: invocation.Timeout,
+		}, nil
 	}
 
 	var exitError *exec.ExitError

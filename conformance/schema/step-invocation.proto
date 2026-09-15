@@ -26,6 +26,7 @@ message StepInvocationDescriptor {
   reserved 15, 16;
   reserved "channel_reads", "channel_writes";
   optional Datastore datastore = 17;
+  optional uint32 max_attempts = 18;
 }
 
 message ExecutionScope {

@@ -128,7 +128,7 @@
                   },
                   "attempts": {
                     "minItems": 1,
-                    "maxItems": 1,
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/attempt"
@@ -154,7 +154,7 @@
                   },
                   "attempts": {
                     "minItems": 1,
-                    "maxItems": 1,
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/attempt"
@@ -180,7 +180,7 @@
                   },
                   "attempts": {
                     "minItems": 1,
-                    "maxItems": 1,
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/attempt"
@@ -262,7 +262,7 @@
                   },
                   "attempts": {
                     "minItems": 1,
-                    "maxItems": 1,
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/attempt"
@@ -325,7 +325,7 @@
                   },
                   "attempts": {
                     "minItems": 1,
-                    "maxItems": 1,
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/attempt"
@@ -358,7 +358,7 @@
                   },
                   "attempts": {
                     "minItems": 1,
-                    "maxItems": 1,
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/attempt"
@@ -391,7 +391,7 @@
                   },
                   "attempts": {
                     "minItems": 1,
-                    "maxItems": 1,
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/attempt"
@@ -494,7 +494,7 @@
                   },
                   "attempts": {
                     "minItems": 1,
-                    "maxItems": 1,
+                    "maxItems": 100,
                     "type": "array",
                     "items": {
                       "$ref": "#/$defs/attempt"
@@ -526,8 +526,8 @@
           "type": "object",
           "properties": {
             "attempt": {
-              "type": "number",
-              "const": 1
+              "type": "integer",
+              "minimum": 1
             },
             "status": {
               "type": "string",
@@ -548,8 +548,8 @@
           "type": "object",
           "properties": {
             "attempt": {
-              "type": "number",
-              "const": 1
+              "type": "integer",
+              "minimum": 1
             },
             "status": {
               "type": "string",
@@ -591,8 +591,8 @@
           "type": "object",
           "properties": {
             "attempt": {
-              "type": "number",
-              "const": 1
+              "type": "integer",
+              "minimum": 1
             },
             "status": {
               "type": "string",
@@ -618,8 +618,8 @@
           "type": "object",
           "properties": {
             "attempt": {
-              "type": "number",
-              "const": 1
+              "type": "integer",
+              "minimum": 1
             },
             "status": {
               "type": "string",
@@ -791,7 +791,7 @@
             },
             "attempts": {
               "minItems": 1,
-              "maxItems": 1,
+              "maxItems": 100,
               "type": "array",
               "items": {
                 "$ref": "#/$defs/attempt"
@@ -819,7 +819,7 @@
             },
             "attempts": {
               "minItems": 1,
-              "maxItems": 1,
+              "maxItems": 100,
               "type": "array",
               "items": {
                 "$ref": "#/$defs/attempt"
@@ -847,7 +847,7 @@
             },
             "attempts": {
               "minItems": 1,
-              "maxItems": 1,
+              "maxItems": 100,
               "type": "array",
               "items": {
                 "$ref": "#/$defs/attempt"
@@ -875,7 +875,7 @@
             },
             "attempts": {
               "minItems": 1,
-              "maxItems": 1,
+              "maxItems": 100,
               "type": "array",
               "items": {
                 "$ref": "#/$defs/attempt"

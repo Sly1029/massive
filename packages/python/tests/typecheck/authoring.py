@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from massive import GraphBuilder, JsonValue, NodeHandle, StepContext, container, execution
+from massive import (
+    GraphBuilder,
+    JsonValue,
+    NodeHandle,
+    StepContext,
+    container,
+    execution,
+    retry,
+)
 
 
 class Request(BaseModel):
@@ -79,7 +88,13 @@ def increment_item(context: StepContext[Request]) -> Result:
 
 
 requests: NodeHandle[list[Request]] = map_graph.add(unpack)
-mapped: NodeHandle[list[Result]] = map_graph.map(requests, increment_item, id="increment-items")
+mapped: NodeHandle[list[Result]] = map_graph.map(
+    requests,
+    increment_item,
+    id="increment-items",
+    retry=retry(3, delay=timedelta(seconds=5)),
+    timeout=timedelta(minutes=5),
+)
 map_graph.edge_from(map_graph.start).to(requests)
 map_graph.edge_from(mapped).to(map_graph.end)
 

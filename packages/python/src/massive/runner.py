@@ -35,7 +35,7 @@ from .canonical import (
     parse_canonical_json,
     sha256_ref,
 )
-from .context import InvocationContext, StepContext
+from .context import InvocationContext, NonRetryableError, StepContext
 from .datastore import (
     Datastore,
     DatastoreDescriptor,
@@ -53,6 +53,7 @@ _MAX_SOURCE_BYTES = 50 * 1024 * 1024
 _DESCRIPTOR_EXIT = 64
 _SCHEMA_EXIT = 65
 _STEP_EXIT = 66
+_NON_RETRYABLE_STEP_EXIT = 67
 
 type StepFunction = Callable[[StepContext[object]], object | Awaitable[object]]
 
@@ -107,6 +108,7 @@ class StepInvocationDescriptor(TypedDict):
     runId: str
     nodeId: str
     attempt: int
+    maxAttempts: int
     scope: NotRequired[ExecutionScope]
     symbol: SymbolDescriptor
     sourcePackage: SourcePackageDescriptor
@@ -129,6 +131,10 @@ class SchemaError(Exception):
 
 
 class StepError(Exception):
+    pass
+
+
+class NonRetryableStepError(Exception):
     pass
 
 
@@ -159,16 +165,19 @@ class _ResolvedStep:
                     {
                         "runId": descriptor["runId"],
                         "nodeId": descriptor["nodeId"],
-                        "attempt": descriptor["attempt"],
                         **({} if "scope" not in descriptor else {"scope": descriptor["scope"]}),
                     }
                 ).idempotency_key,
+                attempt=descriptor["attempt"],
+                max_attempts=descriptor["maxAttempts"],
             ),
         )
         try:
             output = self.function(context)
             if inspect.isawaitable(output):
                 output = asyncio.run(_await_output(output))
+        except NonRetryableError as error:
+            raise NonRetryableStepError(str(error)) from error
         except Exception as error:
             raise StepError(str(error)) from error
 
@@ -200,6 +209,9 @@ def run_descriptor_path(path: Path) -> int:
     except StepError as error:
         print(f"step-execution-failure: {error}", file=sys.stderr)
         return _STEP_EXIT
+    except NonRetryableStepError as error:
+        print(f"non-retryable-step-failure: {error}", file=sys.stderr)
+        return _NON_RETRYABLE_STEP_EXIT
 
 
 @cache

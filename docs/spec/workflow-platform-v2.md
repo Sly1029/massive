@@ -171,8 +171,8 @@ Python objects into isolated workers is not part of the portable runtime.
 
 Registration keeps the original function callable. Execution requirements belong
 to graph placement, so one function can be reused with different contracts. The
-current contract contains environment, CPU, memory, secrets, and network intent;
-timeout and retry policy remain roadmap work.
+current contract contains environment, CPU, memory, secrets, network intent,
+per-attempt timeout, and retry policy.
 
 ## Graph semantics
 
@@ -292,7 +292,14 @@ retry before user code starts, but it does not silently rerun after ambiguous
 completion. The runtime supplies a stable `ctx.idempotency_key` for every retry
 of one logical invocation.
 
-Operational attempt limits and backoff remain part of the execution contract.
+Operational attempt limits and backoff are part of the execution contract:
+`retry{maxAttempts, delaySeconds, backoffFactor, maxDelaySeconds}` and
+`timeoutSeconds`. Workflow defaults apply to every step; a step override
+replaces them. Massive owns the mechanism (deadline, bounded exponential
+backoff, the non-retryable exit, attempt context, per-attempt journal slots).
+Downstream consumers own policy: fleet-wide defaults, which exception types are
+non-retryable, whether billable side effects run only on the final attempt, and
+retries of their own API calls inside a step.
 Friendly presets can be added later if the manual rewrites reveal combinations
 that authors repeat and understand.
 

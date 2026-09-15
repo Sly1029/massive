@@ -54,23 +54,25 @@ class ExecutionScope(BaseModel):
 
 
 class InvocationIdentity(BaseModel):
-    """The collision-free idempotency identity exposed to user step code."""
+    """The collision-free idempotency identity exposed to user step code.
+
+    The key is stable across attempts so a retry can recognize side effects an
+    earlier attempt already committed.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: SafePathSegment = Field(validation_alias="runId", serialization_alias="runId")
     node_id: SafePathSegment = Field(validation_alias="nodeId", serialization_alias="nodeId")
-    attempt: PositiveAttempt
     scope: ExecutionScope | None = None
 
     @property
     def idempotency_key(self) -> str:
-        parts = ["massive-invocation-v1", self.run_id, self.node_id]
+        parts = ["massive-invocation-v2", self.run_id, self.node_id]
         if self.scope is not None:
             parts.append("scope")
             for frame in self.scope.frames:
                 parts.extend(("maps", frame.map_id, "items", str(frame.index)))
-        parts.extend(("attempt", str(self.attempt)))
         return "/".join(parts)
 
 SAFE_PATH_SEGMENT: TypeAdapter[str] = TypeAdapter(SafePathSegment)

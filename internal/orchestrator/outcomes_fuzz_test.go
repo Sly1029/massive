@@ -45,7 +45,11 @@ func FuzzPartialMapOutcomes(f *testing.F) {
 				valid = false
 			}
 		}
-		indexed, err := mapOutcomesByIndex("workers", outcomes, count, complete)
+		dispatched := make([]int, count)
+		for index := range dispatched {
+			dispatched[index] = index
+		}
+		indexed, err := mapOutcomesByIndex("workers", 1, outcomes, dispatched, complete)
 		if (err == nil) != valid {
 			t.Fatalf("count=%d indices=%v complete=%v corruption=%d: %v", count, indices, complete, corruption%8, err)
 		}

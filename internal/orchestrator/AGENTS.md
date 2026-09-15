@@ -23,3 +23,10 @@ Apply verification deadlines per invocation, not once per arbitrarily large map.
 Reconcile all reported dispatches before verification can fail. Publish the map
 journal after reconciliation instead of rewriting the full item list for every
 item, which makes publication quadratic in map cardinality.
+
+Retries append attempts; never rewrite an earlier attempt or reuse its output
+slot. Only failed outcomes with a retryable exit schedule another attempt, and
+only while attempts remain. Cancellation, infrastructure errors, and output
+verification failures end the step. Apply `timeoutSeconds` per attempt as an
+invoker deadline that yields a retryable failure, not a run cancellation. The
+backoff wait must observe the run context.

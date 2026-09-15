@@ -12,6 +12,8 @@ export type StepRun<Input, Output> = (context: {
   readonly context: {
     readonly runId: string;
     readonly stepId: string;
+    readonly attempt: number;
+    readonly maxAttempts: number;
     readonly idempotencyKey: string;
   };
 }) => Output | Promise<Output>;

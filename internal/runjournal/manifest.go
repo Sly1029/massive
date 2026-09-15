@@ -16,7 +16,8 @@ type Manifest struct {
 
 // The run journal is versioned independently of graph IR. Only v4/json-v4 is
 // accepted. Terminal runs distinguish cancelled attempts from undispatched work;
-// every planned step has a terminal status. Execution still uses one attempt.
+// every planned step has a terminal status. Attempts are ordered and 1-based;
+// only the last attempt of a step or map item can still be running.
 
 type Step struct {
 	NodeID     string      `json:"nodeId"`
@@ -99,10 +100,7 @@ func (manifest *Manifest) Terminate(status, diagnostic string) {
 			step.Status = "not-started"
 		case "running":
 			step.Status = status
-			for attempt := range step.Attempts {
-				step.Attempts[attempt].Status = status
-				step.Attempts[attempt].Diagnostic = diagnostic
-			}
+			terminateRunningAttempts(step.Attempts, status, diagnostic)
 		}
 		if step.Items == nil {
 			continue
@@ -115,11 +113,19 @@ func (manifest *Manifest) Terminate(status, diagnostic string) {
 				item.Diagnostic = diagnostic
 			case "running":
 				item.Status = status
-				for attempt := range item.Attempts {
-					item.Attempts[attempt].Status = status
-					item.Attempts[attempt].Diagnostic = diagnostic
-				}
+				terminateRunningAttempts(item.Attempts, status, diagnostic)
 			}
+		}
+	}
+}
+
+// Earlier failed attempts keep their own outcome when a later attempt, or the
+// wait before it, is interrupted.
+func terminateRunningAttempts(attempts []Attempt, status, diagnostic string) {
+	for index := range attempts {
+		if attempts[index].Status == "running" {
+			attempts[index].Status = status
+			attempts[index].Diagnostic = diagnostic
 		}
 	}
 }

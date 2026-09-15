@@ -47,8 +47,8 @@ func Parse(data []byte) (*Manifest, error) {
 		if manifest.Status == "succeeded" && step.Status != "succeeded" && step.Status != "skipped" {
 			return nil, fmt.Errorf("successful run has unsuccessful step %q", step.NodeID)
 		}
-		if len(step.Attempts) > 0 && step.Attempts[0].Status != step.Status {
-			return nil, fmt.Errorf("step %q attempt status differs from step status", step.NodeID)
+		if err := validateAttempts(step.Attempts, step.Status); err != nil {
+			return nil, fmt.Errorf("step %q %w", step.NodeID, err)
 		}
 		if step.Items == nil {
 			continue
@@ -60,8 +60,8 @@ func Parse(data []byte) (*Manifest, error) {
 			if item.Index != index {
 				return nil, fmt.Errorf("map %q item indexes must be dense and source ordered", step.NodeID)
 			}
-			if len(item.Attempts) > 0 && item.Attempts[0].Status != item.Status {
-				return nil, fmt.Errorf("map %q item %d attempt status differs", step.NodeID, index)
+			if err := validateAttempts(item.Attempts, item.Status); err != nil {
+				return nil, fmt.Errorf("map %q item %d %w", step.NodeID, index, err)
 			}
 			if item.Status == "not-started" && step.Status != "failed" && step.Status != "cancelled" {
 				return nil, fmt.Errorf("map %q has not-started items without termination", step.NodeID)
@@ -75,4 +75,21 @@ func Parse(data []byte) (*Manifest, error) {
 		}
 	}
 	return &manifest, nil
+}
+
+// validateAttempts requires dense 1-based attempts where every retried attempt
+// failed and the last attempt carries the owning entry's status.
+func validateAttempts(attempts []Attempt, status string) error {
+	for index, attempt := range attempts {
+		if attempt.Attempt != index+1 {
+			return fmt.Errorf("attempts must be dense and 1-based")
+		}
+		if index < len(attempts)-1 && attempt.Status != "failed" {
+			return fmt.Errorf("attempt %d was retried without failing", attempt.Attempt)
+		}
+	}
+	if len(attempts) > 0 && attempts[len(attempts)-1].Status != status {
+		return fmt.Errorf("last attempt status differs from entry status")
+	}
+	return nil
 }

@@ -7,11 +7,21 @@ from typing import Generic, TypeVar
 InputT = TypeVar("InputT")
 
 
+class NonRetryableError(Exception):
+    """Fail the step without further retries.
+
+    Raise it, a subclass, or ``raise NonRetryableError(...) from error`` when another
+    attempt cannot succeed.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class InvocationContext:
     run_id: str
     step_id: str
     idempotency_key: str
+    attempt: int
+    max_attempts: int
 
 
 @dataclass(frozen=True, slots=True)

@@ -67,6 +67,7 @@ export interface StepInvocationDescriptor {
   readonly runId: string;
   readonly nodeId: string;
   readonly attempt: number;
+  readonly maxAttempts: number;
   readonly scope?: ExecutionScope;
   readonly symbol: StepSymbolRef;
   readonly sourcePackage: SourcePackageRef;
@@ -114,6 +115,7 @@ export async function parseStepInvocationDescriptor(
     runId: descriptor.runId,
     nodeId: descriptor.nodeId,
     attempt: descriptor.attempt,
+    maxAttempts: descriptor.maxAttempts,
     ...(descriptor.scope === undefined
       ? {}
       : { scope: { frames: descriptor.scope.frames.map((frame) => ({ ...frame })) } }),

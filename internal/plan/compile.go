@@ -307,6 +307,17 @@ func compileContracts(workflowSpec *spec.WorkflowSpec, environmentHashes map[str
 				Hosts:  append([]string{}, contract.Network.Hosts...),
 			}
 		}
+		if contract.Retry != nil {
+			compiled.Retry = &planpb.RetryPolicy{
+				MaxAttempts:     uint32Ptr(contract.Retry.MaxAttempts),
+				DelaySeconds:    uint32Ptr(contract.Retry.DelaySeconds),
+				BackoffFactor:   uint32Ptr(contract.Retry.BackoffFactor),
+				MaxDelaySeconds: uint32Ptr(contract.Retry.MaxDelaySeconds),
+			}
+		}
+		if contract.TimeoutSeconds != 0 {
+			compiled.TimeoutSeconds = uint32Ptr(contract.TimeoutSeconds)
+		}
 
 		hash, err := hashPlanMessage(compiled)
 		if err != nil {

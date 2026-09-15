@@ -19,5 +19,10 @@ Reject unsupported network/storage requirements during compilation. Pod-local
 storage cannot carry artifacts between tasks. The embedded source size limit is
 an explicit error, not permission to drop files.
 
+Retry strategies belong only on runner templates. Keep the non-retryable exit
+list aligned with the runner exit codes, pass `{{retries}}` so the runtime
+derives the attempt, and enforce timeouts inside the runtime instead of with
+`activeDeadlineSeconds`.
+
 For lowering or transport changes, exercise `../../../scripts/test-argo.sh`.
 Schema-valid YAML and isolated runtime tests do not prove live controller behavior.

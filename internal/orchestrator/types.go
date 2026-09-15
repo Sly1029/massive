@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 )
@@ -116,6 +117,8 @@ type StepInvocationBatch struct {
 
 type StepInvocation struct {
 	Descriptor StepInvocationDescriptor
+	// Timeout bounds this attempt. Zero means no per-attempt deadline.
+	Timeout time.Duration
 }
 
 type StepInvocationOutcome struct {
@@ -125,4 +128,7 @@ type StepInvocationOutcome struct {
 	Status     string
 	ExitCode   int
 	Diagnostic string
+	// TimedOutAfter is nonzero when the invoker stopped a failed attempt at its
+	// deadline rather than observing the runner exit on its own.
+	TimedOutAfter time.Duration
 }

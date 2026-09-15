@@ -5,11 +5,20 @@ from pathlib import Path
 
 from pydantic import BaseModel, field_validator
 
-from massive import Blob, GraphBuilder, StepContext, container, execution
+from massive import Blob, GraphBuilder, NonRetryableError, StepContext, container, execution
 
 
 class Request(BaseModel):
     value: int
+
+
+class InvalidRequestError(NonRetryableError):
+    pass
+
+
+class AttemptResult(BaseModel):
+    attempt: int
+    max_attempts: int
 
 
 class Result(BaseModel):
@@ -62,6 +71,27 @@ async def capture_async_invocation(context: StepContext[Request]) -> InvocationR
 
 def explode(context: StepContext[Request]) -> Result:
     raise RuntimeError("intentional runner failure")
+
+
+def capture_attempt(context: StepContext[Request]) -> AttemptResult:
+    return AttemptResult(
+        attempt=context.invocation.attempt, max_attempts=context.invocation.max_attempts
+    )
+
+
+def refuse(context: StepContext[Request]) -> Result:
+    raise NonRetryableError("request is permanently invalid")
+
+
+def refuse_subclass(context: StepContext[Request]) -> Result:
+    raise InvalidRequestError("request is permanently invalid")
+
+
+def refuse_from_cause(context: StepContext[Request]) -> Result:
+    try:
+        raise KeyError("missing account")
+    except KeyError as error:
+        raise NonRetryableError("request is permanently invalid") from error
 
 
 def invalid_output(context: StepContext[Request]) -> Result:

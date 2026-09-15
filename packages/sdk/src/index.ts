@@ -20,6 +20,8 @@ export {
   type EnvironmentSpec,
   type ExecutionContract,
   net,
+  retry,
+  type RetrySpec,
   secret,
 } from "./contract.ts";
 // Import the datastore facade directly (not ./datastore/index.ts) so that a
@@ -63,6 +65,7 @@ export {
   DatastoreKeyError,
   GraphValidationError,
   MassiveError,
+  NonRetryableError,
   SchemaPortabilityError,
   SourcePackagePathError,
 } from "./errors.ts";
