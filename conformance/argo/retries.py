@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from massive import GraphBuilder, NonRetryableError, StepContext, container, execution, retry
+from massive import (
+    GraphBuilder,
+    NonRetryableError,
+    StepContext,
+    container,
+    execution,
+    retry,
+)
 from pydantic import BaseModel
 
 IMAGE = "example.invalid/runner@sha256:" + "0" * 64

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -54,11 +55,11 @@ func TestRunRetriesFailedStaticStepIntoNewAttemptSlot(t *testing.T) {
 	storeRoot := newStoreRoot(t)
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
 	compiled, manifests := compileRetryFixture(t, "linear-chain", sourceRoot, 3, 0)
-	invoker := &flakyStepInvoker{functionalStepInvoker: functionalStepInvoker{storeRoot: storeRoot}, exitCodes: map[string][]int{"increment": {runnerExitStepExecution}}}
+	runner := newFlakyRunner(t, map[string][]int{"increment": {runnerExitStepExecution}})
 
 	result, err := Run(context.Background(), RunConfig{
 		Plan: compiled.Plan, DatastoreRoot: storeRoot, ProjectID: "examples/retries", RunID: "static-retry",
-		SourcePackageRoot: sourceRoot, SourceManifests: manifests, StepInvoker: invoker,
+		SourcePackageRoot: sourceRoot, SourceManifests: manifests, StepInvoker: runner.invoker(),
 	}, []byte("20"))
 	if err != nil {
 		t.Fatal(err)
@@ -83,11 +84,15 @@ func TestRunRetriesFailedStaticStepIntoNewAttemptSlot(t *testing.T) {
 			t.Fatalf("step %s attempts = %d, want 1", manifest.Steps[step].NodeID, len(manifest.Steps[step].Attempts))
 		}
 	}
-	for _, descriptor := range invoker.descriptors {
+	descriptors := runner.descriptors(t)
+	if len(descriptors) != 4 {
+		t.Fatalf("runner received %d descriptors, want 4 (three steps plus one retry)", len(descriptors))
+	}
+	for _, descriptor := range descriptors {
 		if descriptor.MaxAttempts != 3 {
 			t.Fatalf("descriptor %s maxAttempts = %d, want 3", descriptor.NodeID, descriptor.MaxAttempts)
 		}
-		assertLiveDescriptorValidAgainstFrozenSchema(t, descriptor)
+		assertDescriptorFileValidAgainstFrozenSchema(t, descriptor.path)
 	}
 }
 
@@ -107,11 +112,11 @@ func TestRunDoesNotRetryNonRetryableOrExhaustedStaticSteps(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			storeRoot := newStoreRoot(t)
 			compiled, manifests := compileRetryFixture(t, "linear-chain", sourceRoot, 3, 0)
-			invoker := &flakyStepInvoker{functionalStepInvoker: functionalStepInvoker{storeRoot: storeRoot}, exitCodes: map[string][]int{"double": testCase.exitCodes}}
+			runner := newFlakyRunner(t, map[string][]int{"double": testCase.exitCodes})
 
 			result, err := Run(context.Background(), RunConfig{
 				Plan: compiled.Plan, DatastoreRoot: storeRoot, ProjectID: "examples/retries", RunID: "static-" + testCase.name,
-				SourcePackageRoot: sourceRoot, SourceManifests: manifests, StepInvoker: invoker,
+				SourcePackageRoot: sourceRoot, SourceManifests: manifests, StepInvoker: runner.invoker(),
 			}, []byte("20"))
 			if err == nil || !strings.Contains(err.Error(), testCase.want) || !strings.HasSuffix(err.Error(), testCase.suffix) {
 				t.Fatalf("run error = %v, want %q ending %q", err, testCase.want, testCase.suffix)
@@ -134,11 +139,11 @@ func TestRunRetriesOnlyFailedMapItems(t *testing.T) {
 	storeRoot := newStoreRoot(t)
 	sourceRoot := finiteMapSourceRoot(t)
 	compiled, manifests := compileRetryFixture(t, "finite-map", sourceRoot, 2, 0)
-	invoker := &flakyStepInvoker{functionalStepInvoker: functionalStepInvoker{storeRoot: storeRoot}, exitCodes: map[string][]int{"map-items/1": {runnerExitStepExecution}}}
+	runner := newFlakyRunner(t, map[string][]int{"map-items/1": {runnerExitStepExecution}})
 
 	result, err := Run(context.Background(), RunConfig{
 		Plan: compiled.Plan, DatastoreRoot: storeRoot, ProjectID: "examples/retries", RunID: "map-retry",
-		SourcePackageRoot: sourceRoot, SourceManifests: manifests, StepInvoker: invoker,
+		SourcePackageRoot: sourceRoot, SourceManifests: manifests, StepInvoker: runner.invoker(),
 	}, []byte(`[2,1,2]`))
 	if err != nil {
 		t.Fatal(err)
@@ -167,14 +172,14 @@ func TestRunStopsMapRetriesAfterTerminalSiblingFailure(t *testing.T) {
 	storeRoot := newStoreRoot(t)
 	sourceRoot := finiteMapSourceRoot(t)
 	compiled, manifests := compileRetryFixture(t, "finite-map", sourceRoot, 3, 0)
-	invoker := &flakyStepInvoker{functionalStepInvoker: functionalStepInvoker{storeRoot: storeRoot}, exitCodes: map[string][]int{
+	runner := newFlakyRunner(t, map[string][]int{
 		"map-items/0": {runnerExitStepExecution},
 		"map-items/2": {runnerExitNonRetryable},
-	}}
+	})
 
 	result, err := Run(context.Background(), RunConfig{
 		Plan: compiled.Plan, DatastoreRoot: storeRoot, ProjectID: "examples/retries", RunID: "map-terminal",
-		SourcePackageRoot: sourceRoot, SourceManifests: manifests, StepInvoker: invoker,
+		SourcePackageRoot: sourceRoot, SourceManifests: manifests, StepInvoker: runner.invoker(),
 	}, []byte(`[2,1,2]`))
 	if err == nil || !strings.Contains(err.Error(), "non-retryable-step-failure (exit 67)") || !strings.Contains(err.Error(), "(attempt 1 of 3)") {
 		t.Fatalf("run error = %v, want the terminal item failure", err)
@@ -246,43 +251,84 @@ func TestInvocationFailureRetryableUsesAttemptBudget(t *testing.T) {
 	}
 }
 
-// flakyStepInvoker fails selected attempts with runner exit codes before
-// delegating to the functional datastore invoker. Keys are node ids or
-// "<map id>/<item index>"; the nth code fails the nth attempt.
-type flakyStepInvoker struct {
-	functionalStepInvoker
-	exitCodes map[string][]int
+// flakyRunner is a real runner process. Listed attempts ("node" or
+// "node/itemIndex" mapped to per-attempt exit codes) exit before author code
+// starts; every other attempt execs the TypeScript runner and publishes output.
+type flakyRunner struct {
+	script   string
+	captures string
 }
 
-func (i *flakyStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocationBatch) ([]StepInvocationOutcome, error) {
-	outcomes := make([]StepInvocationOutcome, 0, len(batch.Steps))
-	for _, step := range batch.Steps {
-		descriptor := step.Descriptor
-		key := descriptor.NodeID
-		if descriptor.Scope != nil {
-			key += "/" + strconv.Itoa(descriptor.Scope.Frames[0].Index)
-		}
-		if codes := i.exitCodes[key]; descriptor.Attempt <= len(codes) {
-			i.descriptors = append(i.descriptors, descriptor)
-			outcomes = append(outcomes, StepInvocationOutcome{
-				NodeID: descriptor.NodeID, Attempt: descriptor.Attempt, Scope: descriptor.Scope,
-				Status: StatusFailed, ExitCode: codes[descriptor.Attempt-1], Diagnostic: "flaky attempt " + strconv.Itoa(descriptor.Attempt),
-			})
-			continue
-		}
-		succeeded, err := i.functionalStepInvoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{step}})
-		if err != nil {
-			return outcomes, err
-		}
-		outcomes = append(outcomes, succeeded...)
+func newFlakyRunner(t *testing.T, exitCodes map[string][]int) flakyRunner {
+	t.Helper()
+	directory := t.TempDir()
+	runner := flakyRunner{script: filepath.Join(directory, "runner.sh"), captures: filepath.Join(directory, "descriptors")}
+	if err := os.Mkdir(runner.captures, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	return outcomes, nil
+	var cases strings.Builder
+	for key, codes := range exitCodes {
+		for index, code := range codes {
+			fmt.Fprintf(&cases, "  '%s:%d') echo 'flaky attempt %d' >&2; exit %d ;;\n", key, index+1, index+1, code)
+		}
+	}
+	script := `#!/bin/sh
+set -eu
+descriptor="$1"
+node=$(grep -o '"nodeId": *"[^"]*"' "$descriptor" | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/')
+attempt=$(grep -o '"attempt": *[0-9]*' "$descriptor" | head -n 1 | grep -o '[0-9]*$')
+index=$(grep -o '"index": *[0-9]*' "$descriptor" | head -n 1 | grep -o '[0-9]*$' || true)
+key="$node"
+if [ -n "$index" ]; then key="$node/$index"; fi
+cp "$descriptor" "` + runner.captures + `/$(printf '%s' "$key" | tr / _)-$attempt.json"
+case "$key:$attempt" in
+` + cases.String() + `esac
+exec "` + filepath.Join(repoRootForTest(t), "scripts", "massive-typescript-runner") + `" "$descriptor"
+`
+	if err := os.WriteFile(runner.script, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return runner
+}
+
+func (r flakyRunner) invoker() *ProcessStepInvoker {
+	return &ProcessStepInvoker{CommandTemplate: []string{r.script, descriptorPathToken}, ProcessLimit: 2}
+}
+
+type capturedDescriptor struct {
+	path        string
+	NodeID      string `json:"nodeId"`
+	MaxAttempts int    `json:"maxAttempts"`
+}
+
+// descriptors returns every descriptor the runner process received, including
+// attempts that exited before author code ran.
+func (r flakyRunner) descriptors(t *testing.T) []capturedDescriptor {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(r.captures, "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptors := make([]capturedDescriptor, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		descriptor := capturedDescriptor{path: path}
+		if err := json.Unmarshal(data, &descriptor); err != nil {
+			t.Fatal(err)
+		}
+		descriptors = append(descriptors, descriptor)
+	}
+	return descriptors
 }
 
 func finiteMapSourceRoot(t *testing.T) string {
 	t.Helper()
 	sourceRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(sourceRoot, "workflow.ts"), []byte("// executed by the functional datastore invoker\n"), 0o644); err != nil {
+	source := "export function format(args: { readonly input: number }): string {\n  return `item:${args.input}`;\n}\n"
+	if err := os.WriteFile(filepath.Join(sourceRoot, "workflow.ts"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return sourceRoot

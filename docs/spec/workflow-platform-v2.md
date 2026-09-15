@@ -287,10 +287,11 @@ ladder. Expose the two decisions that affect execution directly:
   whether a previous attempt completed? Values should distinguish safe rerun,
   rerun requiring an idempotency key, and unsafe rerun.
 
-A plain `@g.step` therefore does not reuse cached results. Infrastructure may
-retry before user code starts, but it does not silently rerun after ambiguous
-completion. The runtime supplies a stable `ctx.idempotency_key` for every retry
-of one logical invocation.
+A plain `@g.step` therefore does not reuse cached results and runs once. A step
+that declares `retry` opts into rerun after failure, including ambiguous
+completions such as timeouts and crashes, so its side effects must tolerate a
+repeat. The runtime supplies a stable `ctx.idempotency_key` for every retry of
+one logical invocation, and `retry(1)` keeps a non-idempotent step single-shot.
 
 Operational attempt limits and backoff are part of the execution contract:
 `retry{maxAttempts, delaySeconds, backoffFactor, maxDelaySeconds}` and

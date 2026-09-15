@@ -249,8 +249,11 @@ contract hash unchanged and means one attempt with no deadline.
 
 Retryable failures are author exceptions (runner exit 66), timeouts, and runner
 crashes. Descriptor (64) and schema (65) failures are deterministic, and authors
-raise `NonRetryableError` (exit 67) to stop retries. Output verification
-failures and infrastructure errors are not retried.
+raise `NonRetryableError` (exit 67) to stop retries. The local orchestrator
+does not retry output verification failures or its own infrastructure errors.
+On Argo the retry expression excludes only exits 64, 65, and 67, so runtime
+failures outside the runner contract (datastore outages, pod crashes, output
+verification) are retried within the same attempt budget.
 
 Contracts are merged from workflow defaults and step overrides. Effective contracts are deduped in the compiled plan by content hash.
 

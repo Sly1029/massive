@@ -78,7 +78,9 @@ func Parse(data []byte) (*Manifest, error) {
 }
 
 // validateAttempts requires dense 1-based attempts where every retried attempt
-// failed and the last attempt carries the owning entry's status.
+// failed and the last attempt carries the owning entry's status. A failed last
+// attempt may also belong to an entry waiting for its retry (running) or one
+// whose run was cancelled during that wait (cancelled).
 func validateAttempts(attempts []Attempt, status string) error {
 	for index, attempt := range attempts {
 		if attempt.Attempt != index+1 {
@@ -88,7 +90,11 @@ func validateAttempts(attempts []Attempt, status string) error {
 			return fmt.Errorf("attempt %d was retried without failing", attempt.Attempt)
 		}
 	}
-	if len(attempts) > 0 && attempts[len(attempts)-1].Status != status {
+	if len(attempts) == 0 {
+		return nil
+	}
+	last := attempts[len(attempts)-1].Status
+	if last != status && (last != "failed" || (status != "running" && status != "cancelled")) {
 		return fmt.Errorf("last attempt status differs from entry status")
 	}
 	return nil

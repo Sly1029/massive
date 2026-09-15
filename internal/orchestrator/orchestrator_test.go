@@ -203,6 +203,12 @@ func assertLiveDescriptorValidAgainstFrozenSchema(t *testing.T, descriptor StepI
 	if err := os.WriteFile(descriptorPath, mustMarshalCanonical(t, descriptor), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	assertDescriptorFileValidAgainstFrozenSchema(t, descriptorPath)
+}
+
+func assertDescriptorFileValidAgainstFrozenSchema(t *testing.T, descriptorPath string) {
+	t.Helper()
+
 	root := repoRootForTest(t)
 	parserURL := "file://" + filepath.ToSlash(filepath.Join(root, "packages", "sdk", "src", "runner", "descriptor.ts"))
 	cmd := exec.Command(
