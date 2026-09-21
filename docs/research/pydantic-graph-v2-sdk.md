@@ -353,10 +353,9 @@ Persistence belongs below this graph API:
 That preserves the valuable S3 crystallization while making the orchestration
 backend replaceable.
 
-## What to validate with the first two manual rewrites
+## What to validate with the first two representative workflows
 
-Do not build a corpus migrator yet. Rewrite two workflows by hand and use them
-to force the SDK and IR seams:
+Build two workflows by hand and use them to force the SDK and IR seams:
 
 1. A dynamic map/reduce workflow with a real empty-input case, bounded
    concurrency, ordered collection, and a custom step environment.
@@ -364,7 +363,7 @@ to force the SDK and IR seams:
    explicit effects, and at least one injected runtime dependency/secret.
 
 For each workflow, run the exact same compiled-plan fixture through the local
-runner and the existing deployment path. Require equivalent canonical output
+runner and the Argo deployment path. Require equivalent canonical output
 artifacts, graph visualization, plan diff, environment hash, and retry/resume
 decisions. This will expose whether the abstraction is actually backend-neutral
 before Argo, Lambda, or Cloudflare adapters multiply.

@@ -132,8 +132,8 @@ massive run examples/05-decision/workflow.py --project examples/decision --input
 massive run examples/05-decision/workflow.py --project examples/decision --input '{"score":40}'
 ```
 
-Decision/select graphs run on the local target. Argo lowering currently rejects
-them rather than silently changing their semantics.
+Decision/select graphs run locally and on Argo. On Argo, the decision runs as a
+control task and branch tasks run only when their case is chosen.
 
 ## 6. Map a finite collection
 

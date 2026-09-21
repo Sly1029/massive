@@ -9,9 +9,13 @@ The `massive-workflows` platform wheel contains both the Python authoring/runtim
 package and the matching native Go CLI:
 
 ```sh
+uv init demo && cd demo
 uv add massive-workflows
-uv run massive run workflow.py --input '{"value": 21}'
+uv run massive run workflow.py --project demo/double --input '{"value": 21}'
 ```
+
+`--project` names the run namespace; inside a GitHub or GitLab checkout it
+defaults to the origin's `owner/repository`.
 
 Each workflow directory can own its dependencies and source/resource allowlist in
 `pyproject.toml`. See [workflow packaging](packages/python/README.md#workflow-packages-and-resources).
@@ -19,8 +23,9 @@ The local runner uses the launching Python environment; it does not install
 dependencies, enforce the declared container, or provide a sandbox.
 
 For Argo, use an immutable runner image containing the same
-`massive-workflows` version, then build and apply the generated runtime assets
-and `WorkflowTemplate`:
+`massive-workflows` version and create the `massive-artifacts` ConfigMap that
+names the [shared S3 datastore](docs/spec/argo-backend.md#shared-invocation-datastore).
+Then build and apply the generated runtime assets and `WorkflowTemplate`:
 
 ```sh
 uv run massive build workflow.py \
@@ -31,7 +36,7 @@ uv run massive build workflow.py \
 
 kubectl apply -f .massive/argo/runtime-configmap.json
 kubectl apply -f .massive/argo/workflow-template.yaml
-argo submit -n workflows --from workflowtemplate/my-workflow \
+argo submit -n workflows --from workflowtemplate/double \
   -p 'input={"value":21}' --watch
 ```
 
@@ -41,8 +46,8 @@ Source archives are verified; image references are pinned declarations, not
 registry or dependency attestations. See the
 [materialization contract](docs/spec/materialization-contract.md).
 
-Version 0.1 supports static graphs and finite maps on Argo, and static graphs,
-exhaustive decisions, and finite maps locally. Argo source transport is
+Version 0.1 supports static graphs, exhaustive decisions, and finite maps both
+locally and on Argo. Argo source transport is
 intentionally small and self-contained for the first release; larger source
 bundles and arbitrary JSON values still need larger transport. Python `Blob`
 and `Tree` handles already send file bodies through the artifact store and

@@ -56,7 +56,7 @@ def s3_server() -> Generator[S3TestServer, None, None]:
                 f"MINIO_ROOT_USER={access_key}",
                 "-e",
                 f"MINIO_ROOT_PASSWORD={secret_key}",
-                "minio/minio",
+                "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
                 "server",
                 "/data",
             ],

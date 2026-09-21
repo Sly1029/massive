@@ -14,9 +14,13 @@ plane, while the command passes the active Python interpreter to the frontend
 and step runner automatically:
 
 ```sh
+uv init demo && cd demo
 uv add massive-workflows
-uv run massive run workflow.py --input '{"value": 21}'
+uv run massive run workflow.py --project demo/double --input '{"value": 21}'
 ```
+
+`--project` names the run namespace; inside a GitHub or GitLab checkout it
+defaults to the origin's `owner/repository`.
 
 Build a static, container-target workflow for Argo with the same compiled plan:
 
@@ -58,8 +62,8 @@ maps. Argo requires immutable container environments and an explicit shared S3
 datastore binding. Blob/Tree file bodies are stored remotely and hydrated into
 private invocation directories. Ordinary JSON values still use Argo parameters;
 embedded plans and source archives are limited to 700 KiB. Declared application
-secrets require deployment bindings; `egress="none"` fails because tasks need
-remote storage. See the [Argo datastore setup](../../docs/spec/argo-backend.md#shared-invocation-datastore)
+secrets require deployment bindings; `network="none"` fails because tasks need
+remote storage. See the [Argo datastore setup](https://github.com/Sly1029/massive/blob/main/docs/spec/argo-backend.md#shared-invocation-datastore)
 for ConfigMap and credential bindings.
 
 ```python
@@ -325,22 +329,26 @@ The runtime derives the artifact namespace from a normalized project identity
 of the form `sha256-<64 lowercase hex characters>`; callers do not put a human
 repository name into an object-store path.
 
-## Building the 0.1 release
+## Releasing
 
-From a clean checkout with Go 1.25 and `uv` installed, build the source archive
+From a clean checkout with Go 1.27 and `uv` installed, build the source archive
 and Linux, macOS, and Windows wheels for amd64 and arm64:
 
 ```sh
 ./scripts/build-python-release.sh dist/python-release
-uv publish dist/python-release/*
 ```
 
 The release builder cross-compiles CGO-disabled Go control-plane binaries,
 assigns Python-ABI-independent platform tags, checks every wheel contains its
-native executable, and checks the source distribution can rebuild the Go
-binary. Run `pnpm check` before publishing; its distribution acceptance test
-installs a wheel in a clean environment and exercises local, Argo build, and
-isolated Argo-step paths.
+native executable, and rebuilds a native wheel from the source distribution
+alone. `scripts/test-python-distribution.sh <wheel>` installs one wheel in a
+clean environment and exercises local, Argo build, and isolated Argo-step paths.
+
+Publishing is done by the `release` GitHub workflow through PyPI trusted
+publishing. Set `version` in `pyproject.toml`, merge it, and push the matching
+`v<version>` tag; the workflow builds the artifacts once, verifies the platform
+wheels on Linux, macOS, and Windows, and publishes them with attestations. A
+manual run of the workflow publishes the same artifacts to TestPyPI.
 
 ## Current scope
 
@@ -408,7 +416,7 @@ Run a zero-config Python workflow through the same compiler, orchestrator, and
 artifact protocol used by every Massive frontend:
 
 ```sh
-massive run path/to/workflow.py --input '{"value": 21}'
+massive run path/to/workflow.py --project demo/double --input '{"value": 21}'
 ```
 
 When a module exports more than one graph, select it explicitly with
@@ -476,7 +484,7 @@ does not install dependencies automatically. For Argo, build an immutable runner
 image with the same locked dependencies and Massive version. Local execution
 currently uses the active interpreter, not the container declared in the contract.
 
-See the [packaged map example](../../examples/07-package/workflow.py) for a
+See the [packaged map example](https://github.com/Sly1029/massive/blob/main/examples/07-package/workflow.py) for a
 nested module, a text resource, and ordered collection into a typed result.
 
 ### Secrets
@@ -487,11 +495,11 @@ Local Python processes currently inherit the launching environment; secret
 preflight and selective task binding are not implemented locally. Argo binds
 logical secret references through `massive build --secret-bindings bindings.json`.
 Only steps declaring a reference receive its Kubernetes `secretKeyRef`.
-See [application secret bindings](../../docs/spec/argo-backend.md#application-secret-bindings)
+See [application secret bindings](https://github.com/Sly1029/massive/blob/main/docs/spec/argo-backend.md#application-secret-bindings)
 for file format, reserved environment names, and failure behavior.
 
 The contract is logical requirements in the workflow and concrete
-bindings in deployment configuration. See the [binding design](../../docs/spec/runtime-environment.md)
+bindings in deployment configuration. See the [binding design](https://github.com/Sly1029/massive/blob/main/docs/spec/runtime-environment.md)
 for the distinction between declarations, bindings, and enforcement.
 
 ## Files and directory snapshots
@@ -548,9 +556,9 @@ Outside a runner, pass an explicit `ArtifactFiles(store, scratch)` as Pydantic's
 binding references. Unbound handles can be inspected and serialized, but cannot
 hydrate. Use a dedicated datastore root or S3 prefix for each security boundary.
 
-The [artifact example](../../examples/08-artifacts/workflow.py) runs a directory
+The [artifact example](https://github.com/Sly1029/massive/blob/main/examples/08-artifacts/workflow.py) runs a directory
 snapshot through parallel processes and collects file reports. The
-[wire contract](../../docs/spec/file-artifacts.md) defines identity and retention
+[wire contract](https://github.com/Sly1029/massive/blob/main/docs/spec/file-artifacts.md) defines identity and retention
 requirements. Python currently provides hydration; TypeScript can forward the
 JSON references but has no corresponding file-handle API.
 

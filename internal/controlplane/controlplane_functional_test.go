@@ -331,3 +331,18 @@ func TestFrontendDiagnosticsDistinguishEntrypointsAndAuthorFailures(t *testing.T
 		t.Fatalf("author diagnostic = %v", err)
 	}
 }
+
+func TestProjectInferenceDoesNotEchoOriginCredentials(t *testing.T) {
+	directory := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "--quiet"},
+		{"remote", "add", "origin", "https://gitlab-ci-token:job-token-secret@gitlab.com/group/repository.git"},
+	} {
+		if output, err := exec.Command("git", append([]string{"-C", directory}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+	}
+	if _, err := projectFromGitOrigin(directory); err == nil || strings.Contains(err.Error(), "job-token-secret") {
+		t.Fatalf("project inference error = %v", err)
+	}
+}

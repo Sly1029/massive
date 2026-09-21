@@ -52,8 +52,8 @@ for what works today.
 - Local task subprocesses now own ordinary descendants through OS process groups
   or Windows jobs, with bounded pipe drainage and captured output. Context
   cancellation persists terminal v4 journals and retains verified completed map
-  outputs. Add CLI signal ingress; killing the CLI itself still does not
-  constitute graceful run cancellation.
+  outputs. SIGINT and SIGTERM to the CLI cancel the run through the same path;
+  SIGKILL still leaves the journal unterminated.
 - Per-task timeout, bounded retry with backoff, a non-retryable author signal,
   and per-attempt journal accounting are part of `ExecutionContract` and run on
   both the local and Argo targets.

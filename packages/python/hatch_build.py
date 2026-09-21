@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
-import platform
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
+from packaging.tags import sys_tags
 
 _SCHEMAS = (
     Path("conformance/schema/step-invocation-descriptor.schema.json"),
@@ -22,20 +23,14 @@ _GO_SOURCE_PATHS = (
     Path("conformance/schema"),
 )
 
-_PLATFORM_TAGS = {
+# Release cross-builds. The binaries are static; Go 1.27 requires macOS 13.
+_RELEASE_PLATFORM_TAGS = {
     ("linux", "amd64"): "manylinux_2_17_x86_64",
     ("linux", "arm64"): "manylinux_2_17_aarch64",
-    ("darwin", "amd64"): "macosx_10_15_x86_64",
-    ("darwin", "arm64"): "macosx_11_0_arm64",
+    ("darwin", "amd64"): "macosx_13_0_x86_64",
+    ("darwin", "arm64"): "macosx_13_0_arm64",
     ("windows", "amd64"): "win_amd64",
     ("windows", "arm64"): "win_arm64",
-}
-
-_MACHINE_TO_GO_ARCH = {
-    "aarch64": "arm64",
-    "amd64": "amd64",
-    "arm64": "arm64",
-    "x86_64": "amd64",
 }
 
 
@@ -68,7 +63,14 @@ class CustomBuildHook(BuildHookInterface):
         if self.target_name != "wheel":
             return
 
-        goos, goarch, platform_tag = _target_platform()
+        go = shutil.which("go")
+        if go is None:
+            raise RuntimeError(
+                "building massive-workflows from source requires the Go toolchain "
+                "declared in go.mod on PATH; prebuilt wheels cover Linux (glibc), "
+                "macOS 13+, and Windows on amd64 and arm64"
+            )
+        goos, goarch, platform_tag = _target_platform(go, repository)
         package_version = self.metadata.version
         executable_name = "massive.exe" if goos == "windows" else "massive"
         artifact = root / ".massive-build" / f"{goos}-{goarch}" / executable_name
@@ -77,7 +79,7 @@ class CustomBuildHook(BuildHookInterface):
         environment.update({"CGO_ENABLED": "0", "GOOS": goos, "GOARCH": goarch})
         subprocess.run(
             [
-                "go",
+                go,
                 "build",
                 "-buildvcs=false",
                 "-trimpath",
@@ -101,18 +103,28 @@ class CustomBuildHook(BuildHookInterface):
 
 
 def _go_repository(root: Path) -> Path:
-    for candidate in (root.parents[1], root):
+    # An extracted sdist carries go.mod at its root; a checkout keeps it two levels up.
+    for candidate in (root, root.parent.parent):
         if (candidate / "go.mod").is_file() and (candidate / "cmd/massive").is_dir():
             return candidate
     raise FileNotFoundError("Massive Go source tree is unavailable")
 
 
-def _target_platform() -> tuple[str, str, str]:
-    goos = os.environ.get("MASSIVE_BUILD_GOOS", platform.system().lower())
-    host_machine = platform.machine().lower()
-    goarch = os.environ.get("MASSIVE_BUILD_GOARCH", _MACHINE_TO_GO_ARCH.get(host_machine, ""))
-    try:
-        platform_tag = _PLATFORM_TAGS[(goos, goarch)]
-    except KeyError as error:
-        raise RuntimeError(f"unsupported Massive wheel target: {goos}/{goarch}") from error
-    return goos, goarch, platform_tag
+def _target_platform(go: str, repository: Path) -> tuple[str, str, str]:
+    if "MASSIVE_BUILD_GOOS" in os.environ or "MASSIVE_BUILD_GOARCH" in os.environ:
+        goos = os.environ.get("MASSIVE_BUILD_GOOS", "")
+        goarch = os.environ.get("MASSIVE_BUILD_GOARCH", "")
+        try:
+            return goos, goarch, _RELEASE_PLATFORM_TAGS[(goos, goarch)]
+        except KeyError as error:
+            raise RuntimeError(f"unsupported Massive release target: {goos}/{goarch}") from error
+    # A source build targets the installing interpreter, including platforms
+    # without a release wheel such as musl Linux.
+    goos, goarch = subprocess.run(
+        [go, "env", "GOOS", "GOARCH"],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    return goos, goarch, next(iter(sys_tags())).platform

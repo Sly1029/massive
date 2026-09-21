@@ -699,6 +699,38 @@ func TestSourceSnapshotIsDeterministicAcrossRuns(t *testing.T) {
 	}
 }
 
+func TestReusedRunIDKeepsTheEarlierJournal(t *testing.T) {
+	storeRoot := newStoreRoot(t)
+	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+	run := func(input string) (*RunResult, error) {
+		return Run(context.Background(), RunConfig{
+			Plan:              compiled.Plan,
+			DatastoreRoot:     storeRoot,
+			ProjectID:         "acme/security-workflows",
+			RunID:             "run-reuse-0001",
+			SourcePackageRoot: sourceRoot,
+			SourceManifests:   manifests,
+			StepInvoker:       &functionalStepInvoker{storeRoot: storeRoot},
+		}, []byte(input))
+	}
+	first, err := run("20")
+	if err != nil || first.Status != StatusSucceeded {
+		t.Fatalf("first run = %#v, %v", first, err)
+	}
+	journalKey := first.ManifestKey
+	recorded := getObject(t, storeRoot, journalKey).Body
+
+	_, err = run("21")
+	var invalid *InvalidRunInputError
+	if !errors.As(err, &invalid) || invalid.Field != "run id" {
+		t.Fatalf("reused run id error = %T (%v), want *InvalidRunInputError", err, err)
+	}
+	if after := getObject(t, storeRoot, journalKey).Body; !bytes.Equal(after, recorded) {
+		t.Fatalf("reused run id rewrote the journal:\nbefore: %s\nafter:  %s", recorded, after)
+	}
+}
+
 func TestHostileRunIDRejectedBeforeSideEffects(t *testing.T) {
 	storeRoot := newStoreRoot(t)
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
