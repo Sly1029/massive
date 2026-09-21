@@ -73,8 +73,8 @@ is the isolation boundary; hashes are identities, not access-control tokens.
 The implementation buffers a file while hashing, uploading, or downloading it.
 Trees hydrate lazily as a whole on first access. Streaming, scratch quotas,
 resumable transfer, per-file lazy access, and cross-platform filename translation
-are not implemented. Argo still rejects decision/select graphs and large source
-packages; this feature only removes file payloads from graph parameters.
+are not implemented. Argo still rejects large source packages; this feature
+only removes file payloads from graph parameters.
 
 Any future retention collector must follow typed JSON references into tree
 manifests and their file blobs, including references nested in lists and models.

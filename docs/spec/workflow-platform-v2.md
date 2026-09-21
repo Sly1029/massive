@@ -24,7 +24,7 @@ not a current SDK promise.
 Replace Metaflow rather than emulate it.
 
 Massive will provide a native Python authoring SDK that emits its
-language-neutral graph IR. Existing workflows will be deliberately rewritten;
+language-neutral graph IR. Metaflow flows are ported by rewriting them;
 there will be no Metaflow compatibility frontend, compatibility runtime, or
 legacy pickle codec. This is an opportunity to remove accidental state,
 channels, decorator coupling, and target-specific behavior instead of carrying
@@ -114,7 +114,7 @@ The important seams are:
 Repository ownership follows that seam. Massive contains the generic Python
 builder/emitter and runner alongside its TypeScript frontend, schemas, compiler,
 artifact runtime, and target adapters. Downstream repositories contain domain
-wrappers, migration reports, and application workflows. A domain SDK may
+wrappers and application workflows. A domain SDK may
 re-export generic Massive authoring types to present one coherent Python import
 surface.
 
@@ -201,7 +201,7 @@ workflows:
 - durable reducer join.
 
 Loops, streaming maps, wait-any, race, cancellation, compensation, and similar
-features should be added only when a rewritten workflow demonstrates the need
+features should be added only when a real workflow demonstrates the need
 and a target can state the required capability honestly.
 
 Decisions switch on a `Literal` or discriminated-union tag and must be
@@ -272,7 +272,7 @@ Every Graph IR artifact declares a version. During design it remains `0.x` and
 breaking changes are allowed. Consumers and backends declare supported version
 ranges and reject unsupported inputs explicitly.
 
-Do not freeze Graph IR v1 until two representative rewritten workflows pass the
+Do not freeze Graph IR v1 until two representative workflows pass the
 acceptance gate below. The invocation, artifact, and runner protocol can
 stabilize earlier because it is already the strongest seam in Massive.
 
@@ -301,7 +301,7 @@ backoff, the non-retryable exit, attempt context, per-attempt journal slots).
 Downstream consumers own policy: fleet-wide defaults, which exception types are
 non-retryable, whether billable side effects run only on the final attempt, and
 retries of their own API calls inside a step.
-Friendly presets can be added later if the manual rewrites reveal combinations
+Friendly presets can be added later if real workflows reveal combinations
 that authors repeat and understand.
 
 For the first cache implementation, use one execution identity hash. It includes
@@ -409,55 +409,35 @@ A Worker isolate is not treated as a native-process executor. Target marketing
 names must not conceal runtime constraints.
 
 `WorkflowSpec` identity is independent of `DeploymentSpec`. A Kubernetes
-namespace or temporary `v2-` prefix is deployment configuration and can be
-settled during rollout without entering the Python authoring model.
+namespace or name prefix is deployment configuration and never enters the
+Python authoring model.
 
-## Migration boundary
-
-Migration reviews established that dynamic maps, joins, parameters, retry/catch
-behavior, environment tooling, and artifact inputs are important enough to
-shape the generic platform. Corpus-specific reports, rewrite notes, fixtures,
-and migrated applications belong in their source repositories, not in Massive.
+## Scope boundary
 
 This public repository contains only generic platform contracts and synthetic
-examples.
-
-Migration is a clean per-workflow cutover:
-
-1. manually rewrite one dynamic map/reduce workflow;
-2. manually rewrite one branch-heavy workflow;
-3. run them in a separate Kubernetes namespace or deployment prefix;
-4. cut each workflow over when its outputs and operational behavior are accepted;
-5. build migration automation last, from repeated mechanical edits actually
-   observed in those rewrites.
-
-There is no shadow-compatibility runtime, dual execution requirement, or eager
-historical artifact import. Old runs remain in their old namespace; new runs
-start under v2.
+examples. Application workflows, their fixtures, and reports about them belong
+in their own repositories. There is no compatibility runtime, dual-execution
+mode, or import of historical Metaflow artifacts.
 
 ## Delivery sequence
 
 1. Reconcile the docs around this direction and keep Graph IR explicitly `0.x`.
-2. Complete a read-only corpus shape audit in the workflows worktree before
-   freezing graph semantics; bring only generic conclusions back to Massive.
-3. Stabilize and generalize the artifact, invocation, and runner protocol.
-4. Add the Python builder/emitter and Python runner with sync/async support.
-5. Add Pydantic `TypeAdapter` validation, canonical serialization, and generated
+2. Stabilize and generalize the artifact, invocation, and runner protocol.
+3. Add the Python builder/emitter and Python runner with sync/async support.
+4. Add Pydantic `TypeAdapter` validation, canonical serialization, and generated
    validation/serialization JSON Schemas at every boundary.
-6. Implement the small graph IR: decisions, map scopes, gather, reducer, and
+5. Implement the small graph IR: decisions, map scopes, gather, reducer, and
    captured outcomes.
-7. Rewrite the two representative workflows by hand.
-8. Run the full compiled path locally through the real artifact runtime.
-9. Build composable `uv`/BuildKit environments.
-10. Compile and execute the same plans on Argo with S3 or MinIO artifacts.
-11. Pass the v1 acceptance gate, then stabilize Graph IR v1.
-12. Add Cloudflare, Lambda, or other targets based on real demand.
-13. Add a migration assistant only after the manual rewrites expose reliable
-    transformations.
+6. Build two representative workflows: one dynamic map/reduce and one branch-heavy.
+7. Run the full compiled path locally through the real artifact runtime.
+8. Build composable `uv`/BuildKit environments.
+9. Compile and execute the same plans on Argo with S3 or MinIO artifacts.
+10. Pass the v1 acceptance gate, then stabilize Graph IR v1.
+11. Add Cloudflare, Lambda, or other targets based on real demand.
 
 ## Graph IR v1 acceptance gate
 
-Do not call the graph schema stable until two real rewritten workflows execute
+Do not call the graph schema stable until two representative workflows execute
 end to end on Argo and demonstrate:
 
 - Python type checking and boundary validation;
@@ -479,7 +459,7 @@ evidence for these contracts.
 
 ## Deferred decisions
 
-The following should remain open until prototypes or the two rewrites provide
+The following should remain open until prototypes or the representative workflows provide
 evidence:
 
 - final Python names and decorator syntax;
@@ -496,8 +476,8 @@ explicit supported range.
 
 ## Rejected directions
 
-- **Metaflow compatibility package:** rejected because applications may be fully
-  rewritten for the native Python SDK and preserving implicit state would weaken the new
+- **Metaflow compatibility package:** rejected because flows can be rewritten
+  for the native Python SDK, and preserving implicit state would weaken the new
   model.
 - **Pickle compatibility:** rejected in favor of typed, portable artifact kinds.
 - **Pydantic Graph as the runtime:** rejected; its authoring form is useful, but
@@ -509,5 +489,5 @@ explicit supported range.
   substitution and ambiguous-rerun guarantees directly.
 - **A large failure-policy IR:** rejected until friendly SDK wrappers prove that
   a new semantic primitive is necessary.
-- **Stable Graph IR before real migration:** rejected; keep `0.x`, version every
+- **Stable Graph IR before real workloads:** rejected; keep `0.x`, version every
   artifact, and freeze only after the acceptance gate.

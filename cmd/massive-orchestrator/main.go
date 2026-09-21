@@ -310,7 +310,8 @@ func projectFromGitOrigin() (string, error) {
 	}
 	project, ok := normalizeGitRemote(origin)
 	if !ok {
-		return "", fmt.Errorf("run requires --project because git origin %q is not a supported GitHub/GitLab remote", origin)
+		// Origins can embed credentials, such as a CI job token, so never echo one.
+		return "", errors.New("run requires --project because the git origin is not a github.com or gitlab.com repository URL")
 	}
 	return project, nil
 }

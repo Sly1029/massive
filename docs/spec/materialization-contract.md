@@ -110,7 +110,7 @@ massive-compiler bundle-argo \
   --deployment .massive/argo/deployment-spec.json \
   --materialization .massive/argo/materialization-spec.json \
   --runtime-assets .massive/argo/runtime-assets \
-  --output .massive/rebuilt
+  --out .massive/rebuilt
 ```
 
 No automatic installation, dependency preflight, registry verification, server

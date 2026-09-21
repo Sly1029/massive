@@ -14,17 +14,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-uv build --out-dir "$test_root/dist" "$repository/packages/python"
-wheel="$(find "$test_root/dist" -maxdepth 1 -name '*.whl' -print -quit)"
-test -n "$wheel"
+# Release verification passes the published wheel; local checks build one.
+wheel="${1:-}"
+if [ -z "$wheel" ]; then
+  uv build --out-dir "$test_root/dist" "$repository/packages/python"
+  wheel="$(find "$test_root/dist" -maxdepth 1 -name '*.whl' -print -quit)"
+fi
+test -f "$wheel"
 
 uv venv "$test_root/venv"
 python="$test_root/venv/bin/python"
 massive="$test_root/venv/bin/massive"
 uv pip install --python "$python" "$wheel"
 
-"$python" -c 'from importlib.metadata import version; assert version("massive-workflows") == "0.1.0"'
-test "$("$massive" version)" = "massive 0.1.0"
+version="$("$python" -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])' "$repository/packages/python/pyproject.toml")"
+"$python" -c 'import sys; from importlib.metadata import version; assert version("massive-workflows") == sys.argv[1]' "$version"
+test "$("$massive" version)" = "massive $version"
 
 mkdir -p "$test_root/project"
 cp "$repository/conformance/workflows/python-linear/workflow.py" "$test_root/project/workflow.py"

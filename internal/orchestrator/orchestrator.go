@@ -137,8 +137,16 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 
 	manifest := newRunManifest(config.Plan.GetPlanHash(), projectKey, runID, index.stepOrder, index.nodesByID)
 	manifestKey := runManifestKey(projectKey, runID)
-	if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-		return nil, err
+	// Creating the journal claims the run id, so a reused id cannot overwrite
+	// an earlier run's record; later journal updates replace it in place.
+	manifestBody, err := canonical.Marshal(manifest)
+	if err != nil {
+		return nil, fmt.Errorf("marshal run manifest: %w", err)
+	}
+	if _, err := store.Put(ctx, manifestKey, manifestBody, datastore.PutOptions{ContentType: jsonContentType, IfAbsent: true}); errors.Is(err, datastore.ErrAlreadyExists) {
+		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "already names a run in this project; choose a new run id"}
+	} else if err != nil {
+		return nil, fmt.Errorf("create run manifest %s: %w", manifestKey, err)
 	}
 
 	result := &RunResult{

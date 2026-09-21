@@ -6,8 +6,7 @@ Date: 2026-08-18
 > This note records primary-source findings and options considered during
 > discovery. Compatibility-layer recommendations here were not accepted. See
 > [Workflow Platform v2 Direction](../spec/workflow-platform-v2.md) for the
-> normative decisions. Corpus-specific follow-up belongs in a workflows
-> repository worktree under `~/worktrees`.
+> normative decisions.
 
 This note uses primary sources only: official documentation, specifications, and source repositories. Factual observations are separated from recommendations and inferences.
 
@@ -44,7 +43,7 @@ Metaflow's useful contract is larger than a DAG syntax:
 - Metaflow labels its documented API as backward-compatible. Its internal graph, runtime, datastore, and plugin implementation files are described in the internals documentation but are not part of that public API list. ([API stability statement](https://docs.metaflow.org/api), [technical overview](https://docs.metaflow.org/internals/technical-overview))
 - Metaflow's own extensions template warns that the extension mechanism relies on internal APIs that are not guaranteed to be stable across versions. ([Metaflow extensions template](https://github.com/Netflix/metaflow-extensions-template))
 
-**Migration implication (inference):** translating only `@step` and `self.next` will undercount the compatibility surface. The corpus must also be inventoried for `self.*` artifact semantics, joins, foreach, parameters/configs, runtime-injected decorators, custom decorators, Client API reads, resume assumptions, and ambient Metaflow globals such as `current`.
+**Porting implication (inference):** translating only `@step` and `self.next` undercounts what a Metaflow flow depends on. A port must also account for `self.*` artifact semantics, joins, foreach, parameters/configs, runtime-injected decorators, custom decorators, Client API reads, resume assumptions, and ambient Metaflow globals such as `current`.
 
 ### Portable IR and backend boundaries
 
@@ -126,7 +125,7 @@ The current design already contains most of the correct seams:
 
 The main architectural correction is that the current `target` concept conflates orchestration and step execution. Argo happens to provide both a DAG controller and Kubernetes pods, but Cloudflare Workflows calling Lambda, a local orchestrator dispatching Kubernetes jobs, or Temporal scheduling mixed workers do not fit that assumption.
 
-The main product correction is prioritization. The specification currently says that no Python frontend is scheduled. For replacing a corpus of Metaflow workflows, the Python frontend and migration analyzer should move ahead of broad TypeScript authoring features, plugin/patch richness, and a hosted metadata plane.
+The main product correction is prioritization. The specification currently says that no Python frontend is scheduled. For Metaflow users, the Python frontend should move ahead of broad TypeScript authoring features, plugin/patch richness, and a hosted metadata plane.
 
 ## Recommended product surface
 
@@ -256,7 +255,7 @@ Then produce one or more target realizations:
 
 The environment key must include normalized dependency inputs, target platform/ABI, runner protocol, materializer version, relevant build policy, and any build-time secrets by stable identity (never secret value). It must exclude CPU/memory, runtime secrets, retry policy, and unrelated scheduling fields.
 
-Implement `env.uv` first for Python, accepting `uv.lock`, PEP 735 dependency-group composition, and PEP 723 single-file metadata; optionally export/store PEP 751 `pylock.toml` for tool-neutral provenance. Use BuildKit for OCI output and cache transport. Add Nix only when a corpus workflow demonstrably needs non-container system reproducibility that uv plus BuildKit cannot express.
+Implement `env.uv` first for Python, accepting `uv.lock`, PEP 735 dependency-group composition, and PEP 723 single-file metadata; optionally export/store PEP 751 `pylock.toml` for tool-neutral provenance. Use BuildKit for OCI output and cache transport. Add Nix only when a workflow demonstrably needs non-container system reproducibility that uv plus BuildKit cannot express.
 
 ### 5. Add a Python frontend without coupling it to Metaflow
 
@@ -274,78 +273,22 @@ def scan(checkout: Checkout) -> Findings: ...
 flow.connect(flow.start, checkout, scan, flow.end)
 ```
 
-Function parameters and return annotations are useful inference, as Hamilton demonstrates, but explicit edges must remain available for branch/map/join and migration. The compiled IR references module plus qualified symbol; it never serializes Python closures or pickles functions as the portable contract.
+Function parameters and return annotations are useful inference, as Hamilton demonstrates, but explicit edges must remain available for branch/map/join. The compiled IR references module plus qualified symbol; it never serializes Python closures or pickles functions as the portable contract.
 
 Use `pyproject.toml` under `[tool.massive]` for package configuration and PEP 621/uv data where it already exists. Allow PEP 723 metadata for one-file local workflows.
 
-## Rejected compatibility migration option
+## Rejected compatibility option
 
-The phases in this section are retained as the alternative that was evaluated,
-not as an implementation plan. The accepted approach is a native per-workflow
-rewrite with migration automation considered only after two manual rewrites.
-
-### Phase A: inventory before designing compatibility
-
-Build `massive migrate audit <paths...>` as a read-only corpus analyzer. Report counts and exact locations for:
-
-- graph forms: linear, split/join, foreach, condition, recursion;
-- parameters, configs, includes, schedules/triggers;
-- all decorators, including those injected in wrapper commands;
-- custom decorators and extension imports;
-- `self.*` writes/reads/deletes and join `inputs` usage;
-- Client API, `current`, `S3`, cards, checkpoint, resume assumptions;
-- dynamic source constructs the analyzer cannot prove;
-- environment sources and target-specific configuration.
-
-This report should decide the compatibility wedge. Do not guess from a few representative flows.
-
-### Phase B: preserve step bodies with a bounded adapter
-
-Create a separate `massive-metaflow-compat` Python distribution. A codemod changes imports, ideally without changing method bodies:
-
-```python
-from massive.compat.metaflow import FlowSpec, step, Parameter
-```
-
-The adapter statically lowers supported `self.next(...)` forms into `WorkflowSpec`. At execution, a compatibility runner:
-
-1. hydrates a flow-state envelope from named artifact refs;
-2. instantiates a lightweight flow object;
-3. invokes the original step method;
-4. snapshots changed `self.*` fields to a typed/opaque state envelope;
-5. maps join `inputs` to read-only branch-state proxies;
-6. emits ordinary Massive output refs and a task receipt.
-
-This is intentionally less elegant than the native SDK. Its value is reducing the initial rewrite surface and preserving user Python libraries and step code. Unsupported decorators or dynamic graph behavior must fail the migration audit; they must not silently disappear.
-
-Keep this adapter out of the core schemas. The portable node is still a normal symbol plus input/output schemas; only the Python runtime understands the legacy state envelope.
-
-### Phase C: provide result-reading continuity
-
-Implement a small compatibility facade for the subset of the Client API used by the corpus. Map a Massive run manifest to Flow/Run/Step/Task/DataArtifact-like views, including an `origin` link for reused outputs. Preserve stable logical IDs, but do not reproduce Metaflow's internal storage layout.
-
-For old historical data, start read-only: retain Metaflow as an archive and allow references/import by pathspec. Copy data into Massive CAS lazily only when a workflow explicitly adopts it; record the origin pathspec and original content hash.
-
-### Phase D: shadow and incrementally rewrite
-
-For each workflow class:
-
-1. compile with the compatibility frontend and inspect the plan;
-2. run locally against frozen inputs;
-3. compare artifact schemas/digests or semantic comparators;
-4. run on Argo in shadow mode;
-5. switch scheduling while retaining rollback;
-6. rewrite high-change steps into native functions when it pays off.
-
-Migration success should be measured by percent of workflows that compile, percent of runs matching outputs, median changed lines, local iteration latency, environment cache hit rate, and number of target-specific hacks removed.
-
-### What not to promise
-
-Do not promise perfect compatibility for arbitrary Metaflow extensions, implicit pickled Python object graphs, cards/UI behavior, or every resume/client query. Publish a compatibility matrix and make unsupported features visible in the audit before users attempt a run.
+A separate compatibility distribution was evaluated: an import-level adapter
+that would lower supported `self.next(...)` forms, run original step methods
+against a snapshotted `self.*` state envelope, and emulate a subset of the
+Client API. It was rejected because it would preserve the implicit state and
+serialization constraints the native model is intended to remove. Flows are
+rewritten against the native Python SDK instead.
 
 ## Target sequence
 
-1. **Local process + Python frontend**: prove migration and preserve the full compile/plan/runner path.
+1. **Local process + Python frontend**: prove the authoring model and preserve the full compile/plan/runner path.
 2. **Argo + container executor**: prove source/environment materialization, object-store artifacts, retry, and operational bundles.
 3. **Cloudflare Container executor**: reuse the OCI runner path for native workloads and place a small Worker in front as coordinator. This proves that an executor can be selected independently from orchestration.
 4. **Ordinary Lambda executor**: useful for bounded event-driven steps; enforce 15-minute, architecture, filesystem, memory, and packaging constraints.
@@ -357,28 +300,10 @@ The first five steps validate the differentiator—portable plans, environments,
 
 ## Product risks and decisions to force early
 
-1. **Compatibility budget:** which Metaflow features must work unchanged, and which workflows may require a rewrite? “All existing flows” changes the project from a frontend migration into a Metaflow reimplementation.
-2. **Python priority:** for a Python-heavy adoption corpus, delaying Python while expanding the TypeScript SDK optimizes the wrong surface.
+1. **Compatibility budget:** which Metaflow features must a port preserve? Unchanged execution of arbitrary flows turns a new SDK into a Metaflow reimplementation.
+2. **Python priority:** for Python-heavy users, delaying Python while expanding the TypeScript SDK optimizes the wrong surface.
 3. **State model:** are arbitrary Python objects a requirement, or may the new native SDK require JSON/Arrow/file artifacts with explicit codecs? Cross-language and edge portability depend on this answer.
 4. **Execution topology:** does “inside Cloudflare” permit a Cloudflare Container, or must a native process execute in a Worker isolate? The latter conflicts with the Worker process and memory model. If Cloudflare Containers are unacceptable operationally, may a Worker orchestrate Lambda/Kubernetes work instead?
 5. **Durability semantics:** is step-boundary retry/resume enough, or are signals, long sleeps, callbacks, and cyclic state machines near-term requirements? Only the latter justifies an early Temporal/Lambda-durable-level contract.
 6. **Cache trust:** may a pure-step cache be shared across projects/users, and who can attest that code/environment/input digests and declared effects are truthful?
 7. **Control plane:** is an object-store run index adequate initially, or must users query/tag/compare thousands of historical runs with low latency? The latter requires a metadata index sooner, but it should consume manifests rather than become execution truth.
-8. **Name/product scope:** is Massive an internal compiler for one workflow repository, or a general platform product? Build the migration wedge first; branding and public generality should follow demonstrated portability.
-
-## Historical compatibility go/no-go milestone
-
-This milestone applied to the rejected compatibility option. The accepted v2
-gate is defined in
-[Workflow Platform v2 Direction](../spec/workflow-platform-v2.md#graph-ir-v1-acceptance-gate).
-
-Before expanding Massive's target/plugin surface, require one vertical result:
-
-- corpus audit covers every Metaflow file;
-- compatibility frontend compiles the dominant graph/decorator subset;
-- ten representative flows run locally without changing their step bodies;
-- three representative flows run on Argo with uv-lock-derived environments;
-- artifacts can be inspected and a failed run can reuse successful predecessors;
-- `massive explain --orchestrator cloudflare-workflows --executor worker-isolate` rejects a native-process step and identifies `cloudflare-container` (or another permitted native executor) as eligible.
-
-If this works, building the replacement into Massive is strongly justified. If it fails because the corpus depends pervasively on arbitrary `FlowSpec` object mutation or undocumented extensions, keep Massive as the new platform but migrate workflow-by-workflow through explicit native Python graphs rather than deepening the compatibility layer.

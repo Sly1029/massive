@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/Sly1029/massive/internal/controlplane"
 	"github.com/Sly1029/massive/internal/deployment"
@@ -212,7 +214,7 @@ func renderRun(writer io.Writer, jsonMode, verbose bool, result *controlplane.Lo
 	if status == orchestrator.StatusSucceeded {
 		fmt.Fprintf(writer, "\n✓ succeeded  run %s\n  result  %s\n", runID, value)
 	} else {
-		fmt.Fprintf(writer, "\n✗ failed  run %s\n", runID)
+		fmt.Fprintf(writer, "\n✗ %s  run %s\n", status, runID)
 	}
 	if verbose {
 		fmt.Fprintf(writer, "  plan    %s\n  store   %s\n", result.Plan.PlanHash, result.Store)
@@ -385,9 +387,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "massive: %s\nRun massive --help for usage.\n", err)
 		os.Exit(2)
 	}
-	parseContext.BindTo(context.Background(), (*context.Context)(nil))
+	// Task processes run in their own process groups, so a terminal interrupt
+	// reaches only this process; cancellation stops them and closes the journal.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	parseContext.BindTo(ctx, (*context.Context)(nil))
 	parseContext.BindTo(os.Stdout, (*io.Writer)(nil))
-	if err := parseContext.Run(); err != nil {
+	err = parseContext.Run()
+	stop()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "✗ %s\n", strings.TrimSpace(err.Error()))
 		os.Exit(exitCodeFor(err))
 	}

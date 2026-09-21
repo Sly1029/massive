@@ -1,6 +1,7 @@
 .venv/
 .massive-build/
 .pytest_cache/
+.hypothesis/
 .ruff_cache/
 __pycache__/
 *.py[cod]

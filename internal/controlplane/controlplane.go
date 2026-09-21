@@ -23,7 +23,8 @@ import (
 	"github.com/Sly1029/massive/internal/target/argo"
 )
 
-var Version = "0.1.0"
+// Version is injected by the wheel build; source builds report a development version.
+var Version = "0.0.0-dev"
 
 type FrontendResult struct {
 	Spec        *spec.WorkflowSpec
@@ -312,5 +313,6 @@ func projectFromGitOrigin(directory string) (string, error) {
 			return matches[1] + "/" + matches[2], nil
 		}
 	}
-	return "", fmt.Errorf("run requires --project because git origin %q is unsupported", origin)
+	// Origins can embed credentials, such as a CI job token, so never echo one.
+	return "", errors.New("run requires --project because the git origin is not a github.com or gitlab.com repository URL")
 }

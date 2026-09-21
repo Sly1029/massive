@@ -57,7 +57,7 @@ func startMinIO(t *testing.T) string {
 		"-p", fmt.Sprintf("127.0.0.1:%d:9000", port),
 		"-e", "MINIO_ROOT_USER=" + minioAccessKey,
 		"-e", "MINIO_ROOT_PASSWORD=" + minioSecretKey,
-		"minio/minio", "server", "/data",
+		"quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e", "server", "/data",
 	}
 	output, err := exec.Command("docker", args...).CombinedOutput()
 	if err != nil {

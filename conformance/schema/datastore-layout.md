@@ -294,8 +294,8 @@ content hash, content type, datastore key, and producing run/node/attempt when
 applicable.
 
 This is a breaking v0 step-output rename from `output.json` to
-`output-manifest.json`. There is no compatibility read or dual write: a
-workflow adopts the v2 SDK and deployment namespace as one migration.
+`output-manifest.json`. There is no compatibility read or dual write; rebuild
+workflows against the current SDK.
 
 ## Layout overview
 
