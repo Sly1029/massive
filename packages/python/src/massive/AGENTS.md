@@ -8,6 +8,10 @@ in `_step.py`, shared by emission and runner loading. `StepContext[Input]` has n
 dependency generic: live application clients are constructed within tasks.
 Keep authoring graph composition separate from worker imports. The runner loads
 the function by its archived module/export without importing an SDK wrapper type.
+`GraphBuilder.call()` is statically expanded at emission into scoped node IDs.
+Keep reference-bearing fields (`decisionRef`, `selectInputs`, and `mergeInputs`)
+and edges scoped together; the emitted Graph IR has no `call` nodes. Reject
+recursive composition and scoped ID collisions before producing a spec.
 The Go compiler owns environment identity; `Container` describes requirements.
 
 Blob/Tree values carry immutable references. Publish bodies before committing

@@ -58,7 +58,27 @@ baked into the runner image. If a container recipe supplies `command=`, that
 command must launch the Massive CLI and accept the generated runtime arguments.
 
 Local and Argo execution support steps, exhaustive decisions/selects, and finite
-maps. Argo requires immutable container environments and an explicit shared S3
+maps. Python workflows can reuse a typed child graph with `graph.call(child, id="name")`.
+Connect the returned handle with ordinary edges:
+
+```python
+child = GraphBuilder(name="normalize", input_type=Request, output_type=Result, defaults=defaults)
+child.edge_from(child.start).to(child.add(normalize)).to(child.end)
+
+parent = GraphBuilder(name="pipeline", input_type=Request, output_type=Result, defaults=defaults)
+called = parent.call(child, id="normalize-input")
+parent.edge_from(parent.start).to(called).to(parent.end)
+```
+
+A child graph may be called more than once, including in a decision branch.
+The Python frontend expands each call into scoped step IDs such as
+`normalize-input--normalize` before emitting Graph IR 0.3. Child steps keep
+their own execution contracts, attempts, and artifacts; there is no retry of
+the whole child as one unit. Calls must be acyclic and use source files from
+the parent workflow's source package. The emitted plan is flat, so inspection
+shows the scoped steps rather than a separate child-run hierarchy.
+
+Argo requires immutable container environments and an explicit shared S3
 datastore binding. Blob/Tree file bodies are stored remotely and hydrated into
 private invocation directories. Ordinary JSON values still use Argo parameters;
 embedded plans and source archives are limited to 700 KiB. Declared application

@@ -32,7 +32,9 @@ def kubectl(*args: str, document: dict | None = None) -> dict:
     return json.loads(result.stdout) if result.stdout.strip().startswith("{") else {}
 
 
-def install_workflow(source: str, secret_bindings: dict | None = None) -> None:
+def install_workflow(
+    source: str, secret_bindings: dict | None = None, *, selector: str = ""
+) -> None:
     with tempfile.TemporaryDirectory(prefix="massive-argo-") as directory:
         root = Path(directory)
         entry = root / "workflow.py"
@@ -46,7 +48,7 @@ def install_workflow(source: str, secret_bindings: dict | None = None) -> None:
                 "run",
                 "./cmd/massive",
                 "build",
-                str(entry),
+                str(entry) + selector,
                 "--output",
                 str(bundle),
                 "--namespace",
@@ -177,6 +179,19 @@ class DecisionConformance(unittest.TestCase):
             )
         )
         install_workflow(retry_source)
+        composition_source = (
+            (ROOT / "packages/python/tests/fixtures/composed_workflow.py")
+            .read_text()
+            .replace(
+                '"example.invalid/python@sha256:" + "0" * 64',
+                repr(os.environ["MASSIVE_TEST_ARGO_IMAGE"]),
+            )
+            .replace(
+                'platform="linux/amd64"',
+                f"platform={os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
+            )
+        )
+        install_workflow(composition_source, selector="#graph")
         cls.runs = {}
         for label, inputs in {
             "positive": {"score": 3},
@@ -191,6 +206,8 @@ class DecisionConformance(unittest.TestCase):
             },
             "retry": {"permanent": False},
             "nonretryable": {"permanent": True},
+            "composed-approved": {"value": 5},
+            "composed-rejected": {"value": -1},
         }.items():
             run = kubectl(
                 "create",
@@ -209,6 +226,8 @@ class DecisionConformance(unittest.TestCase):
                                 "secrets": "argo-secrets",
                                 "retry": "argo-retries",
                                 "nonretryable": "argo-retries",
+                                "composed-approved": "composed",
+                                "composed-rejected": "composed",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -260,6 +279,16 @@ class DecisionConformance(unittest.TestCase):
         nodes = self.successful("positive", 6)
         self.assertEqual(nodes["zero"]["phase"], "Skipped")
         self.assertEqual(nodes["skip"]["phase"], "Skipped")
+
+    def test_reused_child_graph_inside_selected_branch(self) -> None:
+        for label, expected in (("composed-approved", 7), ("composed-rejected", 0)):
+            run = self.completed(label)
+            self.assertEqual(run["status"]["phase"], "Succeeded")
+            root = run["status"]["nodes"][run["metadata"]["name"]]
+            self.assertEqual(
+                json.loads(root["outputs"]["parameters"][0]["value"]),
+                {"value": expected},
+            )
 
     def test_empty_map_inside_selected_branch(self) -> None:
         self.successful("empty", 0)

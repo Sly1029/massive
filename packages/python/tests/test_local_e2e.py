@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from hashlib import sha256
@@ -80,6 +81,97 @@ def _load_fixture(path: Path) -> ModuleType:
     sys.modules[specification.name] = module
     specification.loader.exec_module(module)
     return module
+
+
+def test_composed_workflow_reuses_child_inside_decision_branch(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[3]
+    fixture = Path(__file__).parent / "fixtures/composed_workflow.py"
+    module = _load_fixture(fixture)
+    specification = module.graph.emit(
+        source=source_package(
+            root=fixture.parent, include=[fixture.name], package_id="python-composed"
+        )
+    )
+    graph = specification.value["graph"]
+    assert isinstance(graph, dict)
+    nodes = graph["nodes"]
+    assert isinstance(nodes, list)
+    assert {node["id"] for node in nodes if node["kind"] == "step"} >= {
+        "first--nested--increment",
+        "second--nested--increment",
+    }
+    spec_path = tmp_path / "workflow-spec.json"
+    spec_path.write_text(specification.to_json())
+    store = tmp_path / "store"
+    for run_id, value, expected in (("approved", 5, 7), ("rejected", -1, 0)):
+        result = subprocess.run(
+            [
+                "go",
+                "run",
+                "./cmd/massive-orchestrator",
+                "run",
+                "--spec",
+                str(spec_path),
+                "--source-root",
+                str(fixture.parent),
+                "--store",
+                str(store),
+                "--project",
+                "example/composed",
+                "--run-id",
+                run_id,
+                "--input",
+                json.dumps({"value": value}),
+                "--json",
+            ],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        run = json.loads(result.stdout)
+        assert run["status"] == "succeeded"
+        assert json.loads((store / run["resultKey"]).read_text()) == {"value": expected}
+        steps = {step["nodeId"]: step["status"] for step in run["steps"]}
+        expected_status = "succeeded" if run_id == "approved" else "skipped"
+        assert steps["first--nested--increment"] == expected_status
+        assert steps["second--nested--increment"] == expected_status
+
+
+def test_composed_workflow_builds_argo_dag(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[3]
+    fixture = Path(__file__).parent / "fixtures/composed_workflow.py"
+    bundle = tmp_path / "bundle"
+    result = subprocess.run(
+        [
+            "go",
+            "run",
+            "./cmd/massive",
+            "build",
+            f"{fixture}#graph",
+            "--output",
+            str(bundle),
+            "--namespace",
+            "workflows",
+            "--service-account",
+            "massive-runner",
+            "--artifact-store",
+            "massive-artifacts",
+            "--json",
+        ],
+        cwd=repository,
+        env={**os.environ, "MASSIVE_PYTHON": sys.executable},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    template = json.loads((bundle / "workflow-template.json").read_text())
+    tasks = template["spec"]["templates"][0]["dag"]["tasks"]
+    names = {task["name"] for task in tasks}
+    assert any("first" in name and "increment" in name for name in names)
+    assert any("second" in name and "increment" in name for name in names)
 
 
 def test_file_artifacts_cross_real_map_subprocesses(tmp_path: Path) -> None:
