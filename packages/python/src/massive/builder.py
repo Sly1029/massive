@@ -880,8 +880,14 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
             child_graph = cast(dict[str, JsonValue], child_value["graph"])
             child_nodes = cast(list[dict[str, JsonValue]], child_graph["nodes"])
             child_edges = cast(list[dict[str, JsonValue]], child_graph["edges"])
-            first = next(cast(str, edge["to"]) for edge in child_edges if edge["from"] == _START)
-            last = next(cast(str, edge["from"]) for edge in child_edges if edge["to"] == _END)
+            entries = [cast(str, edge["to"]) for edge in child_edges if edge["from"] == _START]
+            exits = [cast(str, edge["from"]) for edge in child_edges if edge["to"] == _END]
+            if len(entries) != 1 or len(exits) != 1 or entries[0] == _END or exits[0] == _START:
+                raise ValueError(
+                    f"call {call_id!r} requires child {child.name!r} to have exactly one "
+                    "start successor and one end predecessor that are child nodes"
+                )
+            first, last = entries[0], exits[0]
             scoped = {
                 cast(str, node["id"]): SAFE_PATH_SEGMENT.validate_python(f"{call_id}--{node['id']}")
                 for node in child_nodes

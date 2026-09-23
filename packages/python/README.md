@@ -71,6 +71,8 @@ parent.edge_from(parent.start).to(called).to(parent.end)
 ```
 
 A child graph may be called more than once, including in a decision branch.
+Each called graph must have one edge leaving its start and one edge entering
+its end, both connected to nodes inside the child.
 The Python frontend expands each call into scoped step IDs such as
 `normalize-input--normalize` before emitting Graph IR 0.3. Child steps keep
 their own execution contracts, attempts, and artifacts; there is no retry of
