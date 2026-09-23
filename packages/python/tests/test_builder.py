@@ -122,6 +122,10 @@ def identity(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value)
 
 
+def passthrough_request(context: StepContext[Request]) -> Request:
+    return context.inputs
+
+
 def keyword_only_step(*, context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value)
 
@@ -1048,6 +1052,54 @@ def _defaults():
             platform="linux/amd64",
         )
     )
+
+
+def test_workflow_call_rejects_recursion_and_duplicate_scoped_ids() -> None:
+    a = GraphBuilder(name="a", input_type=Request, output_type=Request, defaults=_defaults())
+    b = GraphBuilder(name="b", input_type=Request, output_type=Request, defaults=_defaults())
+    a_call = a.call(b, id="call-b")
+    a.edge_from(a.start).to(a_call).to(a.end)
+    b_call = b.call(a, id="call-a")
+    b.edge_from(b.start).to(b_call).to(b.end)
+    with pytest.raises(ValueError, match="recursive workflow call"):
+        _emit(a)
+
+    child = GraphBuilder(
+        name="child", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    child.edge_from(child.start).to(child.add(passthrough_request, id="identity")).to(child.end)
+    parent = GraphBuilder(
+        name="parent", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    call = parent.call(child, id="first")
+    conflicting = parent.add(passthrough_request, id="first--identity")
+    parent.edge_from(parent.start).to(call).to(conflicting).to(parent.end)
+    with pytest.raises(ValueError, match="duplicate scoped node id"):
+        _emit(parent)
+
+
+@pytest.mark.parametrize("shape", ["multiple-entries", "multiple-exits", "direct-end"])
+def test_workflow_call_rejects_child_without_single_entry_and_exit(shape: str) -> None:
+    child = GraphBuilder(
+        name="child", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    first = child.add(passthrough_request, id="first")
+    second = child.add(passthrough_request, id="second")
+    if shape == "multiple-entries":
+        child.edge_from(child.start).to(first).to(child.end)
+        child.edge_from(child.start).to(second).to(first)
+    elif shape == "multiple-exits":
+        child.edge_from(child.start).to(first).to(child.end)
+        child.edge_from(first).to(second).to(child.end)
+    else:
+        child.edge_from(child.start).to(child.end)
+
+    parent = GraphBuilder(
+        name="parent", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    parent.edge_from(parent.start).to(parent.call(child, id="child-call")).to(parent.end)
+    with pytest.raises(ValueError, match="exactly one start successor and one end predecessor"):
+        _emit(parent)
 
 
 def _emit(graph: GraphBuilder[Any, Any]):

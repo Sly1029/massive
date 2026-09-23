@@ -222,6 +222,15 @@ local runtime invokes one scoped child per already-crystallized source item and
 publishes one deterministic, source-ordered list at the map node's static
 output slot. Empty input publishes `[]`. Argo lowers finite maps to bounded fan-out and ordered collection.
 
+Python graph calls are an authoring-time composition operation. The frontend
+expands each acyclic call into the current Graph IR before writing a
+`WorkflowSpec`. A child node receives a scoped ID formed from its call ID and
+node ID, so separate uses have separate invocation and artifact identities.
+Only executable nodes and their typed dataflow enter the plan; calls have no
+independent retry, run, or deployment lifecycle. A future first-class graph
+definition table would require a new IR version and must preserve these
+execution semantics across targets.
+
 Channels, multi-step map bodies, broadcast/gather, joins/reducers, and channel
 publish/read declarations remain absent from the portable schema. Target
 support is explicit and independently validated after portable compilation.

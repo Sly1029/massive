@@ -223,7 +223,32 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self._decisions: dict[str, _DecisionDefinition] = {}
         self._selects: dict[str, _SelectDefinition] = {}
         self._maps: dict[str, _MapDefinition] = {}
+        self._calls: dict[str, GraphBuilder[Any, Any]] = {}
         self._emitted = False
+        self._emitting = False
+        self._cached_spec: WorkflowSpec | None = None
+        self._cached_source: tuple[str, str] | None = None
+
+    def call(
+        self,
+        graph: GraphBuilder[InputT, OutputT],
+        *,
+        id: str,
+    ) -> NodeHandle[OutputT]:
+        if self._emitted:
+            raise RuntimeError("graph has already been emitted")
+        node_id = SAFE_PATH_SEGMENT.validate_python(id)
+        if node_id in self._known_node_ids():
+            raise ValueError(f"duplicate or reserved call id {node_id!r}")
+        handle: NodeHandle[OutputT] = NodeHandle(
+            graph_token=self._graph_token,
+            node_id=node_id,
+            input_type=graph.input_type,
+            output_type=graph.output_type,
+        )
+        self._calls[node_id] = graph
+        self._handles[node_id] = cast(NodeHandle[Any], handle)
+        return handle
 
     def add(
         self,
@@ -490,7 +515,15 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         )
 
     def _known_node_ids(self) -> set[str]:
-        return {_START, _END, *self._nodes, *self._decisions, *self._selects, *self._maps}
+        return {
+            _START,
+            _END,
+            *self._nodes,
+            *self._decisions,
+            *self._selects,
+            *self._maps,
+            *self._calls,
+        }
 
     def _is_reachable(self, source: str, target: str) -> bool:
         pending = [source]
@@ -591,7 +624,16 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
     def emit(self, *, source: SourcePackage) -> WorkflowSpec:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        if not self._nodes and not self._maps:
+        if self._emitting:
+            raise ValueError("recursive workflow calls are not supported")
+        self._emitting = True
+        try:
+            return self._emit(source=source)
+        finally:
+            self._emitting = False
+
+    def _emit(self, *, source: SourcePackage) -> WorkflowSpec:
+        if not self._nodes and not self._maps and not self._calls:
             raise ValueError("workflow must contain at least one step")
         if not any(source_id == _START for source_id, _ in self._edges):
             raise ValueError("workflow start has no edge")
@@ -613,6 +655,18 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                 raise ValueError(f"map {definition.id!r} must have exactly one incoming edge")
             if not outgoing:
                 raise ValueError(f"map {definition.id!r} must have an outgoing edge")
+
+        for call_id in self._calls:
+            incoming = [edge for edge in self._edges if edge[1] == call_id]
+            incoming.extend(
+                (source, target)
+                for source, target, _ in self._conditional_edges
+                if target == call_id
+            )
+            if len(incoming) != 1:
+                raise ValueError(f"call {call_id!r} must have exactly one incoming edge")
+            if not any(source == call_id for source, _ in self._edges):
+                raise ValueError(f"call {call_id!r} must have an outgoing edge")
 
         lineages = self._activation_lineages()
         for select in self._selects.values():
@@ -736,6 +790,8 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                     "maxConcurrency": definition.concurrency,
                 }
             )
+        for call_id in sorted(self._calls, key=_canonical_sort_key):
+            nodes.append({"id": call_id, "kind": "call"})
         for decision_id, decision in sorted(
             self._decisions.items(), key=lambda item: _canonical_sort_key(item[0])
         ):
@@ -800,6 +856,104 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                 if key in edge
             )
         )
+        for call_id, child in sorted(
+            self._calls.items(), key=lambda item: _canonical_sort_key(item[0])
+        ):
+            if child._emitting:
+                raise ValueError(f"recursive workflow call at {call_id!r}")
+            if child._cached_spec is None:
+                child_spec = child.emit(source=source)
+            else:
+                child_spec = child._cached_spec
+                if child._cached_source != (source.package_id, package_hash):
+                    raise ValueError(
+                        f"called workflow {child.name!r} was emitted from a different source package"
+                    )
+            child_value = child_spec.value
+            for table, entries in (
+                (schema_table, cast(dict[str, JsonValue], child_value["schemas"])),
+                (symbols, cast(dict[str, JsonValue], child_value["symbols"])),
+                (environments, cast(dict[str, JsonValue], child_value["environments"])),
+                (contracts, cast(dict[str, JsonValue], child_value["contracts"])),
+            ):
+                table.update(entries)
+            child_graph = cast(dict[str, JsonValue], child_value["graph"])
+            child_nodes = cast(list[dict[str, JsonValue]], child_graph["nodes"])
+            child_edges = cast(list[dict[str, JsonValue]], child_graph["edges"])
+            entries = [cast(str, edge["to"]) for edge in child_edges if edge["from"] == _START]
+            exits = [cast(str, edge["from"]) for edge in child_edges if edge["to"] == _END]
+            if len(entries) != 1 or len(exits) != 1 or entries[0] == _END or exits[0] == _START:
+                raise ValueError(
+                    f"call {call_id!r} requires child {child.name!r} to have exactly one "
+                    "start successor and one end predecessor that are child nodes"
+                )
+            first, last = entries[0], exits[0]
+            scoped = {
+                cast(str, node["id"]): SAFE_PATH_SEGMENT.validate_python(f"{call_id}--{node['id']}")
+                for node in child_nodes
+                if node["id"] not in (_START, _END)
+            }
+            occupied = {cast(str, node["id"]) for node in nodes}
+            if occupied.intersection(scoped.values()):
+                raise ValueError(f"call {call_id!r} produces a duplicate scoped node id")
+            for node in child_nodes:
+                if node["id"] in (_START, _END):
+                    continue
+                expanded = dict(node)
+                expanded["id"] = scoped[cast(str, node["id"])]
+                if "decisionRef" in expanded:
+                    expanded["decisionRef"] = scoped[cast(str, expanded["decisionRef"])]
+                if "mergeInputs" in expanded:
+                    expanded["mergeInputs"] = [
+                        scoped[item] for item in cast(list[str], expanded["mergeInputs"])
+                    ]
+                if "selectInputs" in expanded:
+                    expanded["selectInputs"] = [
+                        {**item, "source": scoped[cast(str, item["source"])]}
+                        for item in cast(list[dict[str, JsonValue]], expanded["selectInputs"])
+                    ]
+                nodes.append(expanded)
+            expanded_edges: list[dict[str, JsonValue]] = []
+            for edge in edges:
+                if edge["to"] == call_id:
+                    expanded_edges.append({**edge, "to": scoped[first]})
+                elif edge["from"] == call_id:
+                    expanded_edges.append({**edge, "from": scoped[last]})
+                else:
+                    expanded_edges.append(edge)
+            for edge in child_edges:
+                if edge["from"] == _START or edge["to"] == _END:
+                    continue
+                expanded_edges.append(
+                    {
+                        **edge,
+                        "from": scoped[cast(str, edge["from"])],
+                        "to": scoped[cast(str, edge["to"])],
+                    }
+                )
+            edges = expanded_edges
+            for node in nodes:
+                if node.get("kind") == "select" and "selectInputs" in node:
+                    node["selectInputs"] = [
+                        {
+                            **item,
+                            "source": scoped[last] if item["source"] == call_id else item["source"],
+                        }
+                        for item in cast(list[dict[str, JsonValue]], node["selectInputs"])
+                    ]
+                if "mergeInputs" in node:
+                    node["mergeInputs"] = [
+                        scoped[last] if item == call_id else item
+                        for item in cast(list[str], node["mergeInputs"])
+                    ]
+            nodes = [node for node in nodes if node["id"] != call_id]
+        edges.sort(
+            key=lambda edge: tuple(
+                _canonical_sort_key(cast(str, edge[key]))
+                for key in ("from", "to", "case")
+                if key in edge
+            )
+        )
         value = cast(
             JsonValue,
             {
@@ -837,7 +991,10 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         spec_hash = sha256_ref(canonical_json(value))
         emitted = {**cast(dict[str, JsonValue], value), "specHash": spec_hash}
         self._emitted = True
-        return WorkflowSpec(value=emitted, spec_hash=spec_hash)
+        result = WorkflowSpec(value=emitted, spec_hash=spec_hash)
+        self._cached_spec = result
+        self._cached_source = (source.package_id, package_hash)
+        return result
 
 
 def _direct_list_item_schema(annotation: Any, role: str) -> object:

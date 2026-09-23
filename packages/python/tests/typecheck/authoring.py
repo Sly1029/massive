@@ -70,6 +70,23 @@ sync_node: NodeHandle[Result] = graph.add(increment)
 async_node: NodeHandle[Result] = graph.add(increment_async)
 graph.edge_from(graph.start).to(sync_node).to(async_node).to(graph.end)
 
+child_graph: GraphBuilder[Request, Result] = GraphBuilder(
+    name="typed-child",
+    input_type=Request,
+    output_type=Result,
+    defaults=graph.defaults,
+)
+child_node: NodeHandle[Result] = child_graph.add(increment)
+child_graph.edge_from(child_graph.start).to(child_node).to(child_graph.end)
+parent_graph: GraphBuilder[Request, Result] = GraphBuilder(
+    name="typed-parent",
+    input_type=Request,
+    output_type=Result,
+    defaults=graph.defaults,
+)
+called: NodeHandle[Result] = parent_graph.call(child_graph, id="child")
+parent_graph.edge_from(parent_graph.start).to(called).to(parent_graph.end)
+
 
 map_graph: GraphBuilder[BatchRequest, list[Result]] = GraphBuilder(
     name="typed-map",
