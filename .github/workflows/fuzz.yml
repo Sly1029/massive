@@ -20,9 +20,30 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  fuzz:
+  packages:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: list
+        run: |
+          packages="$(git ls-files '*_test.go' | xargs grep -l '^func Fuzz' | xargs -n1 dirname | sort -u | sed 's|^|./|' | jq -Rnc '[inputs]')"
+          echo "packages=${packages}" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: packages
+    runs-on: ubuntu-latest
+    # Each package fuzzes its targets in sequence. Nightly runs give every
+    # target 120s plus up to 30s of minimization; the largest package has five
+    # targets, so 25 minutes leaves room for builds without truncating a run.
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.packages.outputs.packages) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -30,21 +51,32 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Caches saved by pull requests are scoped to their merge ref and never
+      # reach main. Every run restores main's corpus; only main saves it.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build/fuzz
-          key: execution-fuzz-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: execution-fuzz-${{ runner.os }}-
-      - run: ./scripts/fuzz.sh
+          key: execution-fuzz-${{ runner.os }}-${{ matrix.package }}-${{ github.run_id }}
+          restore-keys: execution-fuzz-${{ runner.os }}-${{ matrix.package }}-
+      - run: ./scripts/fuzz.sh "${{ matrix.package }}"
         env:
           FUZZ_TIME: ${{ github.event_name == 'schedule' && '120s' || '15s' }}
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && github.ref == 'refs/heads/main'
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: execution-fuzz-${{ runner.os }}-${{ matrix.package }}-${{ github.run_id }}
+      # Only new, untracked inputs are reproducers; committed seeds already replay.
+      - if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/reproducers"
+          git ls-files --others --exclude-standard -- "${{ matrix.package }}/testdata/fuzz" |
+            xargs -r cp --parents -t "$RUNNER_TEMP/reproducers"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
-          name: execution-fuzz-reproducers
-          path: |
-            internal/**/testdata/fuzz/**
-            conformance/schema/testdata/fuzz/**
+          name: fuzz-reproducers-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/reproducers
           if-no-files-found: ignore
 
   python-properties:
