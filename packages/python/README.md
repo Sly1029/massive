@@ -482,6 +482,8 @@ Includes are directory-relative glob patterns and replace the default `["*.py"]`
 `**` matches any depth, so `resources/**` selects every file below `resources`;
 wildcards also match dotfiles. Include the entrypoint and all local
 modules/resources it needs.
+Emission fails if the entrypoint imports a local module the includes do not
+select; modules imported lazily inside a step are not checked.
 Unknown Massive configuration fields, selected symlinks, and patterns escaping
 the directory are rejected. Parent project configuration is not inherited;
 workflows in separate directories can carry different dependencies and assets.

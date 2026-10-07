@@ -130,6 +130,65 @@ def test_emit_includes_the_entry_and_root_level_sibling_python_files(tmp_path: P
     assert [file["path"] for file in package["files"]] == ["helper.py", "workflow.py"]
 
 
+def test_emit_rejects_imported_workflow_modules_outside_the_source_package(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / "workflow.py"
+    steps = tmp_path / "steps"
+    steps.mkdir()
+    (steps / "__init__.py").write_text("")
+    (steps / "work.py").write_text(
+        "from massive import StepContext\n\n"
+        "from models import Request, Result\n\n\n"
+        "def identity(context: StepContext[Request]) -> Result:\n"
+        "    return Result(value=context.inputs.value)\n"
+    )
+    (tmp_path / "models.py").write_text(
+        "from pydantic import BaseModel\n\n\n"
+        "class Request(BaseModel):\n    value: int\n\n\n"
+        "class Result(BaseModel):\n    value: int\n"
+    )
+    workflow.write_text(
+        "from massive import GraphBuilder, container, execution\n"
+        "from models import Request, Result\n"
+        "from steps.work import identity\n\n"
+        "graph = GraphBuilder(\n"
+        '    name="frontend-modules",\n'
+        "    input_type=Request,\n"
+        "    output_type=Result,\n"
+        "    defaults=execution(environment=container(\n"
+        '        "example.invalid/python@sha256:" + "0" * 64\n'
+        "    )),\n"
+        ")\n"
+        "graph.edge_from(graph.start).to(graph.add(identity)).to(graph.end)\n"
+    )
+
+    rejected = _emit(workflow)
+
+    assert rejected.returncode == 2
+    assert rejected.stdout == ""
+    assert rejected.stderr == (
+        "massive-python-frontend: source include does not select imported workflow "
+        "modules: steps/__init__.py, steps/work.py; add them to "
+        "[tool.massive.source].include\n"
+    )
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.massive.source]\ninclude = ["*.py", "steps/*.py"]\n'
+    )
+    accepted = _emit(workflow)
+
+    assert accepted.returncode == 0, accepted.stderr
+    package = json.loads(accepted.stdout)["sourcePackages"]["python-main"]
+    assert [file["path"] for file in package["files"]] == [
+        "models.py",
+        "pyproject.toml",
+        "steps/__init__.py",
+        "steps/work.py",
+        "workflow.py",
+    ]
+
+
 def test_emit_errors_have_a_stable_nonzero_exit(tmp_path: Path) -> None:
     workflow = tmp_path / "workflow.py"
     workflow.write_text("value = 1\n")
