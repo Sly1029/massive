@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"time"
 )
@@ -19,6 +20,15 @@ const (
 // or cancelling the adapter terminates processes still in its OS ownership group.
 // Tasks must await children whose work contributes to their result.
 func Run(ctx context.Context, argv []string, directory string) (string, error) {
+	var output boundedOutput
+	err := RunTo(ctx, argv, directory, &output, &output)
+	return output.String(), err
+}
+
+// RunTo runs an adapter with separate output streams and owns its descendants.
+// Callers choose their output policy; frontend specifications must remain intact
+// rather than share the bounded combined log capture used by task invocations.
+func RunTo(ctx context.Context, argv []string, directory string, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = directory
 	// Bound inherited-pipe drainage even if a descendant leaves the ownership
@@ -26,32 +36,31 @@ func Run(ctx context.Context, argv []string, directory string) (string, error) {
 	cmd.WaitDelay = pipeDrainLimit
 	owner, err := own(cmd)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer owner.close()
 	cmd.Cancel = owner.kill
-	var output boundedOutput
-	cmd.Stdout, cmd.Stderr = &output, &output
+	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := owner.start(ctx); err != nil {
 		if cmd.Process != nil {
 			_ = owner.kill()
 			_ = cmd.Wait()
 		}
 		if ctx.Err() != nil {
-			return output.String(), ctx.Err()
+			return ctx.Err()
 		}
-		return output.String(), err
+		return err
 	}
 	err = cmd.Wait()
 	// A successful wait is authoritative even if a sibling cancels the shared
 	// context immediately afterward. Preserve its exit status and output.
 	if err != nil && ctx.Err() != nil {
-		return output.String(), ctx.Err()
+		return ctx.Err()
 	}
 	if errors.Is(err, exec.ErrWaitDelay) {
 		err = fmt.Errorf("task descendants kept output open after the adapter exited; ensure tasks await child processes: %w", err)
 	}
-	return output.String(), err
+	return err
 }
 
 type boundedOutput struct {
