@@ -212,7 +212,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			return nil, err
 		}
 		if reason != nil {
-			resolution.markInactive(nodeID, *reason)
+			resolution.inactive[nodeID] = *reason
 			switch node.GetKind() {
 			case "step", "map":
 				markStepSkipped(&manifest, nodeID, *reason)
@@ -258,7 +258,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			if err != nil {
 				return nil, err
 			}
-			resolution.setOutput(nodeID, output)
+			resolution.outputs[nodeID] = output
 			continue
 		case "step":
 		default:
@@ -341,7 +341,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 				markAttemptTerminal(&manifest, nodeID, StatusFailed, "output verification failed")
 				return nil, err
 			}
-			resolution.setOutput(nodeID, output)
+			resolution.outputs[nodeID] = output
 			markAttemptSucceeded(&manifest, nodeID, output.Published)
 			publicationContext, finishPublication := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			err = writeRunManifest(publicationContext, store, manifestKey, manifest)
@@ -1132,30 +1132,7 @@ func resolveOutputArtifact(ctx context.Context, store datastore.Datastore, descr
 		return nodeOutput{}, fmt.Errorf("resolve output artifact manifest %s: %w", manifestKey, err)
 	}
 
-	return nodeOutput{
-		Artifact: runjournal.DataArtifact{
-			Key:         published.Body.Key,
-			Hash:        published.Body.Hash,
-			ContentType: published.Body.ContentType,
-			Schema:      descriptor.Output.Schema,
-		},
-		Published: runjournal.PublishedArtifact{
-			Manifest: runjournal.ArtifactRef{
-				Key:         published.Manifest.Key,
-				Hash:        published.Manifest.Hash,
-				Size:        published.Manifest.Size,
-				ContentType: published.Manifest.ContentType,
-			},
-			Body: runjournal.ArtifactRef{
-				Key:         published.Body.Key,
-				Hash:        published.Body.Hash,
-				Size:        published.Body.Size,
-				ContentType: published.Body.ContentType,
-			},
-			Schema: published.Schema,
-		},
-		Body: body,
-	}, nil
+	return nodeOutputFromPublished(published, body), nil
 }
 
 func resultForEnd(ctx context.Context, store datastore.Datastore, projectKey string, runID string, endNode string, index executionIndex, outputs map[string]nodeOutput) (runjournal.DataArtifact, error) {
@@ -1635,26 +1612,4 @@ func verifyDigest(expected string, body []byte) error {
 		return fmt.Errorf("hash mismatch: expected %s, got %s", expected, actual)
 	}
 	return nil
-}
-
-func repoRootFrom(start string) (string, error) {
-	current, err := filepath.Abs(start)
-	if err != nil {
-		return "", fmt.Errorf("resolve working directory: %w", err)
-	}
-	for {
-		if fileExists(filepath.Join(current, "go.mod")) && fileExists(filepath.Join(current, "deno.json")) {
-			return current, nil
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", fmt.Errorf("could not find repo root from %q", start)
-		}
-		current = parent
-	}
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

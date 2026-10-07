@@ -46,14 +46,6 @@ func newExecutionResolver(index executionIndex, graph *planpb.GraphIR, input []b
 	}
 }
 
-func (r *executionResolver) setOutput(nodeID string, output nodeOutput) {
-	r.outputs[nodeID] = output
-}
-
-func (r *executionResolver) markInactive(nodeID string, reason runjournal.SkipReason) {
-	r.inactive[nodeID] = reason
-}
-
 func (r *executionResolver) inputForNode(node *planpb.GraphNode) ([]byte, error) {
 	inbound := r.index.inboundByTarget[node.GetId()]
 	if len(node.GetMergeInputs()) == 0 {
