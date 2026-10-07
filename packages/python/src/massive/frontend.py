@@ -71,8 +71,22 @@ def emit(request: EntrypointRequest) -> EmitResult:
             "source include must select the workflow entrypoint; "
             "ensure [tool.massive.source].include contains its filename"
         )
+    selected = {file["path"] for file in files}
     with _import_workflow(request) as module:
         selection = _select_graph(request, module)
+        # Runners import from the extracted source package alone, so each module
+        # loaded from the workflow directory must be part of it.
+        unselected = sorted(
+            path
+            for name, loaded in tuple(sys.modules.items())
+            if (path := _workflow_module_path(name, loaded, request.path.parent)) is not None
+            and path not in selected
+        )
+        if unselected:
+            raise FrontendError(
+                "source include does not select imported workflow modules: "
+                f"{', '.join(unselected)}; add them to [tool.massive.source].include"
+            )
         specification = selection.graph.emit(source=source)
     return EmitResult(specification=specification)
 
@@ -152,6 +166,18 @@ def _import_workflow(request: EntrypointRequest) -> Generator[ModuleType, None, 
     finally:
         sys.path[:] = original_path
         _restore_modules(original_modules, request.path.parent, module_name)
+
+
+def _workflow_module_path(name: str, module: ModuleType | None, root: Path) -> str | None:
+    """Return the root-relative file the runner would import for module ``name``."""
+    file_name = getattr(module, "__file__", None)
+    if file_name is None:
+        return None
+    relative = Path(*name.split("."))
+    for candidate in (relative.with_suffix(".py"), relative / "__init__.py"):
+        if Path(file_name).resolve() == root / candidate:
+            return candidate.as_posix()
+    return None
 
 
 def _isolated_module_name(path: Path) -> str:
