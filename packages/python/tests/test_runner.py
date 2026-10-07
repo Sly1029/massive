@@ -179,6 +179,27 @@ def test_runner_reports_non_retryable_step_failures_with_their_own_exit_code(
     assert not (store / descriptor["output"]["manifestKey"]).exists()
 
 
+@pytest.mark.parametrize(
+    ("export", "expected_exit", "diagnostic"),
+    [
+        ("refuse_in_task_group", 67, "non-retryable-step-failure: "),
+        ("fail_in_task_group", 66, "step-execution-failure: "),
+        ("exit_successfully", 66, "step-execution-failure: step called sys.exit(0)"),
+        ("exit_with_protocol_code", 66, "step-execution-failure: step called sys.exit(67)"),
+    ],
+)
+def test_runner_classifies_exception_groups_and_step_exits(
+    tmp_path: Path, export: str, expected_exit: int, diagnostic: str
+) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export=export)
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == expected_exit, result.stderr
+    assert diagnostic in result.stderr
+    assert not (store / descriptor["output"]["manifestKey"]).exists()
+
+
 def test_runner_exposes_the_attempt_and_its_limit_to_step_code(tmp_path: Path) -> None:
     output_schema: dict[str, JsonValue] = {
         "type": "object",

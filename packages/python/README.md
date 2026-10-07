@@ -178,8 +178,9 @@ waits `min(delay * backoff ** (n - 2), max_delay)` before attempt `n`;
 
 Step exceptions, timeouts, and crashes such as out-of-memory kills are retried.
 Input and output schema failures, cancellation, and `NonRetryableError` (or a
-subclass) are not; raise `NonRetryableError(...) from error` when another attempt
-cannot succeed. `ctx.invocation.attempt` (1-based) and `max_attempts` describe the
+subclass, including inside an exception group such as a failed `asyncio.TaskGroup`)
+are not; raise `NonRetryableError(...) from error` when another attempt cannot
+succeed. A step calling `sys.exit()` is an ordinary, retried step failure. `ctx.invocation.attempt` (1-based) and `max_attempts` describe the
 current attempt, while `ctx.invocation.idempotency_key` stays the same across
 attempts so a retry can recognize side effects an earlier attempt committed.
 
