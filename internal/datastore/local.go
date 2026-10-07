@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -47,34 +48,44 @@ func (d *LocalDatastore) Put(ctx context.Context, key Key, body []byte, options 
 	}
 	contentType := defaultContentType(options.ContentType)
 
+	if err := os.MkdirAll(d.root, 0o755); err != nil {
+		return ObjectInfo{}, fmt.Errorf("create datastore root: %w", err)
+	}
+
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		return ObjectInfo{}, fmt.Errorf("open datastore root: %w", err)
+	}
+	defer root.Close()
+
 	target, err := d.pathForKey(key)
 	if err != nil {
 		return ObjectInfo{}, err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return ObjectInfo{}, fmt.Errorf("create parent for %s: %w", key, err)
 	}
 
 	temporary := filepath.Join(filepath.Dir(target), ".tmp-"+filepath.Base(target)+"-"+uuid.NewString())
-	if err := os.WriteFile(temporary, body, 0o644); err != nil {
+	if err := root.WriteFile(temporary, body, 0o644); err != nil {
 		return ObjectInfo{}, fmt.Errorf("write temporary object for %s: %w", key, err)
 	}
 
 	installed := false
 	defer func() {
 		if !installed {
-			_ = os.Remove(temporary)
+			_ = root.Remove(temporary)
 		}
 	}()
 
 	if options.IfAbsent {
-		metadataInstalled, err := d.writeMetadataIfAbsent(key, contentType)
+		metadataInstalled, err := d.writeMetadataIfAbsent(root, key, contentType)
 		if err != nil {
 			return ObjectInfo{}, err
 		}
 		if !metadataInstalled {
-			existingContentType, err := d.readContentType(key)
+			existingContentType, err := d.readContentType(root, key)
 			if err != nil {
 				return ObjectInfo{}, err
 			}
@@ -82,25 +93,25 @@ func (d *LocalDatastore) Put(ctx context.Context, key Key, body []byte, options 
 				return ObjectInfo{}, fmt.Errorf("put %s if absent: existing content type %q differs from %q: %w", key, existingContentType, contentType, ErrAlreadyExists)
 			}
 		}
-		if err := os.Link(temporary, target); err != nil {
+		if err := root.Link(temporary, target); err != nil {
 			if errors.Is(err, os.ErrExist) {
 				return ObjectInfo{}, fmt.Errorf("put %s if absent: %w", key, ErrAlreadyExists)
 			}
 			return ObjectInfo{}, fmt.Errorf("install object %s if absent: %w", key, err)
 		}
 		installed = true
-		if err := os.Remove(temporary); err != nil {
+		if err := root.Remove(temporary); err != nil {
 			return ObjectInfo{}, fmt.Errorf("remove temporary object for %s: %w", key, err)
 		}
 	} else {
-		if err := os.Rename(temporary, target); err != nil {
+		if err := root.Rename(temporary, target); err != nil {
 			return ObjectInfo{}, fmt.Errorf("rename temporary object for %s: %w", key, err)
 		}
 		installed = true
 	}
 
 	if !options.IfAbsent {
-		if err := d.writeMetadata(key, contentType); err != nil {
+		if err := d.writeMetadata(root, key, contentType); err != nil {
 			return ObjectInfo{}, err
 		}
 	}
@@ -113,12 +124,21 @@ func (d *LocalDatastore) Get(ctx context.Context, key Key) (Object, error) {
 		return Object{}, fmt.Errorf("get %s: %w", key, err)
 	}
 
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Object{}, fmt.Errorf("get %s: %w", key, ErrNotFound)
+		}
+		return Object{}, fmt.Errorf("open datastore root: %w", err)
+	}
+	defer root.Close()
+
 	target, err := d.pathForKey(key)
 	if err != nil {
 		return Object{}, err
 	}
 
-	body, err := os.ReadFile(target)
+	body, err := root.ReadFile(target)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Object{}, fmt.Errorf("get %s: %w", key, ErrNotFound)
@@ -126,7 +146,7 @@ func (d *LocalDatastore) Get(ctx context.Context, key Key) (Object, error) {
 		return Object{}, fmt.Errorf("read object %s: %w", key, err)
 	}
 
-	contentType, err := d.readContentType(key)
+	contentType, err := d.readContentType(root, key)
 	if err != nil {
 		return Object{}, err
 	}
@@ -142,12 +162,21 @@ func (d *LocalDatastore) Exists(ctx context.Context, key Key) (bool, error) {
 		return false, fmt.Errorf("exists %s: %w", key, err)
 	}
 
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("open datastore root: %w", err)
+	}
+	defer root.Close()
+
 	target, err := d.pathForKey(key)
 	if err != nil {
 		return false, err
 	}
 
-	info, err := os.Stat(target)
+	info, err := root.Stat(target)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
@@ -163,12 +192,21 @@ func (d *LocalDatastore) List(ctx context.Context, prefix Key) ([]ObjectInfo, er
 		return nil, fmt.Errorf("list %s: %w", prefix, err)
 	}
 
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("open datastore root: %w", err)
+	}
+	defer root.Close()
+
 	prefixPath, err := d.pathForKey(prefix)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := os.Stat(prefixPath); err != nil {
+	if _, err := root.Stat(prefixPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
@@ -176,30 +214,26 @@ func (d *LocalDatastore) List(ctx context.Context, prefix Key) ([]ObjectInfo, er
 	}
 
 	objects := []ObjectInfo{}
-	err = filepath.WalkDir(prefixPath, func(current string, entry os.DirEntry, walkErr error) error {
+	err = fs.WalkDir(root.FS(), filepath.ToSlash(prefixPath), func(current string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() {
-			if current == filepath.Join(d.root, localMetadataDirName) {
+			if current == localMetadataDirName {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		relative, err := filepath.Rel(d.root, current)
+		key, err := ParseKey(current)
 		if err != nil {
 			return err
 		}
-		key, err := ParseKey(filepath.ToSlash(relative))
+		info, err := root.Stat(filepath.FromSlash(current))
 		if err != nil {
 			return err
 		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		contentType, err := d.readContentType(key)
+		contentType, err := d.readContentType(root, key)
 		if err != nil {
 			return err
 		}
@@ -218,25 +252,21 @@ func (d *LocalDatastore) List(ctx context.Context, prefix Key) ([]ObjectInfo, er
 }
 
 func (d *LocalDatastore) pathForKey(key Key) (string, error) {
-	resolved := filepath.Join(d.root, filepath.FromSlash(key.String()))
-	relative, err := filepath.Rel(d.root, resolved)
-	if err != nil {
-		return "", fmt.Errorf("resolve key %s under local datastore root: %w", key, err)
+	local, err := filepath.Localize(key.String())
+	if err != nil || local == "." {
+		return "", fmt.Errorf("%w %q: object path must be local to the datastore", ErrInvalidKey, key.String())
 	}
-	if relative == "." || relative == ".." || filepath.IsAbs(relative) || len(relative) >= 3 && relative[:3] == ".."+string(filepath.Separator) {
-		return "", fmt.Errorf("%w %q: resolved path escapes datastore root", ErrInvalidKey, key.String())
-	}
-	return resolved, nil
+	return local, nil
 }
 
 func (d *LocalDatastore) metadataPath(key Key) string {
 	sum := sha256.Sum256([]byte(key.String()))
-	return filepath.Join(d.root, localMetadataDirName, hex.EncodeToString(sum[:])+".json")
+	return filepath.Join(localMetadataDirName, hex.EncodeToString(sum[:])+".json")
 }
 
-func (d *LocalDatastore) writeMetadata(key Key, contentType string) error {
+func (d *LocalDatastore) writeMetadata(root *os.Root, key Key, contentType string) error {
 	metadataPath := d.metadataPath(key)
-	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
+	if err := root.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
 		return fmt.Errorf("create metadata parent for %s: %w", key, err)
 	}
 
@@ -246,11 +276,11 @@ func (d *LocalDatastore) writeMetadata(key Key, contentType string) error {
 	}
 
 	temporary := metadataPath + ".tmp-" + uuid.NewString()
-	if err := os.WriteFile(temporary, body, 0o644); err != nil {
+	if err := root.WriteFile(temporary, body, 0o644); err != nil {
 		return fmt.Errorf("write temporary metadata for %s: %w", key, err)
 	}
-	if err := os.Rename(temporary, metadataPath); err != nil {
-		_ = os.Remove(temporary)
+	if err := root.Rename(temporary, metadataPath); err != nil {
+		_ = root.Remove(temporary)
 		return fmt.Errorf("rename temporary metadata for %s: %w", key, err)
 	}
 	return nil
@@ -260,9 +290,9 @@ func (d *LocalDatastore) writeMetadata(key Key, contentType string) error {
 // IfAbsent body can become visible. A metadata-only record is an intentional
 // recoverable crash state: a later matching IfAbsent call may install the
 // missing body, while a differing content type cannot replace the record.
-func (d *LocalDatastore) writeMetadataIfAbsent(key Key, contentType string) (bool, error) {
+func (d *LocalDatastore) writeMetadataIfAbsent(root *os.Root, key Key, contentType string) (bool, error) {
 	metadataPath := d.metadataPath(key)
-	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
+	if err := root.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
 		return false, fmt.Errorf("create metadata parent for %s: %w", key, err)
 	}
 
@@ -271,12 +301,12 @@ func (d *LocalDatastore) writeMetadataIfAbsent(key Key, contentType string) (boo
 		return false, fmt.Errorf("encode metadata for %s: %w", key, err)
 	}
 	temporary := metadataPath + ".tmp-" + uuid.NewString()
-	if err := os.WriteFile(temporary, body, 0o644); err != nil {
+	if err := root.WriteFile(temporary, body, 0o644); err != nil {
 		return false, fmt.Errorf("write temporary metadata for %s: %w", key, err)
 	}
-	defer func() { _ = os.Remove(temporary) }()
+	defer func() { _ = root.Remove(temporary) }()
 
-	if err := os.Link(temporary, metadataPath); err != nil {
+	if err := root.Link(temporary, metadataPath); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return false, nil
 		}
@@ -285,8 +315,8 @@ func (d *LocalDatastore) writeMetadataIfAbsent(key Key, contentType string) (boo
 	return true, nil
 }
 
-func (d *LocalDatastore) readContentType(key Key) (string, error) {
-	body, err := os.ReadFile(d.metadataPath(key))
+func (d *LocalDatastore) readContentType(root *os.Root, key Key) (string, error) {
+	body, err := root.ReadFile(d.metadataPath(key))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return defaultContentType(""), nil
