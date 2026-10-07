@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"io"
 	"regexp"
@@ -23,7 +25,8 @@ var sha256RefPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // canonical form. json.RawMessage fields retain their JSON value semantics
 // rather than being encoded as byte strings.
 func Marshal(value any) ([]byte, error) {
-	encoded, err := json.Marshal(value)
+	encoded, err := jsonv2.Marshal(value, json.DefaultOptionsV1(),
+		jsontext.AllowInvalidUTF8(false), jsontext.AllowDuplicateNames(false))
 	if err != nil {
 		return nil, fmt.Errorf("marshal JSON: %w", err)
 	}
@@ -98,6 +101,15 @@ func LessUTF16(a, b string) bool {
 }
 
 func decodeJSON(data []byte) (any, error) {
+	// Validate before v1 decoding can repair Unicode or collapse duplicate keys.
+	strict := jsontext.NewDecoder(bytes.NewReader(data))
+	_, err := strict.ReadValue()
+	if err != nil {
+		return nil, fmt.Errorf("decode JSON field tree: %w", err)
+	}
+	if _, err := strict.ReadValue(); err != io.EOF {
+		return nil, fmt.Errorf("decode JSON field tree: trailing JSON content")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 
@@ -105,10 +117,6 @@ func decodeJSON(data []byte) (any, error) {
 	if err := decoder.Decode(&value); err != nil {
 		return nil, fmt.Errorf("decode JSON field tree: %w", err)
 	}
-	if err := decoder.Decode(new(struct{})); err != io.EOF {
-		return nil, fmt.Errorf("decode JSON field tree: trailing JSON content")
-	}
-
 	return value, nil
 }
 

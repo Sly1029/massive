@@ -63,7 +63,7 @@ func TestCanonicalJSONV0Corpus(t *testing.T) {
 				// Artifact publication accepts a body only when this same
 				// canonicalizer reproduces its bytes exactly. An invalid fixture
 				// may fail canonicalization outright, or normalize to different
-				// bytes (for example, whitespace and lone-surrogate escapes).
+				// bytes (for example, insignificant whitespace).
 				if err == nil && bytes.Equal(canonicalPayload, payload) {
 					t.Fatalf("invalid corpus payload was accepted by the canonical byte boundary: %q", payload)
 				}
@@ -168,5 +168,53 @@ func TestDigestJSONWithRootMemberExcluded(t *testing.T) {
 
 	if withMember != withoutMember {
 		t.Fatalf("self-excluded digest mismatch: %s != %s", withMember, withoutMember)
+	}
+}
+
+func TestCanonicalJSONRejectsMalformedUnicode(t *testing.T) {
+	for name, input := range map[string][]byte{
+		"lone high surrogate":    []byte(`{"value":"\ud800"}`),
+		"lone low surrogate":     []byte(`{"value":"\udc00"}`),
+		"unpaired surrogate key": []byte(`{"\ud800":1}`),
+		"invalid UTF-8 value":    append(append([]byte(`{"value":"`), 0xff), []byte(`"}`)...),
+		"invalid UTF-8 key":      append(append([]byte(`{"`), 0xff), []byte(`":1}`)...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if result, err := CanonicalizeJSON(input); err == nil {
+				t.Fatalf("malformed Unicode silently changed to %s", result)
+			}
+			if digest, err := DigestJSON(input); err == nil {
+				t.Fatalf("malformed Unicode acquired identity %s", digest)
+			}
+			if digest, err := DigestJSONWithRootMemberExcluded(input, "self"); err == nil {
+				t.Fatalf("self-exclusion accepted malformed Unicode: %s", digest)
+			}
+		})
+	}
+	valid := []byte(`{"value":"\ud83d\ude00"}`)
+	actual, err := CanonicalizeJSON(valid)
+	if err != nil || string(actual) != `{"value":"😀"}` {
+		t.Fatalf("valid surrogate pair: %s, %v", actual, err)
+	}
+}
+
+func TestCanonicalJSONRejectsDuplicateObjectNames(t *testing.T) {
+	for _, input := range []string{
+		`{"value":1,"value":2}`,
+		`{"value":{"key":1,"key":2}}`,
+		`{"key":1,"\u006bey":2}`,
+	} {
+		if canonical, err := CanonicalizeJSON([]byte(input)); err == nil {
+			t.Errorf("duplicate names silently collapsed: %s -> %s", input, canonical)
+		}
+	}
+}
+
+func TestMarshalRejectsInvalidUTF8BeforeEncoding(t *testing.T) {
+	invalid := string([]byte{0xff})
+	for _, value := range []any{invalid, map[string]string{invalid: "value"}, map[string]string{"key": invalid}} {
+		if result, err := Marshal(value); err == nil {
+			t.Errorf("invalid Go string silently changed to %s", result)
+		}
 	}
 }
