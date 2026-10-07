@@ -51,9 +51,10 @@ Each `graph.step(id, { input, output, run })` has an input schema, an output
 schema, and executable code. The path builder tracks the current output type,
 so `.to(next)` only accepts a step whose input matches it.
 
-The step functions are top-level named exports. The emitted plan stores symbol
-references, not function bodies, and the runner resolves those exports in a
-fresh step process.
+The step functions are top-level named exports, and each step's `run` must be
+the entrypoint export named by the step id; emission rejects inline closures and
+mismatched names. The emitted plan stores symbol references, not function
+bodies, and the runner resolves those exports in a fresh step process.
 
 ```sh
 massive run examples/02-linear.ts --input '{"value":21}'

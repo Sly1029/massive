@@ -170,8 +170,29 @@ async function selectWorkflowExport(
   readonly exportName: string;
 }> {
   const module = await import(pathToFileURL(filePath).href);
+  const selected = selectExportedWorkflow(module, filePath, requestedExport);
+  // The runner resolves each step as the entrypoint export named by its id.
+  for (const step of selected.workflow.stepNodes.values()) {
+    const exported = module[step.id] as unknown;
+    if (exported !== step.run && (exported as { run?: unknown } | undefined)?.run !== step.run) {
+      throw new MassiveError(
+        `step "${step.id}" must use the run function exported as "${step.id}" from ${filePath}`,
+      );
+    }
+  }
+  return selected;
+}
+
+function selectExportedWorkflow(
+  module: Record<string, unknown>,
+  filePath: string,
+  requestedExport: string | undefined,
+): {
+  readonly workflow: WorkflowBuilder<unknown, unknown>;
+  readonly exportName: string;
+} {
   if (requestedExport !== undefined) {
-    const selected = module[requestedExport] as unknown;
+    const selected = module[requestedExport];
     if (selected instanceof WorkflowBuilder) {
       return { workflow: selected, exportName: requestedExport };
     }
