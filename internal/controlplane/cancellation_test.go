@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/environment"
 )
 
 func TestCancelledMapKeepsCompletedArtifactsAndTerminalJournal(t *testing.T) {
@@ -52,7 +53,7 @@ graph.edge_from(collected).to(graph.end)
 	if err := os.WriteFile(entry, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	frontend, err := Emit(t.Context(), entry)
+	frontend, err := Emit(t.Context(), entry, environment.Execution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +246,7 @@ graph.edge_from(blocked).to(collected)
 			if err := os.WriteFile(entry, []byte(source), 0600); err != nil {
 				t.Fatal(err)
 			}
-			frontend, err := Emit(t.Context(), entry)
+			frontend, err := Emit(t.Context(), entry, environment.Execution)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -304,7 +305,7 @@ func TestCancelledBeforeDispatchDoesNotCreateRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frontend, err := Emit(t.Context(), filepath.Join(root, "conformance", "workflows", "python-linear", "workflow.py"))
+	frontend, err := Emit(t.Context(), filepath.Join(root, "conformance", "workflows", "python-linear", "workflow.py"), environment.Execution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +340,7 @@ graph.edge_from(next_node).to(graph.end)
 	if err := os.WriteFile(entry, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	frontend, err := Emit(t.Context(), entry)
+	frontend, err := Emit(t.Context(), entry, environment.Execution)
 	if err != nil {
 		t.Fatal(err)
 	}

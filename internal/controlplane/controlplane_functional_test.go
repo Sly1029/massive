@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/sourceidentity"
@@ -32,7 +33,7 @@ func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
 	t.Setenv("MASSIVE_PYTHON", python)
 
 	entry := filepath.Join(repository, "conformance", "workflows", "python-linear", "workflow.py")
-	frontend, err := Emit(context.Background(), entry)
+	frontend, err := Emit(context.Background(), entry, environment.Execution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +136,7 @@ func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
 	}
 	t.Setenv("MASSIVE_PYTHON", python)
 
-	frontend, err := Emit(context.Background(), filepath.Join(repository, "examples", "06-map", "workflow.py"))
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "examples", "06-map", "workflow.py"), environment.Emission)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,10 +175,11 @@ func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
 		archives[sourcePackage.GetPackageHash()] = orchestrator.EmbeddedSourceArchive(archive)
 	}
 
+	store := t.TempDir()
 	result, err := orchestrator.RunIsolatedMapItem(context.Background(), orchestrator.IsolatedStepConfig{
-		Plan: workflowPlan, NodeID: "square-items", Datastore: orchestrator.LocalDatastoreDescriptor{Kind: "local", Path: t.TempDir()},
+		Plan: workflowPlan, NodeID: "square-items", Datastore: orchestrator.LocalDatastoreDescriptor{Kind: "local", Path: store},
 		ProjectID: "argo/map-example", RunID: "mapped-python-item",
-		RunnerCommand:  []string{python, "-m", "massive.runner", "{descriptor}"},
+		Environment:    environment.Request{Python: python, ControlPlaneVersion: Version},
 		SourceArchives: archives,
 	}, []byte(`{"value":3}`), 2)
 	if err != nil {
@@ -185,6 +187,27 @@ func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
 	}
 	if got, want := string(result), `{"source":3,"squared":9}`; got != want {
 		t.Fatalf("mapped result = %s, want %s", got, want)
+	}
+	// The attempt records the realization that ran it, beside its output.
+	attempt := filepath.Join(store, "projects", orchestrator.NormalizeProjectKey("argo/map-example"), "runs", "mapped-python-item",
+		"steps", "square-items", "scopes", "maps", "square-items", "items", "2", "1")
+	var realized struct {
+		RealizationHash string `json:"realizationHash"`
+		Record          struct {
+			Key string `json:"key"`
+		} `json:"record"`
+	}
+	body, err := os.ReadFile(filepath.Join(attempt, "environment.json"))
+	if err != nil || json.Unmarshal(body, &realized) != nil {
+		t.Fatalf("attempt environment = %s, %v", body, err)
+	}
+	record, err := os.ReadFile(filepath.Join(store, filepath.FromSlash(realized.Record.Key)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed, err := environment.ParseRecord(record); err != nil || parsed.GetRealizationHash() != realized.RealizationHash ||
+		parsed.GetRealization().GetVerification().String() != "UNDECLARED" {
+		t.Fatalf("attempt record = %v, %v", parsed, err)
 	}
 }
 
@@ -215,7 +238,7 @@ func TestInspectKeepsProjectsSeparateAndDoesNotWrite(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repository, "node_modules", "zod")); err != nil {
 		t.Skip("SDK dependencies are unavailable; run pnpm install")
 	}
-	frontend, err := Emit(context.Background(), filepath.Join(repository, "conformance", "workflows", "linear-chain"))
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "conformance", "workflows", "linear-chain"), environment.Execution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +328,7 @@ export default flow;`
 	if err := os.WriteFile(entry, []byte(source), 0644); err != nil {
 		t.Fatal(err)
 	}
-	emitted, err := Emit(context.Background(), entry)
+	emitted, err := Emit(context.Background(), entry, environment.Execution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +339,7 @@ export default flow;`
 
 func TestFrontendDiagnosticsDistinguishEntrypointsAndAuthorFailures(t *testing.T) {
 	directory := t.TempDir()
-	if _, err := Emit(context.Background(), directory); err == nil || !strings.Contains(err.Error(), "Python entrypoints must name a .py file") {
+	if _, err := Emit(context.Background(), directory, environment.Execution); err == nil || !strings.Contains(err.Error(), "Python entrypoints must name a .py file") {
 		t.Fatalf("directory diagnostic = %v", err)
 	}
 	repository, err := filepath.Abs(filepath.Join("..", ".."))
@@ -332,7 +355,7 @@ func TestFrontendDiagnosticsDistinguishEntrypointsAndAuthorFailures(t *testing.T
 	if err := os.WriteFile(entry, []byte("raise RuntimeError('author failure marker')\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Emit(context.Background(), entry); err == nil || !strings.Contains(err.Error(), "author failure marker") || strings.Contains(err.Error(), "install") {
+	if _, err := Emit(context.Background(), entry, environment.Execution); err == nil || !strings.Contains(err.Error(), "author failure marker") || strings.Contains(err.Error(), "install") {
 		t.Fatalf("author diagnostic = %v", err)
 	}
 }

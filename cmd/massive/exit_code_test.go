@@ -19,6 +19,7 @@ func TestExitCodeForSurfacesRunnerFailureToTargetScheduler(t *testing.T) {
 		{fmt.Errorf("wrapped: %w", &orchestrator.InvocationFailure{ExitCode: 67}), 67},
 		{&orchestrator.InvocationFailure{ExitCode: -1, TimedOutAfter: time.Minute}, runtimeExitTimeout},
 		{&orchestrator.InvocationFailure{ExitCode: -1}, 1},
+		{fmt.Errorf("wrapped: %w", &orchestrator.PreflightError{NodeID: "step", Err: errors.New("missing")}), runtimeExitPreflight},
 	} {
 		if got := exitCodeFor(testCase.err); got != testCase.want {
 			t.Fatalf("exitCodeFor(%v) = %d, want %d", testCase.err, got, testCase.want)

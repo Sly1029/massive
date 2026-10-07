@@ -36,7 +36,7 @@ func TestLockedWorkflowRunsWithThePreflightInterpreter(t *testing.T) {
 	}
 	t.Setenv("MASSIVE_PYTHON", python)
 
-	frontend, err := Emit(t.Context(), filepath.Join(project, "workflow.py"))
+	frontend, err := Emit(t.Context(), filepath.Join(project, "workflow.py"), environment.Execution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestPreflightFailureImportsNoWorkflowModule(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, err := Emit(t.Context(), filepath.Join(root, "workflow.py"))
+	_, err := Emit(t.Context(), filepath.Join(root, "workflow.py"), environment.Execution)
 	var preflight *environment.PreflightError
 	if !errors.As(err, &preflight) || preflight.Findings[0].Code != "MISSING_REQUIREMENT" {
 		t.Fatalf("error = %v, want a missing requirement finding", err)
@@ -96,7 +96,7 @@ func TestPreflightFailureImportsNoWorkflowModule(t *testing.T) {
 	}
 
 	t.Setenv("MASSIVE_PYTHON", "")
-	if _, err := Emit(t.Context(), filepath.Join(root, "workflow.py")); err == nil || !strings.Contains(err.Error(), "uv run --locked massive") {
+	if _, err := Emit(t.Context(), filepath.Join(root, "workflow.py"), environment.Execution); err == nil || !strings.Contains(err.Error(), "uv run --locked massive") {
 		t.Fatalf("error = %v, want interpreter guidance", err)
 	}
 }

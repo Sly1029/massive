@@ -518,8 +518,14 @@ credentials. Credential acquisition failures stop invocation before artifact IO.
 A contract's `retry` lowers to a `retryStrategy` on runner templates only
 (static steps and map items); decision, expansion, and collection control pods
 never retry. The strategy uses `limit: maxAttempts - 1`, `retryPolicy: Always`,
-and `expression: "!(lastRetry.exitCode in ['64', '65', '67'])"`, so descriptor,
-schema, and author non-retryable failures stop immediately. A nonzero
+and `expression: "!(lastRetry.exitCode in ['64', '65', '67', '68'])"`, so descriptor,
+schema, author non-retryable, and dependency preflight (68) failures stop
+immediately. Before each Python attempt, `massive runtime step` and
+`runtime map item` extract the verified source archive and run dependency
+preflight with the image's interpreter. An attempt that passes writes
+`environment.json` (requirement and realization hashes, plus a reference to the
+content-addressed `RealizedEnvironment`) beside its output manifest. The runner
+then runs that interpreter with `-I`. A nonzero
 `delaySeconds` adds `backoff{duration, factor, cap}`. The runtime receives
 `--retry-count={{retries}}` and derives `attempt = retries + 1`, so every retry
 publishes to its own attempt slot and keeps the same idempotency key.

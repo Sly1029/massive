@@ -11,6 +11,7 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 )
@@ -19,12 +20,14 @@ import (
 // executor pod. SourceArchives pins each plan source package, by package hash,
 // to the archive the language runner fetches and verifies by digest.
 type IsolatedStepConfig struct {
-	Plan           *planpb.WorkflowPlan
-	NodeID         string
-	Datastore      DatastoreDescriptor
-	ProjectID      string
-	RunID          string
-	RunnerCommand  []string
+	Plan      *planpb.WorkflowPlan
+	NodeID    string
+	Datastore DatastoreDescriptor
+	ProjectID string
+	RunID     string
+	// Environment checks the executor's Python interpreter against a Python
+	// node's archived project; ProjectRoot is filled in per invocation.
+	Environment    environment.Request
 	WorkingDir     string
 	SourceArchives map[string]SourceArchive
 	// Attempt is the 1-based attempt the target is dispatching. Zero means 1.
@@ -191,7 +194,18 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	if err != nil {
 		return nil, err
 	}
-	invoker := ProcessStepInvoker{CommandTemplate: config.RunnerCommand, WorkingDir: config.WorkingDir, ProcessLimit: 1}
+	var runnerCommand []string
+	if descriptor.Symbol.Language == "python" {
+		if config.Environment.Python == "" {
+			return nil, &PreflightError{NodeID: node.GetId(), Err: errors.New("Python tasks need MASSIVE_PYTHON; launch through the massive command installed by massive-workflows")}
+		}
+		python, err := isolatedPreflight(ctx, store, config.Environment, descriptor, config.SourceArchives[descriptor.SourcePackage.PackageHash])
+		if err != nil {
+			return nil, err
+		}
+		runnerCommand = PythonRunnerCommand(python)
+	}
+	invoker := ProcessStepInvoker{CommandTemplate: runnerCommand, WorkingDir: config.WorkingDir, ProcessLimit: 1}
 	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, MaxConcurrency: 1})
 	if err != nil {
 		return nil, err

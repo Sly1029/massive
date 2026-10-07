@@ -117,7 +117,10 @@ environments/<record-key>/realized-environment.json
 protobuf JSON bytes (`RealizedEnvironment` in `materialization.proto`), stored with
 content type `application/vnd.massive.realized-environment+json`. The record
 carries its own `requirementHash` and `realizationHash`; readers recompute both.
-Runs with identical checked environments share one object.
+Runs with identical checked environments share one object. Each Argo attempt
+that passed dependency preflight also writes
+`projects/<project-key>/runs/<run-id>/steps/<step-id>[/scopes/...]/<attempt>/environment.json`
+beside its output manifest: the run journal's `environment` binding for that attempt.
 
 ### Source package
 

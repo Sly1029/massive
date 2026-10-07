@@ -33,7 +33,7 @@ the retry expression stops; do not add a Go-side precheck that turns it into a
 retryable infrastructure error.
 
 Retry strategies belong only on runner templates. Keep the non-retryable exit
-list aligned with the runner exit codes, pass `{{retries}}` so the runtime
+list aligned with the runner exit codes and the runtime's preflight exit (68), pass `{{retries}}` so the runtime
 derives the attempt, and enforce timeouts inside the runtime instead of with
 `activeDeadlineSeconds`.
 

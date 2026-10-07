@@ -49,11 +49,14 @@ def install_workflow(
     *,
     selector: str = "",
     build_args: tuple[str, ...] = (),
+    pyproject: str | None = None,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="massive-argo-") as directory:
         root = Path(directory)
         entry = root / "workflow.py"
         entry.write_text(source)
+        if pyproject is not None:
+            (root / "pyproject.toml").write_text(pyproject)
         bundle = root / "bundle"
         bindings = root / "secret-bindings.json"
         bindings.write_text(json.dumps(secret_bindings or {}))
@@ -353,6 +356,32 @@ class DecisionConformance(unittest.TestCase):
         )
         install_workflow(composition_source, selector="#graph")
         cls.large_source_result = install_large_source()
+        # The build host lacks nothing here; pods check the image itself.
+        preflight_source = (
+            (Path(__file__).parent / "preflight.py")
+            .read_text()
+            .replace(
+                'IMAGE = "example.invalid/runner@sha256:" + "0" * 64',
+                f"IMAGE = {os.environ['MASSIVE_TEST_ARGO_IMAGE']!r}",
+            )
+            .replace(
+                'PLATFORM = "linux/amd64"',
+                f"PLATFORM = {os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
+            )
+        )
+        for name, dependency in {
+            "argo-preflight": "pydantic>=2",
+            "argo-preflight-missing": "absent-package-for-preflight>=1",
+        }.items():
+            install_workflow(
+                preflight_source.replace('NAME = "argo-preflight"', f"NAME = {name!r}"),
+                pyproject=(
+                    "[project]\n"
+                    f'name = "{name}"\n'
+                    'version = "0.1.0"\n'
+                    f'dependencies = ["massive-workflows", "{dependency}"]\n'
+                ),
+            )
         cls.runs = {}
         for label, inputs in {
             "positive": {"score": 3},
@@ -371,6 +400,8 @@ class DecisionConformance(unittest.TestCase):
             "composed-rejected": {"value": -1},
             "large-source": {},
             "unpublished": {"permanent": False},
+            "preflight": {"value": 21},
+            "preflight-missing": {"value": 21},
         }.items():
             run = kubectl(
                 "create",
@@ -393,6 +424,8 @@ class DecisionConformance(unittest.TestCase):
                                 "composed-rejected": "composed",
                                 "large-source": "large-source",
                                 "unpublished": "argo-unpublished",
+                                "preflight": "argo-preflight",
+                                "preflight-missing": "argo-preflight-missing",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -575,6 +608,18 @@ class DecisionConformance(unittest.TestCase):
         self.assertEqual(run["status"]["phase"], "Failed")
         items = self.pods(run, "map-item-guarded")
         self.assertEqual([node["phase"] for node in items], ["Failed", "Failed"])
+
+    def test_pod_preflight_accepts_a_satisfied_project(self) -> None:
+        self.successful("preflight", 42)
+
+    def test_pod_preflight_failure_is_not_retried(self) -> None:
+        # retry(3) would schedule three pods; exit 68 is non-retryable, and
+        # the image's missing dependency stops the step before author code.
+        run = self.completed("preflight-missing")
+        self.assertEqual(run["status"]["phase"], "Failed")
+        pods = self.pods(run, "step-double")
+        self.assertEqual([node["phase"] for node in pods], ["Failed"])
+        self.assertIn("exit code 68", pods[0].get("message", ""))
 
     def test_selected_item_failure_cannot_produce_success(self) -> None:
         run = self.completed("failure")

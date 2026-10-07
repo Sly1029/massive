@@ -36,6 +36,12 @@ locations, or RECORD hashes to the realization identity. Changing a recipe means
 bumping its recipeVersion and regenerating the hashing vectors from the
 implementation; `conformance/schema` re-derives them independently.
 
+Scope `Execution` is the full check for an interpreter that runs tasks.
+`Emission` (`massive build`) drops installed-requirement findings and the
+`uv sync` check, keeps interpreter safety, the SDK release, workspace locks,
+and `uv lock --check`, and never yields a record. The container is checked
+per attempt instead.
+
 Test against real environments built with `uv venv` and `uv sync --locked`.
 `conformance/workflows/python-locked/uv.lock` is generated with `uv lock`;
 regenerate it when the SDK's dependencies or version change, and never edit it by hand.

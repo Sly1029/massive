@@ -805,9 +805,10 @@ func u32(v uint32) *uint32 { return &v }
 func boolp(v bool) *bool   { return &v }
 
 // runnerNonRetryableExitCodes mirrors the executor's retry classification:
-// descriptor and schema failures are deterministic, and 67 is the author's
-// explicit opt-out. Timeouts (124), author exceptions (66), and pod errors retry.
-var runnerNonRetryableExitCodes = []string{"64", "65", "67"}
+// descriptor and schema failures are deterministic, 67 is the author's explicit
+// opt-out, and 68 is a failed dependency preflight of the image. Timeouts (124),
+// author exceptions (66), and pod errors retry.
+var runnerNonRetryableExitCodes = []string{"64", "65", "67", "68"}
 
 // retryArgs tells the runtime which attempt Argo is dispatching so descriptors,
 // manifest slots, and step context agree with the scheduler's retry count.
