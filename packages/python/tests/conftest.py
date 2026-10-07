@@ -11,6 +11,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from hypothesis import settings
+from hypothesis.database import DirectoryBasedExampleDatabase
+
+# `pnpm check` replays a fixed, derandomized sample. The nightly fuzz workflow
+# explores randomly and persists failing examples in a cached database.
+settings.register_profile("ci", derandomize=True, database=None, deadline=None, print_blob=True)
+settings.register_profile(
+    "nightly",
+    max_examples=1000,
+    deadline=None,
+    print_blob=True,
+    database=DirectoryBasedExampleDatabase(
+        os.environ.get("MASSIVE_HYPOTHESIS_DATABASE", ".hypothesis/examples")
+    ),
+)
+settings.load_profile(os.environ.get("MASSIVE_HYPOTHESIS_PROFILE", "ci"))
 
 
 @dataclass(frozen=True, slots=True)
