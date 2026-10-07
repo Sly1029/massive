@@ -17,7 +17,15 @@ from typing import (
     overload,
 )
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, TypeAdapter, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 from typing_extensions import TypeForm
 
 from ._step import StepDefinition as _Step
@@ -38,6 +46,7 @@ SelectT = TypeVar("SelectT")
 
 _START = "__start"
 _END = "__end"
+_NODE_KIND_ORDER = ("start", "step", "map", "decision", "select", "end")
 # Graph IR versioning is independent from the outer WorkflowSpec transport
 # schema so graph evolution remains an explicit compiler contract.
 GRAPH_IR_VERSION = "0.3"
@@ -888,11 +897,20 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                     "start successor and one end predecessor that are child nodes"
                 )
             first, last = entries[0], exits[0]
-            scoped = {
-                cast(str, node["id"]): SAFE_PATH_SEGMENT.validate_python(f"{call_id}--{node['id']}")
-                for node in child_nodes
-                if node["id"] not in (_START, _END)
-            }
+            scoped: dict[str, str] = {}
+            for node in child_nodes:
+                child_id = cast(str, node["id"])
+                if child_id in (_START, _END):
+                    continue
+                scoped_id = f"{call_id}--{child_id}"
+                try:
+                    scoped[child_id] = SAFE_PATH_SEGMENT.validate_python(scoped_id)
+                except ValidationError as error:
+                    raise ValueError(
+                        f"call {call_id!r} scopes child node {child_id!r} as a "
+                        f"{len(scoped_id)}-character id; '<call id>--<child node id>' must "
+                        "fit the 128-character node id limit"
+                    ) from error
             occupied = {cast(str, node["id"]) for node in nodes}
             if occupied.intersection(scoped.values()):
                 raise ValueError(f"call {call_id!r} produces a duplicate scoped node id")
@@ -947,6 +965,14 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                         for item in cast(list[str], node["mergeInputs"])
                     ]
             nodes = [node for node in nodes if node["id"] != call_id]
+        # Expanded child nodes join the parent's canonical order, so a call emits
+        # the same spec as the equivalent hand-inlined graph.
+        nodes.sort(
+            key=lambda node: (
+                _NODE_KIND_ORDER.index(cast(str, node["kind"])),
+                _canonical_sort_key(cast(str, node["id"])),
+            )
+        )
         edges.sort(
             key=lambda edge: tuple(
                 _canonical_sort_key(cast(str, edge[key]))
