@@ -1,7 +1,6 @@
 package plan
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -401,18 +400,6 @@ func hashingSpec(recipe string) *planpb.HashingSpec {
 		Recipe:           stringPtr(recipe),
 		RecipeVersion:    uint32Ptr(1),
 	}
-}
-
-func hashJSONValue(value any) (string, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return "", fmt.Errorf("marshal JSON value: %w", err)
-	}
-	hash, err := canonical.DigestJSON(data)
-	if err != nil {
-		return "", err
-	}
-	return hash, nil
 }
 
 func hashPlanMessage(message proto.Message) (string, error) {

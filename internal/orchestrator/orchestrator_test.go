@@ -1309,3 +1309,22 @@ func TestRunRejectsEscapingSnapshotParentBeforeInstallation(t *testing.T) {
 		t.Fatalf("rejected snapshot started a run: %v", err)
 	}
 }
+
+func repoRootFrom(start string) (string, error) {
+	current, err := filepath.Abs(start)
+	if err != nil {
+		return "", fmt.Errorf("resolve working directory: %w", err)
+	}
+	for {
+		_, goError := os.Stat(filepath.Join(current, "go.mod"))
+		_, denoError := os.Stat(filepath.Join(current, "deno.json"))
+		if goError == nil && denoError == nil {
+			return current, nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("could not find repo root from %q", start)
+		}
+		current = parent
+	}
+}
