@@ -4,9 +4,8 @@ set -euo pipefail
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 image="$(cat "$repository/conformance/minio/image-reference")"
 commit="${image##*:}"
-mkdir -p "$repository/dist"
-# Keep Docker's build context in the checkout: snap Docker cannot read /tmp.
-scratch="$(mktemp -d "$repository/dist/minio-build.XXXXXX")"
+# Snap Docker cannot read /tmp or hidden checkout directories.
+scratch="$(mktemp -d "${TMPDIR:-$HOME}/massive-minio-build.XXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 mkdir "$scratch/tmp"
 chmod 1777 "$scratch/tmp"
