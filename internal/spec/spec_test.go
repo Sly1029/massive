@@ -3,8 +3,10 @@ package spec
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -274,7 +276,11 @@ func TestParseAllowsMapOutputAsAnOrderedMergeInput(t *testing.T) {
 	}
 }
 
-func TestParseAllowsMapInDecisionBranch(t *testing.T) {
+// A decision reads its selector from a JSON object and forwards that object to
+// the case target, but a map input must be an array. A spec routing a case
+// straight into a map can never execute, so it is rejected up front; the
+// branch starts with a step that produces the items instead.
+func TestParseRejectsMapAsDecisionCaseTarget(t *testing.T) {
 	data := mutateValidFixture(t, "exhaustive-decision", func(root map[string]any) {
 		inputList := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 		itemInput := "sha256:2222222222222222222222222222222222222222222222222222222222222222"
@@ -307,8 +313,15 @@ func TestParseAllowsMapInDecisionBranch(t *testing.T) {
 		}
 	})
 
-	if _, err := Parse(data); err != nil {
-		t.Fatalf("parse map in decision branch: %v", err)
+	_, err := Parse(data)
+	var diagnostics *DiagnosticsError
+	if !errors.As(err, &diagnostics) {
+		t.Fatalf("map as decision case target accepted: %v", err)
+	}
+	for _, want := range []string{"conditional edge target must be a step node", "decision input must be a JSON object carrying its selector", "decision case schema must admit the routed JSON object"} {
+		if !slices.ContainsFunc(diagnostics.Diagnostics, func(diagnostic Diagnostic) bool { return diagnostic.Message == want }) {
+			t.Fatalf("diagnostics %v lack %q", diagnostics.Diagnostics, want)
+		}
 	}
 }
 

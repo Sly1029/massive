@@ -281,6 +281,8 @@ func decisionSpecData(t *testing.T) []byte {
 		map[string]any{"from": "reject", "to": "choose"},
 		map[string]any{"from": "choose", "to": "__end"},
 	}
+	// A decision routes on an object carrying its selector.
+	root["schemas"].(map[string]any)[hashRef("1")] = map[string]any{"type": "object", "required": []any{"kind"}}
 	data, err := json.Marshal(root)
 	if err != nil {
 		t.Fatal(err)
