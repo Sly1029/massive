@@ -30,8 +30,8 @@ type CLI struct {
 
 type RunCommand struct {
 	Entry     string `arg:"" name:"entry" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
-	Input     string `help:"Workflow input as JSON; defaults to null."`
-	InputFile string `name:"input-file" help:"Read workflow input JSON from this file." type:"existingfile"`
+	Input     string `help:"Workflow input as JSON; defaults to null." xor:"input-source"`
+	InputFile string `name:"input-file" help:"Read workflow input JSON from this file." type:"existingfile" xor:"input-source"`
 	Store     string `help:"Local artifact store root." type:"path"`
 	Project   string `help:"Stable project identity, for example owner/repository."`
 	RunID     string `name:"run-id" help:"Caller-provided run identifier."`
@@ -164,9 +164,6 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) error {
 }
 
 func (command *RunCommand) input() ([]byte, error) {
-	if command.InputFile != "" && command.Input != "" {
-		return nil, errors.New("--input and --input-file are mutually exclusive")
-	}
 	input := []byte("null")
 	if command.Input != "" {
 		input = []byte(command.Input)
