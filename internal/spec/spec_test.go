@@ -252,11 +252,14 @@ func TestParseAllowsMapOutputFanout(t *testing.T) {
 func TestParseAllowsMapOutputAsAnOrderedMergeInput(t *testing.T) {
 	data := mutateValidFixture(t, "finite-map", func(root map[string]any) {
 		outputList := "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+		// A merge receives [map output, right output], not the map's list.
+		mergedLists := "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+		root["schemas"].(map[string]any)[mergedLists] = map[string]any{"type": "array", "items": root["schemas"].(map[string]any)[outputList], "minItems": 2, "maxItems": 2}
 		contractRef := "sha256:8888888888888888888888888888888888888888888888888888888888888888"
 		graph := root["graph"].(map[string]any)
 		graph["nodes"] = append(graph["nodes"].([]any),
 			map[string]any{"id": "right", "kind": "step", "inputSchema": outputList, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef},
-			map[string]any{"id": "merge", "kind": "step", "inputSchema": outputList, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef, "mergeInputs": []any{"map-items", "right"}},
+			map[string]any{"id": "merge", "kind": "step", "inputSchema": mergedLists, "outputSchema": outputList, "symbolRef": "finite-map/format", "contractRef": contractRef, "mergeInputs": []any{"map-items", "right"}},
 		)
 		graph["edges"] = []any{
 			map[string]any{"from": "__start", "to": "map-items"},

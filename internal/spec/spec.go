@@ -800,6 +800,9 @@ func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, i
 			if target.Kind == NodeKindSelect {
 				continue // selectInputs validates each declared source contract.
 			}
+			if len(target.MergeInputs) > 0 {
+				continue // A merge receives the ordered array of all its inputs.
+			}
 			targetSchema, consumesValue := graphValueInputSchema(target, parsed.Workflow.OutputSchema)
 			if !consumesValue {
 				diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: targetID, Message: "map output must target a value consumer"})
