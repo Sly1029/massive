@@ -16,8 +16,9 @@ def main() -> NoReturn:
             "massive: the native control-plane binary is missing; "
             "install a platform wheel supported by massive-workflows"
         )
-    environment = os.environ.copy()
-    environment.setdefault("MASSIVE_PYTHON", sys.executable)
+    # Always this interpreter: a stale exported MASSIVE_PYTHON must not redirect
+    # `uv run --locked massive` to a different environment.
+    environment = {**os.environ, "MASSIVE_PYTHON": sys.executable}
     arguments = [str(executable), *sys.argv[1:]]
     if os.name != "nt":
         os.execve(executable, arguments, environment)

@@ -35,11 +35,12 @@ func TestEnvCheckReportsJSONForCI(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
-		entry, status string
-		exit          int
+		entry, status, verification string
+		exit                        int
 	}{
-		{filepath.Join(repository, "conformance", "workflows", "python-linear", "workflow.py"), "ready", 0},
-		{filepath.Join(broken, "workflow.py"), "failed", 1},
+		{filepath.Join(repository, "conformance", "workflows", "python-linear", "workflow.py"), "unverified", "UNDECLARED", 0},
+		{filepath.Join(repository, "examples", "07-package", "workflow.py"), "ready", "DIRECT_REQUIREMENTS_SATISFIED", 0},
+		{filepath.Join(broken, "workflow.py"), "failed", "DIRECT_REQUIREMENTS_SATISFIED", 1},
 	} {
 		command := exec.Command(binary, "env", "check", tc.entry, "--json")
 		command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
@@ -64,7 +65,7 @@ func TestEnvCheckReportsJSONForCI(t *testing.T) {
 		if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 			t.Fatalf("stdout is not one JSON report: %v\n%s", err, stdout.String())
 		}
-		if report.Status != tc.status || report.Verification != "DIRECT_REQUIREMENTS_SATISFIED" || report.Interpreter.Executable == "" {
+		if report.Status != tc.status || report.Verification != tc.verification || report.Interpreter.Executable == "" {
 			t.Fatalf("report = %+v", report)
 		}
 		if tc.exit != 0 && (len(report.Findings) != 1 || report.Findings[0].Code != "MISSING_REQUIREMENT" || report.Findings[0].Fix == "") {

@@ -35,8 +35,8 @@ Implemented:
   identity metamorphically, and lowers every generated plan to Argo.
 - Dependency preflight checks the launching interpreter before importing author
   code: `requires-python`, direct requirements, shadowed distributions and
-  modules, the SDK release, and with `uv.lock` an exact, offline
-  `uv sync --locked --check`. `massive env check --json` exposes it to CI. The
+  modules, the SDK release, and with `uv.lock` an offline check that the locked
+  runtime set is installed. `massive env check --json` exposes it to CI. The
   checked interpreter runs emission and every local task in isolated mode.
 
 Next:

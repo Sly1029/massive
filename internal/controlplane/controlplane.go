@@ -38,33 +38,21 @@ type FrontendResult struct {
 	Environment *environment.Report
 }
 
-// CheckEnvironment runs dependency preflight for a Python workflow entrypoint
-// without importing it. Findings are returned in the report, not as an error.
-func CheckEnvironment(ctx context.Context, entry string) (*environment.Report, error) {
-	path := entry
-	if index := strings.LastIndex(entry, "#"); index >= 0 {
-		path = entry[:index]
-	}
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return nil, fmt.Errorf("resolve workflow entrypoint: %w", err)
-	}
-	if filepath.Ext(absolute) != ".py" {
-		return nil, fmt.Errorf("dependency preflight requires a Python workflow entrypoint, not %q", entry)
-	}
-	if info, err := os.Stat(absolute); err != nil || info.IsDir() {
-		return nil, fmt.Errorf("workflow entrypoint %q is not a file", absolute)
+// CheckEnvironment runs dependency preflight for a Python workflow file without
+// importing it. Findings are returned in the report, not as an error.
+func CheckEnvironment(ctx context.Context, workflowFile string) (*environment.Report, error) {
+	if info, err := os.Stat(workflowFile); err != nil || info.IsDir() || filepath.Ext(workflowFile) != ".py" {
+		return nil, fmt.Errorf("dependency preflight requires a Python workflow file, not %q", workflowFile)
 	}
 	python := os.Getenv("MASSIVE_PYTHON")
 	if python == "" {
 		return nil, errors.New("Python workflows need the project interpreter; launch the massive command installed by massive-workflows (for example `uv run --locked massive …`) or set MASSIVE_PYTHON")
 	}
-	sdkVersion := Version
-	if sdkVersion == developmentVersion {
+	return environment.Check(ctx, environment.Request{
+		Python: python, ProjectRoot: filepath.Dir(workflowFile), ControlPlaneVersion: Version,
 		// A source-built control plane is paired with its checkout's SDK.
-		sdkVersion = ""
-	}
-	return environment.Check(ctx, environment.Request{Python: python, ProjectRoot: filepath.Dir(absolute), SDKVersion: sdkVersion})
+		RequireSDK: Version != developmentVersion,
+	})
 }
 
 // Emit loads a language frontend as a process adapter. The only data crossing
@@ -95,7 +83,7 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	}
 	switch extension {
 	case ".py":
-		report, err = CheckEnvironment(ctx, entry)
+		report, err = CheckEnvironment(ctx, absolute)
 		if err != nil {
 			return nil, err
 		}

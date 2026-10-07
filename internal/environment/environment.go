@@ -24,28 +24,28 @@ import (
 type Verification string
 
 const (
-	// LockSyncChecked means `uv sync --locked --check` found the interpreter's
-	// environment exactly synchronized with a current uv.lock.
+	// LockSyncChecked means every locked runtime package (no dev groups or
+	// extras) is installed at its locked version from a current uv.lock.
+	// Additional installed packages are permitted.
 	LockSyncChecked Verification = "LOCK_SYNC_CHECKED"
 	// DirectRequirementsSatisfied means only requires-python and the applicable
 	// [project].dependencies were checked; transitive versions are unconstrained.
 	DirectRequirementsSatisfied Verification = "DIRECT_REQUIREMENTS_SATISFIED"
+	// Undeclared means the workflow has no [project] metadata, so nothing beyond
+	// interpreter safety and the SDK release was verified.
+	Undeclared Verification = "UNDECLARED"
 )
 
-// FindingCode classifies a preflight failure. Probe codes come from the Python
-// probe contract; the remaining codes are added here.
+// FindingCode classifies a preflight failure. The probe contract defines the
+// interpreter and project codes; these are added by the control plane.
 type FindingCode string
 
 const (
-	RequiresPython        FindingCode = "REQUIRES_PYTHON"
-	MissingRequirement    FindingCode = "MISSING_REQUIREMENT"
-	RequirementVersion    FindingCode = "REQUIREMENT_VERSION"
-	DuplicateDistribution FindingCode = "DUPLICATE_DISTRIBUTION"
-	ShadowedModule        FindingCode = "SHADOWED_MODULE"
-	SDKVersion            FindingCode = "SDK_VERSION"
-	UVUnavailable         FindingCode = "UV_UNAVAILABLE"
-	LockStale             FindingCode = "LOCK_STALE"
-	LockOutOfSync         FindingCode = "LOCK_OUT_OF_SYNC"
+	SDKVersion    FindingCode = "SDK_VERSION"
+	UVUnavailable FindingCode = "UV_UNAVAILABLE"
+	UVFailed      FindingCode = "UV_FAILED"
+	LockStale     FindingCode = "LOCK_STALE"
+	LockOutOfSync FindingCode = "LOCK_OUT_OF_SYNC"
 )
 
 // Finding is one problem with a one-line fix. Messages never contain raw uv
@@ -79,7 +79,7 @@ type Distribution struct {
 	Editable bool   `json:"editable"`
 }
 
-// Probe is the schema-validated report of `python -I -m massive.environment probe`.
+// Probe is the schema-validated report of `python -I -m massive_environment probe`.
 type Probe struct {
 	SchemaVersion int                  `json:"schemaVersion"`
 	Interpreter   Interpreter          `json:"interpreter"`
@@ -93,9 +93,11 @@ type Request struct {
 	Python string
 	// ProjectRoot is the workflow directory holding pyproject.toml and uv.lock.
 	ProjectRoot string
-	// SDKVersion is the massive-workflows release paired with this control
-	// plane. A source-built control plane leaves it empty.
-	SDKVersion string
+	// ControlPlaneVersion is the release of the control plane running the check.
+	ControlPlaneVersion string
+	// RequireSDK requires massive-workflows to be the ControlPlaneVersion
+	// release. A source-built control plane has no release to match.
+	RequireSDK bool
 }
 
 type Report struct {
@@ -129,29 +131,31 @@ func (e *PreflightError) Error() string {
 const sdkDistribution = "massive-workflows"
 
 // Check probes the interpreter and, when the project has a uv.lock, verifies
-// that the lock is current and the interpreter's environment matches it exactly.
+// that the lock is current and its runtime packages are installed.
 func Check(ctx context.Context, request Request) (*Report, error) {
 	probe, err := runProbe(ctx, request.Python, request.ProjectRoot)
 	if err != nil {
 		return nil, err
 	}
 	report := &Report{ProjectRoot: request.ProjectRoot, Verification: DirectRequirementsSatisfied, Probe: *probe}
-	if request.SDKVersion != "" {
-		if finding := sdkVersionFinding(probe, request.SDKVersion); finding != nil {
+	if probe.Project == nil {
+		report.Verification = Undeclared
+	}
+	_, err = os.Stat(filepath.Join(request.ProjectRoot, "uv.lock"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("inspect uv.lock: %w", err)
+	}
+	locked := err == nil
+	if request.RequireSDK {
+		if finding := sdkVersionFinding(probe, request.ControlPlaneVersion, request.ProjectRoot, locked); finding != nil {
 			report.Findings = append(report.Findings, *finding)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(request.ProjectRoot, "uv.lock")); errors.Is(err, os.ErrNotExist) {
+	if !locked {
 		return report, nil
-	} else if err != nil {
-		return nil, fmt.Errorf("inspect uv.lock: %w", err)
 	}
 	report.Verification = LockSyncChecked
-	findings, err := lockFindings(ctx, request.ProjectRoot, probe.Interpreter.Prefix)
-	if err != nil {
-		return nil, err
-	}
-	report.Findings = append(report.Findings, findings...)
+	report.Findings = append(report.Findings, lockFindings(ctx, request.ProjectRoot, probe.Interpreter)...)
 	return report, nil
 }
 
@@ -167,18 +171,29 @@ var probeSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 	return compiler.Compile("environment-probe.schema.json")
 })
 
+const probeProjectError = 2
+
+var missingProbe = regexp.MustCompile(`No module named '?massive_environment'?$`)
+
 func runProbe(ctx context.Context, python, root string) (*Probe, error) {
 	// Isolated mode keeps the workflow directory and PYTHONPATH off sys.path.
-	command := exec.CommandContext(ctx, python, "-I", "-m", "massive.environment", "probe", root)
+	command := exec.CommandContext(ctx, python, "-I", "-m", "massive_environment", "probe", root)
 	command.Dir = root
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
+		var exit *exec.ExitError
 		detail := lastLine(stderr.String())
-		if detail == "" {
+		switch {
+		case errors.As(err, &exit) && exit.ExitCode() == probeProjectError:
+			// The probe reports unreadable project metadata as one line.
+			return nil, errors.New(strings.TrimSpace(stderr.String()))
+		case missingProbe.MatchString(detail):
+			return nil, fmt.Errorf("%s does not have massive-workflows installed; install it in the project environment with `uv sync --locked`, or launch through `uv run --locked massive`", python)
+		case detail == "":
 			detail = err.Error()
 		}
-		return nil, fmt.Errorf("%s cannot run the Massive environment probe (%s); install massive-workflows in the project environment with `uv sync --locked`, or launch through `uv run --locked massive`", python, detail)
+		return nil, fmt.Errorf("%s cannot run the Massive environment probe: %s", python, detail)
 	}
 	schema, err := probeSchema()
 	if err != nil {
@@ -198,8 +213,12 @@ func runProbe(ctx context.Context, python, root string) (*Probe, error) {
 	return &probe, nil
 }
 
-func sdkVersionFinding(probe *Probe, version string) *Finding {
-	fix := fmt.Sprintf("pin %s==%s in [project].dependencies and run `uv lock && uv sync --locked`, or launch the massive command installed in that environment", sdkDistribution, version)
+func sdkVersionFinding(probe *Probe, version, root string, locked bool) *Finding {
+	release := sdkDistribution + "==" + version
+	fix := fmt.Sprintf("run `uv pip install --python %s %s`, or launch the massive command installed in that environment", shellQuote(probe.Interpreter.Executable), release)
+	if locked {
+		fix = fmt.Sprintf("pin %s in [project].dependencies and run `uv lock`, then %s", release, syncCommand(probe.Interpreter.Prefix, root))
+	}
 	for _, distribution := range probe.Distributions {
 		if distribution.Name != sdkDistribution {
 			continue
@@ -224,76 +243,103 @@ func sdkVersionFinding(probe *Probe, version string) *Finding {
 // names and versions are reported, never other uv output.
 var plannedChange = regexp.MustCompile(`(?m)^ ([+-]) ([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9.+!_-]+)`)
 
-func lockFindings(ctx context.Context, root, prefix string) ([]Finding, error) {
+// uvSettings may be inherited: they locate the cache and indexes or are
+// recorded lock inputs. Every other UV_* variable (UV_FROZEN, UV_NO_SYNC,
+// UV_PYTHON, UV_NO_DEV, ...) could change what the check means.
+var uvSettings = regexp.MustCompile(`^UV_(CACHE_DIR|NO_CACHE|CONFIG_FILE|NO_CONFIG|INDEX|INDEX_[A-Z0-9_]+|DEFAULT_INDEX|EXTRA_INDEX_URL|FIND_LINKS|INDEX_STRATEGY|KEYRING_PROVIDER|NATIVE_TLS|INSECURE_HOST|EXCLUDE_NEWER|RESOLUTION|PRERELEASE)=`)
+
+func lockFindings(ctx context.Context, root string, interpreter Interpreter) []Finding {
 	uv, err := exec.LookPath("uv")
 	if err != nil {
 		return []Finding{{
 			Code:    UVUnavailable,
 			Message: "uv.lock is present, but uv is not on PATH to check the environment against it",
 			Fix:     "install uv (https://docs.astral.sh/uv/), or launch via `uv run --locked massive …`",
-		}}, nil
+		}}
 	}
-	environment := append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+prefix, "UV_PYTHON_DOWNLOADS=never")
-	lockCheck := exec.CommandContext(ctx, uv, "lock", "--check", "--offline", "--project", root)
-	lockCheck.Dir, lockCheck.Env = root, environment
-	if exit, err := runUV(lockCheck, &bytes.Buffer{}); err != nil {
-		return nil, err
-	} else if exit != 0 {
+	environment := []string{"UV_PROJECT_ENVIRONMENT=" + interpreter.Prefix}
+	for _, variable := range os.Environ() {
+		if (!strings.HasPrefix(variable, "UV_") || uvSettings.MatchString(variable)) && !strings.HasPrefix(variable, "VIRTUAL_ENV=") {
+			environment = append(environment, variable)
+		}
+	}
+	// Pin uv to the probed interpreter so .python-version cannot redirect it.
+	common := []string{"--offline", "--no-python-downloads", "--project", root, "--python", interpreter.Executable}
+	run := func(arguments ...string) (int, string, Finding) {
+		arguments = append(arguments, common...)
+		var output bytes.Buffer
+		command := exec.CommandContext(ctx, uv, arguments...)
+		command.Dir, command.Env, command.Stdout, command.Stderr = root, environment, &output, &output
+		err := command.Run()
+		var exit *exec.ExitError
+		if err == nil || (errors.As(err, &exit) && exit.ExitCode() == 1) {
+			return command.ProcessState.ExitCode(), output.String(), Finding{}
+		}
+		rerun := "UV_PROJECT_ENVIRONMENT=" + shellQuote(interpreter.Prefix) + " uv"
+		for _, argument := range arguments {
+			rerun += " " + shellQuote(argument)
+		}
+		return -1, "", Finding{
+			Code:    UVFailed,
+			Message: fmt.Sprintf("uv could not check uv.lock in %s (%v)", root, err),
+			Fix:     fmt.Sprintf("rerun `%s` for uv's diagnostics", rerun),
+		}
+	}
+
+	switch exit, _, failure := run("lock", "--check"); exit {
+	case -1:
+		return []Finding{failure}
+	case 1:
 		return []Finding{{
 			Code:    LockStale,
 			Message: fmt.Sprintf("uv.lock in %s does not match pyproject.toml", root),
 			Fix:     fmt.Sprintf("run `uv lock` in %s and commit the updated uv.lock", root),
-		}}, nil
+		}}
 	}
-	var output bytes.Buffer
-	syncCheck := exec.CommandContext(ctx, uv, "sync", "--locked", "--check", "--offline", "--project", root)
-	syncCheck.Dir, syncCheck.Env = root, environment
-	if exit, err := runUV(syncCheck, &output); err != nil {
-		return nil, err
-	} else if exit == 0 {
-		return nil, nil
+	// --inexact --no-dev checks the locked runtime set only: dev groups,
+	// extras, and tools installed alongside it are permitted.
+	exit, output, failure := run("sync", "--locked", "--check", "--inexact", "--no-dev")
+	switch exit {
+	case -1:
+		return []Finding{failure}
+	case 0:
+		return nil
 	}
-	var install, remove []string
-	for _, match := range plannedChange.FindAllStringSubmatch(output.String(), -1) {
+	var required, replaced []string
+	for _, match := range plannedChange.FindAllStringSubmatch(output, -1) {
 		change := match[2] + "==" + match[3]
 		if match[1] == "+" {
-			install = append(install, change)
+			required = append(required, change)
 		} else {
-			remove = append(remove, change)
+			replaced = append(replaced, change)
 		}
 	}
-	var differences []string
-	if len(install) > 0 {
-		differences = append(differences, "missing "+strings.Join(install, ", "))
+	message := fmt.Sprintf("the environment at %s lacks locked runtime packages", interpreter.Prefix)
+	if len(required) > 0 {
+		message += ": " + strings.Join(required, ", ")
 	}
-	if len(remove) > 0 {
-		differences = append(differences, "not in uv.lock "+strings.Join(remove, ", "))
+	if len(replaced) > 0 {
+		message += " (installed instead: " + strings.Join(replaced, ", ") + ")"
 	}
-	message := fmt.Sprintf("the environment at %s does not match uv.lock", prefix)
-	if len(differences) > 0 {
-		message += ": " + strings.Join(differences, "; ")
-	}
-	fix := fmt.Sprintf("run `uv sync --locked` in %s", root)
-	if len(remove) > 0 {
-		fix += "; it removes packages missing from uv.lock because a locked environment must match exactly (declare needed packages in [project].dependencies and run `uv lock`)"
-	}
-	return []Finding{{Code: LockOutOfSync, Message: message, Fix: fix}}, nil
+	return []Finding{{Code: LockOutOfSync, Message: message, Fix: syncCommand(interpreter.Prefix, root)}}
 }
 
-// runUV returns uv's check verdict: exit 1 means "not current". Any other
-// failure is an error that names the command to rerun, without uv's output.
-func runUV(command *exec.Cmd, output *bytes.Buffer) (int, error) {
-	command.Stdout, command.Stderr = output, output
-	err := command.Run()
-	var exit *exec.ExitError
-	switch {
-	case err == nil:
-		return 0, nil
-	case errors.As(err, &exit) && exit.ExitCode() == 1:
-		return 1, nil
-	default:
-		return 0, fmt.Errorf("`uv %s` failed in %s (%v); rerun it there for details", strings.Join(command.Args[1:4], " "), command.Dir, err)
+// syncCommand repairs the probed environment, naming it explicitly unless it
+// is the project's default .venv.
+func syncCommand(prefix, root string) string {
+	if filepath.Clean(prefix) == filepath.Join(root, ".venv") {
+		return fmt.Sprintf("run `uv sync --locked` in %s", root)
 	}
+	return fmt.Sprintf("run `UV_PROJECT_ENVIRONMENT=%s uv sync --locked --no-dev --project %s`, or launch via `uv run --locked massive …` from %s", shellQuote(prefix), shellQuote(root), root)
+}
+
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%+=:,./_-]+$`)
+
+func shellQuote(value string) string {
+	if shellSafe.MatchString(value) {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func lastLine(text string) string {

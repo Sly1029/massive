@@ -27,10 +27,12 @@ const (
 func DefaultRunnerCommand(language string) ([]string, error) {
 	switch language {
 	case "python":
-		if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
-			return PythonRunnerCommand(python), nil
+		// Always one isolated launch path; the massive launcher sets MASSIVE_PYTHON.
+		python := os.Getenv("MASSIVE_PYTHON")
+		if python == "" {
+			return nil, errors.New("Python tasks need MASSIVE_PYTHON; launch through the massive command installed by massive-workflows")
 		}
-		return []string{"massive-python-runner", descriptorPathToken}, nil
+		return PythonRunnerCommand(python), nil
 	case "typescript":
 		runner := os.Getenv("MASSIVE_TYPESCRIPT_RUNNER")
 		if runner == "" {

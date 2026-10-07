@@ -15,7 +15,7 @@ type EnvCommand struct {
 }
 
 type EnvCheckCommand struct {
-	Entry string `arg:"" name:"entry" help:"Python workflow entrypoint, optionally followed by #export." type:"path"`
+	Entry string `arg:"" name:"entry" help:"Python workflow file." type:"existingfile"`
 	JSON  bool   `help:"Emit one structured JSON report."`
 }
 
@@ -30,11 +30,15 @@ func (command *EnvCheckCommand) Run(ctx context.Context, stdout io.Writer) error
 		return err
 	}
 	failure := report.Err()
+	// "unverified" passes but declares nothing to check; CI can reject it.
+	status, mark := "ready", "✓ environment ready"
+	switch {
+	case failure != nil:
+		status = "failed"
+	case report.Verification == environment.Undeclared:
+		status, mark = "unverified", "! no [project] dependencies declared; only interpreter safety and the SDK release were checked"
+	}
 	if command.JSON {
-		status := "ready"
-		if failure != nil {
-			status = "failed"
-		}
 		if err := json.NewEncoder(stdout).Encode(envCheckOutput{Status: status, Report: report}); err != nil {
 			return err
 		}
@@ -44,8 +48,8 @@ func (command *EnvCheckCommand) Run(ctx context.Context, stdout io.Writer) error
 		return failure
 	}
 	interpreter := report.Interpreter
-	_, err = fmt.Fprintf(stdout, "✓ environment ready  %s\n  python        %s %s (%s/%s)\n  executable    %s\n  verification  %s\n  distributions %d\n",
-		report.ProjectRoot, interpreter.Implementation, interpreter.Version, interpreter.OS, interpreter.Arch,
+	_, err = fmt.Fprintf(stdout, "%s  %s\n  python        %s %s (%s/%s)\n  executable    %s\n  verification  %s\n  distributions %d\n",
+		mark, report.ProjectRoot, interpreter.Implementation, interpreter.Version, interpreter.OS, interpreter.Arch,
 		interpreter.Executable, report.Verification, len(report.Distributions))
 	return err
 }

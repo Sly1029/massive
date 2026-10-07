@@ -4,20 +4,25 @@ This package checks an existing Python environment against a workflow project.
 It never installs packages. Read `../../docs/spec/environment-materialization.md`
 before changing findings, verification levels, or the probe contract.
 
-The Python probe (`massive.environment`) must run with `-I` and read metadata
-only. Never import workflow modules before every finding is reported. Validate
-probe output against `conformance/schema/environment-probe.schema.json`, and
-update that schema, the Pydantic models, and the Go structs together. The probe
-imports the installed SDK. A broken SDK installation is an error with an
-installation command, not a finding.
+The Python probe (top-level `massive_environment`) must run with `-I` and read
+metadata only. It must not import workflow modules or the `massive` SDK, which
+keeps it fast and lets a broken SDK dependency surface as a lock finding.
+`conformance/schema/environment-probe.schema.json` is generated from the probe's
+Pydantic model; a Python test enforces this. Update the Go structs with it.
+Exit 2 from the probe means unreadable project metadata: surface its one line.
 
-uv checks run offline with `UV_PROJECT_ENVIRONMENT` set to the probed prefix.
-Exit 1 means "not current"; any other failure is an error. Findings may carry
-only package names and versions parsed from uv's planned-change lines. Raw uv
-output can contain index URLs with credentials, so never report or persist it.
-Lock checks keep exact `uv sync --check` semantics: extra packages fail. A
-missing `uv` with a lock present fails with a fix line; never downgrade the
-verification level silently.
+uv checks run offline with `UV_PROJECT_ENVIRONMENT` set to the probed prefix and
+`--python` set to the probed executable. Pass only allowlisted `UV_*` variables
+(cache, index, and resolution inputs); variables such as `UV_FROZEN`, `UV_NO_DEV`,
+or `UV_PYTHON` would change the check's meaning. Exit 1 means "not current"; any
+other failure is a `UV_FAILED` finding that keeps the probe's findings. Findings
+may carry only package names and versions parsed from uv's planned-change lines.
+Raw uv output can contain index URLs with credentials, so never report or persist it.
+The lock check is `--inexact --no-dev`: the locked runtime set must be installed,
+and dev groups, extras, or tools beside it are allowed. Fix lines must name the
+checked environment unless it is `<root>/.venv`. A missing `uv` with a lock, or a
+parent workspace lock, is a finding. Never downgrade the verification level
+silently; a project without `[project]` metadata is `UNDECLARED`.
 
 Test against real environments built with `uv venv` and `uv sync --locked`.
 `conformance/workflows/python-locked/uv.lock` is generated with `uv lock`;

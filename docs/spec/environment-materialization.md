@@ -56,32 +56,46 @@ lockfile, and virtual environment. `massive` does not install dependencies itsel
 ### Dependency preflight (implemented for existing Python environments)
 
 Before importing any workflow module, `massive run`, `massive build`, and
-`massive env check` run `python -I -m massive.environment probe <dir>` with the
-launching interpreter (`MASSIVE_PYTHON`, which the wheel launcher sets). The probe
-reads `[project]` metadata with Pydantic and installed distribution metadata with
-`importlib.metadata` and `packaging`. Its output is validated against
-`conformance/schema/environment-probe.schema.json`. The Go control plane then
-adds the SDK release check and, when `uv.lock` exists, runs
-`uv lock --check --offline`, followed by `uv sync --locked --check --offline`
-against the probed prefix (`UV_PROJECT_ENVIRONMENT`).
+`massive env check` run `python -I -m massive_environment probe <dir>` with the
+launching interpreter (`MASSIVE_PYTHON`, which the wheel launcher always sets to
+its own interpreter). The probe is a small top-level module that does not import
+the SDK. It reads `[project]` metadata with Pydantic and installed distribution
+metadata with `importlib.metadata` and `packaging`. Its output is validated
+against `conformance/schema/environment-probe.schema.json`, which is generated
+from the probe's Pydantic model. The Go control plane then adds the SDK release
+check and, when `uv.lock` exists, runs `uv lock --check`, followed by
+`uv sync --locked --check --inexact --no-dev`. Both run offline against the probed
+prefix (`UV_PROJECT_ENVIRONMENT`) and interpreter (`--python`), with an
+allowlisted environment: inherited `UV_*` settings keep only cache, index, and
+resolution options.
+
+The lock check verifies the locked **runtime** set: every package the lock
+installs without dev groups or extras is present at its locked version. Extra
+installed packages, including dev groups and extras, are allowed. That way a
+container synced with `--no-dev` and a development environment synced with
+extras both pass.
 
 | Code | Meaning |
 | --- | --- |
 | `REQUIRES_PYTHON` | The interpreter is outside `requires-python`. |
 | `MISSING_REQUIREMENT`, `REQUIREMENT_VERSION` | An applicable direct requirement is absent or the wrong version. |
-| `DUPLICATE_DISTRIBUTION` | Two copies of a distribution are on `sys.path`; the first shadows the rest. |
+| `DUPLICATE_DISTRIBUTION` | Two copies of a direct requirement or `massive-workflows` are on `sys.path`; the first shadows the rest. |
 | `SHADOWED_MODULE` | A workflow-directory module shadows a standard-library or installed module. |
+| `WORKSPACE_LOCK` | The workflow is a uv workspace member whose `uv.lock` is in a parent directory, so it is neither archived nor checked. |
 | `SDK_VERSION` | `massive-workflows` differs from the control plane release. Source-built control planes skip this check. |
 | `UV_UNAVAILABLE` | `uv.lock` exists but `uv` is not on `PATH`. There is no silent downgrade. |
 | `LOCK_STALE` | `uv.lock` does not match `pyproject.toml`. |
-| `LOCK_OUT_OF_SYNC` | The environment differs from the lock, including extra packages. |
+| `LOCK_OUT_OF_SYNC` | A locked runtime package is missing or at another version. |
+| `UV_FAILED` | uv could not run the check; the fix line is the exact command to rerun. |
 
 Each finding has a one-line fix. A finding names only the package names and
-versions from uv's planned changes; raw uv output is never reported. The
-verification level is `LOCK_SYNC_CHECKED` with a lock and
-`DIRECT_REQUIREMENTS_SATISFIED` without one. An interpreter that cannot run the
-probe, such as a base interpreter without `massive-workflows`, is an error with
-an installation command.
+versions from uv's planned changes; raw uv output is never reported. Fix lines
+name the checked environment (`UV_PROJECT_ENVIRONMENT=<prefix>`) unless it is the
+project's `.venv`. The verification level is `LOCK_SYNC_CHECKED` with a lock,
+`DIRECT_REQUIREMENTS_SATISFIED` without one, and `UNDECLARED` without `[project]`
+metadata. `UNDECLARED` is not a failure, but `env check` reports it as
+`unverified`. Unreadable project metadata is a one-line error. An interpreter
+without `massive-workflows` is an error with an installation command.
 
 After the check passes, the probed `sys.executable` runs the frontend and every
 local task, both with `-I`. The working directory and `PYTHONPATH` therefore

@@ -57,7 +57,7 @@ requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/massive"]
+packages = ["src/massive", "src/massive_environment"]
 exclude = ["src/massive/AGENTS.md"]
 
 [tool.hatch.build.hooks.custom]

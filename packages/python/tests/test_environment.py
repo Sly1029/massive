@@ -8,15 +8,24 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-_SCHEMA = json.loads(
-    (Path(__file__).resolve().parents[3] / "conformance/schema/environment-probe.schema.json")
-    .read_text()
+from massive_environment import Probe
+
+_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[3] / "conformance/schema/environment-probe.schema.json"
 )
+_SCHEMA = json.loads(_SCHEMA_PATH.read_text())
+
+
+def test_committed_schema_is_generated_from_the_probe_model() -> None:
+    # Regenerate with:
+    # python -I -c "import json, massive_environment as m;
+    #   print(json.dumps(m.Probe.model_json_schema(mode='serialization'), indent=2))"
+    assert Probe.model_json_schema(mode="serialization") == _SCHEMA
 
 
 def _probe(root: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-I", "-m", "massive.environment", "probe", str(root)],
+        [sys.executable, "-I", "-m", "massive_environment", "probe", str(root)],
         cwd=root,
         check=False,
         capture_output=True,
@@ -69,4 +78,7 @@ def test_probe_rejects_invalid_requirements_without_partial_output(tmp_path: Pat
     result = _probe(tmp_path)
     assert result.returncode == 2
     assert result.stdout == ""
-    assert "pyproject.toml" in result.stderr
+    prefix = f"invalid {tmp_path / 'pyproject.toml'}: project.dependencies.0: Value error, "
+    assert result.stderr.startswith(prefix)
+    assert result.stderr.count("\n") == 1
+    assert "errors.pydantic.dev" not in result.stderr

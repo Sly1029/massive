@@ -76,7 +76,7 @@ func TestPreflightFailureImportsNoWorkflowModule(t *testing.T) {
 	}
 	_, err := Emit(t.Context(), filepath.Join(root, "workflow.py"))
 	var preflight *environment.PreflightError
-	if !errors.As(err, &preflight) || preflight.Findings[0].Code != environment.MissingRequirement {
+	if !errors.As(err, &preflight) || preflight.Findings[0].Code != "MISSING_REQUIREMENT" {
 		t.Fatalf("error = %v, want a missing requirement finding", err)
 	}
 	if !strings.Contains(err.Error(), "no workflow module was imported") {

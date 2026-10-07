@@ -273,7 +273,8 @@ TOML
   cd "$locked"
   uv lock --quiet
   uv sync --quiet --locked
-  uv run --locked massive env check workflow.py --json > "$test_root/env-ready.json"
+  # The launcher overrides a stale exported interpreter with its own.
+  MASSIVE_PYTHON="$test_root/missing/python" uv run --locked massive env check workflow.py --json > "$test_root/env-ready.json"
   uv run --locked massive run workflow.py --input '{"value": 21}' \
     --store "$test_root/locked-store" --project massive/distribution-locked \
     --run-id locked --json > "$test_root/locked-result.json"
@@ -303,7 +304,8 @@ run = json.loads((root / "locked-result.json").read_text())
 assert run["status"] == "succeeded" and run["result"]["value"] == 42, run
 diagnostic = (root / "locked-preflight.txt").read_text()
 assert "MISSING_REQUIREMENT" in diagnostic and "LOCK_OUT_OF_SYNC" in diagnostic, diagnostic
-assert "missing tabulate==" in diagnostic and "uv sync --locked" in diagnostic, diagnostic
+assert "lacks locked runtime packages: tabulate==" in diagnostic, diagnostic
+assert "uv sync --locked" in diagnostic, diagnostic
 PY
 
 # The shipped Go CLI dispatches to the TypeScript adapters even when the Python
