@@ -51,8 +51,42 @@ uv run --locked massive run workflow.py --project example/analysis --input '{}'
 
 Create/update the lock deliberately with `uv lock`, not as an implicit side effect
 of compilation. Each workflow can have its own directory, project metadata,
-lockfile, and virtual environment. `massive` uses the launching Python interpreter
-for both emission and task execution. It does not install dependencies itself.
+lockfile, and virtual environment. `massive` does not install dependencies itself.
+
+### Dependency preflight (implemented for existing Python environments)
+
+Before importing any workflow module, `massive run`, `massive build`, and
+`massive env check` run `python -I -m massive.environment probe <dir>` with the
+launching interpreter (`MASSIVE_PYTHON`, which the wheel launcher sets). The probe
+reads `[project]` metadata with Pydantic and installed distribution metadata with
+`importlib.metadata` and `packaging`. Its output is validated against
+`conformance/schema/environment-probe.schema.json`. The Go control plane then
+adds the SDK release check and, when `uv.lock` exists, runs
+`uv lock --check --offline`, followed by `uv sync --locked --check --offline`
+against the probed prefix (`UV_PROJECT_ENVIRONMENT`).
+
+| Code | Meaning |
+| --- | --- |
+| `REQUIRES_PYTHON` | The interpreter is outside `requires-python`. |
+| `MISSING_REQUIREMENT`, `REQUIREMENT_VERSION` | An applicable direct requirement is absent or the wrong version. |
+| `DUPLICATE_DISTRIBUTION` | Two copies of a distribution are on `sys.path`; the first shadows the rest. |
+| `SHADOWED_MODULE` | A workflow-directory module shadows a standard-library or installed module. |
+| `SDK_VERSION` | `massive-workflows` differs from the control plane release. Source-built control planes skip this check. |
+| `UV_UNAVAILABLE` | `uv.lock` exists but `uv` is not on `PATH`. There is no silent downgrade. |
+| `LOCK_STALE` | `uv.lock` does not match `pyproject.toml`. |
+| `LOCK_OUT_OF_SYNC` | The environment differs from the lock, including extra packages. |
+
+Each finding has a one-line fix. A finding names only the package names and
+versions from uv's planned changes; raw uv output is never reported. The
+verification level is `LOCK_SYNC_CHECKED` with a lock and
+`DIRECT_REQUIREMENTS_SATISFIED` without one. An interpreter that cannot run the
+probe, such as a base interpreter without `massive-workflows`, is an error with
+an installation command.
+
+After the check passes, the probed `sys.executable` runs the frontend and every
+local task, both with `-I`. The working directory and `PYTHONPATH` therefore
+cannot shadow the archived source, and emission and execution cannot resolve
+different interpreters.
 
 For Argo, build an image with the same locked dependencies and Massive version,
 then reference its immutable digest using `container(...)`. Argo currently executes
@@ -89,10 +123,11 @@ incompatible dependencies should fail before scheduling work, with an actionable
 installation command. A container materializer must commit an actual image before
 recording an artifact; a recipe is not a built artifact.
 
-Dependency preflight should eventually happen before importing author code. That
-requires reading project metadata without graph evaluation. Optional Docker-based
-local execution can then reuse an existing image rather than invent a new scheduler.
-Neither dependency preflight nor local Docker execution is implemented by this change.
+Local dependency preflight runs before any author code is imported (see above).
+The realized environment is not yet recorded in run journals, and Argo pods do not
+yet check their image against the archived project inputs. Optional Docker-based
+local execution can later reuse an existing image rather than invent a new
+scheduler; it is not implemented.
 
 ## Identity and sharing
 

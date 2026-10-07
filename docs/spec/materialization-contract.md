@@ -115,5 +115,7 @@ massive-compiler bundle-argo \
   --out .massive/rebuilt
 ```
 
-No automatic installation, dependency preflight, registry verification, server
-build workers, provider registry, or local Docker execution is included.
+No automatic installation, registry verification, server build workers, provider
+registry, or local Docker execution is included. Local dependency preflight checks
+the emitting interpreter ([environment materialization](environment-materialization.md));
+it does not verify the container image this manifest selects.

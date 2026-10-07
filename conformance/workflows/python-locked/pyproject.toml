@@ -1,0 +1,10 @@
+[project]
+name = "python-locked"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["massive-workflows", "tabulate>=0.9,<1"]
+
+# Conformance builds the SDK from this checkout. Published workflows depend on
+# the massive-workflows release instead. Regenerate uv.lock with `uv lock`.
+[tool.uv.sources]
+massive-workflows = { path = "../../../packages/python", editable = true }

@@ -26,6 +26,7 @@ type CLI struct {
 	Run     RunCommand     `cmd:"" help:"Compile and execute a workflow locally."`
 	Build   BuildCommand   `cmd:"" help:"Compile a workflow for a deployment target."`
 	Publish PublishCommand `cmd:"" help:"Upload an object-store-v0 bundle's source archives to its datastore."`
+	Env     EnvCommand     `cmd:"" help:"Check a workflow's dependency environment."`
 	Version VersionCommand `cmd:"" help:"Print the Massive version."`
 	Runtime RuntimeCommand `cmd:"" hidden:""`
 }

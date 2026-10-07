@@ -7,6 +7,7 @@ artifact boundaries used by conformance.
 
 Kong owns argument validation. Parse errors exit 2 and write only to stderr.
 Machine-readable output must remain parseable even when author code logs.
+`env check --json` prints its report to stdout even when findings make it exit 1.
 Adapter dispatch follows the entrypoint language, including under the Python
 wheel launcher. Exercise `../../scripts/test-python-distribution.sh` after
 changing language dispatch, packaging, or runtime command selection.

@@ -505,7 +505,8 @@ Multiple exports in one directory share that directory's package configuration.
 
 `pyproject.toml` and `uv.lock`, when present, are always included in the source
 manifest. Changes to their bytes or any included resource change package identity.
-This records intended dependency inputs; it does **not** verify installed packages.
+Including them records intended dependency inputs; dependency preflight, below,
+checks the installed packages.
 
 Use `importlib.resources.files("analysis")` or paths relative to `__file__` to
 load packaged resources. The runner imports from a verified extracted archive,
@@ -520,10 +521,44 @@ uv sync --locked
 uv run --locked massive run workflow.py --project example/analysis --input '{}'
 ```
 
-The launching Python environment runs both the frontend and each step. Massive
-does not install dependencies automatically. For Argo, build an immutable runner
-image with the same locked dependencies and Massive version. Local execution
-currently uses the active interpreter, not the container declared in the contract.
+### Dependency preflight
+
+`massive run` and `massive build` check the launching interpreter before importing
+any workflow module. The check runs `python -I -m massive.environment probe` on
+the workflow directory, which reads only project and distribution metadata. It
+fails with one fix line per problem when:
+
+- the interpreter does not satisfy `requires-python`;
+- an applicable `[project].dependencies` entry is missing or the wrong version;
+- a distribution is installed twice on `sys.path`;
+- a module in the workflow directory, such as `json.py`, shadows a standard-library
+  or installed module;
+- `massive-workflows` differs from the control plane's release;
+- with a `uv.lock`: the lock is stale (`uv lock --check`), or the environment differs
+  from it (`uv sync --locked --check`). This is exact, so packages installed outside
+  the lock also fail. A lock without `uv` on `PATH` fails too.
+
+Without a lock, only direct requirements are checked
+(`DIRECT_REQUIREMENTS_SATISFIED`); transitive versions are not. With a lock, the
+check is `LOCK_SYNC_CHECKED`. Both checks run offline, never install anything,
+and never print uv's output, because index URLs can carry credentials. Check an
+environment in CI without running the workflow:
+
+```sh
+uv run --locked massive env check workflow.py --json
+```
+
+The command prints one JSON report with `status`, `verification`, the
+interpreter, installed distributions, and any findings, and exits 1 if there
+are findings. The checked interpreter's `sys.executable` then runs the frontend
+and every local step in isolated mode (`-I`), so neither the working directory
+nor `PYTHONPATH` can shadow the verified source snapshot. Launch through the
+`massive` command installed by `massive-workflows`, which supplies that
+interpreter as `MASSIVE_PYTHON`.
+
+For Argo, build an immutable runner image with the same locked dependencies and
+Massive version. Preflight checks the local emission environment, not the
+container declared in the contract.
 
 See the [packaged map example](https://github.com/Sly1029/massive/blob/main/examples/07-package/workflow.py) for a
 nested module, a text resource, and ordered collection into a typed result.

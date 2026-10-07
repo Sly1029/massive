@@ -16,6 +16,10 @@ recursive composition, scoped ID collisions, and over-long scoped IDs before
 producing a spec. Expansion must stay spec-transparent: a composed graph emits
 the same canonical spec as its hand-inlined twin using `<call>--<child>` IDs.
 The Go compiler owns environment identity; `Container` describes requirements.
+`environment.py` is the dependency preflight probe. It runs under `python -I`,
+reads only project and distribution metadata, and must not import workflow modules.
+The frontend and runner also run under `-I`, with an explicit `sys.path`
+entry for the workflow directory or verified snapshot.
 
 Blob/Tree values carry immutable references. Publish bodies before committing
 an output manifest; hydrate into invocation-local scratch. A changed working

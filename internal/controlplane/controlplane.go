@@ -17,6 +17,7 @@ import (
 
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/deployment"
+	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
@@ -24,12 +25,46 @@ import (
 )
 
 // Version is injected by the wheel build; source builds report a development version.
-var Version = "0.0.0-dev"
+var Version = developmentVersion
+
+const developmentVersion = "0.0.0-dev"
 
 type FrontendResult struct {
 	Spec        *spec.WorkflowSpec
 	Canonical   []byte
 	PackageRoot string
+	// Environment is the preflight report for a Python workflow, whose
+	// interpreter also runs every task. TypeScript workflows have none.
+	Environment *environment.Report
+}
+
+// CheckEnvironment runs dependency preflight for a Python workflow entrypoint
+// without importing it. Findings are returned in the report, not as an error.
+func CheckEnvironment(ctx context.Context, entry string) (*environment.Report, error) {
+	path := entry
+	if index := strings.LastIndex(entry, "#"); index >= 0 {
+		path = entry[:index]
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workflow entrypoint: %w", err)
+	}
+	if filepath.Ext(absolute) != ".py" {
+		return nil, fmt.Errorf("dependency preflight requires a Python workflow entrypoint, not %q", entry)
+	}
+	if info, err := os.Stat(absolute); err != nil || info.IsDir() {
+		return nil, fmt.Errorf("workflow entrypoint %q is not a file", absolute)
+	}
+	python := os.Getenv("MASSIVE_PYTHON")
+	if python == "" {
+		return nil, errors.New("Python workflows need the project interpreter; launch the massive command installed by massive-workflows (for example `uv run --locked massive …`) or set MASSIVE_PYTHON")
+	}
+	sdkVersion := Version
+	if sdkVersion == developmentVersion {
+		// A source-built control plane is paired with its checkout's SDK.
+		sdkVersion = ""
+	}
+	return environment.Check(ctx, environment.Request{Python: python, ProjectRoot: filepath.Dir(absolute), SDKVersion: sdkVersion})
 }
 
 // Emit loads a language frontend as a process adapter. The only data crossing
@@ -47,6 +82,7 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	resolvedEntry := absolute + strings.TrimPrefix(entry, path)
 
 	var argv []string
+	var report *environment.Report
 	language := "Python"
 	packageRoot := filepath.Dir(absolute)
 	extension := filepath.Ext(absolute)
@@ -59,15 +95,14 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	}
 	switch extension {
 	case ".py":
-		if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
-			argv = []string{python, "-m", "massive.frontend"}
-		} else {
-			frontend := os.Getenv("MASSIVE_PYTHON_FRONTEND")
-			if frontend == "" {
-				frontend = "massive-python-frontend"
-			}
-			argv = []string{frontend}
+		report, err = CheckEnvironment(ctx, entry)
+		if err != nil {
+			return nil, err
 		}
+		if err := report.Err(); err != nil {
+			return nil, err
+		}
+		argv = []string{report.Interpreter.Executable, "-I", "-m", "massive.frontend"}
 	case ".ts":
 		language = "TypeScript"
 		frontend := os.Getenv("MASSIVE_TYPESCRIPT_FRONTEND")
@@ -124,6 +159,7 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 		Spec:        workflowSpec,
 		Canonical:   canonicalBytes,
 		PackageRoot: packageRoot,
+		Environment: report,
 	}, nil
 }
 
@@ -180,8 +216,13 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 		reused = true
 	}
 
+	var runnerCommand []string
+	if request.Frontend.Environment != nil {
+		runnerCommand = orchestrator.PythonRunnerCommand(request.Frontend.Environment.Interpreter.Executable)
+	}
 	runResult, runErr := orchestrator.Run(ctx, orchestrator.RunConfig{
 		Plan:              compiled.Plan,
+		RunnerCommand:     runnerCommand,
 		DatastoreRoot:     storeRoot,
 		ProjectID:         project,
 		RunID:             request.RunID,

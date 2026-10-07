@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://massive.dev/conformance/schema/environment-probe.schema.json",
+  "title": "Massive Python environment probe",
+  "description": "Facts reported by `python -I -m massive.environment probe <workflow-directory>` before any workflow module is imported. Interpreter paths identify the pinned executable; they are not part of a realization identity.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "interpreter", "project", "distributions", "findings"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "interpreter": { "$ref": "#/$defs/interpreter" },
+    "project": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/project" }]
+    },
+    "distributions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/distribution" }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "nonEmpty": { "type": "string", "minLength": 1 },
+    "interpreter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executable", "prefix", "implementation", "version", "cacheTag", "platform", "os", "arch"],
+      "properties": {
+        "executable": { "$ref": "#/$defs/nonEmpty" },
+        "prefix": { "$ref": "#/$defs/nonEmpty" },
+        "implementation": { "$ref": "#/$defs/nonEmpty" },
+        "version": { "$ref": "#/$defs/nonEmpty" },
+        "cacheTag": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/nonEmpty" }] },
+        "platform": { "$ref": "#/$defs/nonEmpty" },
+        "os": { "$ref": "#/$defs/nonEmpty" },
+        "arch": { "$ref": "#/$defs/nonEmpty" }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiresPython", "dependencies"],
+      "properties": {
+        "requiresPython": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/nonEmpty" }] },
+        "dependencies": {
+          "description": "PEP 508 requirements with canonical names, sorted.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/nonEmpty" }
+        }
+      }
+    },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "direct", "editable"],
+      "properties": {
+        "name": {
+          "description": "Canonical distribution name; the first copy on sys.path.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "version": { "$ref": "#/$defs/nonEmpty" },
+        "direct": { "type": "boolean" },
+        "editable": { "type": "boolean" }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "fix"],
+      "properties": {
+        "code": {
+          "enum": [
+            "REQUIRES_PYTHON",
+            "MISSING_REQUIREMENT",
+            "REQUIREMENT_VERSION",
+            "DUPLICATE_DISTRIBUTION",
+            "SHADOWED_MODULE"
+          ]
+        },
+        "message": { "$ref": "#/$defs/nonEmpty" },
+        "fix": { "$ref": "#/$defs/nonEmpty" }
+      }
+    }
+  }
+}

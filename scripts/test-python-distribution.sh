@@ -253,6 +253,59 @@ assert run["result"] == {
 }, run
 PY
 
+# A locked workflow project checks its own environment before importing author
+# code. The wheel's control plane also requires the same massive-workflows release.
+locked="$test_root/locked"
+mkdir -p "$locked"
+cp "$repository/conformance/workflows/python-locked/workflow.py" "$locked/workflow.py"
+printf 'open("imported", "w").close()\n' >> "$locked/workflow.py"
+cat > "$locked/pyproject.toml" <<TOML
+[project]
+name = "locked-distribution"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["massive-workflows==$version", "tabulate>=0.9,<1"]
+
+[tool.uv.sources]
+massive-workflows = { path = "$wheel" }
+TOML
+(
+  cd "$locked"
+  uv lock --quiet
+  uv sync --quiet --locked
+  uv run --locked massive env check workflow.py --json > "$test_root/env-ready.json"
+  uv run --locked massive run workflow.py --input '{"value": 21}' \
+    --store "$test_root/locked-store" --project massive/distribution-locked \
+    --run-id locked --json > "$test_root/locked-result.json"
+  rm imported
+  uv pip uninstall --quiet --python .venv/bin/python tabulate
+  if .venv/bin/massive run workflow.py --input '{"value": 21}' \
+    --store "$test_root/locked-store" --project massive/distribution-locked \
+    2> "$test_root/locked-preflight.txt"; then
+    echo "preflight accepted an environment that differs from uv.lock" >&2
+    exit 1
+  fi
+  test ! -e imported
+)
+"$python" - "$test_root" "$version" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+ready = json.loads((root / "env-ready.json").read_text())
+assert ready["status"] == "ready", ready
+assert ready["verification"] == "LOCK_SYNC_CHECKED", ready
+assert ready["interpreter"]["executable"].startswith(str(root / "locked/.venv")), ready
+sdk = next(item for item in ready["distributions"] if item["name"] == "massive-workflows")
+assert sdk == {"name": "massive-workflows", "version": sys.argv[2], "direct": True, "editable": False}, sdk
+run = json.loads((root / "locked-result.json").read_text())
+assert run["status"] == "succeeded" and run["result"]["value"] == 42, run
+diagnostic = (root / "locked-preflight.txt").read_text()
+assert "MISSING_REQUIREMENT" in diagnostic and "LOCK_OUT_OF_SYNC" in diagnostic, diagnostic
+assert "missing tabulate==" in diagnostic and "uv sync --locked" in diagnostic, diagnostic
+PY
+
 # The shipped Go CLI dispatches to the TypeScript adapters even when the Python
 # launcher supplies MASSIVE_PYTHON. No repository CLI or binary build cache runs.
 cp -R "$repository/conformance/workflows/linear-chain" "$test_root/typescript"

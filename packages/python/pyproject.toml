@@ -26,6 +26,7 @@ classifiers = [
 dependencies = [
   "botocore>=1.35.10,<2",
   "jsonschema>=4.23,<5",
+  "packaging>=24.2,<27",
   "pydantic>=2.12,<3",
   "typing-extensions>=4.14.1,<5",
 ]

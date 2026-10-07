@@ -41,3 +41,6 @@ only while attempts remain. Cancellation, infrastructure errors, and output
 verification failures end the step. Apply `timeoutSeconds` per attempt as an
 invoker deadline that yields a retryable failure, not a run cancellation. The
 backoff wait must observe the run context.
+
+Python tasks run as `python -I -m massive.runner`. Local runs pin the interpreter
+that passed dependency preflight; do not resolve `MASSIVE_PYTHON` again per task.

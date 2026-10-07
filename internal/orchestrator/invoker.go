@@ -28,7 +28,7 @@ func DefaultRunnerCommand(language string) ([]string, error) {
 	switch language {
 	case "python":
 		if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
-			return []string{python, "-m", "massive.runner", descriptorPathToken}, nil
+			return PythonRunnerCommand(python), nil
 		}
 		return []string{"massive-python-runner", descriptorPathToken}, nil
 	case "typescript":
@@ -40,6 +40,12 @@ func DefaultRunnerCommand(language string) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported runner language %q", language)
 	}
+}
+
+// PythonRunnerCommand runs tasks with a pinned interpreter in isolated mode, so
+// the working directory and PYTHONPATH cannot shadow the verified source snapshot.
+func PythonRunnerCommand(python string) []string {
+	return []string{python, "-I", "-m", "massive.runner", descriptorPathToken}
 }
 
 type ProcessStepInvoker struct {

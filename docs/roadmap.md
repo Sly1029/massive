@@ -33,12 +33,19 @@ Implemented:
   maps, merges, child-graph calls, retries, timeouts, and cancellation) against
   a reference interpreter, rejects rehashed semantic mutations, checks plan
   identity metamorphically, and lowers every generated plan to Argo.
+- Dependency preflight checks the launching interpreter before importing author
+  code: `requires-python`, direct requirements, shadowed distributions and
+  modules, the SDK release, and with `uv.lock` an exact, offline
+  `uv sync --locked --check`. `massive env check --json` exposes it to CI. The
+  checked interpreter runs emission and every local task in isolated mode.
 
 Next:
 
 - Exercise installation and execution on clean Linux CI runners.
-- Add dependency preflight and record the realized environment identity. Use
-  standard Python project metadata and lockfiles, not a second dependency language.
+- Record the realized environment identity in run journals, and check Argo pods
+  against the archived project inputs. Local dependency preflight is implemented
+  (below); keep using standard Python project metadata and lockfiles, not a
+  second dependency language.
 - Add artifact references for large arbitrary JSON values. File bodies already
   use references; ordinary JSON values still pass through Argo parameters.
 
