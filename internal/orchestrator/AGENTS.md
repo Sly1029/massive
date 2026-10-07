@@ -24,6 +24,11 @@ Reconcile all reported dispatches before verification can fail. Publish the map
 journal after reconciliation instead of rewriting the full item list for every
 item, which makes publication quadratic in map cardinality.
 
+Source snapshots must remain read-only after installation. macOS requires the
+staging directory itself to be writable during rename; restore its read-only
+mode before reporting installation success. Containment checks must resolve
+symlinks in existing ancestors even when the snapshot target does not exist.
+
 Retries append attempts; never rewrite an earlier attempt or reuse its output
 slot. Only failed outcomes with a retryable exit schedule another attempt, and
 only while attempts remain. Cancellation, infrastructure errors, and output

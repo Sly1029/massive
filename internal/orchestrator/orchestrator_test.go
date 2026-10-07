@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -975,6 +976,52 @@ func TestPopulateSnapshotRejectsSymlinkEscape(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "outside the source package root") {
 		t.Fatalf("error = %v, want outside-root rejection", err)
+	}
+}
+
+func TestPathWithinMissingTargetUnderSymlinkedRoot(t *testing.T) {
+	realRoot := t.TempDir()
+	linkedRoot := filepath.Join(t.TempDir(), "store")
+	if err := os.Symlink(realRoot, linkedRoot); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	contained, err := pathWithin(linkedRoot, filepath.Join(linkedRoot, ".snapshots", "missing"))
+	if err != nil || !contained {
+		t.Fatalf("missing snapshot inside symlinked store: contained=%v, err=%v", contained, err)
+	}
+	escape := filepath.Join(realRoot, "escape")
+	if err := os.Symlink(t.TempDir(), escape); err != nil {
+		t.Fatal(err)
+	}
+	contained, err = pathWithin(linkedRoot, filepath.Join(linkedRoot, "escape", "missing"))
+	if err != nil || contained {
+		t.Fatalf("missing target through escaping symlink: contained=%v, err=%v", contained, err)
+	}
+}
+
+func TestEnsureSourceSnapshotInstallsReadOnlyTree(t *testing.T) {
+	sourceRoot := t.TempDir()
+	content := []byte("export const value = 1;\n")
+	if err := os.WriteFile(filepath.Join(sourceRoot, "workflow.ts"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	storeRoot := t.TempDir()
+	files := []SourcePackageFile{{Path: "workflow.ts", Hash: canonical.DigestBytes(content)}}
+	snapshotDir := sourceSnapshotDir(storeRoot, canonical.DigestBytes(content))
+	t.Cleanup(func() { _ = forceRemoveAll(snapshotDir) })
+	if err := ensureSourceSnapshot(storeRoot, sourceRoot, snapshotDir, files); err != nil {
+		t.Fatal(err)
+	}
+	if !snapshotMatchesManifest(snapshotDir, files) {
+		t.Fatal("installed snapshot does not match its source manifest")
+	}
+	if runtime.GOOS != "windows" {
+		for path, mode := range map[string]os.FileMode{snapshotDir: 0o555, filepath.Join(snapshotDir, "workflow.ts"): 0o444} {
+			info, err := os.Stat(path)
+			if err != nil || info.Mode().Perm() != mode {
+				t.Fatalf("snapshot permissions for %s: info=%v, err=%v, want=%o", path, info, err, mode)
+			}
+		}
 	}
 }
 
