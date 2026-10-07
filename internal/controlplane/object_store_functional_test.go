@@ -1,8 +1,10 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,11 +27,7 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	python := filepath.Join(repository, "packages", "python", ".venv", "bin", "python")
-	if _, err := os.Stat(python); err != nil {
-		t.Skip("Python SDK environment is unavailable; run uv sync --project packages/python")
-	}
-	t.Setenv("MASSIVE_PYTHON", python)
+	python := requirePythonSDK(t, repository)
 	workflowRoot := t.TempDir()
 	fixture := filepath.Join(repository, "conformance", "workflows", "large-source")
 	for _, name := range []string{"workflow.py", "pyproject.toml"} {
@@ -106,7 +104,7 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Execute with exactly the digests the WorkflowTemplate pins.
-	pinned := orchestrator.PublishedSources{}
+	pinned := map[string]orchestrator.SourceArchive{}
 	for _, item := range template.Spec.Templates {
 		if item.Name != "step-areas" {
 			continue
@@ -114,7 +112,7 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 		for _, arg := range item.Container.Args {
 			if value, ok := strings.CutPrefix(arg, "--source-archive="); ok {
 				packageHash, archiveHash, _ := strings.Cut(value, "=")
-				pinned[packageHash] = archiveHash
+				pinned[packageHash] = orchestrator.SourceArchive{Digest: archiveHash}
 			}
 		}
 	}
@@ -125,10 +123,14 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 	run := func(t *testing.T, descriptor orchestrator.DatastoreDescriptor) {
 		config := orchestrator.IsolatedStepConfig{
 			Plan: workflowPlan, Datastore: descriptor, ProjectID: "argo/large-source", RunID: "remote",
-			RunnerCommand: []string{python, "-m", "massive.runner", "{descriptor}"}, Sources: pinned,
+			RunnerCommand: []string{python, "-m", "massive.runner", "{descriptor}"}, SourceArchives: pinned,
 		}
 		config.NodeID = "areas"
-		if _, err := orchestrator.RunIsolatedStep(context.Background(), config, []byte(`{}`)); err == nil || !strings.Contains(err.Error(), "massive publish") {
+		// A missing archive is a deterministic descriptor failure (exit 64),
+		// which Argo's retry expression never retries.
+		_, err := orchestrator.RunIsolatedStep(context.Background(), config, []byte(`{}`))
+		var failure *orchestrator.InvocationFailure
+		if !errors.As(err, &failure) || failure.ExitCode != 64 || !strings.Contains(failure.Diagnostic, "massive publish") {
 			t.Fatalf("unpublished archive error = %v", err)
 		}
 		for attempt, created := range []bool{true, false} {
@@ -136,7 +138,7 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(published) != 1 || published[0].Created != created || published[0].ArchiveHash != pinned[published[0].PackageHash] {
+			if len(published) != 1 || published[0].Created != created || published[0].ArchiveHash != pinned[published[0].PackageHash].Digest {
 				t.Fatalf("publication %d = %+v", attempt, published)
 			}
 		}
@@ -195,5 +197,113 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 			Kind: "s3", Bucket: "massive-sources", Region: "us-east-1", Prefix: "published",
 			Endpoint: "http://" + endpoint, ForcePathStyle: &forcePathStyle,
 		})
+	})
+}
+
+// requirePythonSDK returns the repository's Python SDK interpreter. Locally a
+// missing environment skips the test; in CI (CI=true) it fails it.
+func requirePythonSDK(t *testing.T, repository string) string {
+	t.Helper()
+	python := filepath.Join(repository, "packages", "python", ".venv", "bin", "python")
+	if _, err := os.Stat(python); err != nil {
+		if os.Getenv("CI") == "true" {
+			t.Fatalf("Python SDK environment is unavailable in CI: %v", err)
+		}
+		t.Skip("Python SDK environment is unavailable; run uv sync --project packages/python")
+	}
+	t.Setenv("MASSIVE_PYTHON", python)
+	return python
+}
+
+func TestPublishRejectsUnsafeBundlesAndNeverOverwrites(t *testing.T) {
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirePythonSDK(t, repository)
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "examples", "06-map", "workflow.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := func(transport string) string {
+		output := t.TempDir()
+		if _, err := BundleArgo(ArgoBundleRequest{
+			Frontend: frontend, OutputDirectory: output, ProfileName: "functional-test",
+			ArtifactStoreBinding: "massive-artifacts", Namespace: "workflows",
+			ServiceAccountName: "massive-runner", WorkflowTemplateName: "map-example", RuntimeTransport: transport,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return output
+	}
+	store := func() orchestrator.DatastoreDescriptor {
+		return orchestrator.LocalDatastoreDescriptor{Kind: "local", Path: writableStoreForTest(t)}
+	}
+
+	if _, err := PublishArgoSources(context.Background(), build(argo.TransportEmbedded), store()); err == nil || !strings.Contains(err.Error(), "only object-store-v0 bundles are published") {
+		t.Fatalf("embedded bundle publication error = %v", err)
+	}
+
+	bundle := build(argo.TransportObjectStore)
+	tampered := func(t *testing.T, name string, change func([]byte) []byte) string {
+		copied := t.TempDir()
+		if err := os.CopyFS(copied, os.DirFS(bundle)); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(copied, filepath.FromSlash(name))
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, change(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return copied
+	}
+	archives, err := filepath.Glob(filepath.Join(bundle, "runtime-assets", "*.tar"))
+	if err != nil || len(archives) != 1 {
+		t.Fatalf("bundle archives = %v, %v", archives, err)
+	}
+	archiveName := "runtime-assets/" + filepath.Base(archives[0])
+	t.Run("tampered archive", func(t *testing.T) {
+		copied := tampered(t, archiveName, func(body []byte) []byte {
+			changed := append([]byte(nil), body...)
+			changed[600] ^= 1 // first file body byte
+			return changed
+		})
+		if _, err := PublishArgoSources(context.Background(), copied, store()); err == nil || !strings.Contains(err.Error(), "has digest") {
+			t.Fatalf("tampered archive error = %v", err)
+		}
+	})
+	t.Run("tampered materialization manifest", func(t *testing.T) {
+		copied := tampered(t, "materialization-manifest.json", func(body []byte) []byte {
+			return bytes.Replace(body, []byte(`"materializerVersion":"1"`), []byte(`"materializerVersion":"2"`), 1)
+		})
+		if _, err := PublishArgoSources(context.Background(), copied, store()); err == nil || !strings.Contains(err.Error(), "does not match the digest") {
+			t.Fatalf("tampered manifest error = %v", err)
+		}
+	})
+	t.Run("different bytes at the key", func(t *testing.T) {
+		probe, err := PublishArgoSources(context.Background(), bundle, store())
+		if err != nil {
+			t.Fatal(err)
+		}
+		descriptor := store()
+		planted := []byte("not the published archive")
+		local, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: descriptor.(orchestrator.LocalDatastoreDescriptor).Path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := datastore.MustKey(probe[0].Key)
+		if _, err := local.Put(context.Background(), key, planted, datastore.PutOptions{ContentType: orchestrator.SourceArchiveContentType}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := PublishArgoSources(context.Background(), bundle, descriptor); err == nil || !strings.Contains(err.Error(), "different source archive") {
+			t.Fatalf("conflicting publication error = %v", err)
+		}
+		existing, err := local.Get(context.Background(), key)
+		if err != nil || !bytes.Equal(existing.Body, planted) {
+			t.Fatalf("publication replaced the existing object: %q, %v", existing.Body, err)
+		}
 	})
 }

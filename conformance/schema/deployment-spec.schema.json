@@ -59,8 +59,8 @@
       "required": ["kind"],
       "properties": { "kind": { "enum": ["local", "argo"] } },
       "allOf": [
-        { "if": { "properties": { "kind": { "const": "local" } } }, "then": { "$ref": "#/$defs/localTarget" } },
-        { "if": { "properties": { "kind": { "const": "argo" } } }, "then": { "$ref": "#/$defs/argoTarget" } }
+        { "if": { "required": ["kind"], "properties": { "kind": { "const": "local" } } }, "then": { "$ref": "#/$defs/localTarget" } },
+        { "if": { "required": ["kind"], "properties": { "kind": { "const": "argo" } } }, "then": { "$ref": "#/$defs/argoTarget" } }
       ]
     },
     "localTarget": {

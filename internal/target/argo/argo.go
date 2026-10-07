@@ -29,9 +29,12 @@ const (
 	// TransportEmbedded mounts the plan and source archives from one immutable
 	// ConfigMap. TransportObjectStore mounts only the plan; pods resolve source
 	// archives from the shared datastore by package key and archive digest.
-	TransportEmbedded         = "embedded-v0"
-	TransportObjectStore      = "object-store-v0"
-	workflowTemplateSchemaRef = "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.argoproj.workflow.v1alpha1.WorkflowTemplate"
+	TransportEmbedded    = "embedded-v0"
+	TransportObjectStore = "object-store-v0"
+	// BundleManifestSchemaVersion is the only TargetBundleManifest version this
+	// compiler writes and publish accepts; 0 is an explicit value, not absence.
+	BundleManifestSchemaVersion = 0
+	workflowTemplateSchemaRef   = "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.argoproj.workflow.v1alpha1.WorkflowTemplate"
 )
 
 type File struct {
@@ -786,7 +789,7 @@ func buildBundle(p *planpb.WorkflowPlan, d *deployment.Spec, files []File) (*Bun
 		return nil, err
 	}
 	bundleHash := canonical.DigestBytes(identityJSON)
-	manifest := &planpb.TargetBundleManifest{SchemaVersion: u32(0), Target: str(Kind), PlanHash: str(p.GetPlanHash()), BundleHash: str(bundleHash), Files: entries, Validations: []*planpb.ValidationResult{{Name: str("argo-schema"), Passed: boolp(true)}, {Name: str("dag-integrity"), Passed: boolp(true)}, {Name: str("credential-free-binding"), Passed: boolp(true)}, {Name: str("secret-binding"), Passed: boolp(true)}}, Provenance: &planpb.BundleProvenance{CompilerName: str(p.GetProvenance().GetCompilerName()), CompilerVersion: str(p.GetProvenance().GetCompilerVersion())}, DeploymentHash: str(d.DeploymentHash), RuntimeTransport: str(d.Profile.Target.RuntimeTransport)}
+	manifest := &planpb.TargetBundleManifest{SchemaVersion: u32(BundleManifestSchemaVersion), Target: str(Kind), PlanHash: str(p.GetPlanHash()), BundleHash: str(bundleHash), Files: entries, Validations: []*planpb.ValidationResult{{Name: str("argo-schema"), Passed: boolp(true)}, {Name: str("dag-integrity"), Passed: boolp(true)}, {Name: str("credential-free-binding"), Passed: boolp(true)}, {Name: str("secret-binding"), Passed: boolp(true)}}, Provenance: &planpb.BundleProvenance{CompilerName: str(p.GetProvenance().GetCompilerName()), CompilerVersion: str(p.GetProvenance().GetCompilerVersion())}, DeploymentHash: str(d.DeploymentHash), RuntimeTransport: str(d.Profile.Target.RuntimeTransport)}
 	raw, err := protojson.Marshal(manifest)
 	if err != nil {
 		return nil, err

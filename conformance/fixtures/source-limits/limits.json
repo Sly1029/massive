@@ -1,0 +1,38 @@
+{
+  "description": "Shared source-package limit archives (gzip-compressed USTAR). Every verifier decompresses an archive and checks it: Go sourceidentity.VerifyArchive, the Python runner, and the TypeScript runner. Package hashes were computed by the Python SDK. The TypeScript runner keeps a smaller cap of 1,024 files and 50 MiB and rejects larger packages with a diagnostic naming the Python runner. Byte-limit acceptance at exactly 256 MiB is not stored; it would require 256 MiB of data.",
+  "limits": {
+    "files": 16384,
+    "bytes": 268435456,
+    "typescriptFiles": 1024,
+    "typescriptBytes": 52428800
+  },
+  "cases": [
+    {
+      "archive": "files-at-limit.tar.gz",
+      "description": "16,384 empty files: exactly the shared file limit",
+      "packageHash": "sha256:3d3214f9381f6e093fd0b5c8ea2638272e724c11098db1c4bf77d91f37731c26",
+      "archiveHash": "sha256:cc4fdd26fb4d22bb96897fd3c8dc6e38f2532dec32fc4fc4ef4448540b1cb55e",
+      "go": "accept",
+      "python": "accept",
+      "typescript": "reject-typescript-cap"
+    },
+    {
+      "archive": "files-over-limit.tar.gz",
+      "description": "16,385 empty files: one above the shared file limit",
+      "packageHash": "sha256:d8407d99c1ce568810ec9f98ccb3eca9e3cd4f71deebde92ca99f83b6736dc55",
+      "archiveHash": "sha256:ed2a6b8c81268159bd33410f71ca001d06a10e7e7d69092cb647d4e07bfde5b9",
+      "go": "reject-limits",
+      "python": "reject-limits",
+      "typescript": "reject-typescript-cap"
+    },
+    {
+      "archive": "bytes-over-limit.tar.gz",
+      "description": "one file header declaring 256 MiB + 1 byte with no body; verifiers must reject the declared size before reading",
+      "packageHash": null,
+      "archiveHash": "sha256:18e34643ba539bffc9bbc1170e2e85023e8f8c7a974cc7ec983824ab189e8c75",
+      "go": "reject-limits",
+      "python": "reject-limits",
+      "typescript": "reject-typescript-cap"
+    }
+  ]
+}

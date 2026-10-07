@@ -24,7 +24,13 @@ deployment hash and runtime ConfigMap name, never the plan hash. Selection is
 explicit; never switch transports by size. `object-store-v0` ConfigMaps hold
 only the plan, and runner templates pin each archive digest from the verified
 materialization manifest. Runtime pods trust only those pinned digests, not
-whatever object is present at the package key.
+whatever object is present at a key.
+
+Source archive keys include the archive digest, not only the package identity:
+different tar encodings of one package must never contend for a key. A missing,
+oversized, or mismatched published archive must surface as runner exit 64 so
+the retry expression stops; do not add a Go-side precheck that turns it into a
+retryable infrastructure error.
 
 Retry strategies belong only on runner templates. Keep the non-retryable exit
 list aligned with the runner exit codes, pass `{{retries}}` so the runtime

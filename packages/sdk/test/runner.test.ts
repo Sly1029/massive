@@ -578,6 +578,41 @@ Deno.test("runner rejects verified unsafe, corrupted, and trailing source archiv
   }
 });
 
+Deno.test("runner applies its documented cap to the shared source-limit archives", async () => {
+  const fixtures = new URL(
+    "../../../conformance/fixtures/source-limits/",
+    import.meta.url,
+  );
+  const manifest = JSON.parse(
+    await Deno.readTextFile(new URL("limits.json", fixtures)),
+  ) as {
+    cases: { archive: string; archiveHash: string; typescript: string }[];
+  };
+  for (const vector of manifest.cases) {
+    assertEquals(vector.typescript, "reject-typescript-cap");
+    const compressed = await Deno.readFile(new URL(vector.archive, fixtures));
+    const archive = new Uint8Array(
+      await new Response(
+        new Blob([compressed]).stream().pipeThrough(
+          new DecompressionStream("gzip"),
+        ),
+      ).arrayBuffer(),
+    );
+    assertEquals(sha256RefBytes(archive), vector.archiveHash);
+    await withRunnerFixture(
+      { input: { value: 21 }, stepExport: "double", sourceArchive: archive },
+      async ({ descriptor }) => {
+        const outcome = await executeStep(descriptor);
+        assert(outcome.kind === "descriptor-resolution-failure");
+        assert(
+          outcome.error.message.includes("Python runner"),
+          outcome.error.message,
+        );
+      },
+    );
+  }
+});
+
 async function withRunnerFixture(
   options: {
     readonly input: JsonValue;

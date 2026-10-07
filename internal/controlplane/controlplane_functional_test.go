@@ -161,7 +161,7 @@ func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	archives := make(map[string][]byte, len(workflowPlan.GetSourcePackages()))
+	archives := make(map[string]orchestrator.SourceArchive, len(workflowPlan.GetSourcePackages()))
 	for _, sourcePackage := range workflowPlan.GetSourcePackages() {
 		name, err := orchestrator.SourceArchiveBundleName(sourcePackage.GetPackageHash())
 		if err != nil {
@@ -171,14 +171,14 @@ func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		archives[sourcePackage.GetPackageHash()] = archive
+		archives[sourcePackage.GetPackageHash()] = orchestrator.EmbeddedSourceArchive(archive)
 	}
 
 	result, err := orchestrator.RunIsolatedMapItem(context.Background(), orchestrator.IsolatedStepConfig{
 		Plan: workflowPlan, NodeID: "square-items", Datastore: orchestrator.LocalDatastoreDescriptor{Kind: "local", Path: t.TempDir()},
 		ProjectID: "argo/map-example", RunID: "mapped-python-item",
-		RunnerCommand: []string{python, "-m", "massive.runner", "{descriptor}"},
-		Sources:       orchestrator.EmbeddedSources(archives),
+		RunnerCommand:  []string{python, "-m", "massive.runner", "{descriptor}"},
+		SourceArchives: archives,
 	}, []byte(`{"value":3}`), 2)
 	if err != nil {
 		t.Fatal(err)

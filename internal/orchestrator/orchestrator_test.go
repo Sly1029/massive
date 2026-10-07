@@ -172,8 +172,9 @@ func TestDescriptorsValidateAndMatchLinearGolden(t *testing.T) {
 		t.Fatalf("descriptor packageHash = %s, want plan packageHash %s", descriptor.SourcePackage.PackageHash, planPackageHash)
 	}
 	archiveBody := getObject(t, storeRoot, descriptor.SourcePackage.SourceArchive.Key)
-	if descriptor.SourcePackage.SourceArchive.ContentType != SourceArchiveContentType || !strings.HasSuffix(descriptor.SourcePackage.SourceArchive.Key, "/source.tar") {
-		t.Fatalf("source archive reference = %#v, want portable source.tar", descriptor.SourcePackage.SourceArchive)
+	archiveRef := descriptor.SourcePackage.SourceArchive
+	if archiveRef.ContentType != SourceArchiveContentType || archiveRef.Key != sourceArchiveKey(planPackageHash, archiveRef.Hash) || canonical.DigestBytes(archiveBody.Body) != archiveRef.Hash {
+		t.Fatalf("source archive reference = %#v, want a key content-addressed by package and archive digest", archiveRef)
 	}
 	if bytes.Contains(archiveBody.Body, []byte(storeRoot)) {
 		t.Fatal("portable source archive contains local datastore path")

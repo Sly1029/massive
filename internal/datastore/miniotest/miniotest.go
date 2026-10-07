@@ -19,17 +19,22 @@ const (
 	SecretKey = "massive-test-secret"
 )
 
-// Start runs a disposable MinIO container and returns its host:port. It skips
-// the test when Docker or the pinned image is unavailable.
+// Start runs a disposable MinIO container and returns its host:port. Locally
+// it skips the test when Docker or the pinned image is unavailable; in CI
+// (CI=true) that is a failure, so the S3 evidence cannot silently disappear.
 func Start(t *testing.T) string {
 	t.Helper()
+	skip := t.Skipf
+	if os.Getenv("CI") == "true" {
+		skip = t.Fatalf
+	}
 
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skipf("docker unavailable; skipping real MinIO test: %v", err)
+		skip("docker unavailable; skipping real MinIO test: %v", err)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("could not allocate a local port for MinIO; skipping real MinIO test: %v", err)
+		skip("could not allocate a local port for MinIO; skipping real MinIO test: %v", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
@@ -48,7 +53,7 @@ func Start(t *testing.T) string {
 		strings.TrimSpace(string(image)), "server", "/data",
 	).CombinedOutput()
 	if err != nil {
-		t.Skipf("could not start MinIO container with docker; skipping real MinIO test: %v\n%s", err, output)
+		skip("could not start MinIO container with docker; skipping real MinIO test: %v\n%s", err, output)
 	}
 	t.Cleanup(func() {
 		_ = exec.Command("docker", "rm", "-f", container).Run()
@@ -65,6 +70,6 @@ func Start(t *testing.T) string {
 		time.Sleep(500 * time.Millisecond)
 	}
 	logs, _ := exec.Command("docker", "logs", container).CombinedOutput()
-	t.Skipf("MinIO container did not become ready; skipping real MinIO test\n%s", logs)
+	skip("MinIO container did not become ready; skipping real MinIO test\n%s", logs)
 	return ""
 }

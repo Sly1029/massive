@@ -75,11 +75,14 @@ the `massive.dev/runtime-transport` annotation.
   `--runtime-transport object-store-v0`; files are never dropped.
 - `object-store-v0` mounts only the plan (still bounded by 700 KiB). Each
   runner template pins every source package as
-  `--source-archive=<package-hash>=<archive-digest>`. The pod checks that
-  `packages/sha256-<package>/source.tar` exists in the bound datastore, and the
-  language runner streams it to private scratch and rejects it unless its
-  SHA-256 equals the pinned digest, before reading any entry or importing code.
-  Control pods execute no author code and receive no source.
+  `--source-archive=<package-hash>=<archive-digest>`. The language runner
+  streams `packages/sha256-<package>/archives/sha256-<archive>.tar` from the
+  bound datastore to private scratch and rejects it unless its SHA-256 equals
+  the pinned digest, before reading any entry or importing code. A missing
+  object, an object above the largest valid archive size, or a digest mismatch
+  is a descriptor failure (exit 64), which Argo's retry expression never
+  retries; the missing-object diagnostic names `massive publish`. Control pods
+  execute no author code and receive no source.
 
 Selection is explicit rather than automatic by size. `object-store-v0` adds a
 deploy step that needs datastore write credentials, so a growing workflow
@@ -92,18 +95,41 @@ massive publish .massive/argo --datastore-config datastore.json
 
 `massive publish` reads `bundle-manifest.json`, checks each archive against the
 digest recorded there and pinned by `materialization-manifest.json`, re-derives
-its source-package identity, and writes it with an if-absent put at the
-package's content-addressed key. Republishing is idempotent; an existing object
-with different bytes is a conflict, never overwritten. The descriptor uses the
+its source-package identity, and writes it with an atomic if-absent put.
+Republishing is idempotent; an existing object with different bytes is a
+conflict, never overwritten. The descriptor uses the
 shared datastore schema and may differ from the in-cluster one only in its
 endpoint (for example, a port-forward). Credentials come from the standard
 AWS environment. A bundle built with `embedded-v0` has nothing to publish and is
 rejected.
 
+The archive key is content-addressed by both the package identity and the
+exact archive digest. Archive bytes are not uniquely determined by package
+identity (tar metadata and end padding can vary), so keying by package alone
+would let one differently encoded archive occupy the key every pod reads. Local
+runs and `embedded-v0` pods install archives under the same layout.
+
 Source packages may hold up to 16,384 files and 256 MiB of file bodies. The Go
-verifier and the Python and TypeScript runners share these bounds. Build and
-publish hold each archive in memory; pods do not: the Go runtime only checks
-presence, and the Python runner streams the download and each extracted file.
+verifier and the Python runner share these bounds, recorded with shared
+at-limit and over-limit archives in `conformance/fixtures/source-limits`. The
+largest archive they accept is 16,384 × 1 KiB of headers and padding, plus
+256 MiB, plus one 10 KiB tar record of end padding. The Python runner refuses
+an object above that size from its declared length (S3 `ContentLength` or file
+size) and stops copying once it passes the bound, so an object planted by any
+holder of store write credentials cannot fill pod disk. The TypeScript runner
+buffers archives in memory and keeps a 1,024-file, 50 MiB cap, rejecting larger
+packages with a diagnostic naming the Python runner.
+
+Build and publish hold each archive in memory. Pods do not: the Go runtime never
+reads the archive, and the Python runner streams the download and each
+extracted file, then deletes its archive copy before user code runs.
+
+**Size budget.** Every runner pod, including each map item, downloads and
+extracts the full archive before invoking user code; the scratch it needs is
+the extracted size. Packages of a few tens of MB suit fan-outs of about 1,000
+items. Above that, account for transfer volume (item count × archive size) and
+per-pod ephemeral storage. A node-level cache keyed by archive digest is a
+planned follow-up, not current behavior.
 
 ## Target Config
 

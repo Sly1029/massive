@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import subprocess
@@ -20,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from massive import canonical_json, sha256_ref
 from massive.artifact import ArtifactRuntime, Destination, Producer
 from massive.canonical import JsonValue
-from massive.datastore import LocalDatastore
+from massive.datastore import DatastoreObjectTooLargeError, LocalDatastore, S3Datastore
 
 PROJECT_KEY = "sha256-" + "b" * 64
 
@@ -496,6 +497,85 @@ def test_runner_reports_an_unpublished_source_archive_as_a_descriptor_failure(
 
     assert result.returncode == 64
     assert "source archive is missing" in result.stderr
+    assert "massive publish" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "vector",
+    json.loads(
+        (Path(__file__).resolve().parents[3] / "conformance/fixtures/source-limits/limits.json").read_text()
+    )["cases"],
+    ids=lambda vector: vector["archive"],
+)
+def test_runner_applies_the_shared_source_limit_archives(
+    tmp_path: Path, vector: dict[str, str]
+) -> None:
+    fixtures = Path(__file__).resolve().parents[3] / "conformance/fixtures/source-limits"
+    body = gzip.decompress((fixtures / vector["archive"]).read_bytes())
+    assert "sha256:" + sha256(body).hexdigest() == vector["archiveHash"]
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    archive = descriptor["sourcePackage"]["sourceArchive"]
+    archive["hash"] = vector["archiveHash"]
+    (store / archive["key"]).write_bytes(body)
+    descriptor_path.write_text(canonical_json(descriptor))
+
+    result = _run(descriptor_path)
+
+    # The fixture contains no step module, so an accepted archive extracts and
+    # then fails to import the step; a rejected one never reaches import.
+    assert result.returncode == 64
+    if vector["python"] == "accept":
+        assert "cannot import runner_workflow" in result.stderr, result.stderr
+    else:
+        assert vector["python"] == "reject-limits"
+        assert "exceeds source package limits" in result.stderr, result.stderr
+
+
+def test_runner_refuses_a_planted_archive_larger_than_any_valid_package(tmp_path: Path) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    path = store / descriptor["sourcePackage"]["sourceArchive"]["key"]
+    # A sparse file stands in for an oversized object without consuming disk;
+    # the declared size must be rejected before any byte is copied.
+    with path.open("r+b") as planted:
+        planted.truncate(16384 * 1024 + 256 * 1024 * 1024 + 10240 + 1)
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 64
+    assert "exceeds source package limits" in result.stderr
+
+
+def test_s3_download_stops_at_the_declared_size_bound(tmp_path: Path, s3_server: Any) -> None:
+    bucket = f"massive-python-{uuid.uuid4().hex}"
+    client = boto3.client(
+        "s3",
+        endpoint_url=s3_server.endpoint,
+        region_name="us-east-1",
+        aws_access_key_id=s3_server.access_key,
+        aws_secret_access_key=s3_server.secret_key,
+    )
+    client.create_bucket(Bucket=bucket)
+    client.put_object(Bucket=bucket, Key="packages/archive.tar", Body=b"x" * 4096)
+    os.environ["AWS_ACCESS_KEY_ID"] = s3_server.access_key
+    os.environ["AWS_SECRET_ACCESS_KEY"] = s3_server.secret_key
+    try:
+        store = S3Datastore(
+            {
+                "kind": "s3",
+                "bucket": bucket,
+                "region": "us-east-1",
+                "endpoint": s3_server.endpoint,
+                "forcePathStyle": True,
+            }
+        )
+        with (tmp_path / "download").open("w+b") as destination:
+            with pytest.raises(DatastoreObjectTooLargeError):
+                store.download("packages/archive.tar", destination, max_bytes=4095)
+            assert destination.tell() == 0
+            info = store.download("packages/archive.tar", destination, max_bytes=4096)
+            assert info.size == destination.tell() == 4096
+    finally:
+        del os.environ["AWS_ACCESS_KEY_ID"], os.environ["AWS_SECRET_ACCESS_KEY"]
 
 
 def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path, s3_server: Any) -> None:

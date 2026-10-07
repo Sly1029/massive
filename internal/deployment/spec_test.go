@@ -152,6 +152,31 @@ func TestRuntimeTransportIsARequiredDeploymentBinding(t *testing.T) {
 	}
 }
 
+func TestTargetDiagnosticsNameOnlyTheFailingBranch(t *testing.T) {
+	for name, target := range map[string]map[string]any{
+		"missing kind":         {"namespace": "workflows"},
+		"missing argo binding": {"kind": "argo", "namespace": "workflows", "serviceAccountName": "runner"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse(deploymentJSON(t, map[string]any{"name": "argo", "artifactStoreBinding": "artifacts", "target": target}))
+			var diagnostics *DiagnosticsError
+			if !errors.As(err, &diagnostics) {
+				t.Fatalf("error = %v", err)
+			}
+			rendered := fmt.Sprint(diagnostics.Diagnostics)
+			missing := map[string]string{"missing kind": "'kind'", "missing argo binding": "'runtimeTransport'"}[name]
+			if !strings.Contains(rendered, missing) || strings.Contains(rendered, "additional properties") {
+				t.Fatalf("diagnostics = %s, want only the missing %s", rendered, missing)
+			}
+			for _, diagnostic := range diagnostics.Diagnostics {
+				if !strings.HasPrefix(diagnostic.Ref, "/properties/profile/") {
+					t.Fatalf("diagnostic ref %q is not a keyword location", diagnostic.Ref)
+				}
+			}
+		})
+	}
+}
+
 func TestParseSharedDeploymentFixtures(t *testing.T) {
 	for _, name := range []string{"local", "argo"} {
 		t.Run(name, func(t *testing.T) {

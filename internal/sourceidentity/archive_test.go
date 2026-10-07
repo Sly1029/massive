@@ -3,8 +3,11 @@ package sourceidentity
 import (
 	"archive/tar"
 	"bytes"
-	"fmt"
-	"sort"
+	"compress/gzip"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -89,38 +92,89 @@ func TestVerifyArchiveBoundsDeclaredSizeBeforeReadingBody(t *testing.T) {
 	}
 }
 
-func TestVerifyArchiveAcceptsResourceTreesUpToTheFileLimit(t *testing.T) {
-	build := func(count int) ([]byte, string) {
-		var archive bytes.Buffer
-		writer := tar.NewWriter(&archive)
-		files := make([]File, 0, count)
-		for index := range count {
-			name := fmt.Sprintf("resources/%02d/%05d.md", index%97, index)
-			body := []byte(name)
-			if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}); err != nil {
+func TestSharedSourceLimitArchives(t *testing.T) {
+	root := filepath.Join("..", "..", "conformance", "fixtures", "source-limits")
+	data, err := os.ReadFile(filepath.Join(root, "limits.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Limits struct {
+			Files int `json:"files"`
+			Bytes int `json:"bytes"`
+		} `json:"limits"`
+		Cases []struct {
+			Archive     string `json:"archive"`
+			PackageHash string `json:"packageHash"`
+			ArchiveHash string `json:"archiveHash"`
+			Go          string `json:"go"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.Limits.Files != MaxFiles || fixture.Limits.Bytes != MaxBytes {
+		t.Fatalf("shared limits %+v differ from the Go verifier", fixture.Limits)
+	}
+	for _, vector := range fixture.Cases {
+		t.Run(vector.Archive, func(t *testing.T) {
+			compressed, err := os.Open(filepath.Join(root, vector.Archive))
+			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := writer.Write(body); err != nil {
+			defer compressed.Close()
+			reader, err := gzip.NewReader(compressed)
+			if err != nil {
 				t.Fatal(err)
 			}
-			files = append(files, File{Path: name, Hash: canonical.DigestBytes(body)})
-		}
-		if err := writer.Close(); err != nil {
-			t.Fatal(err)
-		}
-		sort.Slice(files, func(i, j int) bool { return canonical.LessUTF16(files[i].Path, files[j].Path) })
-		hash, err := Digest(files)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return archive.Bytes(), hash
+			archive, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if canonical.DigestBytes(archive) != vector.ArchiveHash || len(archive) > MaxArchiveBytes {
+				t.Fatalf("fixture archive digest or size changed")
+			}
+			err = VerifyArchive(archive, vector.PackageHash)
+			switch vector.Go {
+			case "accept":
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "reject-limits":
+				if err == nil || !strings.Contains(err.Error(), "limits") {
+					t.Fatalf("limit error = %v", err)
+				}
+			default:
+				t.Fatalf("unknown expectation %q", vector.Go)
+			}
+		})
 	}
-	archive, hash := build(MaxFiles)
-	if err := VerifyArchive(archive, hash); err != nil {
-		t.Fatalf("archive with %d files: %v", MaxFiles, err)
+}
+
+func TestVerifyArchiveBoundsEndPadding(t *testing.T) {
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	body := []byte("value = 1\n")
+	if err := writer.WriteHeader(&tar.Header{Name: "workflow.py", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}); err != nil {
+		t.Fatal(err)
 	}
-	archive, hash = build(MaxFiles + 1)
-	if err := VerifyArchive(archive, hash); err == nil || !strings.Contains(err.Error(), "limits") {
-		t.Fatalf("archive above the file limit: %v", err)
+	if _, err := writer.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := Digest([]File{{Path: "workflow.py", Hash: canonical.DigestBytes(body)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One full tar record of padding is accepted; anything longer could make
+	// an archive exceed MaxArchiveBytes, which runners use as a download bound.
+	record := append(archive.Bytes()[:1024], make([]byte, MaxEndPadding)...)
+	if err := VerifyArchive(record, hash); err != nil {
+		t.Fatalf("record-padded archive: %v", err)
+	}
+	if err := VerifyArchive(append(record, make([]byte, 512)...), hash); err == nil || !strings.Contains(err.Error(), "end padding") {
+		t.Fatalf("overpadded archive error = %v", err)
 	}
 }

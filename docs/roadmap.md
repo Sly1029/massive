@@ -93,6 +93,8 @@ validation and isolated runner tests do not replace a live cluster execution gat
   workload identity in a cloud cluster as a separate infrastructure gate.
 - Add streaming transfer and scratch budgets for repository-sized trees; current
   file operations buffer one file at a time.
+- Cache extracted source archives per node, keyed by archive digest. Today every
+  Argo runner pod downloads and extracts its full source package.
 - Preserve reference closure before adding any retention or selective resume.
 - Keep repository fetching, revision metadata, service clients, and domain policy
   in application packages composed over typed inputs and reusable contracts.

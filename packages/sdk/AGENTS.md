@@ -13,3 +13,7 @@ resolution aligned with `src/resolve.ts` and the Go control plane.
 
 For shared IR changes, follow `../../conformance/AGENTS.md`. Local author code is
 trusted execution; step-only Deno permissions cannot isolate frontend imports.
+
+The TypeScript runner buffers source archives in memory, so it keeps a
+1,024-file, 50 MiB cap below the shared Go/Python limits. Its rejection must
+name the Python runner; `conformance/fixtures/source-limits` checks it.

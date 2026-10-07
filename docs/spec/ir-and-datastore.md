@@ -312,7 +312,7 @@ specs/<spec-key>/workflow-spec.json
 envs/<env-key>/manifest.json
 envs/<env-key>/runtime.tar.zst
 packages/<package-key>/source-manifest.json
-packages/<package-key>/source.tar
+packages/<package-key>/archives/<archive-key>.tar
 plans/<plan-key>/workflow.json
 plans/<plan-key>/provenance.json
 targets/<plan-key>/<target>/bundle-manifest.json
@@ -420,7 +420,7 @@ Example:
     "language": "typescript",
     "packageHash": "sha256:...",
     "sourceArchive": {
-      "key": "packages/.../source.tar",
+      "key": "packages/.../archives/sha256-....tar",
       "hash": "sha256:...",
       "contentType": "application/vnd.massive.source-tar"
     }

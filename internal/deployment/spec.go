@@ -9,13 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/santhosh-tekuri/jsonschema/v6"
-	"golang.org/x/text/language"
-	"golang.org/x/text/message"
 )
 
 type Spec struct {
@@ -197,22 +194,30 @@ func validateSchema(data []byte, fragment string) error {
 	return nil
 }
 
-// schemaDiagnostics reports the leaf causes. The library's basic output drops
-// causes reached through if/then references, such as a missing Argo field.
+// schemaDiagnostics reports every failing keyword with its location. The
+// detailed output keeps causes reached through if/then references, such as a
+// missing Argo field, which the flattened basic output drops.
 func schemaDiagnostics(validation *jsonschema.ValidationError) []Diagnostic {
-	if len(validation.Causes) == 0 {
-		path := "/" + strings.Join(validation.InstanceLocation, "/")
-		if len(validation.InstanceLocation) == 0 {
-			path = "$"
-		}
-		_, fragment, _ := strings.Cut(validation.SchemaURL, "#")
-		return []Diagnostic{{Path: path, Ref: "#" + fragment, Message: validation.ErrorKind.LocalizedString(printer)}}
-	}
 	var diagnostics []Diagnostic
-	for _, cause := range validation.Causes {
-		diagnostics = append(diagnostics, schemaDiagnostics(cause)...)
+	collectSchemaDiagnostics(validation.DetailedOutput(), &diagnostics)
+	if len(diagnostics) == 0 {
+		return []Diagnostic{{Path: "$", Ref: "deployment-spec.schema.json", Message: validation.Error()}}
 	}
 	return diagnostics
 }
 
-var printer = message.NewPrinter(language.English)
+func collectSchemaDiagnostics(unit *jsonschema.OutputUnit, diagnostics *[]Diagnostic) {
+	if unit == nil {
+		return
+	}
+	if unit.Error != nil {
+		path := unit.InstanceLocation
+		if path == "" {
+			path = "$"
+		}
+		*diagnostics = append(*diagnostics, Diagnostic{Path: path, Ref: unit.KeywordLocation, Message: unit.Error.String()})
+	}
+	for index := range unit.Errors {
+		collectSchemaDiagnostics(&unit.Errors[index], diagnostics)
+	}
+}

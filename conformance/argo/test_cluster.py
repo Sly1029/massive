@@ -44,7 +44,11 @@ def kubectl(*args: str, document: dict | None = None) -> dict:
 
 
 def install_workflow(
-    source: str, secret_bindings: dict | None = None, *, selector: str = ""
+    source: str,
+    secret_bindings: dict | None = None,
+    *,
+    selector: str = "",
+    build_args: tuple[str, ...] = (),
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="massive-argo-") as directory:
         root = Path(directory)
@@ -72,6 +76,7 @@ def install_workflow(
                 "massive-storage-credentials",
                 "--secret-bindings",
                 str(bindings),
+                *build_args,
             ],
             cwd=ROOT,
             check=True,
@@ -323,6 +328,17 @@ class DecisionConformance(unittest.TestCase):
             )
         )
         install_workflow(retry_source)
+        # Never published: a changed source identity whose archive is absent
+        # from the store must fail once (exit 64), not exhaust its retries.
+        install_workflow(
+            retry_source + "\n# unpublished object-store variant\n",
+            build_args=(
+                "--name",
+                "argo-unpublished",
+                "--runtime-transport",
+                "object-store-v0",
+            ),
+        )
         composition_source = (
             (ROOT / "packages/python/tests/fixtures/composed_workflow.py")
             .read_text()
@@ -354,6 +370,7 @@ class DecisionConformance(unittest.TestCase):
             "composed-approved": {"value": 5},
             "composed-rejected": {"value": -1},
             "large-source": {},
+            "unpublished": {"permanent": False},
         }.items():
             run = kubectl(
                 "create",
@@ -375,6 +392,7 @@ class DecisionConformance(unittest.TestCase):
                                 "composed-approved": "composed",
                                 "composed-rejected": "composed",
                                 "large-source": "large-source",
+                                "unpublished": "argo-unpublished",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -448,6 +466,14 @@ class DecisionConformance(unittest.TestCase):
         self.assertGreater(result["files"], 2000)
         self.assertGreater(result["bytes"], 1024 * 1024)
         self.assertEqual(len(self.pods(run, "map-item-inventory")), 3)
+
+    def test_missing_published_source_is_not_retried(self) -> None:
+        run = self.completed("unpublished")
+        self.assertEqual(run["status"]["phase"], "Failed")
+        attempts = self.pods(run, "step-flaky")
+        self.assertEqual(len(attempts), 1, attempts)
+        self.assertEqual(attempts[0]["phase"], "Failed")
+        self.assertIn("exit code 64", attempts[0].get("message", ""), attempts[0])
 
     def test_empty_map_inside_selected_branch(self) -> None:
         self.successful("empty", 0)

@@ -24,7 +24,8 @@ func PublishArgoSources(ctx context.Context, bundleDirectory string, descriptor 
 	if err := readBundleJSON(bundleDirectory, "bundle-manifest.json", "", &manifest); err != nil {
 		return nil, err
 	}
-	if manifest.GetTarget() != argo.Kind || manifest.GetSchemaVersion() != 0 {
+	// SchemaVersion has explicit presence: a manifest without one is obsolete.
+	if manifest.GetTarget() != argo.Kind || manifest.SchemaVersion == nil || manifest.GetSchemaVersion() != argo.BundleManifestSchemaVersion {
 		return nil, fmt.Errorf("bundle-manifest.json is not a current Argo bundle; rebuild it with massive build")
 	}
 	if transport := manifest.GetRuntimeTransport(); transport != argo.TransportObjectStore {

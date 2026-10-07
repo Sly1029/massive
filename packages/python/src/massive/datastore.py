@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -59,6 +59,10 @@ class DatastoreNotFoundError(Exception):
     pass
 
 
+class DatastoreObjectTooLargeError(Exception):
+    pass
+
+
 class Datastore(Protocol):
     def put(
         self, key: str, body: bytes, *, content_type: str, if_absent: bool = False
@@ -66,8 +70,12 @@ class Datastore(Protocol):
 
     def get(self, key: str) -> DatastoreObject: ...
 
-    def download(self, key: str, destination: BinaryIO) -> ObjectInfo:
-        """Stream one object into an open file without buffering its body."""
+    def download(self, key: str, destination: BinaryIO, *, max_bytes: int) -> ObjectInfo:
+        """Stream one object into an open file without buffering its body.
+
+        Raises DatastoreObjectTooLargeError, without writing past max_bytes,
+        when the object is larger.
+        """
         ...
 
 
@@ -114,10 +122,13 @@ class LocalDatastore:
             body=body,
         )
 
-    def download(self, key: str, destination: BinaryIO) -> ObjectInfo:
+    def download(self, key: str, destination: BinaryIO, *, max_bytes: int) -> ObjectInfo:
         try:
             with self.path_for_key(key).open("rb") as source:
-                shutil.copyfileobj(source, destination, _CHUNK_BYTES)
+                _check_size(key, os.fstat(source.fileno()).st_size, max_bytes)
+                _copy_bounded(
+                    key, iter(lambda: source.read(_CHUNK_BYTES), b""), destination, max_bytes
+                )
         except FileNotFoundError as error:
             raise DatastoreNotFoundError(f"datastore object not found: {key}") from error
         return ObjectInfo(
@@ -239,9 +250,13 @@ class S3Datastore:
             body=body,
         )
 
-    def download(self, key: str, destination: BinaryIO) -> ObjectInfo:
+    def download(self, key: str, destination: BinaryIO, *, max_bytes: int) -> ObjectInfo:
         result = self._get_object(key)
-        destination.writelines(result["Body"].iter_chunks(_CHUNK_BYTES))
+        try:
+            _check_size(key, result["ContentLength"], max_bytes)
+            _copy_bounded(key, result["Body"].iter_chunks(_CHUNK_BYTES), destination, max_bytes)
+        finally:
+            result["Body"].close()
         return ObjectInfo(
             key=key,
             size=destination.tell(),
@@ -271,6 +286,23 @@ def datastore_from_descriptor(descriptor: DatastoreDescriptor) -> Datastore:
     if descriptor["kind"] == "s3":
         return S3Datastore(descriptor)
     raise AssertionError("unreachable datastore kind")
+
+
+def _check_size(key: str, size: int, max_bytes: int) -> None:
+    if size > max_bytes:
+        raise DatastoreObjectTooLargeError(
+            f"datastore object {key} is {size} bytes, above the {max_bytes}-byte limit"
+        )
+
+
+def _copy_bounded(key: str, chunks: Iterator[bytes], destination: BinaryIO, max_bytes: int) -> None:
+    # The declared size is checked first; counting again guards a store that
+    # returns more bytes than it declared.
+    written = 0
+    for chunk in chunks:
+        written += len(chunk)
+        _check_size(key, written, max_bytes)
+        destination.write(chunk)
 
 
 def _validate_key(key: str) -> None:

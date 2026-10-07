@@ -127,11 +127,14 @@ type RuntimeSources struct {
 	SourceArchives map[string]string `name:"source-archive" help:"Published object-store-v0 archive as <package-hash>=<archive-digest>; repeat per package." xor:"sources" required:""`
 }
 
-func (sources RuntimeSources) resolve(workflowPlan *planpb.WorkflowPlan) (orchestrator.IsolatedSources, error) {
+func (sources RuntimeSources) resolve(workflowPlan *planpb.WorkflowPlan) (map[string]orchestrator.SourceArchive, error) {
+	archives := make(map[string]orchestrator.SourceArchive, len(workflowPlan.GetSourcePackages()))
 	if sources.BundleDir == "" {
-		return orchestrator.PublishedSources(sources.SourceArchives), nil
+		for packageHash, digest := range sources.SourceArchives {
+			archives[packageHash] = orchestrator.SourceArchive{Digest: digest}
+		}
+		return archives, nil
 	}
-	archives := make(orchestrator.EmbeddedSources, len(workflowPlan.GetSourcePackages()))
 	for _, sourcePackage := range workflowPlan.GetSourcePackages() {
 		name, err := orchestrator.SourceArchiveBundleName(sourcePackage.GetPackageHash())
 		if err != nil {
@@ -141,7 +144,7 @@ func (sources RuntimeSources) resolve(workflowPlan *planpb.WorkflowPlan) (orches
 		if err != nil {
 			return nil, fmt.Errorf("read runtime source archive %s: %w", name, err)
 		}
-		archives[sourcePackage.GetPackageHash()] = body
+		archives[sourcePackage.GetPackageHash()] = orchestrator.EmbeddedSourceArchive(body)
 	}
 	return archives, nil
 }
@@ -402,7 +405,7 @@ func runRuntimeInvocation(ctx context.Context, planPath string, runtimeSources R
 	config := orchestrator.IsolatedStepConfig{
 		Plan: workflowPlan, NodeID: nodeID, Datastore: binding,
 		ProjectID: project, RunID: runID,
-		Sources: sources, Attempt: retryCount + 1,
+		SourceArchives: sources, Attempt: retryCount + 1,
 	}
 	if mapItemIndex != nil {
 		return orchestrator.RunIsolatedMapItem(ctx, config, []byte(input), *mapItemIndex)

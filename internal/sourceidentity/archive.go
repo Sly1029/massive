@@ -16,6 +16,12 @@ import (
 const (
 	MaxFiles = 16384
 	MaxBytes = 256 * 1024 * 1024
+	// MaxEndPadding admits writers that pad the two end blocks to one
+	// 10,240-byte tar record, as Python's tarfile does.
+	MaxEndPadding = 10240
+	// MaxArchiveBytes bounds every archive VerifyArchive accepts: each file
+	// adds a header block and at most one block of padding to its body.
+	MaxArchiveBytes = MaxFiles*1024 + MaxBytes + MaxEndPadding
 )
 
 // VerifyArchive derives source-package-v1 identity from exact tar entry bytes.
@@ -36,6 +42,9 @@ func VerifyArchive(archive []byte, expectedHash string) error {
 			end := dataEnd + (512-dataEnd%512)%512
 			if len(archive)-end < 1024 {
 				return errors.New("source archive is missing its two zero end blocks")
+			}
+			if len(archive)-end > MaxEndPadding {
+				return errors.New("source archive has more end padding than one tar record")
 			}
 			if len(bytes.Trim(archive[end:], "\x00")) != 0 {
 				return errors.New("source archive has trailing data after its files")

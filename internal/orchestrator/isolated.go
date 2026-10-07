@@ -16,67 +16,56 @@ import (
 )
 
 // IsolatedStepConfig contains the portable inputs available inside one remote
-// executor pod. Sources resolve each plan source package to a datastore
-// archive that the language runner fetches and verifies by digest.
+// executor pod. SourceArchives pins each plan source package, by package hash,
+// to the archive the language runner fetches and verifies by digest.
 type IsolatedStepConfig struct {
-	Plan          *planpb.WorkflowPlan
-	NodeID        string
-	Datastore     DatastoreDescriptor
-	ProjectID     string
-	RunID         string
-	RunnerCommand []string
-	WorkingDir    string
-	Sources       IsolatedSources
+	Plan           *planpb.WorkflowPlan
+	NodeID         string
+	Datastore      DatastoreDescriptor
+	ProjectID      string
+	RunID          string
+	RunnerCommand  []string
+	WorkingDir     string
+	SourceArchives map[string]SourceArchive
 	// Attempt is the 1-based attempt the target is dispatching. Zero means 1.
 	// Targets own retry scheduling; this primitive runs exactly one attempt.
 	Attempt int
 }
 
-// IsolatedSources is the runtime half of a target's source transport.
-type IsolatedSources interface {
-	sourceArchive(ctx context.Context, store datastore.Datastore, packageHash string) (key string, archiveHash string, err error)
+// SourceArchive is the runtime half of a target's source transport.
+type SourceArchive struct {
+	// Digest is the SHA-256 of the archive bytes pinned by the deployment.
+	Digest string
+	// Body holds embedded-v0 bytes mounted beside the plan. Each invocation
+	// verifies and installs them. Without a body the archive must already be
+	// published (object-store-v0); the language runner reports a missing or
+	// mismatched object as a non-retryable descriptor failure.
+	Body []byte
 }
 
-// EmbeddedSources holds archive bytes mounted beside the plan, keyed by
-// package hash. Each invocation verifies them against the package identity
-// and installs them at the package's content-addressed datastore key.
-type EmbeddedSources map[string][]byte
-
-func (sources EmbeddedSources) sourceArchive(ctx context.Context, store datastore.Datastore, packageHash string) (string, string, error) {
-	archive, ok := sources[packageHash]
-	if !ok || len(archive) == 0 {
-		return "", "", fmt.Errorf("isolated source archive %s is unavailable", packageHash)
-	}
-	if err := sourceidentity.VerifyArchive(archive, packageHash); err != nil {
-		return "", "", err
-	}
-	key := sourcePackageKey(packageHash)
-	if _, err := store.Put(ctx, datastore.MustKey(key), archive, datastore.PutOptions{ContentType: SourceArchiveContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
-		return "", "", fmt.Errorf("write isolated source archive: %w", err)
-	}
-	return key, canonical.DigestBytes(archive), nil
+// EmbeddedSourceArchive pins mounted archive bytes by their own digest.
+func EmbeddedSourceArchive(body []byte) SourceArchive {
+	return SourceArchive{Digest: canonical.DigestBytes(body), Body: body}
 }
 
-// PublishedSources maps package hashes to the archive digests pinned by a
-// deployment. The archives were uploaded ahead of time; the language runner
-// downloads each one and rejects bytes that do not match its digest before it
-// extracts or imports anything.
-type PublishedSources map[string]string
-
-func (sources PublishedSources) sourceArchive(ctx context.Context, store datastore.Datastore, packageHash string) (string, string, error) {
-	archiveHash, ok := sources[packageHash]
-	if !ok || !validSHA256Ref(archiveHash) {
-		return "", "", fmt.Errorf("isolated source package %s has no pinned archive digest", packageHash)
+func (archive SourceArchive) install(ctx context.Context, store datastore.Datastore, packageHash string) (string, error) {
+	if !validSHA256Ref(archive.Digest) {
+		return "", fmt.Errorf("isolated source package %s has no pinned archive digest", packageHash)
 	}
-	key := sourcePackageKey(packageHash)
-	exists, err := store.Exists(ctx, datastore.MustKey(key))
-	if err != nil {
-		return "", "", fmt.Errorf("check published source archive %s: %w", key, err)
+	key := sourceArchiveKey(packageHash, archive.Digest)
+	if archive.Body == nil {
+		return key, nil
 	}
-	if !exists {
-		return "", "", fmt.Errorf("source archive %s is not published at %s; upload the bundle's source archives with massive publish", archiveHash, key)
+	if canonical.DigestBytes(archive.Body) != archive.Digest {
+		return "", fmt.Errorf("isolated source archive for %s does not match its pinned digest", packageHash)
 	}
-	return key, archiveHash, nil
+	if err := sourceidentity.VerifyArchive(archive.Body, packageHash); err != nil {
+		return "", err
+	}
+	if _, err := store.Put(ctx, datastore.MustKey(key), archive.Body, datastore.PutOptions{ContentType: SourceArchiveContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
+		return "", fmt.Errorf("write isolated source archive: %w", err)
+	}
+	return key, nil
 }
 
 // InvocationFailure reports a runner attempt that completed unsuccessfully, so
@@ -160,15 +149,14 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 			return nil, fmt.Errorf("write isolated schema %s: %w", schema.GetHash(), err)
 		}
 	}
-	if config.Sources == nil {
-		return nil, errors.New("isolated step requires a source transport")
-	}
 	packages := make(map[string]sourcePackageArtifact, len(config.Plan.GetSourcePackages()))
 	for _, sourcePackage := range config.Plan.GetSourcePackages() {
-		key, archiveHash, err := config.Sources.sourceArchive(ctx, store, sourcePackage.GetPackageHash())
+		archive := config.SourceArchives[sourcePackage.GetPackageHash()]
+		key, err := archive.install(ctx, store, sourcePackage.GetPackageHash())
 		if err != nil {
 			return nil, err
 		}
+		archiveHash := archive.Digest
 		packages[sourcePackage.GetPackageId()] = sourcePackageArtifact{
 			PackageID: sourcePackage.GetPackageId(), Language: sourcePackage.GetLanguage(),
 			PackageHash: sourcePackage.GetPackageHash(), Key: key,
@@ -234,9 +222,9 @@ type PublishedSourceArchive struct {
 	Created bool `json:"created"`
 }
 
-// PublishSourceArchives installs verified archives at their package keys for
-// PublishedSources. Publication is idempotent; an existing object with a
-// different digest is a conflict, never overwritten.
+// PublishSourceArchives installs verified archives at their content-addressed
+// keys for object-store-v0 pods. Publication is idempotent; an object with
+// different bytes at the key is a conflict and is never overwritten.
 func PublishSourceArchives(ctx context.Context, descriptor DatastoreDescriptor, archives map[string][]byte) ([]PublishedSourceArchive, error) {
 	store, err := openInvocationDatastore(ctx, descriptor)
 	if err != nil {
@@ -249,8 +237,9 @@ func PublishSourceArchives(ctx context.Context, descriptor DatastoreDescriptor, 
 		if err := sourceidentity.VerifyArchive(archive, packageHash); err != nil {
 			return nil, err
 		}
-		key := sourcePackageKey(packageHash)
-		record := PublishedSourceArchive{PackageHash: packageHash, ArchiveHash: canonical.DigestBytes(archive), Key: key, Created: true}
+		archiveHash := canonical.DigestBytes(archive)
+		key := sourceArchiveKey(packageHash, archiveHash)
+		record := PublishedSourceArchive{PackageHash: packageHash, ArchiveHash: archiveHash, Key: key, Created: true}
 		_, err := store.Put(ctx, datastore.MustKey(key), archive, datastore.PutOptions{ContentType: SourceArchiveContentType, IfAbsent: true})
 		if errors.Is(err, datastore.ErrAlreadyExists) {
 			existing, getErr := store.Get(ctx, datastore.MustKey(key))
