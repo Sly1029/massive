@@ -610,6 +610,11 @@ func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir strin
 	if err := populateSnapshot(sourceRoot, staging, files); err != nil {
 		return err
 	}
+	// macOS requires a directory to be writable when renaming it, even when
+	// its parent does not change. Keep the files and nested directories locked.
+	if err := os.Chmod(staging, 0o755); err != nil {
+		return fmt.Errorf("prepare source snapshot for installation: %w", err)
+	}
 
 	if err := os.Rename(staging, snapshotDir); err != nil {
 		// A concurrent run may have installed an identical snapshot, or a stale
@@ -633,6 +638,9 @@ func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir strin
 			return fmt.Errorf("install source snapshot %q: %w", snapshotDir, err)
 		}
 	}
+	if err := os.Chmod(snapshotDir, 0o555); err != nil {
+		return fmt.Errorf("lock installed source snapshot: %w", err)
+	}
 	committed = true
 	return nil
 }
@@ -641,19 +649,13 @@ func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir strin
 // root, following symlinks on the components that exist. It is the guard for
 // any destructive filesystem operation on a composed path.
 func pathWithin(root string, target string) (bool, error) {
-	rootAbs, err := filepath.Abs(root)
+	rootAbs, err := resolveExistingPath(root)
 	if err != nil {
 		return false, err
 	}
-	if resolved, err := filepath.EvalSymlinks(rootAbs); err == nil {
-		rootAbs = resolved
-	}
-	targetAbs, err := filepath.Abs(target)
+	targetAbs, err := resolveExistingPath(target)
 	if err != nil {
 		return false, err
-	}
-	if resolved, err := filepath.EvalSymlinks(targetAbs); err == nil {
-		targetAbs = resolved
 	}
 	rel, err := filepath.Rel(rootAbs, targetAbs)
 	if err != nil {
@@ -663,6 +665,30 @@ func pathWithin(root string, target string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// resolveExistingPath resolves symlinks in the existing prefix of a path,
+// retaining any missing suffix for containment checks before installation.
+func resolveExistingPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) || filepath.Dir(abs) == abs {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(abs))
+		abs = filepath.Dir(abs)
+	}
 }
 
 // populateSnapshot verifies each manifest file on disk under sourceRoot against

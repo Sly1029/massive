@@ -383,6 +383,9 @@ async function startMinIO(t: Deno.TestContext): Promise<
   const port = await freePort();
   const host = `127.0.0.1:${port}`;
   const container = `massive-runner-minio-${crypto.randomUUID()}`;
+  const image = (await Deno.readTextFile(
+    new URL("../../../conformance/minio/image-reference", import.meta.url),
+  )).trim();
   const started = await new Deno.Command("docker", {
     args: [
       "run",
@@ -396,7 +399,7 @@ async function startMinIO(t: Deno.TestContext): Promise<
       `MINIO_ROOT_USER=${accessKey}`,
       "-e",
       `MINIO_ROOT_PASSWORD=${secretKey}`,
-      "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+      image,
       "server",
       "/data",
     ],

@@ -16,6 +16,11 @@ Fixtures describe real executable requirements. Change a fixture at its source
 when its environment or network intent changes; tests must not silently rewrite
 those requirements just to get through a target compiler.
 
+S3 tests share the source-pinned image reference in `minio/image-reference`.
+Build it with `../scripts/build-minio-test-image.sh` before running Docker-backed
+fixtures. The Argo gate loads that image into its owned cluster and binds the
+imported manifest digest, so it exercises the same server as the language tests.
+
 Invocation descriptors are current-only v3/json-v3. Channel fields are absent,
 including empty arrays; validate and reject them before user code runs. The
 materialization container selection is a plain field: preserve its proto-JSON

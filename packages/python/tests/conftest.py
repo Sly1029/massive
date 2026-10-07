@@ -8,6 +8,7 @@ import time
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +38,7 @@ def s3_server() -> Generator[S3TestServer, None, None]:
     access_key = "massive-python-test-access"
     secret_key = "massive-python-test-secret"
     container = f"massive-python-minio-{uuid.uuid4().hex}"
+    image = (Path(__file__).resolve().parents[3] / "conformance/minio/image-reference").read_text().strip()
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -56,7 +58,7 @@ def s3_server() -> Generator[S3TestServer, None, None]:
                 f"MINIO_ROOT_USER={access_key}",
                 "-e",
                 f"MINIO_ROOT_PASSWORD={secret_key}",
-                "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+                image,
                 "server",
                 "/data",
             ],
