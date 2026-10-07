@@ -147,12 +147,14 @@ class _ResolvedStep:
     def invoke(
         self,
         descriptor: StepInvocationDescriptor,
-        input_value: object,
+        input_body: bytes,
         files: ArtifactFiles,
         workspace: Path,
     ) -> bytes:
+        # Artifacts are JSON, so decode and encode in Pydantic's JSON mode: strict
+        # models accept ISO strings and arrays there, and fields use schema aliases.
         try:
-            input_value = self.input_adapter.validate_python(input_value, context=files)
+            input_value = self.input_adapter.validate_json(input_body, context=files)
         except PydanticValidationError as error:
             raise SchemaError(f"input does not satisfy the step input type: {error}") from error
         context = StepContext[object](
@@ -195,7 +197,9 @@ class _ResolvedStep:
         except PydanticValidationError as error:
             raise SchemaError(f"output does not satisfy the step output type: {error}") from error
         try:
-            output = self.output_adapter.dump_python(validated_output, mode="json", context=files)
+            output = self.output_adapter.dump_python(
+                validated_output, mode="json", by_alias=True, context=files
+            )
         except PydanticSerializationError as error:
             raise SchemaError(f"output cannot be serialized as JSON: {error}") from error
         try:
@@ -274,7 +278,7 @@ def _execute(descriptor: StepInvocationDescriptor) -> None:
         ArtifactRuntime(datastore).validate_destination(destination, producer)
     except (ArtifactError, PydanticValidationError) as error:
         raise SchemaError(f"output artifact destination is invalid: {error}") from error
-    input_value, _input_schema = _read_input(descriptor, datastore)
+    input_body = _read_input(descriptor, datastore)
     with (
         TemporaryDirectory(prefix="massive-invocation-") as scratch,
         _resolved_step(symbol, source_package, datastore) as step,
@@ -282,7 +286,7 @@ def _execute(descriptor: StepInvocationDescriptor) -> None:
         workspace = Path(scratch) / "workspace"
         workspace.mkdir()
         output_body = step.invoke(
-            descriptor, input_value, ArtifactFiles(datastore, Path(scratch) / "files"), workspace
+            descriptor, input_body, ArtifactFiles(datastore, Path(scratch) / "files"), workspace
         )
     try:
         ArtifactRuntime(datastore).publish_json(destination, producer, output_body)
@@ -315,9 +319,7 @@ async def _await_output(value: Awaitable[object]) -> object:
     return await value
 
 
-def _read_input(
-    descriptor: StepInvocationDescriptor, datastore: Datastore
-) -> tuple[JsonValue, dict[str, object]]:
+def _read_input(descriptor: StepInvocationDescriptor, datastore: Datastore) -> bytes:
     input_descriptor = descriptor["input"]
     artifact = input_descriptor["artifact"]
     expected_hash = artifact["hash"]
@@ -327,7 +329,7 @@ def _read_input(
     value = _parse_canonical_json(body, "input artifact")
     schema = _schema(datastore, input_descriptor["schema"])
     _validate(schema, value, "input")
-    return value, schema
+    return body
 
 
 def _schema(datastore: Datastore, reference: str) -> dict[str, object]:
