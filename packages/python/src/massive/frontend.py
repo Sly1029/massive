@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
 import sys
 from collections.abc import Generator, Mapping, Sequence
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
@@ -70,7 +71,7 @@ def emit(request: EntrypointRequest) -> EmitResult:
             "source include must select the workflow entrypoint; "
             "ensure [tool.massive.source].include contains its filename"
         )
-    with redirect_stdout(sys.stderr), _import_workflow(request) as module:
+    with _import_workflow(request) as module:
         selection = _select_graph(request, module)
         specification = selection.graph.emit(source=source)
     return EmitResult(specification=specification)
@@ -81,6 +82,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if len(arguments) != 2 or arguments[0] != "emit":
         _write_diagnostic("usage: massive-python-frontend emit path/to/workflow.py[#export]")
         return _ERROR_EXIT
+    # stdout carries only the spec. Point file descriptor 1 at stderr while author
+    # code runs, so its prints, native writes, and subprocesses cannot corrupt it.
+    sys.stdout.flush()
+    spec_output = os.fdopen(os.dup(1), "w", encoding="utf-8")
+    os.dup2(2, 1)
     try:
         result = emit(EntrypointRequest.parse(arguments[1]))
     except FrontendError as error:
@@ -89,7 +95,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as error:  # noqa: BLE001 -- this is the process boundary.
         _write_diagnostic(str(error))
         return _ERROR_EXIT
-    sys.stdout.write(result.canonical_json)
+    sys.stdout.flush()
+    with spec_output:
+        spec_output.write(result.canonical_json)
     return 0
 
 

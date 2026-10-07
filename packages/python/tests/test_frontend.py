@@ -20,6 +20,24 @@ def test_emit_writes_a_canonical_spec_for_the_single_exported_graph(tmp_path: Pa
     assert json.loads(result.stdout)["workflow"]["name"] == "frontend-graph"
 
 
+def test_emit_keeps_import_time_output_from_any_writer_off_stdout(tmp_path: Path) -> None:
+    workflow = tmp_path / "workflow.py"
+    workflow.write_text(
+        "import os\nimport subprocess\nimport sys\n\n"
+        'print("from print")\n'
+        'os.write(1, b"from file descriptor\\n")\n'
+        'subprocess.run([sys.executable, "-c", "print(\'from subprocess\')"], check=True)\n\n'
+        + _workflow_source("graph")
+    )
+
+    result = _emit(workflow)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == canonical_json(json.loads(result.stdout))
+    for line in ("from print", "from file descriptor", "from subprocess"):
+        assert line in result.stderr
+
+
 def test_checked_python_workflow_matches_shared_conformance_fixture() -> None:
     repository = Path(__file__).resolve().parents[3]
     workflow = repository / "conformance/workflows/python-linear/workflow.py"
