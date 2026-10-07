@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tarfile
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from hashlib import sha256
 from io import BytesIO
@@ -14,7 +15,7 @@ from typing import Any, cast
 
 import boto3
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from massive import canonical_json, sha256_ref
 from massive.artifact import ArtifactRuntime, Destination, Producer
@@ -379,6 +380,67 @@ def test_runner_uses_serialized_decimal_output_as_valid_downstream_input(tmp_pat
     assert second_result.returncode == 0, second_result.stderr
 
 
+class StrictEvent(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    at: datetime
+    window: tuple[int, int]
+
+
+def test_runner_decodes_json_input_for_strict_models(tmp_path: Path) -> None:
+    # Strict models reject ISO strings and arrays in Python mode; artifacts are JSON.
+    event = {"at": "2026-01-02T03:04:05Z", "window": [1, 2]}
+    descriptor_path, descriptor, store = _descriptor(
+        tmp_path,
+        export="strict_echo",
+        input_value=event,
+        input_schema=TypeAdapter(StrictEvent).json_schema(mode="validation"),
+        output_schema=TypeAdapter(StrictEvent).json_schema(mode="serialization"),
+    )
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 0, result.stderr
+    assert _published_body(descriptor, store) == canonical_json(event).encode()
+
+
+class AliasedResult(BaseModel):
+    total_value: int = Field(alias="totalValue")
+
+
+def test_runner_serializes_output_fields_by_their_schema_alias(tmp_path: Path) -> None:
+    descriptor_path, descriptor, store = _descriptor(
+        tmp_path,
+        export="aliased_result",
+        output_schema=TypeAdapter(AliasedResult).json_schema(mode="serialization"),
+    )
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 0, result.stderr
+    assert _published_body(descriptor, store) == b'{"totalValue":42}'
+    assert TypeAdapter(AliasedResult).validate_json(_published_body(descriptor, store)) == (
+        AliasedResult(totalValue=42)
+    )
+
+
+def _published_body(descriptor: dict[str, Any], store: Path) -> bytes:
+    _publication, body = ArtifactRuntime(LocalDatastore(store)).resolve_json(
+        Destination(
+            manifest_key=descriptor["output"]["manifestKey"],
+            schema_ref=descriptor["output"]["schema"],
+        ),
+        Producer(
+            project_key=descriptor["projectKey"],
+            plan_hash=descriptor["planHash"],
+            run_id=descriptor["runId"],
+            node_id=descriptor["nodeId"],
+            attempt=descriptor["attempt"],
+        ),
+    )
+    return body
+
+
 def test_runner_reports_an_invalid_immutable_output_slot_as_schema_failure(
     tmp_path: Path,
 ) -> None:
@@ -462,7 +524,8 @@ def _descriptor(
     *,
     export: str,
     input_value: dict[str, object] | None = None,
-    output_schema: dict[str, JsonValue] | None = None,
+    input_schema: dict[str, Any] | None = None,
+    output_schema: dict[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any], Path]:
     source_root = Path(__file__).parent / "fixtures"
     store = tmp_path / "store"
@@ -472,7 +535,7 @@ def _descriptor(
         "required": ["value"],
         "properties": {"value": {"type": "integer"}},
     }
-    schema_text = canonical_json(schema)
+    schema_text = canonical_json(input_schema or schema)
     schema_hash = sha256_ref(schema_text)
     output_schema_text = canonical_json(output_schema or schema)
     output_schema_hash = sha256_ref(output_schema_text)

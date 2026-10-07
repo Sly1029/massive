@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from massive import Blob, GraphBuilder, NonRetryableError, StepContext, container, execution
 
@@ -36,6 +37,17 @@ class Result(BaseModel):
 
 class DecimalResult(BaseModel):
     value: Decimal
+
+
+class StrictEvent(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    at: datetime
+    window: tuple[int, int]
+
+
+class AliasedResult(BaseModel):
+    total_value: int = Field(alias="totalValue")
 
 
 class InvocationResult(BaseModel):
@@ -132,6 +144,14 @@ def decimal_result(context: StepContext[Request]) -> DecimalResult:
 
 def decimal_echo(context: StepContext[DecimalResult]) -> DecimalResult:
     return context.inputs
+
+
+def strict_echo(context: StepContext[StrictEvent]) -> StrictEvent:
+    return context.inputs
+
+
+def aliased_result(context: StepContext[Request]) -> AliasedResult:
+    return AliasedResult(totalValue=context.inputs.value * 2)
 
 
 def changed_file(context: StepContext[Request]) -> Blob:
