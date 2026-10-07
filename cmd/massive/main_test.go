@@ -20,6 +20,10 @@ func TestCLIExplainsInvalidArguments(t *testing.T) {
 	if output, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, output)
 	}
+	inputPath := filepath.Join(t.TempDir(), "input.json")
+	if err := os.WriteFile(inputPath, []byte("null"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -27,6 +31,8 @@ func TestCLIExplainsInvalidArguments(t *testing.T) {
 	}{
 		{"inspect conflicting views", []string{"inspect", "run-id", "--project", "test", "--step", "task", "--json"}, "--step"},
 		{"inspect requires project", []string{"inspect", "run-id"}, "--project"},
+		{"run conflicting inputs", []string{"run", "example.py", "--input", "null", "--input-file", inputPath}, "--input"},
+		{"run empty input conflicts with file", []string{"run", "example.py", "--input=", "--input-file", inputPath}, "--input"},
 		{"unknown flag", []string{"run", "example.py", "--invalid"}, "--invalid"},
 		{"missing build option", []string{"build", "example.py"}, "--output"},
 		{"invalid target", []string{"build", "example.py", "--target", "invalid", "--output", "bundle", "--namespace", "default", "--service-account", "runner"}, "argo"},
@@ -70,13 +76,6 @@ func TestRunInputReadsARealJSONFile(t *testing.T) {
 	}
 	if string(input) != `{"value": 41}` {
 		t.Fatalf("input = %q", input)
-	}
-}
-
-func TestRunInputRejectsConflictingSources(t *testing.T) {
-	_, err := (&RunCommand{Input: `{"value": 41}`, InputFile: "input.json"}).input()
-	if err == nil {
-		t.Fatal("expected --input and --input-file conflict")
 	}
 }
 
