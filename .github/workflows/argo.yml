@@ -1,22 +1,38 @@
 name: Argo conformance
 
+# Live clusters are the slowest gate; run them only when lowered or executed code changes.
 on:
   pull_request:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "conformance/**"
+      - "packages/python/**"
+      - "scripts/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/argo.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   argo:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Install cluster tools
         run: |
           curl -fsSL https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64 -o "$RUNNER_TEMP/kind"
@@ -26,7 +42,7 @@ jobs:
           chmod +x "$RUNNER_TEMP/kind" "$RUNNER_TEMP/kubectl"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - run: ./scripts/test-argo.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
           name: argo-conformance-diagnostics

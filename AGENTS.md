@@ -21,6 +21,13 @@
 node scripts/check-no-test-mocks.mjs
 ```
 
+- Enable the hooks once per clone with `git config core.hooksPath .githooks`:
+  pre-commit checks staged tests for mocks, and pre-push runs `pnpm check:fast`.
+- CI minutes are limited. Run `pnpm check` locally before opening or updating a PR
+  instead of iterating against CI. Check runs on every non-documentation PR; the
+  Argo, Platforms, and Fuzz workflows run only when their paths change, and the
+  nightly fuzz job is the long campaign.
+
 
 ## Durable context
 
