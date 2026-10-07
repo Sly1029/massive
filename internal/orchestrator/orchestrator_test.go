@@ -1276,3 +1276,36 @@ func TestCancelledBeforeDispatchCreatesNoJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRunRejectsEscapingSnapshotParentBeforeInstallation(t *testing.T) {
+	storeRoot, outside := t.TempDir(), t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(storeRoot, ".snapshots")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("symlink creation unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
+	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
+	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
+	_, err := Run(t.Context(), RunConfig{
+		Plan: compiled.Plan, DatastoreRoot: storeRoot,
+		ProjectID: "test/snapshot", RunID: "escaping-snapshot",
+		SourcePackageRoot: sourceRoot, SourceManifests: manifests,
+	}, []byte("20"))
+	if err == nil || !strings.Contains(err.Error(), "outside datastore root") {
+		t.Errorf("escaping snapshot parent error = %v, want containment rejection", err)
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		t.Cleanup(func() { _ = forceRemoveAll(filepath.Join(outside, entry.Name())) })
+	}
+	if len(entries) != 0 {
+		t.Fatalf("source materialization wrote outside the datastore: %v", entries)
+	}
+	if _, err := os.Stat(filepath.Join(storeRoot, "projects")); !os.IsNotExist(err) {
+		t.Fatalf("rejected snapshot started a run: %v", err)
+	}
+}

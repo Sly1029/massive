@@ -588,6 +588,14 @@ func sourceSnapshotDir(storeRoot string, planPackageHash string) string {
 // idiom), so a concurrent run either wins the rename or converges on the
 // identical bytes.
 func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir string, files []SourcePackageFile) error {
+	contained, err := pathWithin(storeRoot, snapshotDir)
+	if err != nil {
+		return fmt.Errorf("verify source snapshot %q is inside the datastore: %w", snapshotDir, err)
+	}
+	if !contained {
+		return fmt.Errorf("refusing source snapshot %q: outside datastore root %q", snapshotDir, storeRoot)
+	}
+
 	if snapshotMatchesManifest(snapshotDir, files) {
 		return nil
 	}
@@ -622,8 +630,8 @@ func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir strin
 		if snapshotMatchesManifest(snapshotDir, files) {
 			return nil
 		}
-		// Removing a composed path: only ever do so once it is confirmed to be
-		// strictly inside the datastore root, never a caller-influenced path.
+		// Recheck before deletion: staging may have taken time, and the
+		// composed path must still resolve inside the datastore.
 		contained, err := pathWithin(storeRoot, snapshotDir)
 		if err != nil {
 			return fmt.Errorf("verify source snapshot %q is inside the datastore: %w", snapshotDir, err)
