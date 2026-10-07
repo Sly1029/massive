@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -92,6 +94,32 @@ def refuse_from_cause(context: StepContext[Request]) -> Result:
         raise KeyError("missing account")
     except KeyError as error:
         raise NonRetryableError("request is permanently invalid") from error
+
+
+async def refuse_in_task_group(context: StepContext[Request]) -> Result:
+    async def refuse_item() -> None:
+        raise InvalidRequestError("request is permanently invalid")
+
+    async with asyncio.TaskGroup() as group:
+        group.create_task(refuse_item())
+    return Result(value=context.inputs.value)
+
+
+async def fail_in_task_group(context: StepContext[Request]) -> Result:
+    async def fail_item() -> None:
+        raise RuntimeError("transient item failure")
+
+    async with asyncio.TaskGroup() as group:
+        group.create_task(fail_item())
+    return Result(value=context.inputs.value)
+
+
+def exit_successfully(context: StepContext[Request]) -> Result:
+    sys.exit(0)
+
+
+def exit_with_protocol_code(context: StepContext[Request]) -> Result:
+    sys.exit(67)
 
 
 def invalid_output(context: StepContext[Request]) -> Result:

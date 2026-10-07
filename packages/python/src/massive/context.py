@@ -11,7 +11,8 @@ class NonRetryableError(Exception):
     """Fail the step without further retries.
 
     Raise it, a subclass, or ``raise NonRetryableError(...) from error`` when another
-    attempt cannot succeed.
+    attempt cannot succeed. An exception group containing one, such as a failed
+    ``asyncio.TaskGroup``, is not retried either.
     """
 
 

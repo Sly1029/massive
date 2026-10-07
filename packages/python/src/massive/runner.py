@@ -178,8 +178,17 @@ class _ResolvedStep:
                 output = asyncio.run(_await_output(output))
         except NonRetryableError as error:
             raise NonRetryableStepError(str(error)) from error
+        except ExceptionGroup as group:
+            # asyncio.TaskGroup wraps a failing task's NonRetryableError in a group.
+            if group.subgroup(NonRetryableError) is not None:
+                raise NonRetryableStepError(str(group)) from group
+            raise StepError(str(group)) from group
         except Exception as error:
             raise StepError(str(error)) from error
+        except SystemExit as error:
+            # The runner owns the process status; a step must not end it as success
+            # or impersonate a protocol exit code.
+            raise StepError(f"step called sys.exit({error.code!r})") from error
 
         try:
             validated_output = self.output_adapter.validate_python(output)
