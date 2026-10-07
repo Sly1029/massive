@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 )
 
 type Spec struct {
@@ -45,10 +48,13 @@ type SecretKeyRef struct {
 }
 
 type Target struct {
-	Kind                      string                  `json:"kind"`
-	Namespace                 string                  `json:"namespace,omitempty"`
-	ServiceAccountName        string                  `json:"serviceAccountName,omitempty"`
-	WorkflowTemplateName      string                  `json:"workflowTemplateName,omitempty"`
+	Kind                 string `json:"kind"`
+	Namespace            string `json:"namespace,omitempty"`
+	ServiceAccountName   string `json:"serviceAccountName,omitempty"`
+	WorkflowTemplateName string `json:"workflowTemplateName,omitempty"`
+	// RuntimeTransport selects how pods receive verified source archives.
+	// It changes generated resources, so it is part of deployment identity.
+	RuntimeTransport          string                  `json:"runtimeTransport,omitempty"`
 	ArtifactCredentialsSecret string                  `json:"artifactCredentialsSecret,omitempty"`
 	SecretBindings            map[string]SecretKeyRef `json:"secretBindings,omitempty"`
 }
@@ -191,28 +197,22 @@ func validateSchema(data []byte, fragment string) error {
 	return nil
 }
 
+// schemaDiagnostics reports the leaf causes. The library's basic output drops
+// causes reached through if/then references, such as a missing Argo field.
 func schemaDiagnostics(validation *jsonschema.ValidationError) []Diagnostic {
-	basic := validation.BasicOutput()
+	if len(validation.Causes) == 0 {
+		path := "/" + strings.Join(validation.InstanceLocation, "/")
+		if len(validation.InstanceLocation) == 0 {
+			path = "$"
+		}
+		_, fragment, _ := strings.Cut(validation.SchemaURL, "#")
+		return []Diagnostic{{Path: path, Ref: "#" + fragment, Message: validation.ErrorKind.LocalizedString(printer)}}
+	}
 	var diagnostics []Diagnostic
-	collectSchemaDiagnostics(basic, &diagnostics)
-	if len(diagnostics) == 0 {
-		return []Diagnostic{{Path: "$", Ref: "deployment-spec.schema.json", Message: validation.Error()}}
+	for _, cause := range validation.Causes {
+		diagnostics = append(diagnostics, schemaDiagnostics(cause)...)
 	}
 	return diagnostics
 }
 
-func collectSchemaDiagnostics(unit *jsonschema.OutputUnit, diagnostics *[]Diagnostic) {
-	if unit == nil {
-		return
-	}
-	if unit.Error != nil {
-		path := unit.InstanceLocation
-		if path == "" {
-			path = "$"
-		}
-		*diagnostics = append(*diagnostics, Diagnostic{Path: path, Ref: unit.KeywordLocation, Message: unit.Error.String()})
-	}
-	for index := range unit.Errors {
-		collectSchemaDiagnostics(&unit.Errors[index], diagnostics)
-	}
-}
+var printer = message.NewPrinter(language.English)

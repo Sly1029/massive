@@ -29,7 +29,8 @@ func TestPortableArgoCompilationSurvivesCheckoutRemoval(t *testing.T) {
 	}
 	output := t.TempDir()
 	local, err := BundleArgo(ArgoBundleRequest{
-		Frontend: frontend, OutputDirectory: output, ProfileName: "portable",
+		RuntimeTransport: "embedded-v0",
+		Frontend:         frontend, OutputDirectory: output, ProfileName: "portable",
 		ArtifactStoreBinding: "artifacts", Namespace: "workflows",
 		ServiceAccountName: "runner", WorkflowTemplateName: "portable",
 	})
@@ -287,7 +288,7 @@ func materializationManifest(t *testing.T, compiled *ArgoCompilation) *pb.Materi
 func portableProfile() deployment.Profile {
 	return deployment.Profile{
 		Name: "portable", ArtifactStoreBinding: "artifacts",
-		Target: deployment.Target{Kind: "argo", Namespace: "workflows", ServiceAccountName: "runner", WorkflowTemplateName: "portable"},
+		Target: deployment.Target{Kind: "argo", Namespace: "workflows", ServiceAccountName: "runner", WorkflowTemplateName: "portable", RuntimeTransport: "embedded-v0"},
 	}
 }
 

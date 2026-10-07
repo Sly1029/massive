@@ -472,6 +472,32 @@ def test_runner_rejects_a_verified_traversal_archive(tmp_path: Path) -> None:
     assert not (tmp_path / "escape.py").exists()
 
 
+def test_runner_rejects_source_archive_bytes_that_differ_from_the_pinned_digest(
+    tmp_path: Path,
+) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    path = store / descriptor["sourcePackage"]["sourceArchive"]["key"]
+    path.write_bytes(_archive_entry("runner_workflow.py", b"raise SystemExit(0)\n"))
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 64
+    assert "source archive hash mismatch" in result.stderr
+    assert not (store / descriptor["output"]["manifestKey"]).exists()
+
+
+def test_runner_reports_an_unpublished_source_archive_as_a_descriptor_failure(
+    tmp_path: Path,
+) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    (store / descriptor["sourcePackage"]["sourceArchive"]["key"]).unlink()
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 64
+    assert "source archive is missing" in result.stderr
+
+
 def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path, s3_server: Any) -> None:
     endpoint = s3_server.endpoint
     access_key = s3_server.access_key

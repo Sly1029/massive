@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/runjournal"
+	"github.com/alecthomas/kong"
 )
 
 func TestCLIExplainsInvalidArguments(t *testing.T) {
@@ -36,6 +37,10 @@ func TestCLIExplainsInvalidArguments(t *testing.T) {
 		{"unknown flag", []string{"run", "example.py", "--invalid"}, "--invalid"},
 		{"missing build option", []string{"build", "example.py"}, "--output"},
 		{"invalid target", []string{"build", "example.py", "--target", "invalid", "--output", "bundle", "--namespace", "default", "--service-account", "runner"}, "argo"},
+		{"invalid runtime transport", []string{"build", "example.py", "--runtime-transport", "configmap", "--output", "bundle", "--namespace", "default", "--service-account", "runner", "--artifact-store", "artifacts"}, "object-store-v0"},
+		{"runtime requires a source transport", []string{"runtime", "step", "--plan", "main.go", "--node", "n", "--input", "1", "--output", "out", "--project", "p", "--run-id", "r", "--datastore-config", "main.go"}, "--source-archive"},
+		{"runtime source transports are exclusive", []string{"runtime", "step", "--plan", "main.go", "--bundle-dir", ".", "--source-archive=sha256:a=sha256:b", "--node", "n", "--input", "1", "--output", "out", "--project", "p", "--run-id", "r", "--datastore-config", "main.go"}, "can't be used together"},
+		{"publish requires a datastore", []string{"publish", "."}, "--datastore-config"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command := exec.Command(binary, tc.args...)
@@ -52,6 +57,25 @@ func TestCLIExplainsInvalidArguments(t *testing.T) {
 				t.Fatalf("argument errors wrote to stdout: %q", stdout.String())
 			}
 		})
+	}
+}
+
+func TestRuntimeSourceArchivesAccumulatePerPackage(t *testing.T) {
+	var cli CLI
+	parser, err := kong.New(&cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+	if _, err := parser.Parse([]string{
+		"runtime", "map", "item", "--plan", "main.go", "--node", "n", "--item", "{}", "--output", "out",
+		"--project", "p", "--run-id", "r", "--datastore-config", "main.go",
+		"--source-archive=" + first + "=" + second, "--source-archive=" + second + "=" + first,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := cli.Runtime.Map.Item.SourceArchives; len(got) != 2 || got[first] != second || got[second] != first {
+		t.Fatalf("source archives = %v", got)
 	}
 }
 

@@ -121,6 +121,14 @@ packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/s
 packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar
 ```
 
+`source.tar` is the deterministic USTAR archive whose entries derive
+`<package-key>`; its content type is `application/vnd.massive.source-tar`.
+Local runs and `embedded-v0` pods install it if absent. For Argo
+`object-store-v0`, `massive publish` installs it ahead of time and pods read it
+only after the runner verifies the archive digest pinned in the
+WorkflowTemplate. A publisher must not replace an existing object whose bytes
+differ.
+
 ### Compiled plan
 
 Templates:

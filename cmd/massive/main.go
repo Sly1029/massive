@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/controlplane"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/mapexec"
@@ -24,6 +25,7 @@ type CLI struct {
 	Inspect InspectCommand `cmd:"" help:"Inspect a recorded local run without executing it."`
 	Run     RunCommand     `cmd:"" help:"Compile and execute a workflow locally."`
 	Build   BuildCommand   `cmd:"" help:"Compile a workflow for a deployment target."`
+	Publish PublishCommand `cmd:"" help:"Upload an object-store-v0 bundle's source archives to its datastore."`
 	Version VersionCommand `cmd:"" help:"Print the Massive version."`
 	Runtime RuntimeCommand `cmd:"" hidden:""`
 }
@@ -50,7 +52,14 @@ type BuildCommand struct {
 	ServiceAccount            string `name:"service-account" help:"Kubernetes service account used by workflow pods." required:""`
 	ArtifactStore             string `name:"artifact-store" help:"ConfigMap containing the shared S3 datastore.json descriptor." required:""`
 	Name                      string `help:"WorkflowTemplate name; defaults to the workflow name."`
+	RuntimeTransport          string `name:"runtime-transport" help:"How pods receive source: embedded-v0 (runtime ConfigMap, at most 700 KiB) or object-store-v0 (shared datastore, uploaded with massive publish)." enum:"embedded-v0,object-store-v0" default:"embedded-v0"`
 	JSON                      bool   `help:"Emit one structured JSON result."`
+}
+
+type PublishCommand struct {
+	Bundle          string `arg:"" name:"bundle" help:"Directory written by massive build --runtime-transport object-store-v0." type:"existingdir"`
+	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor naming the store the bundle's pods read." required:"" type:"existingfile"`
+	JSON            bool   `help:"Emit one structured JSON result."`
 }
 
 type VersionCommand struct{}
@@ -101,7 +110,7 @@ type RuntimeMapCommand struct {
 
 type RuntimeStepCommand struct {
 	Plan            string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
-	BundleDir       string `name:"bundle-dir" help:"Directory containing mounted source archives." required:"" type:"existingdir"`
+	RuntimeSources  `embed:""`
 	Node            string `help:"Static plan node to execute." required:""`
 	Input           string `help:"Canonical JSON step input." required:""`
 	Output          string `help:"Write canonical JSON result to this path." required:"" type:"path"`
@@ -111,6 +120,32 @@ type RuntimeStepCommand struct {
 	RetryCount      int    `name:"retry-count" help:"Retries already attempted by the target scheduler; the attempt is retry-count + 1." default:"0"`
 }
 
+// RuntimeSources selects the source transport: embedded-v0 mounts archives
+// beside the plan; object-store-v0 pins each published archive's digest.
+type RuntimeSources struct {
+	BundleDir      string            `name:"bundle-dir" help:"Directory containing mounted embedded-v0 source archives." type:"existingdir" xor:"sources" required:""`
+	SourceArchives map[string]string `name:"source-archive" help:"Published object-store-v0 archive as <package-hash>=<archive-digest>; repeat per package." xor:"sources" required:""`
+}
+
+func (sources RuntimeSources) resolve(workflowPlan *planpb.WorkflowPlan) (orchestrator.IsolatedSources, error) {
+	if sources.BundleDir == "" {
+		return orchestrator.PublishedSources(sources.SourceArchives), nil
+	}
+	archives := make(orchestrator.EmbeddedSources, len(workflowPlan.GetSourcePackages()))
+	for _, sourcePackage := range workflowPlan.GetSourcePackages() {
+		name, err := orchestrator.SourceArchiveBundleName(sourcePackage.GetPackageHash())
+		if err != nil {
+			return nil, err
+		}
+		body, err := os.ReadFile(filepath.Join(sources.BundleDir, name))
+		if err != nil {
+			return nil, fmt.Errorf("read runtime source archive %s: %w", name, err)
+		}
+		archives[sourcePackage.GetPackageHash()] = body
+	}
+	return archives, nil
+}
+
 type RuntimeMapExpandCommand struct {
 	Input  string `help:"Canonical JSON map input." required:""`
 	Output string `help:"Write indexed Argo loop items to this path." required:"" type:"path"`
@@ -118,7 +153,7 @@ type RuntimeMapExpandCommand struct {
 
 type RuntimeMapItemCommand struct {
 	Plan            string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
-	BundleDir       string `name:"bundle-dir" help:"Directory containing mounted source archives." required:"" type:"existingdir"`
+	RuntimeSources  `embed:""`
 	Node            string `help:"Static plan map node to execute." required:""`
 	Item            string `help:"Indexed Argo map item envelope." required:""`
 	Output          string `help:"Write indexed map result to this path." required:"" type:"path"`
@@ -245,6 +280,7 @@ func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
 		ArtifactCredentialsSecret: command.ArtifactCredentialsSecret,
 		SecretBindings:            secretBindings,
 		ServiceAccountName:        command.ServiceAccount, WorkflowTemplateName: command.Name,
+		RuntimeTransport: command.RuntimeTransport,
 	})
 	if err != nil {
 		return err
@@ -261,13 +297,39 @@ func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
 	return nil
 }
 
+func (command *PublishCommand) Run(ctx context.Context, stdout io.Writer) error {
+	descriptorJSON, err := os.ReadFile(command.DatastoreConfig)
+	if err != nil {
+		return fmt.Errorf("read datastore descriptor: %w", err)
+	}
+	descriptor, err := orchestrator.ParseDatastoreDescriptor(descriptorJSON)
+	if err != nil {
+		return err
+	}
+	published, err := controlplane.PublishArgoSources(ctx, command.Bundle, descriptor)
+	if err != nil {
+		return err
+	}
+	if command.JSON {
+		return json.NewEncoder(stdout).Encode(map[string]any{"status": "published", "sourceArchives": published})
+	}
+	for _, archive := range published {
+		state := "uploaded"
+		if !archive.Created {
+			state = "present "
+		}
+		fmt.Fprintf(stdout, "✓ %s  %s  %s\n", state, archive.ArchiveHash, archive.Key)
+	}
+	return nil
+}
+
 func (*VersionCommand) Run(stdout io.Writer) error {
 	_, err := fmt.Fprintf(stdout, "massive %s\n", controlplane.Version)
 	return err
 }
 
 func (command *RuntimeStepCommand) Run(ctx context.Context) error {
-	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, command.Input, command.Project, command.RunID, command.DatastoreConfig, command.RetryCount, nil)
+	result, err := runRuntimeInvocation(ctx, command.Plan, command.RuntimeSources, command.Node, command.Input, command.Project, command.RunID, command.DatastoreConfig, command.RetryCount, nil)
 	if err != nil {
 		return err
 	}
@@ -290,7 +352,7 @@ func (command *RuntimeMapItemCommand) Run(ctx context.Context) error {
 	if empty {
 		return writeRuntimeOutput(command.Output, []byte(`{"empty":true}`))
 	}
-	result, err := runRuntimeInvocation(ctx, command.Plan, command.BundleDir, command.Node, string(item.Body), command.Project, command.RunID, command.DatastoreConfig, command.RetryCount, &item.Index)
+	result, err := runRuntimeInvocation(ctx, command.Plan, command.RuntimeSources, command.Node, string(item.Body), command.Project, command.RunID, command.DatastoreConfig, command.RetryCount, &item.Index)
 	if err != nil {
 		return err
 	}
@@ -309,7 +371,7 @@ func (command *RuntimeMapCollectCommand) Run() error {
 	return writeRuntimeOutput(command.Output, result)
 }
 
-func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, input, project, runID, datastoreConfig string, retryCount int, mapItemIndex *int) ([]byte, error) {
+func runRuntimeInvocation(ctx context.Context, planPath string, runtimeSources RuntimeSources, nodeID, input, project, runID, datastoreConfig string, retryCount int, mapItemIndex *int) ([]byte, error) {
 	if retryCount < 0 {
 		return nil, fmt.Errorf("retry count %d must be nonnegative", retryCount)
 	}
@@ -325,17 +387,9 @@ func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, inpu
 	if err != nil {
 		return nil, err
 	}
-	archives := make(map[string][]byte, len(workflowPlan.GetSourcePackages()))
-	for _, sourcePackage := range workflowPlan.GetSourcePackages() {
-		name, err := orchestrator.SourceArchiveBundleName(sourcePackage.GetPackageHash())
-		if err != nil {
-			return nil, err
-		}
-		body, err := os.ReadFile(filepath.Join(bundleDir, name))
-		if err != nil {
-			return nil, fmt.Errorf("read runtime source archive %s: %w", name, err)
-		}
-		archives[sourcePackage.GetPackageHash()] = body
+	sources, err := runtimeSources.resolve(workflowPlan)
+	if err != nil {
+		return nil, err
 	}
 	bindingJSON, err := os.ReadFile(datastoreConfig)
 	if err != nil {
@@ -348,7 +402,7 @@ func runRuntimeInvocation(ctx context.Context, planPath, bundleDir, nodeID, inpu
 	config := orchestrator.IsolatedStepConfig{
 		Plan: workflowPlan, NodeID: nodeID, Datastore: binding,
 		ProjectID: project, RunID: runID,
-		SourceArchives: archives, Attempt: retryCount + 1,
+		Sources: sources, Attempt: retryCount + 1,
 	}
 	if mapItemIndex != nil {
 		return orchestrator.RunIsolatedMapItem(ctx, config, []byte(input), *mapItemIndex)

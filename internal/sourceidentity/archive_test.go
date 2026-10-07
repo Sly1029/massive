@@ -3,6 +3,8 @@ package sourceidentity
 import (
 	"archive/tar"
 	"bytes"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -77,12 +79,48 @@ func TestVerifyArchiveRejectsUnsafeAndMismatchedSource(t *testing.T) {
 func TestVerifyArchiveBoundsDeclaredSizeBeforeReadingBody(t *testing.T) {
 	var archive bytes.Buffer
 	writer := tar.NewWriter(&archive)
-	if err := writer.WriteHeader(&tar.Header{Name: "huge.py", Typeflag: tar.TypeReg, Size: 51 * 1024 * 1024}); err != nil {
+	if err := writer.WriteHeader(&tar.Header{Name: "huge.py", Typeflag: tar.TypeReg, Size: MaxBytes + 1}); err != nil {
 		t.Fatal(err)
 	}
 	// Intentionally no body: validation must reject the declared size rather
 	// than attempt to read it or report a truncated body.
 	if err := VerifyArchive(archive.Bytes(), "unused"); err == nil || !strings.Contains(err.Error(), "limits") {
 		t.Fatalf("oversized header verification: %v", err)
+	}
+}
+
+func TestVerifyArchiveAcceptsResourceTreesUpToTheFileLimit(t *testing.T) {
+	build := func(count int) ([]byte, string) {
+		var archive bytes.Buffer
+		writer := tar.NewWriter(&archive)
+		files := make([]File, 0, count)
+		for index := range count {
+			name := fmt.Sprintf("resources/%02d/%05d.md", index%97, index)
+			body := []byte(name)
+			if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := writer.Write(body); err != nil {
+				t.Fatal(err)
+			}
+			files = append(files, File{Path: name, Hash: canonical.DigestBytes(body)})
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		sort.Slice(files, func(i, j int) bool { return canonical.LessUTF16(files[i].Path, files[j].Path) })
+		hash, err := Digest(files)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return archive.Bytes(), hash
+	}
+	archive, hash := build(MaxFiles)
+	if err := VerifyArchive(archive, hash); err != nil {
+		t.Fatalf("archive with %d files: %v", MaxFiles, err)
+	}
+	archive, hash = build(MaxFiles + 1)
+	if err := VerifyArchive(archive, hash); err == nil || !strings.Contains(err.Error(), "limits") {
+		t.Fatalf("archive above the file limit: %v", err)
 	}
 }

@@ -10,8 +10,8 @@ import { SymbolResolutionError } from "./outcomes.ts";
 
 const SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar";
 const TAR_BLOCK_SIZE = 512;
-const MAX_SOURCE_FILES = 1_024;
-const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
+const MAX_SOURCE_FILES = 16_384;
+const MAX_SOURCE_BYTES = 256 * 1024 * 1024;
 
 export async function withResolvedStepSymbol<Result>(
   descriptor: StepInvocationDescriptor,

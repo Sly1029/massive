@@ -28,5 +28,9 @@ implicit mutable instance state and pickle codecs are not runtime contracts.
 Test real publication and hydration with the submission archive removed, and
 cover the installed wheel as well as editable SDK imports.
 
+The runner streams source archives to scratch and verifies the descriptor's
+archive digest before opening the tar; do not buffer whole archives or read
+entries from unverified bytes. Source limits match the Go verifier.
+
 Keep the extracted source directory importable throughout invocation and output
 serialization; ordinary functions and validators may lazily import sibling modules.

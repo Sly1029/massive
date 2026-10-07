@@ -20,6 +20,10 @@ message TargetBundleManifest {
   optional BundleProvenance provenance = 7;
   // Identity of the separate target/profile binding used for this bundle.
   optional string deployment_hash = 8;
+  // How executor pods receive verified source archives: "embedded-v0" mounts
+  // them from the runtime ConfigMap; "object-store-v0" fetches them from the
+  // shared datastore after `massive publish` uploads the source-archive files.
+  optional string runtime_transport = 9;
 }
 
 message EmittedFile {

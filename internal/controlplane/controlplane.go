@@ -20,7 +20,6 @@ import (
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
-	"github.com/Sly1029/massive/internal/target/argo"
 	"github.com/Sly1029/massive/internal/taskprocess"
 )
 
@@ -205,6 +204,7 @@ type ArgoBundleRequest struct {
 	Namespace                 string
 	ServiceAccountName        string
 	WorkflowTemplateName      string
+	RuntimeTransport          string
 }
 
 type ArgoBundleResult struct {
@@ -226,6 +226,7 @@ func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
 			Kind: "argo", Namespace: request.Namespace,
 			ServiceAccountName:        request.ServiceAccountName,
 			WorkflowTemplateName:      request.WorkflowTemplateName,
+			RuntimeTransport:          request.RuntimeTransport,
 			ArtifactCredentialsSecret: request.ArtifactCredentialsSecret,
 			SecretBindings:            request.SecretBindings,
 		},
@@ -264,7 +265,7 @@ func BundleArgo(request ArgoBundleRequest) (*ArgoBundleResult, error) {
 	}
 	return &ArgoBundleResult{
 		PlanHash: compiled.Plan.PlanHash, DeploymentHash: compiled.Deployment.DeploymentHash,
-		BundleHash: bundle.Manifest.GetBundleHash(), RuntimeTransport: argo.RuntimeTransport,
+		BundleHash: bundle.Manifest.GetBundleHash(), RuntimeTransport: bundle.Manifest.GetRuntimeTransport(),
 		Files: files,
 	}, nil
 }

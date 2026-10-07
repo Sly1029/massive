@@ -128,6 +128,7 @@ const WorkflowPackageConfigSchema = z.object({
           kind: z.literal("argo"),
           namespace: z.string().min(1),
           serviceAccountName: z.string().min(1),
+          runtimeTransport: z.enum(["embedded-v0", "object-store-v0"]),
           workflowTemplateName: z.string().min(1).optional(),
           artifactCredentialsSecret: z.string().min(1).optional(),
         }).strict(),

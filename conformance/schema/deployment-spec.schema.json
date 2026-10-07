@@ -55,9 +55,12 @@
       }
     },
     "target": {
-      "oneOf": [
-        { "$ref": "#/$defs/localTarget" },
-        { "$ref": "#/$defs/argoTarget" }
+      "type": "object",
+      "required": ["kind"],
+      "properties": { "kind": { "enum": ["local", "argo"] } },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "local" } } }, "then": { "$ref": "#/$defs/localTarget" } },
+        { "if": { "properties": { "kind": { "const": "argo" } } }, "then": { "$ref": "#/$defs/argoTarget" } }
       ]
     },
     "localTarget": {
@@ -90,9 +93,10 @@
     "argoTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "namespace", "serviceAccountName"],
+      "required": ["kind", "namespace", "serviceAccountName", "runtimeTransport"],
       "properties": {
         "kind": { "const": "argo" },
+        "runtimeTransport": { "enum": ["embedded-v0", "object-store-v0"] },
         "namespace": { "$ref": "#/$defs/id" },
         "serviceAccountName": { "$ref": "#/$defs/id" },
         "workflowTemplateName": { "$ref": "#/$defs/id" },

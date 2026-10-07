@@ -19,6 +19,13 @@ Reject unsupported network/storage requirements during compilation. Pod-local
 storage cannot carry artifacts between tasks. The embedded source size limit is
 an explicit error, not permission to drop files.
 
+`runtimeTransport` is a DeploymentSpec binding: changing it must change the
+deployment hash and runtime ConfigMap name, never the plan hash. Selection is
+explicit; never switch transports by size. `object-store-v0` ConfigMaps hold
+only the plan, and runner templates pin each archive digest from the verified
+materialization manifest. Runtime pods trust only those pinned digests, not
+whatever object is present at the package key.
+
 Retry strategies belong only on runner templates. Keep the non-retryable exit
 list aligned with the runner exit codes, pass `{{retries}}` so the runtime
 derives the attempt, and enforce timeouts inside the runtime instead of with

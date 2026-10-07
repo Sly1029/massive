@@ -32,8 +32,12 @@ type TargetBundleManifest struct {
 	Provenance    *BundleProvenance      `protobuf:"bytes,7,opt,name=provenance,proto3,oneof" json:"provenance,omitempty"`
 	// Identity of the separate target/profile binding used for this bundle.
 	DeploymentHash *string `protobuf:"bytes,8,opt,name=deployment_hash,json=deploymentHash,proto3,oneof" json:"deployment_hash,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// How executor pods receive verified source archives: "embedded-v0" mounts
+	// them from the runtime ConfigMap; "object-store-v0" fetches them from the
+	// shared datastore after `massive publish` uploads the source-archive files.
+	RuntimeTransport *string `protobuf:"bytes,9,opt,name=runtime_transport,json=runtimeTransport,proto3,oneof" json:"runtime_transport,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *TargetBundleManifest) Reset() {
@@ -118,6 +122,13 @@ func (x *TargetBundleManifest) GetProvenance() *BundleProvenance {
 func (x *TargetBundleManifest) GetDeploymentHash() string {
 	if x != nil && x.DeploymentHash != nil {
 		return *x.DeploymentHash
+	}
+	return ""
+}
+
+func (x *TargetBundleManifest) GetRuntimeTransport() string {
+	if x != nil && x.RuntimeTransport != nil {
+		return *x.RuntimeTransport
 	}
 	return ""
 }
@@ -298,7 +309,7 @@ var File_bundle_manifest_proto protoreflect.FileDescriptor
 
 const file_bundle_manifest_proto_rawDesc = "" +
 	"\n" +
-	"\x15bundle-manifest.proto\x12\x0fmassive.plan.v1\x1a\x13workflow-plan.proto\"\xf5\x03\n" +
+	"\x15bundle-manifest.proto\x12\x0fmassive.plan.v1\x1a\x13workflow-plan.proto\"\xbd\x04\n" +
 	"\x14TargetBundleManifest\x12*\n" +
 	"\x0eschema_version\x18\x01 \x01(\rH\x00R\rschemaVersion\x88\x01\x01\x12\x1b\n" +
 	"\x06target\x18\x02 \x01(\tH\x01R\x06target\x88\x01\x01\x12 \n" +
@@ -310,14 +321,16 @@ const file_bundle_manifest_proto_rawDesc = "" +
 	"\n" +
 	"provenance\x18\a \x01(\v2!.massive.plan.v1.BundleProvenanceH\x04R\n" +
 	"provenance\x88\x01\x01\x12,\n" +
-	"\x0fdeployment_hash\x18\b \x01(\tH\x05R\x0edeploymentHash\x88\x01\x01B\x11\n" +
+	"\x0fdeployment_hash\x18\b \x01(\tH\x05R\x0edeploymentHash\x88\x01\x01\x120\n" +
+	"\x11runtime_transport\x18\t \x01(\tH\x06R\x10runtimeTransport\x88\x01\x01B\x11\n" +
 	"\x0f_schema_versionB\t\n" +
 	"\a_targetB\f\n" +
 	"\n" +
 	"_plan_hashB\x0e\n" +
 	"\f_bundle_hashB\r\n" +
 	"\v_provenanceB\x12\n" +
-	"\x10_deployment_hash\"\x9d\x01\n" +
+	"\x10_deployment_hashB\x14\n" +
+	"\x12_runtime_transport\"\x9d\x01\n" +
 	"\vEmittedFile\x12\x17\n" +
 	"\x04path\x18\x01 \x01(\tH\x00R\x04path\x88\x01\x01\x12=\n" +
 	"\bartifact\x18\x02 \x01(\v2\x1c.massive.plan.v1.ArtifactRefH\x01R\bartifact\x88\x01\x01\x12\x17\n" +

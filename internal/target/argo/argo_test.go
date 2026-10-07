@@ -3,11 +3,14 @@ package argo
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -155,8 +158,116 @@ func TestExecutableBundleRequiresBoundedRuntimeAssets(t *testing.T) {
 	for hash := range assets.SourceArchives {
 		assets.SourceArchives[hash] = make([]byte, maxEmbeddedRuntimeBytes)
 	}
-	if _, err := Compile(compiled.CanonicalJSON, deploymentForPlan(t, compiled.CanonicalJSON), assets); err == nil || !strings.Contains(err.Error(), "ConfigMap transport") {
+	if _, err := Compile(compiled.CanonicalJSON, deploymentForPlan(t, compiled.CanonicalJSON), assets); err == nil || !strings.Contains(err.Error(), "embedded-v0 runtime ConfigMap") {
 		t.Fatalf("oversized source assets error = %v", err)
+	}
+}
+
+func TestObjectStoreTransportPinsLargeArchivesOutsideTheConfigMap(t *testing.T) {
+	compiled := fixturePlan(t, "python-linear")
+	// Nested resource trees exceed the embedded limit; the bytes are
+	// pseudo-random so the archive size is not an artifact of padding.
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	files := []sourceidentity.File{}
+	seed := []byte("resource")
+	for index := range 600 {
+		name := fmt.Sprintf("resources/pack-%d/rules/%03d.yaml", index%7, index)
+		body := make([]byte, 0, 2048)
+		for len(body) < 2048 {
+			digest := sha256.Sum256(append(seed, byte(len(body)), byte(index), byte(index>>8)))
+			seed = digest[:]
+			body = append(body, digest[:]...)
+		}
+		if err := writer.WriteHeader(&tar.Header{Name: name, Size: int64(len(body)), Mode: 0o644, Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write(body); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, sourceidentity.File{Path: name, Hash: canonical.DigestBytes(body)})
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sort.Slice(files, func(i, j int) bool { return canonical.LessUTF16(files[i].Path, files[j].Path) })
+	packageHash, err := sourceidentity.Digest(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range compiled.Plan.SourcePackages {
+		source.PackageHash = pointer(packageHash)
+	}
+	planJSON, _ := rehashPlan(t, compiled.Plan)
+	archives := map[string][]byte{packageHash: archive.Bytes()}
+	selection, err := materialization.ForPlan(compiled.Plan, archives)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specJSON, err := materialization.MarshalCanonical(selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets := RuntimeAssets{SourceArchives: archives, MaterializationSpec: specJSON}
+	if archive.Len() <= maxEmbeddedRuntimeBytes {
+		t.Fatalf("fixture archive is only %d bytes", archive.Len())
+	}
+
+	embedded := deploymentForAssets(t, planJSON, assets, TransportEmbedded)
+	if _, err := Compile(planJSON, embedded, assets); err == nil || !strings.Contains(err.Error(), "--runtime-transport object-store-v0") {
+		t.Fatalf("oversized embedded bundle error = %v", err)
+	}
+	objectStore := deploymentForAssets(t, planJSON, assets, TransportObjectStore)
+	if objectStore.DeploymentHash == embedded.DeploymentHash {
+		t.Fatal("runtime transport must be part of deployment identity")
+	}
+	bundle, err := Compile(planJSON, objectStore, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Manifest.GetRuntimeTransport() != TransportObjectStore {
+		t.Fatalf("bundle manifest transport = %q", bundle.Manifest.GetRuntimeTransport())
+	}
+	var configMap struct {
+		BinaryData map[string]string `json:"binaryData"`
+	}
+	if err := json.Unmarshal(fileByPath(t, bundle, "runtime-configmap.json").Bytes, &configMap); err != nil {
+		t.Fatal(err)
+	}
+	if len(configMap.BinaryData) != 1 || configMap.BinaryData["massive-plan.json"] == "" {
+		t.Fatalf("object-store ConfigMap entries = %v, want only the plan", reflect.ValueOf(configMap.BinaryData).MapKeys())
+	}
+	name := "runtime-assets/source-sha256-" + strings.TrimPrefix(packageHash, "sha256:") + ".tar"
+	if !bytes.Equal(fileByPath(t, bundle, name).Bytes, archive.Bytes()) {
+		t.Fatal("bundle must still expose the exact archive for publication")
+	}
+	var template map[string]any
+	if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+		t.Fatal(err)
+	}
+	if transport := template["metadata"].(map[string]any)["annotations"].(map[string]any)["massive.dev/runtime-transport"]; transport != TransportObjectStore {
+		t.Fatalf("template transport annotation = %v", transport)
+	}
+	pinned := "--source-archive=" + packageHash + "=" + canonical.DigestBytes(archive.Bytes())
+	runners := 0
+	for _, item := range template["spec"].(map[string]any)["templates"].([]any) {
+		container, ok := item.(map[string]any)["container"].(map[string]any)
+		if !ok {
+			continue
+		}
+		args := container["args"].([]any)
+		if containsArgs(args, "--bundle-dir") {
+			t.Fatalf("object-store template still mounts embedded sources: %v", args)
+		}
+		if containsArgs(args, "runtime", "step") || containsArgs(args, "runtime", "map", "item") {
+			runners++
+			if !containsArgs(args, pinned) {
+				t.Fatalf("runner args do not pin the archive digest: %v", args)
+			}
+		}
+	}
+	if runners == 0 {
+		t.Fatal("fixture has no runner templates")
 	}
 }
 
@@ -410,14 +521,22 @@ func deploymentForPlan(t *testing.T, planJSON []byte) *deployment.Spec {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assets := runtimeAssetsForPlan(t, p)
+	return deploymentForAssets(t, planJSON, runtimeAssetsForPlan(t, p), TransportEmbedded)
+}
+
+func deploymentForAssets(t *testing.T, planJSON []byte, assets RuntimeAssets, transport string) *deployment.Spec {
+	t.Helper()
+	p, err := plan.ParseCanonicalJSON(planJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
 	manifest, err := materialization.Resolve(p, assets.MaterializationSpec, assets.SourceArchives)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d, _, err := deployment.New(p.GetPlanHash(), deployment.Profile{
 		Name: "argo-staging", ArtifactStoreBinding: "staging-artifacts",
-		Target: deployment.Target{Kind: "argo", Namespace: "workflows", ServiceAccountName: "massive-runner", WorkflowTemplateName: "massive-static"},
+		Target: deployment.Target{Kind: "argo", Namespace: "workflows", ServiceAccountName: "massive-runner", WorkflowTemplateName: "massive-static", RuntimeTransport: transport},
 	}, manifest.GetManifestHash())
 	if err != nil {
 		t.Fatal(err)

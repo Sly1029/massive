@@ -11,6 +11,13 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 )
 
+// Source packages hold application resources as well as modules. These bounds
+// are shared by every runner that extracts an archive.
+const (
+	MaxFiles = 16384
+	MaxBytes = 256 * 1024 * 1024
+)
+
 // VerifyArchive derives source-package-v1 identity from exact tar entry bytes.
 // Both target compilation and remote execution use this same trust boundary.
 func VerifyArchive(archive []byte, expectedHash string) error {
@@ -42,7 +49,7 @@ func VerifyArchive(archive []byte, expectedHash string) error {
 			return fmt.Errorf("source archive contains invalid entry %q", header.Name)
 		}
 		seen[header.Name] = true
-		if len(files) >= 1024 || header.Size > 50*1024*1024-totalSize {
+		if len(files) >= MaxFiles || header.Size > MaxBytes-totalSize {
 			return errors.New("source archive exceeds source package limits")
 		}
 		totalSize += header.Size

@@ -7,13 +7,13 @@ import importlib.resources
 import inspect
 import json
 import re
+import shutil
 import sys
 import tarfile
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cache
-from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal, NotRequired, Protocol, TypedDict, cast
@@ -48,8 +48,8 @@ from .identity import SHA256_REFERENCE, InvocationIdentity
 from .identity import ExecutionScope as ArtifactExecutionScope
 
 _SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
-_MAX_SOURCE_FILES = 1024
-_MAX_SOURCE_BYTES = 50 * 1024 * 1024
+_MAX_SOURCE_FILES = 16384
+_MAX_SOURCE_BYTES = 256 * 1024 * 1024
 _DESCRIPTOR_EXIT = 64
 _SCHEMA_EXIT = 65
 _STEP_EXIT = 66
@@ -374,13 +374,21 @@ def _source_root(
     archive = source_package["sourceArchive"]
     if archive["contentType"] != _SOURCE_ARCHIVE_CONTENT_TYPE:
         raise DescriptorError("Python runner requires application/vnd.massive.source-tar")
-    body = datastore.get(archive["key"]).body
-    if _sha256_ref_bytes(body) != archive["hash"]:
-        raise DescriptorError("source archive hash mismatch")
     with TemporaryDirectory(prefix="massive-source-") as temporary:
-        root = Path(temporary)
+        # Stream the archive to scratch and verify its digest before reading
+        # any entry; a source package can be far larger than pod memory needs.
+        archive_path = Path(temporary) / "source.tar"
+        root = Path(temporary) / "source"
+        with archive_path.open("w+b") as download:
+            try:
+                datastore.download(archive["key"], download)
+            except DatastoreNotFoundError as error:
+                raise DescriptorError(f"source archive is missing: {archive['key']}") from error
+            download.seek(0)
+            if "sha256:" + hashlib.file_digest(download, "sha256").hexdigest() != archive["hash"]:
+                raise DescriptorError("source archive hash mismatch")
         try:
-            with tarfile.open(fileobj=BytesIO(body), mode="r:") as archive_file:
+            with tarfile.open(archive_path, mode="r:") as archive_file:
                 names: set[str] = set()
                 total_size = 0
                 for member in archive_file:
@@ -402,11 +410,13 @@ def _source_root(
                         )
                     target = root / member.name
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(source.read())
+                    with target.open("wb") as extracted:
+                        shutil.copyfileobj(source, extracted)
                     target.chmod(0o444)
                     names.add(member.name)
         except (tarfile.TarError, OSError) as error:
             raise DescriptorError(f"source archive is invalid: {error}") from error
+        archive_path.unlink()
         yield root
 
 
@@ -471,10 +481,6 @@ def _datastore(descriptor: DatastoreDescriptor) -> Datastore:
     if descriptor["kind"] == "s3":
         return S3Datastore(descriptor)
     raise AssertionError("unreachable datastore kind")
-
-
-def _sha256_ref_bytes(body: bytes) -> str:
-    return "sha256:" + hashlib.sha256(body).hexdigest()
 
 
 def _safe_archive_path(path: str) -> bool:
