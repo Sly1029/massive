@@ -14,6 +14,9 @@ cleanup() {
   if (( result != 0 )); then
     "$KUBECTL" -n argo get workflows,pods -o yaml > "$logs/resources.yaml" 2>&1 || true
     "$KUBECTL" -n argo logs deployment/workflow-controller > "$logs/controller.log" 2>&1 || true
+    "$KUBECTL" -n argo logs deployment/minio > "$logs/minio.log" 2>&1 || true
+    "$KUBECTL" -n argo logs deployment/minio --previous > "$logs/minio-previous.log" 2>&1 || true
+    "$KUBECTL" -n argo get events > "$logs/events.log" 2>&1 || true
     "$KUBECTL" -n argo logs -l workflows.argoproj.io/workflow --all-containers --prefix --max-log-requests=50 --tail=200 > "$logs/pods.log" 2>&1 || true
   fi
   "$kind" delete cluster --name "$cluster"
