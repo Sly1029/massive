@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from massive import Retry, container, execution, retry
+from massive import Container, ExecutionContract, Retry, container, execution, retry
 
 _ENVIRONMENT = container("registry.example/python@sha256:" + "0123456789abcdef" * 4)
 
@@ -133,3 +133,29 @@ def test_container_records_invocation_requirements() -> None:
 def test_container_recipe_rejects_mutable_image_references(image: str) -> None:
     with pytest.raises(ValueError, match="immutable image digest"):
         container(image)
+
+
+_DIGEST = "registry.example/python@sha256:" + "0123456789abcdef" * 4
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"image": "registry.example/python:3.12"}, "immutable image digest"),
+        ({"image": _DIGEST, "platform": "LINUX"}, "os/architecture pair"),
+        ({"image": _DIGEST, "command": ("python", "")}, "command values"),
+        ({"image": _DIGEST, "working_directory": ""}, "working directory"),
+    ],
+)
+def test_direct_and_derived_containers_are_validated(
+    arguments: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        Container(**{"platform": "linux/amd64", **arguments})
+    with pytest.raises(ValueError, match=message):
+        replace(container(_DIGEST), **arguments)
+
+
+def test_contract_rejects_an_unknown_network_policy() -> None:
+    with pytest.raises(ValueError, match="network egress must be 'none' or 'any'"):
+        ExecutionContract(environment=container(_DIGEST), network="all")  # type: ignore[arg-type]
