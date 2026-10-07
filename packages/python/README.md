@@ -98,8 +98,9 @@ shows the scoped steps rather than a separate child-run hierarchy.
 
 Argo requires immutable container environments and an explicit shared S3
 datastore binding. Blob/Tree file bodies are stored remotely and hydrated into
-private invocation directories. Ordinary JSON values still use Argo parameters;
-the `embedded-v0` runtime ConfigMap is limited to 700 KiB. Declared application
+private invocation directories. JSON values above 4 KiB cross Argo parameters
+as datastore references and arrive in step inputs as ordinary values; the
+`embedded-v0` runtime ConfigMap is limited to 700 KiB. Declared application
 secrets require deployment bindings; `network="none"` fails because tasks need
 remote storage. See the [Argo datastore setup](https://github.com/Sly1029/massive/blob/main/docs/spec/argo-backend.md#shared-invocation-datastore)
 for ConfigMap and credential bindings.

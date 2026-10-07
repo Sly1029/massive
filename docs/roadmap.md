@@ -23,6 +23,10 @@ Implemented:
   700 KiB embedded ConfigMap limit: `massive publish` uploads verified archives
   and pods verify them by pinned digest. Source packages may hold 16,384 files
   and 256 MiB.
+- JSON values above 4 KiB cross Argo parameters as content-addressed datastore
+  references, hydrated before typed step inputs; local execution passes the
+  same values as artifacts. Multi-MB values flow through steps, decisions,
+  selects, and maps on both targets.
 - Python `Blob` and `Tree` references transport files through the existing
   filesystem/S3 datastore, including ordered subprocess maps. Hydration is
   invocation-local; explicit snapshots publish mutations.
@@ -46,8 +50,6 @@ Implemented:
 Next:
 
 - Exercise installation and execution on clean Linux CI runners.
-- Add artifact references for large arbitrary JSON values. File bodies already
-  use references; ordinary JSON values still pass through Argo parameters.
 
 Acceptance: a clean checkout runs a linear workflow, a resource-bearing fan-out,
 and a conditional workflow without manually repairing the environment.
@@ -90,7 +92,8 @@ deployment-bound native Secret references. Cloud workload identity remains a
 separate infrastructure gate.
 Source packages beyond the embedded limit use `object-store-v0`.
 Remaining work:
-- large JSON value transport and representative application images.
+- representative application images, and map fan-outs wider than one Argo
+  parameter of collected item envelopes.
 
 Reject unsupported requirements instead of silently weakening them. Schema
 validation and isolated runner tests do not replace a live cluster execution gate.

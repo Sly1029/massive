@@ -4,9 +4,11 @@ Read `../../../docs/spec/argo-backend.md` when changing pod templates, control
 flow, or runtime transport. Deployment artifacts contain bindings, never values
 of credentials; execution requirements remain separate from deployment binding.
 
-Only user invocations need shared datastore access and application execution
-resources. Decision/select, map expansion, and collection control pods execute
-no author code; keep user credentials and resources off these pods. Bind each
+Only user invocations need application secrets and execution resources.
+Decision/select, map expansion, and collection control pods execute no author
+code; keep application secrets and resources off them. They do mount the
+shared datastore, with any bound storage credentials, because value parameters
+may reference bodies they must validate, expand, or collect. Bind each
 logical application-secret ref through DeploymentSpec and reject unbound refs
 before emitting a bundle. Reserve storage/runtime environment names even when
 no explicit storage credential Secret is configured.
@@ -40,3 +42,8 @@ derives the attempt, and enforce timeouts inside the runtime instead of with
 
 For lowering or transport changes, exercise `../../../scripts/test-argo.sh`.
 Schema-valid YAML and isolated runtime tests do not prove live controller behavior.
+
+Value parameters are canonical JSON up to 4 KiB, otherwise `@` plus a value
+reference; map envelopes inline at most 256 bytes. Keep values unambiguous:
+never concatenate parameters into JSON text (merge sources are separate
+parameters), and forward a received reference instead of republishing it.

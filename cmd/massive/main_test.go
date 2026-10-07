@@ -11,9 +11,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/runjournal"
+	"github.com/Sly1029/massive/internal/valueparam"
 	"github.com/alecthomas/kong"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestCLIExplainsInvalidArguments(t *testing.T) {
@@ -104,10 +108,21 @@ func TestRunInputReadsARealJSONFile(t *testing.T) {
 	}
 }
 
+func localDatastoreConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "datastore.json")
+	body, _ := json.Marshal(map[string]string{"kind": "local", "path": t.TempDir()})
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestRuntimeMapTransportExpandsAndCollectsThroughFiles(t *testing.T) {
 	root := t.TempDir()
+	datastoreConfig := localDatastoreConfig(t)
 	expandedPath := filepath.Join(root, "expanded.json")
-	if err := (&RuntimeMapExpandCommand{Input: `[3,3]`, Output: expandedPath}).Run(); err != nil {
+	if err := (&RuntimeMapExpandCommand{Input: `[3,3]`, Output: expandedPath, DatastoreConfig: datastoreConfig}).Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	expanded, err := os.ReadFile(expandedPath)
@@ -121,8 +136,8 @@ func TestRuntimeMapTransportExpandsAndCollectsThroughFiles(t *testing.T) {
 	collectedPath := filepath.Join(root, "collected.json")
 	if err := (&RuntimeMapCollectCommand{
 		Input:  `[{"index":1,"value":"second"},{"index":0,"value":"first"}]`,
-		Output: collectedPath,
-	}).Run(); err != nil {
+		Output: collectedPath, DatastoreConfig: datastoreConfig,
+	}).Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	collected, err := os.ReadFile(collectedPath)
@@ -132,11 +147,65 @@ func TestRuntimeMapTransportExpandsAndCollectsThroughFiles(t *testing.T) {
 	if got, want := string(collected), `["first","second"]`; got != want {
 		t.Fatalf("collected = %s, want %s", got, want)
 	}
+
+	// A large map input travels by reference; its large items are referenced
+	// again, and the collected list returns as one reference.
+	large := `"` + strings.Repeat("v", 4096) + `"`
+	if err := (&RuntimeMapExpandCommand{Input: `[` + large + `]`, Output: expandedPath, DatastoreConfig: datastoreConfig}).Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	expanded, err = os.ReadFile(expandedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(expanded, &items); err != nil || len(items) != 1 || !strings.Contains(string(items[0]), `"ref":`) {
+		t.Fatalf("large expanded items = %.200s, %v", expanded, err)
+	}
+	// An item pod forwards the referenced item body as its published result.
+	if err := (&RuntimeMapCollectCommand{Input: `[` + string(items[0]) + `]`, Output: collectedPath, DatastoreConfig: datastoreConfig}).Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	collected, err = os.ReadFile(collectedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(collected), `@{"hash":"sha256:`) {
+		t.Fatalf("large collection = %.80s, want a reference", collected)
+	}
+}
+
+func TestMergeInputsAssembleInlineAndReferencedSourcesInOrder(t *testing.T) {
+	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec := valueparam.Codec{Store: store}
+	large := `"` + strings.Repeat("r", valueparam.InlineLimit) + `"`
+	referenced, err := codec.Encode(t.Context(), []byte(large))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowPlan := &planpb.WorkflowPlan{Graph: &planpb.GraphIR{Nodes: []*planpb.GraphNode{{
+		Id: proto.String("merge"), Kind: proto.String("step"), MergeInputs: []string{"left", "right"},
+	}}}}
+	command := RuntimeStepCommand{Node: "merge", MergeInputs: []string{`{ "left": 1 }`, string(referenced)}}
+	input, err := command.input(t.Context(), codec, workflowPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(input), `[{"left":1},`+large+`]`; got != want {
+		t.Fatalf("merged input = %.60s, want %.60s", got, want)
+	}
+	command.MergeInputs = command.MergeInputs[:1]
+	if _, err := command.input(t.Context(), codec, workflowPlan); err == nil || !strings.Contains(err.Error(), "merges 2 sources") {
+		t.Fatalf("short merge error = %v", err)
+	}
 }
 
 func TestRuntimeMapEmptyMarkerDoesNotLoadOrInvokeAPlan(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "result.json")
-	command := RuntimeMapItemCommand{Item: `{"empty":true}`, Output: output}
+	command := RuntimeMapItemCommand{Item: `{"empty":true}`, Output: output, DatastoreConfig: localDatastoreConfig(t)}
 	if err := command.Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}

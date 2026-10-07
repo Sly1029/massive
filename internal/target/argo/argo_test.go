@@ -84,9 +84,19 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 	if !containsArgs(args, "runtime", "step") || !containsArgs(args, "--node=merge") {
 		t.Fatalf("remote runtime command missing: %v", args)
 	}
-	input := merge["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"]
-	if input != "[{{tasks.left.outputs.parameters.result}},{{tasks.right.outputs.parameters.result}}]" {
-		t.Fatalf("ordered merge input expression = %v", input)
+	// Each merge source is its own parameter: a value reference is not JSON
+	// text, so sources cannot be concatenated into one array expression.
+	parameters := merge["arguments"].(map[string]any)["parameters"].([]any)
+	if len(parameters) != 2 ||
+		!reflect.DeepEqual(parameters[0], map[string]any{"name": "input-0", "value": "{{tasks.left.outputs.parameters.result}}"}) ||
+		!reflect.DeepEqual(parameters[1], map[string]any{"name": "input-1", "value": "{{tasks.right.outputs.parameters.result}}"}) {
+		t.Fatalf("ordered merge parameters = %v", parameters)
+	}
+	if !containsArgs(args, "--merge-input={{inputs.parameters.input-0}}", "--merge-input={{inputs.parameters.input-1}}") || containsArgs(args, "--input={{inputs.parameters.input}}") {
+		t.Fatalf("merge runtime arguments = %v", args)
+	}
+	if inputs := stepTemplate["inputs"].(map[string]any)["parameters"].([]any); len(inputs) != 2 {
+		t.Fatalf("merge template inputs = %v", inputs)
 	}
 	fileByPath(t, first, "runtime-configmap.json")
 	if first.Manifest.GetBundleHash() == "" || first.Manifest.GetPlanHash() == "" || first.Manifest.GetDeploymentHash() == "" {
@@ -695,8 +705,10 @@ func TestArgoRequiresStorageEgressAndBindsCredentialsOnlyToInvocations(t *testin
 	}
 	templates := template["spec"].(map[string]any)["templates"].([]any)
 	control := templateByName(t, templates, "step-route")["container"].(map[string]any)
-	if control["env"] != nil {
-		t.Fatal("control task received storage credentials")
+	for _, variable := range control["env"].([]any) {
+		if name := variable.(map[string]any)["name"].(string); !strings.HasPrefix(name, "AWS_") {
+			t.Fatalf("control task received non-storage environment %s", name)
+		}
 	}
 	step := templateByName(t, templates, "step-accept")["container"].(map[string]any)
 	if len(step["env"].([]any)) != 3 {
@@ -752,52 +764,51 @@ func TestArgoInvocationStorageWiring(t *testing.T) {
 				}
 				name := template["name"].(string)
 				invocation := strings.HasPrefix(name, "map-item-") || (strings.HasPrefix(name, "step-") && name != "step-route" && name != "step-choose")
+				// Every runtime pod reads the shared datastore: invocations publish
+				// artifacts and control pods resolve value references.
 				mounts := pod["volumeMounts"].([]any)
-				if invocation {
-					if len(mounts) != 2 {
-						t.Fatalf("%s mounts: %v", name, mounts)
-					}
-					storage := mounts[1].(map[string]any)
-					if storage["name"] != "massive-datastore" || storage["mountPath"] != "/var/run/massive-datastore" || storage["readOnly"] != true {
-						t.Fatalf("%s storage: %v", name, storage)
-					}
-				} else if len(mounts) != 1 {
-					t.Fatalf("control %s received datastore mount", name)
+				if len(mounts) != 2 {
+					t.Fatalf("%s mounts: %v", name, mounts)
 				}
+				storage := mounts[1].(map[string]any)
+				if storage["name"] != "massive-datastore" || storage["mountPath"] != "/var/run/massive-datastore" || storage["readOnly"] != true {
+					t.Fatalf("%s storage: %v", name, storage)
+				}
+				if !containsArgs(pod["args"].([]any), "--datastore-config", "/var/run/massive-datastore/datastore.json") {
+					t.Fatalf("%s lacks the datastore descriptor: %v", name, pod["args"])
+				}
+				byName := map[string]map[string]any{}
+				variables, _ := pod["env"].([]any)
+				for _, variable := range variables {
+					entry := variable.(map[string]any)
+					byName[entry["name"].(string)] = entry
+				}
+				// Only invocations receive application secrets; storage credentials
+				// reach every pod when bound.
+				expected := 0
 				if invocation {
-					variables := pod["env"].([]any)
-					byName := map[string]map[string]any{}
-					for _, variable := range variables {
-						entry := variable.(map[string]any)
-						byName[entry["name"].(string)] = entry
-					}
-					expectedCount := 1
-					if secret != "" {
-						expectedCount += 3
-					}
-					if len(variables) != expectedCount || len(byName) != expectedCount {
-						t.Fatalf("%s variables = %v", name, variables)
-					}
+					expected++
 					app := byName["APP_TOKEN"]
 					ref := app["valueFrom"].(map[string]any)["secretKeyRef"].(map[string]any)
 					if ref["name"] != "application-credentials" || ref["key"] != "token" {
 						t.Fatalf("%s app binding: %v", name, app)
 					}
-					if secret != "" {
-						for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
-							entry := byName[key]
-							if entry == nil {
-								t.Fatalf("%s missing %s", name, key)
-							}
-							ref := entry["valueFrom"].(map[string]any)["secretKeyRef"].(map[string]any)
-							if ref["name"] != secret || ref["key"] != key || (ref["optional"] == true) != (key == "AWS_SESSION_TOKEN") {
-								t.Fatalf("%s storage binding: %v", name, entry)
-							}
+				}
+				if secret != "" {
+					expected += 3
+					for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+						entry := byName[key]
+						if entry == nil {
+							t.Fatalf("%s missing %s", name, key)
+						}
+						ref := entry["valueFrom"].(map[string]any)["secretKeyRef"].(map[string]any)
+						if ref["name"] != secret || ref["key"] != key || (ref["optional"] == true) != (key == "AWS_SESSION_TOKEN") {
+							t.Fatalf("%s storage binding: %v", name, entry)
 						}
 					}
 				}
-				if invocation != (pod["env"] != nil) {
-					t.Fatalf("%s credential wiring with secret %q: %v", name, secret, pod["env"])
+				if len(variables) != expected || len(byName) != expected {
+					t.Fatalf("%s variables with secret %q = %v", name, secret, variables)
 				}
 			}
 		}

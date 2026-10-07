@@ -7,8 +7,9 @@ The current implementation emits an executable DAG and validates its
 immutable ConfigMap containing the verified plan and, for the `embedded-v0`
 runtime transport, its source archives; `object-store-v0` pods fetch source
 archives from the shared datastore instead. Every pod runs one isolated
-proto-described step through the same language runner used by local execution. Argo output parameters carry canonical JSON values between
-tasks. The template is annotated
+proto-described step through the same language runner used by local execution. Argo parameters carry
+[value parameters](#value-parameters) between tasks: small canonical JSON
+values inline, larger ones as datastore references. The template is annotated
 `massive.dev/execution-status: executable-dag`.
 
 Argo is the first non-local backend. The Argo compiler emits a deploy bundle, not only a single WorkflowTemplate.
@@ -428,7 +429,9 @@ control`, validates the selected case with the same schema validator as local
 execution, and emits a numeric case index. User tags never become controller
 expressions. Decision and select tasks reuse an upstream container environment
 without invoking author code or inheriting that step's resources or secrets.
-Control tasks do not receive storage credentials or an author network contract.
+Control tasks receive the shared datastore binding, including bound storage
+credentials, so they can resolve and publish value references; they never
+receive application secrets, resources, or an author network contract.
 
 Every ordinary dependency requires `.Succeeded`. Selects wait for all branch
 sources to finish or become inactive, require at least one successful source,
@@ -463,9 +466,49 @@ and use its registry digest in `container(...)`. Application packages can extend
 this recipe with their own locked dependencies; the generic image contains only
 Massive and its runtime requirements.
 
-Source archives use the selected runtime transport, and ordinary values still
-pass through Argo parameters. All Argo invocations use the shared datastore for
-artifact publication and Blob/Tree hydration; there is no pod-local fallback.
+Source archives use the selected runtime transport, and JSON values use value
+parameters. All Argo invocations use the shared datastore for artifact
+publication, value references, and Blob/Tree hydration; there is no pod-local
+fallback.
+
+## Value parameters
+
+Argo passes values between tasks as parameters. It copies them into pod
+arguments and its template environment, which Linux limits to 128 KiB per
+string, and into the workflow status. A merge step or a map collector receives
+several values at once. So Massive runtime commands exchange **value
+parameters**:
+
+- canonical JSON text when the canonical body is at most **4,096 bytes**; or
+- `@` followed by the canonical JSON of a reference,
+  `{"hash":"sha256:<hex>","size":<bytes>}`, to the canonical body stored at
+  `blobs/sha256/<hex>` with content type `application/json`.
+
+`@` cannot begin JSON text, so the forms are unambiguous for every value. The
+reference schema is `conformance/schema/value-reference.schema.json`. Its hash is
+the SHA-256 of the same canonical bytes recorded in artifact manifests and step
+descriptors, so a reference never changes a value's identity, input hashes,
+output manifests, or idempotency keys. Step outputs are already committed at
+that key by the language runner; control tasks and collectors publish their
+outputs with an if-absent put. Every reader verifies hash, size, content type,
+and canonical encoding before use. Vectors, with hashes computed independently
+of the Go implementation, live in `conformance/fixtures/value-parameters`.
+
+Map envelopes carry each item as `{"index":i,"value":v}` when the item's body
+is at most **256 bytes**, otherwise as `{"index":i,"ref":{...}}`. The smaller
+limit applies because Argo concatenates every item result into the collector's
+single parameter. A map's collected envelopes must still fit that parameter, so
+very wide maps remain bounded by Argo (each referenced item costs about 120
+bytes). A merge step receives one parameter per source (`--merge-input`, in
+`mergeInputs` order) rather than a concatenated array, because a reference is
+not JSON text.
+
+Typed step inputs are hydrated by the Go runtime before the language runner
+starts, so runners and author code see ordinary values in both targets. The
+local target already passes every value as a datastore artifact and never needs
+references. A workflow input submitted with `-p input=` may itself be a
+reference to a body published at its blob key. A workflow result above 4 KiB is
+returned as a reference; read its body from the datastore.
 
 ## Shared invocation datastore
 
@@ -496,8 +539,8 @@ Without `--artifact-credentials-secret`, the runtime resolves standard AWS
 credentials from the execution environment, including workload identity. The
 Go provider refreshes IAM credentials; Python uses its SDK credential chain.
 With the flag, Massive binds only `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
-and optional `AWS_SESSION_TOKEN` from that Secret to user invocation containers.
-Control-only tasks never receive those storage credentials. No credential bytes
+and optional `AWS_SESSION_TOKEN` from that Secret to runtime containers. Control
+tasks receive them only to read and publish value references. No credential bytes
 are included in plans, descriptors, source archives, or deploy bundles.
 
 An `egress: none` execution contract cannot reach remote storage, so the Argo

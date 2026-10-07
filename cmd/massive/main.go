@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -16,9 +18,9 @@ import (
 	"github.com/Sly1029/massive/internal/controlplane"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/environment"
-	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/valueparam"
 	"github.com/alecthomas/kong"
 )
 
@@ -67,26 +69,27 @@ type PublishCommand struct {
 type VersionCommand struct{}
 
 type RuntimeControlCommand struct {
-	Plan   string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
-	Node   string `help:"Decision or select node." required:""`
-	Input  string `help:"Canonical JSON control value." required:""`
-	Output string `help:"Write validated canonical JSON here." required:"" type:"path"`
+	Plan            string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
+	Node            string `help:"Decision or select node." required:""`
+	Input           string `help:"Control value parameter: canonical JSON or a value reference." required:""`
+	Output          string `help:"Write the validated value parameter here." required:"" type:"path"`
+	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
 }
 
-func (command *RuntimeControlCommand) Run() error {
-	data, err := os.ReadFile(command.Plan)
+func (command *RuntimeControlCommand) Run(ctx context.Context) error {
+	verified, err := readRuntimePlan(command.Plan)
 	if err != nil {
 		return err
 	}
-	parsed, err := plan.ParseCanonicalJSON(data)
+	codec, _, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
 	if err != nil {
 		return err
 	}
-	verified, err := plan.VerifyCanonicalJSON(data, parsed.GetPlanHash())
+	input, err := codec.Decode(ctx, []byte(command.Input))
 	if err != nil {
 		return err
 	}
-	result, err := orchestrator.ResolveControlValue(verified, command.Node, []byte(command.Input))
+	result, err := orchestrator.ResolveControlValue(verified, command.Node, input.Body)
 	if err != nil {
 		return err
 	}
@@ -95,7 +98,15 @@ func (command *RuntimeControlCommand) Run() error {
 			return err
 		}
 	}
-	return writeRuntimeOutput(command.Output, result.Value)
+	// Control tasks pass the validated value through; a reference is forwarded
+	// rather than downloaded again by a second publication.
+	output := input.Parameter()
+	if input.Ref == nil {
+		if output, err = codec.Encode(ctx, result.Value); err != nil {
+			return err
+		}
+	}
+	return writeRuntimeOutput(command.Output, output)
 }
 
 type RuntimeCommand struct {
@@ -113,13 +124,14 @@ type RuntimeMapCommand struct {
 type RuntimeStepCommand struct {
 	Plan            string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
 	RuntimeSources  `embed:""`
-	Node            string `help:"Static plan node to execute." required:""`
-	Input           string `help:"Canonical JSON step input." required:""`
-	Output          string `help:"Write canonical JSON result to this path." required:"" type:"path"`
-	Project         string `help:"Stable remote project identity." required:""`
-	RunID           string `name:"run-id" help:"Remote workflow run identifier." required:""`
-	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
-	RetryCount      int    `name:"retry-count" help:"Retries already attempted by the target scheduler; the attempt is retry-count + 1." default:"0"`
+	Node            string   `help:"Static plan node to execute." required:""`
+	Input           string   `help:"Step input parameter: canonical JSON or a value reference." xor:"input" required:""`
+	MergeInputs     []string `name:"merge-input" help:"One value parameter per merge source, in the node's mergeInputs order." sep:"none" xor:"input" required:""`
+	Output          string   `help:"Write canonical JSON result to this path." required:"" type:"path"`
+	Project         string   `help:"Stable remote project identity." required:""`
+	RunID           string   `name:"run-id" help:"Remote workflow run identifier." required:""`
+	DatastoreConfig string   `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
+	RetryCount      int      `name:"retry-count" help:"Retries already attempted by the target scheduler; the attempt is retry-count + 1." default:"0"`
 }
 
 // RuntimeSources selects the source transport: embedded-v0 mounts archives
@@ -152,8 +164,9 @@ func (sources RuntimeSources) resolve(workflowPlan *planpb.WorkflowPlan) (map[st
 }
 
 type RuntimeMapExpandCommand struct {
-	Input  string `help:"Canonical JSON map input." required:""`
-	Output string `help:"Write indexed Argo loop items to this path." required:"" type:"path"`
+	Input           string `help:"Map input parameter: canonical JSON or a value reference." required:""`
+	Output          string `help:"Write indexed Argo loop items to this path." required:"" type:"path"`
+	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
 }
 
 type RuntimeMapItemCommand struct {
@@ -169,8 +182,9 @@ type RuntimeMapItemCommand struct {
 }
 
 type RuntimeMapCollectCommand struct {
-	Input  string `help:"Aggregated indexed Argo map results." required:""`
-	Output string `help:"Write the canonical ordered result list to this path." required:"" type:"path"`
+	Input           string `help:"Aggregated indexed Argo map results." required:""`
+	Output          string `help:"Write the ordered result list parameter to this path." required:"" type:"path"`
+	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
 }
 
 type runOutput struct {
@@ -335,15 +349,58 @@ func (*VersionCommand) Run(stdout io.Writer) error {
 }
 
 func (command *RuntimeStepCommand) Run(ctx context.Context) error {
-	result, err := runRuntimeInvocation(ctx, command.Plan, command.RuntimeSources, command.Node, command.Input, command.Project, command.RunID, command.DatastoreConfig, command.RetryCount, nil)
+	workflowPlan, err := readRuntimePlan(command.Plan)
 	if err != nil {
 		return err
 	}
-	return writeRuntimeOutput(command.Output, result)
+	codec, descriptor, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
+	if err != nil {
+		return err
+	}
+	input, err := command.input(ctx, codec, workflowPlan)
+	if err != nil {
+		return err
+	}
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, command.RetryCount, nil)
+	if err != nil {
+		return err
+	}
+	parameter, err := valueparam.EncodePublished(result)
+	if err != nil {
+		return err
+	}
+	return writeRuntimeOutput(command.Output, parameter)
 }
 
-func (command *RuntimeMapExpandCommand) Run() error {
-	items, err := mapexec.ArgoItems([]byte(command.Input))
+// input resolves the step's value parameter, or assembles a merge step's
+// ordered array from one parameter per source so references stay valid.
+func (command *RuntimeStepCommand) input(ctx context.Context, codec valueparam.Codec, workflowPlan *planpb.WorkflowPlan) ([]byte, error) {
+	if command.MergeInputs == nil {
+		value, err := codec.Decode(ctx, []byte(command.Input))
+		return value.Body, err
+	}
+	for _, node := range workflowPlan.GetGraph().GetNodes() {
+		if node.GetId() == command.Node && len(node.GetMergeInputs()) != len(command.MergeInputs) {
+			return nil, fmt.Errorf("step %q merges %d sources but received %d merge inputs", command.Node, len(node.GetMergeInputs()), len(command.MergeInputs))
+		}
+	}
+	bodies := make([][]byte, len(command.MergeInputs))
+	for index, parameter := range command.MergeInputs {
+		value, err := codec.Decode(ctx, []byte(parameter))
+		if err != nil {
+			return nil, fmt.Errorf("merge input %d: %w", index, err)
+		}
+		bodies[index] = value.Body
+	}
+	return slices.Concat([]byte("["), bytes.Join(bodies, []byte(",")), []byte("]")), nil
+}
+
+func (command *RuntimeMapExpandCommand) Run(ctx context.Context) error {
+	codec, _, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
+	if err != nil {
+		return err
+	}
+	items, err := codec.ExpandItems(ctx, []byte(command.Input))
 	if err != nil {
 		return err
 	}
@@ -351,37 +408,46 @@ func (command *RuntimeMapExpandCommand) Run() error {
 }
 
 func (command *RuntimeMapItemCommand) Run(ctx context.Context) error {
-	item, empty, err := mapexec.ParseArgoItem([]byte(command.Item))
+	codec, descriptor, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
+	if err != nil {
+		return err
+	}
+	item, empty, err := codec.DecodeItem(ctx, []byte(command.Item))
 	if err != nil {
 		return err
 	}
 	if empty {
 		return writeRuntimeOutput(command.Output, []byte(`{"empty":true}`))
 	}
-	result, err := runRuntimeInvocation(ctx, command.Plan, command.RuntimeSources, command.Node, string(item.Body), command.Project, command.RunID, command.DatastoreConfig, command.RetryCount, &item.Index)
+	workflowPlan, err := readRuntimePlan(command.Plan)
 	if err != nil {
 		return err
 	}
-	envelope, err := mapexec.ArgoResult(item.Index, result)
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, item.Body, command.Project, command.RunID, descriptor, command.RetryCount, &item.Index)
+	if err != nil {
+		return err
+	}
+	envelope, err := valueparam.EncodePublishedItemResult(item.Index, result)
 	if err != nil {
 		return err
 	}
 	return writeRuntimeOutput(command.Output, envelope)
 }
 
-func (command *RuntimeMapCollectCommand) Run() error {
-	result, err := mapexec.CollectArgoResults([]byte(command.Input))
+func (command *RuntimeMapCollectCommand) Run(ctx context.Context) error {
+	codec, _, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
+	if err != nil {
+		return err
+	}
+	result, err := codec.CollectResults(ctx, []byte(command.Input))
 	if err != nil {
 		return err
 	}
 	return writeRuntimeOutput(command.Output, result)
 }
 
-func runRuntimeInvocation(ctx context.Context, planPath string, runtimeSources RuntimeSources, nodeID, input, project, runID, datastoreConfig string, retryCount int, mapItemIndex *int) ([]byte, error) {
-	if retryCount < 0 {
-		return nil, fmt.Errorf("retry count %d must be nonnegative", retryCount)
-	}
-	planJSON, err := os.ReadFile(planPath)
+func readRuntimePlan(path string) (*planpb.WorkflowPlan, error) {
+	planJSON, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read runtime plan: %w", err)
 	}
@@ -389,19 +455,30 @@ func runRuntimeInvocation(ctx context.Context, planPath string, runtimeSources R
 	if err != nil {
 		return nil, err
 	}
-	workflowPlan, err := plan.VerifyCanonicalJSON(planJSON, parsed.GetPlanHash())
+	return plan.VerifyCanonicalJSON(planJSON, parsed.GetPlanHash())
+}
+
+func openRuntimeDatastore(ctx context.Context, path string) (valueparam.Codec, orchestrator.DatastoreDescriptor, error) {
+	bindingJSON, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return valueparam.Codec{}, nil, fmt.Errorf("read datastore binding: %w", err)
+	}
+	descriptor, err := orchestrator.ParseDatastoreDescriptor(bindingJSON)
+	if err != nil {
+		return valueparam.Codec{}, nil, err
+	}
+	store, err := orchestrator.OpenDatastore(ctx, descriptor)
+	if err != nil {
+		return valueparam.Codec{}, nil, err
+	}
+	return valueparam.Codec{Store: store}, descriptor, nil
+}
+
+func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan, runtimeSources RuntimeSources, nodeID string, input []byte, project, runID string, descriptor orchestrator.DatastoreDescriptor, retryCount int, mapItemIndex *int) ([]byte, error) {
+	if retryCount < 0 {
+		return nil, fmt.Errorf("retry count %d must be nonnegative", retryCount)
 	}
 	sources, err := runtimeSources.resolve(workflowPlan)
-	if err != nil {
-		return nil, err
-	}
-	bindingJSON, err := os.ReadFile(datastoreConfig)
-	if err != nil {
-		return nil, fmt.Errorf("read datastore binding: %w", err)
-	}
-	binding, err := orchestrator.ParseDatastoreDescriptor(bindingJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -411,14 +488,14 @@ func runRuntimeInvocation(ctx context.Context, planPath string, runtimeSources R
 	pythonEnvironment, _ := controlplane.PythonEnvironment()
 	config := orchestrator.IsolatedStepConfig{
 		Environment: pythonEnvironment,
-		Plan:        workflowPlan, NodeID: nodeID, Datastore: binding,
+		Plan:        workflowPlan, NodeID: nodeID, Datastore: descriptor,
 		ProjectID: project, RunID: runID,
 		SourceArchives: sources, Attempt: retryCount + 1,
 	}
 	if mapItemIndex != nil {
-		return orchestrator.RunIsolatedMapItem(ctx, config, []byte(input), *mapItemIndex)
+		return orchestrator.RunIsolatedMapItem(ctx, config, input, *mapItemIndex)
 	}
-	return orchestrator.RunIsolatedStep(ctx, config, []byte(input))
+	return orchestrator.RunIsolatedStep(ctx, config, input)
 }
 
 func writeRuntimeOutput(path string, result []byte) error {

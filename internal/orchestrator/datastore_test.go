@@ -25,7 +25,7 @@ func TestInvocationDatastoreConfigUsesTheRunnerContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer, err := openInvocationDatastore(context.Background(), descriptor)
+	writer, err := OpenDatastore(context.Background(), descriptor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestInvocationDatastoreConfigUsesTheRunnerContract(t *testing.T) {
 	if _, err := writer.Put(context.Background(), key, []byte("shared"), datastore.PutOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	reader, err := openInvocationDatastore(context.Background(), descriptor)
+	reader, err := OpenDatastore(context.Background(), descriptor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestInvocationDatastoreConfigUsesTheRunnerContract(t *testing.T) {
 
 func TestS3InvocationRejectsEndpointsWithCredentialsOrPaths(t *testing.T) {
 	for _, endpoint := range []string{"http://user:password@host", "https://host/path", "ftp://host", "https://host?secret=value"} {
-		_, err := openInvocationDatastore(context.Background(), S3DatastoreDescriptor{Kind: "s3", Bucket: "bucket", Region: "us-east-1", Endpoint: endpoint})
+		_, err := OpenDatastore(context.Background(), S3DatastoreDescriptor{Kind: "s3", Bucket: "bucket", Region: "us-east-1", Endpoint: endpoint})
 		if err == nil {
 			t.Fatalf("accepted invalid S3 endpoint: %s", endpoint)
 		}

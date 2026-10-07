@@ -352,3 +352,48 @@ func TestPublishRejectsUnsafeBundlesAndNeverOverwrites(t *testing.T) {
 		}
 	})
 }
+
+// Multi-MB JSON values pass between local steps, decisions, selects and map
+// items as ordinary datastore artifacts; Argo carries the same values by
+// reference and conformance/argo requires the same result.
+func TestMultiMegabyteValuesRunLocally(t *testing.T) {
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirePythonSDK(t, repository)
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "conformance", "argo", "large_values.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := writableStoreForTest(t)
+	local, err := RunLocal(context.Background(), LocalRunRequest{
+		Frontend: frontend, Input: []byte(`{"count":20000}`), Store: store,
+		Project: "massive/large-values", RunID: "multi-mb",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary struct {
+		Count     int `json:"count"`
+		Annotated int `json:"annotated"`
+	}
+	if err := json.Unmarshal(local.Result, &summary); err != nil || summary.Count != 20000 || summary.Annotated != 20000 {
+		t.Fatalf("summary = %s, %v", local.Result, err)
+	}
+	largest := int64(0)
+	if err := filepath.WalkDir(filepath.Join(store, "blobs"), func(_ string, entry os.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() {
+			info, err := entry.Info()
+			if err == nil {
+				largest = max(largest, info.Size())
+			}
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if largest < 3*1024*1024 {
+		t.Fatalf("largest stored value is %d bytes; the fixture must pass multi-MB values", largest)
+	}
+}

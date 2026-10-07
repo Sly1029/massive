@@ -139,9 +139,7 @@ def publish_bundle(bundle: Path) -> None:
         descriptor.write_text(
             json.dumps({**DATASTORE, "endpoint": f"http://127.0.0.1:{port}"})
         )
-        credentials = kubectl("get", "secret", "my-minio-cred", "-o", "json")[
-            "data"
-        ]
+        credentials = kubectl("get", "secret", "my-minio-cred", "-o", "json")["data"]
         published = json.loads(
             massive(
                 "publish",
@@ -165,6 +163,40 @@ def publish_bundle(bundle: Path) -> None:
     finally:
         forward.terminate()
         forward.wait(timeout=30)
+
+
+def fixture_source(path: Path) -> str:
+    return (
+        path.read_text()
+        .replace(
+            'IMAGE = "example.invalid/runner@sha256:" + "0" * 64',
+            f"IMAGE = {os.environ['MASSIVE_TEST_ARGO_IMAGE']!r}",
+        )
+        .replace(
+            'PLATFORM = "linux/amd64"',
+            f"PLATFORM = {os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
+        )
+    )
+
+
+def run_locally(source: str, inputs: dict) -> dict:
+    """Run a workflow with the local target, the expected result on Argo."""
+    with tempfile.TemporaryDirectory(prefix="massive-argo-local-") as directory:
+        entry = Path(directory) / "workflow.py"
+        entry.write_text(source)
+        return json.loads(
+            massive(
+                "run",
+                str(entry),
+                "--input",
+                json.dumps(inputs),
+                "--store",
+                str(Path(directory) / "store"),
+                "--project",
+                "massive/argo-local",
+                "--json",
+            )
+        )["result"]
 
 
 def install_large_source() -> dict:
@@ -412,9 +444,20 @@ class DecisionConformance(unittest.TestCase):
                     'version = "0.1.0"\n'
                     f'dependencies = ["massive-workflows", "{dependency}"]\n'
                 ),
-                build_args=("--runtime-transport", "object-store-v0") if published else (),
+                build_args=("--runtime-transport", "object-store-v0")
+                if published
+                else (),
                 publish=published,
             )
+        large_values = fixture_source(Path(__file__).parent / "large_values.py")
+        install_workflow(large_values)
+        cls.local_values = {
+            label: run_locally(large_values, inputs)
+            for label, inputs in {
+                "large-values": {"count": 20000},
+                "small-values": {"count": 10},
+            }.items()
+        }
         cls.runs = {}
         for label, inputs in {
             "positive": {"score": 3},
@@ -437,6 +480,8 @@ class DecisionConformance(unittest.TestCase):
             "locked": {"value": 21},
             "preflight-missing": {"value": 21},
             "preflight-published": {"value": 21},
+            "large-values": {"count": 20000},
+            "small-values": {"count": 10},
         }.items():
             run = kubectl(
                 "create",
@@ -463,6 +508,8 @@ class DecisionConformance(unittest.TestCase):
                                 "locked": "argo-locked",
                                 "preflight-missing": "argo-preflight-missing",
                                 "preflight-published": "argo-preflight-published",
+                                "large-values": "large-values",
+                                "small-values": "large-values",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -536,6 +583,43 @@ class DecisionConformance(unittest.TestCase):
         self.assertGreater(result["files"], 2000)
         self.assertGreater(result["bytes"], 1024 * 1024)
         self.assertEqual(len(self.pods(run, "map-item-inventory")), 3)
+
+    def test_multi_mb_values_cross_every_boundary_by_reference(self) -> None:
+        for label in ("large-values", "small-values"):
+            run = self.completed(label)
+            self.assertEqual(
+                run["status"]["phase"], "Succeeded", str(run["status"].get("message"))
+            )
+            root = run["status"]["nodes"][run["metadata"]["name"]]
+            result = json.loads(root["outputs"]["parameters"][0]["value"])
+            self.assertEqual(result, self.local_values[label])
+        self.assertEqual(self.local_values["large-values"]["annotated"], 20000)
+        run = self.completed("large-values")
+        outputs = {
+            node["displayName"]: node["outputs"]["parameters"][0]["value"]
+            for node in run["status"]["nodes"].values()
+            if node.get("type") == "Pod" and node.get("outputs", {}).get("parameters")
+        }
+        # Every multi-MB value is a reference in Argo; the summary stays inline.
+        for task in (
+            "generate",
+            "route",
+            "split",
+            "collect",
+            "flatten",
+            "route-select",
+        ):
+            self.assertTrue(
+                outputs[task].startswith('@{"hash":"sha256:'), outputs[task][:80]
+            )
+        self.assertTrue(outputs["summarize"].startswith("{"), outputs["summarize"])
+        items = [
+            json.loads(value)
+            for name, value in outputs.items()
+            if name.startswith("invoke(")
+        ]
+        self.assertEqual(len(items), 4)
+        self.assertTrue(all("ref" in item for item in items), items)
 
     def test_missing_published_source_is_not_retried(self) -> None:
         run = self.completed("unpublished")
@@ -656,8 +740,12 @@ class DecisionConformance(unittest.TestCase):
         run = self.completed("locked")
         self.assertEqual(run["status"]["phase"], "Succeeded", str(run.get("status")))
         root = run["status"]["nodes"][run["metadata"]["name"]]
-        self.assertEqual(json.loads(root["outputs"]["parameters"][0]["value"]), "value  42")
-        self.assertEqual([node["phase"] for node in self.pods(run, "step-render")], ["Succeeded"])
+        self.assertEqual(
+            json.loads(root["outputs"]["parameters"][0]["value"]), "value  42"
+        )
+        self.assertEqual(
+            [node["phase"] for node in self.pods(run, "step-render")], ["Succeeded"]
+        )
 
     def main_log(self, run: dict) -> str:
         """The runtime's own diagnostics from the workflow's pods."""

@@ -381,12 +381,14 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		for index, dependency := range deps {
 			argoDependencies[index] = taskNames[dependency]
 		}
-		var inputExpression string
+		var inputParameters []any
 		var err error
 		if node.GetKind() == "select" {
-			inputExpression, err = argoSelectExpression(node, executableNodes, taskNames)
+			var expression string
+			expression, err = argoSelectExpression(node, executableNodes, taskNames)
+			inputParameters = []any{map[string]any{"name": "input", "value": expression}}
 		} else {
-			inputExpression, err = argoInputExpression(node, inbound[node.GetId()], g.GetStartNode(), taskNames)
+			inputParameters, err = argoInputParameters(node, inbound[node.GetId()], g.GetStartNode(), taskNames)
 		}
 		if err != nil {
 			return nil, "", err
@@ -397,7 +399,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		}
 		task := map[string]any{
 			"name": taskNames[node.GetId()], "template": templateName,
-			"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": inputExpression}}},
+			"arguments": map[string]any{"parameters": inputParameters},
 		}
 		if len(argoDependencies) > 0 {
 			readiness := make([]string, 0, len(argoDependencies)+1)
@@ -433,8 +435,8 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		}
 		tasks = append(tasks, task)
 		if control {
-			controlTemplate, err := runtimePodTemplate(templateName, node.GetId(), env, contract, runtimeName, nil,
-				[]string{"runtime", "control", "--plan", "/var/run/massive/massive-plan.json", "--node=" + node.GetId(), "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"})
+			controlTemplate, err := runtimePodTemplate(templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target,
+				[]string{"runtime", "control", "--plan", "/var/run/massive/massive-plan.json", "--node=" + node.GetId(), "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath})
 			if err != nil {
 				return nil, "", err
 			}
@@ -458,13 +460,11 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 			slices.Concat([]string{
 				"runtime", "step",
 				"--plan", "/var/run/massive/massive-plan.json",
-			}, sourceArgs, []string{
-				"--node=" + node.GetId(),
-				"--input={{inputs.parameters.input}}",
+			}, sourceArgs, []string{"--node=" + node.GetId()}, stepInputArgs(inputParameters), []string{
 				"--output", "/tmp/massive/result.json",
 				"--project", "argo/" + name,
 				"--run-id", "{{workflow.uid}}",
-				"--datastore-config", "/var/run/massive-datastore/datastore.json",
+				"--datastore-config", datastoreConfigPath,
 			}, retryArgs(contract)),
 		)
 		if err != nil {
@@ -528,8 +528,8 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	controlContract := &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef}
 
 	expandTemplate, err := runtimePodTemplate(
-		expandName, node.GetId(), env, controlContract, runtimeName, nil,
-		[]string{"runtime", "map", "expand", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
+		expandName, node.GetId(), env, controlContract, runtimeName, storage,
+		[]string{"runtime", "map", "expand", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath},
 	)
 	if err != nil {
 		return nil, err
@@ -545,7 +545,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 			"--output", "/tmp/massive/result.json",
 			"--project", "argo/" + workflowName,
 			"--run-id", "{{workflow.uid}}",
-			"--datastore-config", "/var/run/massive-datastore/datastore.json",
+			"--datastore-config", datastoreConfigPath,
 		}, retryArgs(contract)),
 	)
 	if err != nil {
@@ -553,8 +553,8 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	}
 	applyRetryStrategy(itemTemplate, contract)
 	collectTemplate, err := runtimePodTemplate(
-		collectName, node.GetId(), env, controlContract, runtimeName, nil,
-		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
+		collectName, node.GetId(), env, controlContract, runtimeName, storage,
+		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath},
 	)
 	if err != nil {
 		return nil, err
@@ -587,6 +587,13 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 }
 
 var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// inputParameterPattern finds the template inputs a pod's arguments consume.
+var inputParameterPattern = regexp.MustCompile(`\{\{inputs\.parameters\.([a-z0-9-]+)\}\}`)
+
+// datastoreConfigPath is where every runtime pod mounts the shared datastore
+// descriptor. Control pods use it only to resolve and publish value references.
+const datastoreConfigPath = "/var/run/massive-datastore/datastore.json"
 
 func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName string, storage *deployment.Target, args []string) (map[string]any, error) {
 	if env.GetContainer().GetImage() == "" {
@@ -652,9 +659,19 @@ func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement,
 		}
 		container["resources"] = map[string]any{"requests": quantities, "limits": quantities}
 	}
+	inputs := []any{}
+	declared := map[string]bool{}
+	for _, arg := range args {
+		for _, match := range inputParameterPattern.FindAllStringSubmatch(arg, -1) {
+			if !declared[match[1]] {
+				declared[match[1]] = true
+				inputs = append(inputs, map[string]any{"name": match[1]})
+			}
+		}
+	}
 	template := map[string]any{
 		"name":   name,
-		"inputs": map[string]any{"parameters": []any{map[string]any{"name": "input"}}},
+		"inputs": map[string]any{"parameters": inputs},
 		"outputs": map[string]any{"parameters": []any{map[string]any{
 			"name": "result", "valueFrom": map[string]any{"path": "/tmp/massive/result.json"},
 		}}},
@@ -680,21 +697,39 @@ func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement,
 	return template, nil
 }
 
-func argoInputExpression(step *planpb.GraphNode, inbound []string, startNode string, taskNames map[string]string) (string, error) {
+// argoInputParameters binds a node's task arguments. A merge step receives one
+// parameter per source in mergeInputs order rather than a concatenated JSON
+// array, because a source may be a value reference, which is not JSON text.
+func argoInputParameters(step *planpb.GraphNode, inbound []string, startNode string, taskNames map[string]string) ([]any, error) {
 	if len(step.GetMergeInputs()) > 0 {
-		parts := make([]string, 0, len(step.GetMergeInputs()))
-		for _, source := range step.GetMergeInputs() {
-			parts = append(parts, "{{tasks."+taskNames[source]+".outputs.parameters.result}}")
+		parameters := make([]any, 0, len(step.GetMergeInputs()))
+		for index, source := range step.GetMergeInputs() {
+			parameters = append(parameters, map[string]any{
+				"name": fmt.Sprintf("input-%d", index), "value": "{{tasks." + taskNames[source] + ".outputs.parameters.result}}",
+			})
 		}
-		return "[" + strings.Join(parts, ",") + "]", nil
+		return parameters, nil
 	}
 	if len(inbound) != 1 {
-		return "", fmt.Errorf("argo target: step %q requires exactly one input source", step.GetId())
+		return nil, fmt.Errorf("argo target: step %q requires exactly one input source", step.GetId())
 	}
+	value := "{{tasks." + taskNames[inbound[0]] + ".outputs.parameters.result}}"
 	if inbound[0] == startNode {
-		return "{{workflow.parameters.input}}", nil
+		value = "{{workflow.parameters.input}}"
 	}
-	return "{{tasks." + taskNames[inbound[0]] + ".outputs.parameters.result}}", nil
+	return []any{map[string]any{"name": "input", "value": value}}, nil
+}
+
+// stepInputArgs passes each bound task parameter to the runtime in order.
+func stepInputArgs(parameters []any) []string {
+	if len(parameters) == 1 && parameters[0].(map[string]any)["name"] == "input" {
+		return []string{"--input={{inputs.parameters.input}}"}
+	}
+	args := make([]string, len(parameters))
+	for index, parameter := range parameters {
+		args[index] = "--merge-input={{inputs.parameters." + parameter.(map[string]any)["name"].(string) + "}}"
+	}
+	return args
 }
 
 // argoFieldName projects the broader proto node-id space onto names accepted
