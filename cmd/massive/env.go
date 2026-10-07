@@ -21,6 +21,9 @@ type EnvCheckCommand struct {
 
 type envCheckOutput struct {
 	Status string `json:"status"`
+	// Identities are present only when there are no findings.
+	RequirementHash string `json:"requirementHash,omitempty"`
+	RealizationHash string `json:"realizationHash,omitempty"`
 	*environment.Report
 }
 
@@ -39,7 +42,9 @@ func (command *EnvCheckCommand) Run(ctx context.Context, stdout io.Writer) error
 		status, mark = "unverified", "! no [project] dependencies declared; only interpreter safety and the SDK release were checked"
 	}
 	if command.JSON {
-		if err := json.NewEncoder(stdout).Encode(envCheckOutput{Status: status, Report: report}); err != nil {
+		output := envCheckOutput{Status: status, Report: report,
+			RequirementHash: report.Record.GetRequirementHash(), RealizationHash: report.Record.GetRealizationHash()}
+		if err := json.NewEncoder(stdout).Encode(output); err != nil {
 			return err
 		}
 		return failure
@@ -48,8 +53,9 @@ func (command *EnvCheckCommand) Run(ctx context.Context, stdout io.Writer) error
 		return failure
 	}
 	interpreter := report.Interpreter
-	_, err = fmt.Fprintf(stdout, "%s  %s\n  python        %s %s (%s/%s)\n  executable    %s\n  verification  %s\n  distributions %d\n",
+	_, err = fmt.Fprintf(stdout, "%s  %s\n  python        %s %s (%s/%s)\n  executable    %s\n  verification  %s\n  distributions %d\n  requirement   %s\n  realization   %s\n",
 		mark, report.ProjectRoot, interpreter.Implementation, interpreter.Version, interpreter.OS, interpreter.Arch,
-		interpreter.Executable, report.Verification, len(report.Distributions))
+		interpreter.Executable, report.Verification, len(report.Distributions),
+		report.Record.GetRequirementHash(), report.Record.GetRealizationHash())
 	return err
 }

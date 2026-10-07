@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/runjournal"
 )
 
 const (
@@ -35,8 +36,11 @@ type RunConfig struct {
 	// plan proto records only the package hash, so the orchestrator threads the
 	// manifest separately to verify on-disk source against it before running.
 	SourceManifests map[string]SourcePackageManifest
-	StepInvoker     StepInvoker
-	Hooks           RunHooks
+	// Environment is the checked dependency realization recorded in the
+	// journal; nil when the frontend has no dependency preflight.
+	Environment *runjournal.Environment
+	StepInvoker StepInvoker
+	Hooks       RunHooks
 }
 
 // SourcePackageManifest is the compiled spec's view of one source package: the

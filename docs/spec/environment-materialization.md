@@ -145,8 +145,8 @@ incompatible dependencies should fail before scheduling work, with an actionable
 installation command. A container materializer must commit an actual image before
 recording an artifact; a recipe is not a built artifact.
 
-Local dependency preflight runs before any author code is imported (see above).
-The realized environment is not yet recorded in run journals, and Argo pods do not
+Local dependency preflight runs before any author code is imported (see above),
+and each local run records the realized environment (below). Argo pods do not
 yet check their image against the archived project inputs. Optional Docker-based
 local execution can later reuse an existing image rather than invent a new
 scheduler; it is not implemented.
@@ -163,6 +163,30 @@ Source and dependency identities serve different purposes:
 Including `uv.lock` in a source archive records intended dependencies. It does not
 prove that the installed environment matches them, and it is not result-cache safety.
 Do not claim reproducibility until realization is verified.
+
+### Recorded Python realizations (implemented locally)
+
+A Python environment that passes preflight yields a `RealizedEnvironment`
+(`conformance/schema/materialization.proto`) with two identities, defined in
+[canonical hashing](../../conformance/schema/hashing.md#python-environment-identities):
+
+- `requirementHash` (`python-requirement` v1) covers `requires-python` and the
+  `uv.lock` digest, or the normalized `[project].dependencies` without a lock.
+  `[tool.massive.source]` is source identity and is excluded.
+- `realizationHash` (`existing-python` v1) covers the interpreter implementation,
+  version, cache tag, `sysconfig` platform, normalized OS/architecture, sorted
+  installed distributions (name, version, PEP 610 direct and editable flags),
+  materializer name/version, and verification level. Interpreter paths and
+  installer `RECORD` hashes are excluded because console-script shebangs embed
+  paths. Two environments synced from the same lock on the same platform share it.
+
+`massive run` stores the record content-addressed under
+`environments/sha256-<hex>/realized-environment.json`. Journal v5 has a required
+`environment` entry: `null` without preflight (TypeScript), otherwise both hashes
+and the record reference. `massive inspect --environment` checks the stored
+bytes against that reference and recomputes both identities before displaying
+it. A realization is a statement about what was checked, at the stated
+verification level. It is not a hermetic build or a result-cache key.
 
 ## Secrets are runtime bindings, not packages
 

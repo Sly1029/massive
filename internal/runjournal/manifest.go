@@ -1,23 +1,33 @@
 package runjournal
 
 type Manifest struct {
-	Kind          string        `json:"kind"`
-	SchemaVersion uint32        `json:"schemaVersion"`
-	Encoding      string        `json:"encoding"`
-	PlanHash      string        `json:"planHash"`
-	ProjectKey    string        `json:"projectKey"`
-	RunID         string        `json:"runId"`
-	Status        string        `json:"status"`
-	Diagnostic    string        `json:"diagnostic,omitempty"`
-	Steps         []Step        `json:"steps"`
-	Decisions     []Decision    `json:"decisions"`
-	Result        *DataArtifact `json:"result,omitempty"`
+	Kind          string `json:"kind"`
+	SchemaVersion uint32 `json:"schemaVersion"`
+	Encoding      string `json:"encoding"`
+	PlanHash      string `json:"planHash"`
+	ProjectKey    string `json:"projectKey"`
+	RunID         string `json:"runId"`
+	Status        string `json:"status"`
+	Diagnostic    string `json:"diagnostic,omitempty"`
+	// Environment is null when the run's frontend has no dependency preflight.
+	Environment *Environment  `json:"environment"`
+	Steps       []Step        `json:"steps"`
+	Decisions   []Decision    `json:"decisions"`
+	Result      *DataArtifact `json:"result,omitempty"`
 }
 
-// The run journal is versioned independently of graph IR. Only v4/json-v4 is
+// The run journal is versioned independently of graph IR. Only v5/json-v5 is
 // accepted. Terminal runs distinguish cancelled attempts from undispatched work;
 // every planned step has a terminal status. Attempts are ordered and 1-based;
 // only the last attempt of a step or map item can still be running.
+
+// Environment binds a run to the dependency realization that passed preflight.
+// Record is the content-addressed RealizedEnvironment carrying both identities.
+type Environment struct {
+	RequirementHash string      `json:"requirementHash"`
+	RealizationHash string      `json:"realizationHash"`
+	Record          ArtifactRef `json:"record"`
+}
 
 type Step struct {
 	NodeID     string      `json:"nodeId"`

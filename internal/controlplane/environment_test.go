@@ -45,8 +45,9 @@ func TestLockedWorkflowRunsWithThePreflightInterpreter(t *testing.T) {
 	}
 	// Tasks use the interpreter pinned by preflight, not a later lookup.
 	t.Setenv("MASSIVE_PYTHON", filepath.Join(t.TempDir(), "missing-python"))
+	store := writableStoreForTest(t)
 	result, err := RunLocal(t.Context(), LocalRunRequest{
-		Frontend: frontend, Input: []byte(`{"value": 21}`), Store: writableStoreForTest(t),
+		Frontend: frontend, Input: []byte(`{"value": 21}`), Store: store,
 		Project: "massive/environment-test", RunID: "locked",
 	})
 	if err != nil {
@@ -58,6 +59,14 @@ func TestLockedWorkflowRunsWithThePreflightInterpreter(t *testing.T) {
 	}
 	if err := json.Unmarshal(result.Result, &output); err != nil || output.Value != 42 || output.Table != "value  42" {
 		t.Fatalf("result = %s, %v", result.Result, err)
+	}
+	journal, record, err := InspectEnvironment(t.Context(), store, "massive/environment-test", "locked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal.Environment.RealizationHash != frontend.Environment.Record.GetRealizationHash() ||
+		record.GetRequirement().GetLockHash() == "" || record.GetRealization().GetMaterializerName() != environment.MaterializerName {
+		t.Fatalf("journal environment = %+v, record = %v", journal.Environment, record)
 	}
 }
 

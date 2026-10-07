@@ -35,7 +35,7 @@ func journalWithPartialMap(states []byte) Manifest {
 		}
 		items[index] = item
 	}
-	return Manifest{Kind: "RunManifest", SchemaVersion: 4, Encoding: "json-v4", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{{NodeID: "route", Status: "selected", SelectedCase: "active"}}, Steps: []Step{
+	return Manifest{Kind: "RunManifest", SchemaVersion: 5, Encoding: "json-v5", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{{NodeID: "route", Status: "selected", SelectedCase: "active"}}, Steps: []Step{
 		{NodeID: "map", Status: "running", Attempts: []Attempt{{Attempt: 1, Status: "running", Input: input}}, Items: &items},
 		{NodeID: "next", Status: "pending", Attempts: []Attempt{}},
 		{NodeID: "complete", Status: "succeeded", Attempts: []Attempt{{Attempt: 1, Status: "succeeded", Input: input, Output: &output}}},

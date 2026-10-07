@@ -79,7 +79,7 @@ graph.edge_from(collected).to(graph.end)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if journal.Status != "cancelled" || journal.SchemaVersion != 4 || journal.Encoding != "json-v4" {
+	if journal.Status != "cancelled" || journal.SchemaVersion != 5 || journal.Encoding != "json-v5" {
 		t.Fatalf("journal = %#v", journal)
 	}
 	statuses := map[string]string{}

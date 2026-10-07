@@ -17,8 +17,11 @@ import (
 	"sync"
 
 	contract "github.com/Sly1029/massive/conformance/schema"
+	pb "github.com/Sly1029/massive/conformance/schema/materializationpb"
+	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/taskprocess"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"google.golang.org/protobuf/proto"
 )
 
 // Verification states how much of the realization was checked.
@@ -105,6 +108,8 @@ type Report struct {
 	ProjectRoot  string       `json:"projectRoot"`
 	Verification Verification `json:"verification"`
 	Probe
+	// Record identifies the realization; it exists only when there are no findings.
+	Record *pb.RealizedEnvironment `json:"-"`
 }
 
 // Err reports every finding at once so one fix cycle can address them all.
@@ -142,24 +147,31 @@ func Check(ctx context.Context, request Request) (*Report, error) {
 	if probe.Project == nil {
 		report.Verification = Undeclared
 	}
-	_, err = os.Stat(filepath.Join(request.ProjectRoot, "uv.lock"))
+	lock, err := os.ReadFile(filepath.Join(request.ProjectRoot, "uv.lock"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("inspect uv.lock: %w", err)
+		return nil, fmt.Errorf("read uv.lock: %w", err)
 	}
-	locked := err == nil
+	var lockHash *string
+	if err == nil {
+		lockHash = proto.String(canonical.DigestBytes(lock))
+	}
 	if request.RequireSDK {
-		if finding := sdkVersionFinding(probe, request.ControlPlaneVersion, request.ProjectRoot, locked); finding != nil {
+		if finding := sdkVersionFinding(probe, request.ControlPlaneVersion, request.ProjectRoot, lockHash != nil); finding != nil {
 			report.Findings = append(report.Findings, *finding)
 		}
 	}
-	if !locked {
-		return report, nil
+	if lockHash != nil {
+		report.Verification = LockSyncChecked
+		report.Findings = append(report.Findings, lockFindings(ctx, request.ProjectRoot, probe.Interpreter)...)
+		// A cancelled uv check is not a finding about the environment.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
-	report.Verification = LockSyncChecked
-	report.Findings = append(report.Findings, lockFindings(ctx, request.ProjectRoot, probe.Interpreter)...)
-	// A cancelled uv check is not a finding about the environment.
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if len(report.Findings) == 0 {
+		if report.Record, err = newRecord(report, lockHash, request.ControlPlaneVersion); err != nil {
+			return nil, err
+		}
 	}
 	return report, nil
 }

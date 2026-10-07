@@ -209,6 +209,35 @@ scheduling, retry policy, run IDs, target queue placement, or wall-clock
 timestamps. Those fields may affect execution contracts or target scheduling,
 but they do not define the dependency environment.
 
+### Python environment identities
+
+A `RealizedEnvironment` record carries two independent identities. Both hash a
+canonical field tree, with no self-exclusion because neither member is inside
+its own tree.
+
+Recipe `python-requirement@1`:
+
+```json
+{"dependencies":[],"lockHash":"sha256:<uv.lock bytes>","recipe":"python-requirement",
+ "recipeVersion":1,"requiresPython":">=3.12"}
+```
+
+`lockHash` is the SHA-256 of the exact `uv.lock` bytes, or `null` without a
+lock. With a lock, `dependencies` is empty; otherwise it lists
+`[project].dependencies` as PEP 508 strings with canonical names, sorted.
+`requiresPython` is `null` when undeclared.
+
+Recipe `existing-python@1` covers `implementation`, `pythonVersion`, `cacheTag`
+(`null` when absent), `sysconfigPlatform`, `os`, `arch`, `distributions`
+(`[{"direct","editable","name","version"}]` sorted by canonical name),
+`materializerName`, `materializerVersion`, and `verification` (the
+`PythonVerification` enum name), plus `recipe` and `recipeVersion`. It excludes
+interpreter paths and requirement inputs.
+
+The records `conformance/fixtures/hashing/realized-environment-locked-v1.json` and
+`realized-environment-direct-v1.json` are vectors. Each carries both expected
+hashes, and implementations must recompute them from the record's fields.
+
 ### Runtime-Artifact Hash
 
 A runtime-artifact hash covers the exact bytes of the persisted artifact payload.

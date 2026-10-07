@@ -105,6 +105,20 @@ envs/sha256-7777777777777777777777777777777777777777777777777777777777777777/man
 envs/sha256-7777777777777777777777777777777777777777777777777777777777777777/runtime.tar.zst
 ```
 
+### Realized environment
+
+Template:
+
+```text
+environments/<record-key>/realized-environment.json
+```
+
+`<record-key>` is the path segment for the SHA-256 of the record's exact canonical
+protobuf JSON bytes (`RealizedEnvironment` in `materialization.proto`), stored with
+content type `application/vnd.massive.realized-environment+json`. The record
+carries its own `requirementHash` and `realizationHash`; readers recompute both.
+Runs with identical checked environments share one object.
+
 ### Source package
 
 Templates:
@@ -242,10 +256,13 @@ projects/<project-key>/runs/<run-id>/steps/<step-id>/scopes/maps/<map-id>/items/
 
 Static invocations omit `scope` and retain the original static paths.
 
-`run-manifest.json` is the v4 (`schemaVersion: 4`, `encoding: "json-v4"`) run
+`run-manifest.json` is the v5 (`schemaVersion: 5`, `encoding: "json-v5"`) run
 manifest the orchestrator records when it creates a run: plan hash, run status,
-per-step attempt/artifact records, finite-map item records, and durable
-decision outcomes. A selected
+the checked dependency environment, per-step attempt/artifact records, finite-map
+item records, and durable decision outcomes. `environment` is required: either
+`null` (no dependency preflight, as for TypeScript) or `requirementHash`,
+`realizationHash`, and a `record` reference to the content-addressed
+`RealizedEnvironment` at `environments/sha256-<hex>/realized-environment.json`. A selected
 decision record has `nodeId`, `status: "selected"`, and `selectedCase`. A failed
 record has `status: "failed"` and a safe diagnostic; an inactive nested decision
 has `status: "skipped"` and the same structured `skipReason` used by steps. The
