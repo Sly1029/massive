@@ -485,6 +485,32 @@ Deno.test("runner rejects descriptors without maxAttempts", async () => {
   );
 });
 
+for (
+  const [label, source] of [
+    ["a missing import", 'import "./missing-helper.ts";\nexport const double = () => ({ value: 1 });\n'],
+    ["a top-level throw", 'throw new Error("import-time failure");\n'],
+    ["a syntax error", "export const double = (;\n"],
+  ] as const
+) {
+  Deno.test(`runner reports a step module with ${label} as resolution failure 64`, async () => {
+    const archive = ustar([{
+      path: "runner-workflow.ts",
+      body: new TextEncoder().encode(source),
+    }]);
+    await withRunnerFixture(
+      { input: { value: 21 }, stepExport: "double", sourceArchive: archive },
+      async ({ descriptor }) => {
+        const outcome = await executeStep(descriptor);
+        assertEquals(outcome.kind, "descriptor-resolution-failure");
+        assertEquals(
+          outcome.exitCode,
+          RUNNER_EXIT_CODES.descriptorResolutionFailure,
+        );
+      },
+    );
+  });
+}
+
 Deno.test("runner rejects verified unsafe, corrupted, and trailing source archives", async () => {
   const unsafe = ustar([{
     path: "../escape.ts",
