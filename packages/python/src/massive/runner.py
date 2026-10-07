@@ -186,7 +186,10 @@ class _ResolvedStep:
         except PydanticValidationError as error:
             raise SchemaError(f"output does not satisfy the step output type: {error}") from error
         try:
-            output = self.output_adapter.dump_python(validated_output, mode="json", context=files)
+            # Emitted schemas name fields by alias, so outputs must use the same keys.
+            output = self.output_adapter.dump_python(
+                validated_output, mode="json", by_alias=True, context=files
+            )
         except PydanticSerializationError as error:
             raise SchemaError(f"output cannot be serialized as JSON: {error}") from error
         try:

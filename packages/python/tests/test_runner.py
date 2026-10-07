@@ -436,6 +436,37 @@ def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path, s3_server:
     assert output == canonical_json(cast(JsonValue, {"value": 42})).encode()
 
 
+def test_runner_serializes_aliased_output_fields_as_their_schema_keys(tmp_path: Path) -> None:
+    descriptor_path, descriptor, store = _descriptor(
+        tmp_path,
+        export="labelled_result",
+        output_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["ラベル"],
+            "properties": {"ラベル": {"type": "integer"}},
+        },
+    )
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 0, result.stderr
+    _publication, body = ArtifactRuntime(LocalDatastore(store)).resolve_json(
+        Destination(
+            manifest_key=descriptor["output"]["manifestKey"],
+            schema_ref=descriptor["output"]["schema"],
+        ),
+        Producer(
+            project_key=descriptor["projectKey"],
+            plan_hash=descriptor["planHash"],
+            run_id=descriptor["runId"],
+            node_id=descriptor["nodeId"],
+            attempt=descriptor["attempt"],
+        ),
+    )
+    assert json.loads(body) == {"ラベル": 21}
+
+
 def _descriptor(
     tmp_path: Path,
     *,

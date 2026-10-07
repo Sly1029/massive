@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from massive import Blob, GraphBuilder, NonRetryableError, StepContext, container, execution
 
@@ -34,6 +34,10 @@ class Result(BaseModel):
 
 class DecimalResult(BaseModel):
     value: Decimal
+
+
+class LabelledResult(BaseModel):
+    label: int = Field(alias="ラベル")
 
 
 class InvocationResult(BaseModel):
@@ -104,6 +108,10 @@ def decimal_result(context: StepContext[Request]) -> DecimalResult:
 
 def decimal_echo(context: StepContext[DecimalResult]) -> DecimalResult:
     return context.inputs
+
+
+def labelled_result(context: StepContext[Request]) -> LabelledResult:
+    return LabelledResult(ラベル=context.inputs.value)
 
 
 def changed_file(context: StepContext[Request]) -> Blob:
