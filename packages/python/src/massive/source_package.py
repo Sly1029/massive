@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,7 +62,10 @@ class SourcePackage:
         for pattern in self.include:
             if Path(pattern).is_absolute() or ".." in Path(pattern).parts:
                 raise ValueError("source include patterns must stay within the workflow directory")
-            for candidate in root.glob(pattern):
+            # glob.glob keeps a trailing "**" matching files on every supported Python,
+            # as fast-glob does; pathlib's meaning of it changed in Python 3.13.
+            for match in glob.glob(pattern, root_dir=root, recursive=True, include_hidden=True):
+                candidate = root / match
                 relative = candidate.relative_to(root)
                 if any((root / part).is_symlink() for part in (relative, *relative.parents)):
                     raise ValueError(f"source package must not include symlinks: {relative}")

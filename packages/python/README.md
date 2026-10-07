@@ -477,8 +477,10 @@ dependencies = ["massive-workflows==0.1.0", "httpx>=0.28,<1"]
 include = ["workflow.py", "analysis/**/*.py", "analysis/prompts/*.txt", "rules/*.yaml"]
 ```
 
-Includes are directory-relative `pathlib` glob patterns and replace the default
-`["*.py"]`. Include the entrypoint and all local modules/resources it needs.
+Includes are directory-relative glob patterns and replace the default `["*.py"]`.
+`**` matches any depth, so `resources/**` selects every file below `resources`;
+wildcards also match dotfiles. Include the entrypoint and all local
+modules/resources it needs.
 Unknown Massive configuration fields, selected symlinks, and patterns escaping
 the directory are rejected. Parent project configuration is not inherited;
 workflows in separate directories can carry different dependencies and assets.

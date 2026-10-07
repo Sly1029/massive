@@ -93,6 +93,25 @@ def test_project_source_includes_nested_modules_resources_and_dependency_inputs(
     assert changed_project != changed_lock
 
 
+@pytest.mark.parametrize("pattern", ["resources/**", "resources/**/*"])
+def test_trailing_recursive_wildcard_selects_nested_files_on_every_python(
+    tmp_path: Path, pattern: str
+) -> None:
+    # pathlib's trailing "**" matches only directories before Python 3.13; source
+    # identity must not depend on the interpreter, and must match fast-glob.
+    (tmp_path / "resources/templates").mkdir(parents=True)
+    (tmp_path / "resources/empty").mkdir()
+    (tmp_path / "resources/rules.yaml").write_text("rules: []\n")
+    (tmp_path / "resources/templates/report.md").write_text("# Report\n")
+
+    files, _ = source_package(root=tmp_path, include=[pattern], package_id="test").manifest()
+
+    assert [file["path"] for file in files] == [
+        "resources/rules.yaml",
+        "resources/templates/report.md",
+    ]
+
+
 def test_project_configuration_does_not_leak_between_workflow_directories(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[tool.massive.source]\ninclude = ["not-the-child.py"]\n'
