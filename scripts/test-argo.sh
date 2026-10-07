@@ -29,8 +29,14 @@ uv export --frozen --project packages/python --no-dev --no-emit-project \
 cp packages/python/Dockerfile "$scratch/image/Dockerfile"
 image="massive-conformance:run-$$"
 docker build -t "$image" "$scratch/image"
+minio_image="$(cat conformance/minio/image-reference)"
+./scripts/build-minio-test-image.sh
 "$kind" create cluster --name "$cluster" --image kindest/node:v1.34.0 --wait 60s
 "$kind" load docker-image "$image" --name "$cluster"
+"$kind" load docker-image "$minio_image" --name "$cluster"
+minio_digest="$(docker exec "$cluster-control-plane" ctr -n k8s.io images list | awk -v image="docker.io/library/$minio_image" '$1 == image { print $3 }')"
+minio_reference="docker.io/library/massive-minio-conformance@$minio_digest"
+docker exec "$cluster-control-plane" ctr -n k8s.io images tag "docker.io/library/$minio_image" "$minio_reference"
 # Tag the imported manifest by digest as well, so the immutable reference can
 # run without a registry or any remote image publication.
 digest="$(docker exec "$cluster-control-plane" ctr -n k8s.io images list | awk -v image="docker.io/library/$image" '$1 == image { print $3 }')"
@@ -42,6 +48,8 @@ curl -fsSL https://raw.githubusercontent.com/argoproj/argo-workflows/v3.7.16/man
 # The tagged source manifest deliberately uses :latest for development images.
 # Pin controller/server explicitly; the controller derives the executor version.
 sed -i 's|argoproj/argocli:latest|argoproj/argocli:v3.7.16|g; s|argoproj/workflow-controller:latest|argoproj/workflow-controller:v3.7.16|g' "$scratch/install.yaml"
+# Use the same source-built S3 fixture as the language and Go contract tests.
+sed -i "s|quay.io/minio/minio:[^[:space:]]*|$minio_reference|g" "$scratch/install.yaml"
 "$KUBECTL" create namespace argo
 "$KUBECTL" apply -n argo -f "$scratch/install.yaml"
 "$KUBECTL" rollout status -n argo deployment/workflow-controller --timeout=120s

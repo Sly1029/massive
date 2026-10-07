@@ -51,13 +51,17 @@ func startMinIO(t *testing.T) string {
 		t.Skipf("could not allocate a local port for MinIO; skipping real MinIO datastore contract: %v", err)
 	}
 	container := "massive-minio-" + strings.NewReplacer("/", "-", "_", "-").Replace(t.Name())
+	image, err := os.ReadFile("../../conformance/minio/image-reference")
+	if err != nil {
+		t.Fatal(err)
+	}
 	args := []string{
 		"run", "-d", "--rm",
 		"--name", container,
 		"-p", fmt.Sprintf("127.0.0.1:%d:9000", port),
 		"-e", "MINIO_ROOT_USER=" + minioAccessKey,
 		"-e", "MINIO_ROOT_PASSWORD=" + minioSecretKey,
-		"quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e", "server", "/data",
+		strings.TrimSpace(string(image)), "server", "/data",
 	}
 	output, err := exec.Command("docker", args...).CombinedOutput()
 	if err != nil {
