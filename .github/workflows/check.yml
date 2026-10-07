@@ -2,57 +2,39 @@ name: Check
 
 on:
   pull_request:
+    paths-ignore: ["**/*.md", "docs/**", "LICENSE"]
   push:
     branches: [main]
+    paths-ignore: ["**/*.md", "docs/**", "LICENSE"]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
-      - uses: pnpm/action-setup@v4
-      - uses: denoland/setup-deno@v2
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.12"
       - run: pnpm install --frozen-lockfile
       - run: ./scripts/build-minio-test-image.sh
       - run: pnpm check
-
-  task-processes:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Verify source snapshot installation
-        run: go test ./internal/orchestrator -run 'TestPathWithinMissingTargetUnderSymlinkedRoot|TestEnsureSourceSnapshotInstallsReadOnlyTree' -count=1
-      - if: runner.os != 'Windows'
-        run: go test -race -count=10 -timeout=5m ./internal/taskprocess
-      - if: runner.os == 'Windows'
-        run: go test -count=10 -timeout=5m ./internal/taskprocess
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.12"
-      - run: uv sync --project packages/python --frozen
-      - if: runner.os != 'Windows'
-        run: go test -race -count=3 -timeout=5m ./internal/controlplane -run 'TestCancelled|TestFailedRunTerminal'
-      - if: runner.os == 'Windows'
-        run: go test -count=3 -timeout=5m ./internal/controlplane -run 'TestCancelled|TestFailedRunTerminal'

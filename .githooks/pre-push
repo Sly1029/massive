@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+# Static checks only; `pnpm check` remains the full gate before opening a PR.
+set -eu
+
+if command -v massive-heavy >/dev/null 2>&1; then
+  exec massive-heavy pnpm check:fast
+fi
+exec pnpm check:fast
