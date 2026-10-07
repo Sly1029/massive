@@ -76,3 +76,46 @@ g.step("no-publish", {
     return context.input;
   },
 });
+
+// Edges are checked from the consumer's side: a step accepts any producer whose
+// output is assignable to its input, and nothing narrower is accepted.
+const onlyLiteral = g.step("only-literal", {
+  input: z.literal("only-this"),
+  output: z.string(),
+  run: ({ input }) => input,
+});
+
+const stringOrNumber = g.step("string-or-number", {
+  input: z.union([z.string(), z.int()]),
+  output: z.string(),
+  run: ({ input }) => String(input),
+});
+
+const partialRecord = g.step("partial-record", {
+  input: z.int(),
+  output: z.object({ a: z.int() }),
+  run: ({ input }) => ({ a: input }),
+});
+
+const fullRecord = g.step("full-record", {
+  input: z.object({ a: z.int(), b: z.int() }),
+  output: z.string(),
+  run: ({ input }) => String(input.a + input.b),
+});
+
+g.from(numberToString).to(stringOrNumber).to(g.end());
+
+// @ts-expect-error a string output does not satisfy a literal input
+g.from(numberToString).to(onlyLiteral);
+
+// @ts-expect-error an output missing field b does not satisfy the input record
+g.from(partialRecord).to(fullRecord);
+
+const widen = g.step("widen", {
+  input: z.string(),
+  output: z.union([z.string(), z.int()]),
+  run: ({ input }) => input,
+});
+
+// @ts-expect-error string | number output does not satisfy the string workflow output
+g.from(widen).to(g.end());

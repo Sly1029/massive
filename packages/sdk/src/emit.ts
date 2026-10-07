@@ -390,14 +390,14 @@ function lowerEnvironment(
   };
 }
 
-function sortedSteps(builder: WorkflowBuilder<unknown, unknown>): StepNode[] {
+function sortedSteps(builder: WorkflowBuilder<unknown, never>): StepNode[] {
   return [...builder.stepNodes.values()].sort((left, right) =>
     compareCodeUnits(left.id, right.id)
   );
 }
 
 function lowerNodes(
-  builder: WorkflowBuilder<unknown, unknown>,
+  builder: WorkflowBuilder<unknown, never>,
   stepSchemas: ReadonlyMap<
     string,
     { readonly input: string; readonly output: string }
@@ -440,7 +440,7 @@ function lowerNodes(
 }
 
 function lowerEdges(
-  builder: WorkflowBuilder<unknown, unknown>,
+  builder: WorkflowBuilder<unknown, never>,
 ): WorkflowSpec["graph"]["edges"] {
   const edges: WorkflowSpecEdge[] = [];
   builder.graph.forEachDirectedEdge((_edge, _attributes, source, target) => {

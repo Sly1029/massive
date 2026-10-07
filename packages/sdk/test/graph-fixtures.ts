@@ -8,7 +8,8 @@ export interface GraphCase {
   readonly expectedTasks: number;
   readonly expectedEdges: number;
   readonly mergeExpectations?: Record<string, readonly string[]>;
-  build(): WorkflowBuilder<number, number | string>;
+  // A builder consumes its output at end(), so heterogeneous outputs widen to never.
+  build(): WorkflowBuilder<number, never>;
 }
 
 export const graphCases = [
