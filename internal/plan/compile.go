@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -183,8 +184,20 @@ func compileGraph(workflowSpec *spec.WorkflowSpec, schedule Schedule, schemaHash
 		nodes = append(nodes, compiled)
 	}
 
-	edges := make([]*planpb.GraphEdge, 0, len(workflowSpec.Graph.Edges))
-	for _, edge := range workflowSpec.Graph.Edges {
+	// Edge declaration order is not part of the graph. Ordering by endpoint
+	// keeps the plan body independent of how a frontend emitted the edges.
+	specEdges := slices.Clone(workflowSpec.Graph.Edges)
+	slices.SortFunc(specEdges, func(left, right spec.GraphEdge) int {
+		if order := compareUTF16(left.From, right.From); order != 0 {
+			return order
+		}
+		if order := compareUTF16(left.To, right.To); order != 0 {
+			return order
+		}
+		return compareUTF16(left.Case, right.Case)
+	})
+	edges := make([]*planpb.GraphEdge, 0, len(specEdges))
+	for _, edge := range specEdges {
 		compiled := &planpb.GraphEdge{From: stringPtr(edge.From), To: stringPtr(edge.To)}
 		if edge.Case != "" {
 			compiled.Case = stringPtr(edge.Case)
@@ -217,10 +230,11 @@ func compileSchemas(workflowSpec *spec.WorkflowSpec) (map[string]string, []*plan
 		byHash[newHash] = string(canonicalJSON)
 	}
 
-	oldHashes := sortedKeys(workflowSpec.Schemas)
-	entries := make([]*planpb.SchemaEntry, 0, len(oldHashes))
-	for _, oldHash := range oldHashes {
-		hash := oldToNew[oldHash]
+	// Entries are content-addressed: spec-local references and duplicate
+	// declarations of one schema do not change the plan.
+	hashes := sortedKeys(byHash)
+	entries := make([]*planpb.SchemaEntry, 0, len(hashes))
+	for _, hash := range hashes {
 		entries = append(entries, &planpb.SchemaEntry{
 			Hash:          stringPtr(hash),
 			CanonicalJson: stringPtr(byHash[hash]),
@@ -276,7 +290,7 @@ func containerRequirement(environment spec.Environment) *planpb.ContainerRequire
 }
 
 func compileContracts(workflowSpec *spec.WorkflowSpec, environmentHashes map[string]string) (map[string]string, []*planpb.ExecutionContract, error) {
-	compiledByOldRef := make(map[string]*planpb.ExecutionContract, len(workflowSpec.Contracts))
+	compiledByHash := make(map[string]*planpb.ExecutionContract, len(workflowSpec.Contracts))
 	oldToNew := make(map[string]string, len(workflowSpec.Contracts))
 
 	oldRefs := sortedKeys(workflowSpec.Contracts)
@@ -323,17 +337,15 @@ func compileContracts(workflowSpec *spec.WorkflowSpec, environmentHashes map[str
 			return nil, nil, fmt.Errorf("hash contract %s: %w", oldRef, err)
 		}
 		compiled.ContractRef = stringPtr(hash)
-		compiledByOldRef[oldRef] = compiled
+		compiledByHash[hash] = compiled
 		oldToNew[oldRef] = hash
 	}
 
-	entries := make([]*planpb.ExecutionContract, 0, len(compiledByOldRef))
-	for _, oldRef := range oldRefs {
-		entries = append(entries, compiledByOldRef[oldRef])
+	// Identical contracts declared under several spec references are one entry.
+	entries := make([]*planpb.ExecutionContract, 0, len(compiledByHash))
+	for _, hash := range sortedKeys(compiledByHash) {
+		entries = append(entries, compiledByHash[hash])
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return canonical.LessUTF16(entries[i].GetContractRef(), entries[j].GetContractRef())
-	})
 
 	return oldToNew, entries, nil
 }
