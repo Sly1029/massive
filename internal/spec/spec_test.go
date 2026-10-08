@@ -20,6 +20,7 @@ func TestParseAcceptsValidFixtures(t *testing.T) {
 		{name: "linear-chain", path: fixturePath("linear-chain")},
 		{name: "diamond", path: fixturePath("diamond")},
 		{name: "python-linear", path: fixturePath("python-linear")},
+		{name: "python-fan-in", path: fixturePath("python-fan-in")},
 		{name: "exhaustive-decision", path: fixturePath("exhaustive-decision")},
 		{name: "finite-map", path: fixturePath("finite-map")},
 	}

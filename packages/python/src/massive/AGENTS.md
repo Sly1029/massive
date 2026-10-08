@@ -17,6 +17,12 @@ handles (start, map, select, case) are `NodeHandle[Never, Output]`. Keep
 rejected wiring for pyright and ty through their unused-ignore rules.
 `GraphBuilder.call()` is statically expanded at emission into scoped node IDs.
 Require one child entry and one child exit before rewiring the parent's edges.
+The IR gives every graph exactly one start successor and end predecessor, and a
+called child must remain a valid standalone workflow, so child start fan-out is
+not supported; a child may end in a fan-in step. A call that consumes a fan-in
+moves its `mergeInputs` onto the child's entry, which must be a step. `merge`
+and `gather` validate the consumer type at `.to()`; a heterogeneous gather
+decodes through the same tagged-union rule as decisions (`_tagged_union_cases`).
 Keep reference-bearing fields (`decisionRef`, `selectInputs`, and `mergeInputs`)
 and edges scoped together; the emitted Graph IR has no `call` nodes. Reject
 recursive composition, scoped ID collisions, and over-long scoped IDs before

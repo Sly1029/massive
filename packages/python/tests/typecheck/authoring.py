@@ -235,6 +235,11 @@ async def to_prompt_async(context: StepContext[Summary]) -> Prompt:
     return Prompt(prompt=context.inputs.summary)
 
 
+def to_combined(context: StepContext[tuple[Prompt, Prompt]]) -> Prompt:
+    weighed, tallied = context.inputs
+    return Prompt(prompt=f"{weighed.prompt} ({tallied.prompt})")
+
+
 def to_answer(context: StepContext[Prompt]) -> Answer:
     return Answer(answer=context.inputs.prompt)
 
@@ -260,3 +265,54 @@ prompt_path.to(pipeline.call(answers, id="answers")).to_end(pipeline.end)
 async_prompt: EdgePath[Prompt] = pipeline.edge_from(summary_call).transform(
     to_prompt_async, id="to-prompt-async"
 )
+
+
+class Approval(BaseModel):
+    kind: Literal["approval"]
+    summary: str
+
+
+class Objection(BaseModel):
+    kind: Literal["objection"]
+    reason: str
+
+
+Review = Annotated[Approval | Objection, Field(discriminator="kind")]
+
+
+def approve_summary(context: StepContext[Summary]) -> Approval:
+    return Approval(kind="approval", summary=context.inputs.summary)
+
+
+def object_to_summary(context: StepContext[Summary]) -> Objection:
+    return Objection(kind="objection", reason=context.inputs.summary)
+
+
+def weigh(context: StepContext[tuple[Approval, Objection]]) -> Prompt:
+    approval, objection = context.inputs
+    return Prompt(prompt=f"{approval.summary}: {objection.reason}")
+
+
+def tally(context: StepContext[list[Review]]) -> Prompt:
+    return Prompt(prompt=str(len(context.inputs)))
+
+
+# Static fan-in: merge delivers a positional tuple, gather a list of the union.
+reviews: GraphBuilder[Document, Answer] = GraphBuilder(
+    name="typed-fan-in", input_type=Document, output_type=Answer, defaults=graph.defaults
+)
+reviewed = reviews.call(summaries, id="summaries")
+reviews.edge_from(reviews.start).to(reviewed)
+approval = reviews.add(approve_summary)
+objection = reviews.add(object_to_summary)
+reviews.edge_from(reviewed).to(approval)
+reviews.edge_from(reviewed).to(objection)
+weighed: EdgePath[tuple[Approval, Objection]] = reviews.merge(approval, objection)
+gathered: EdgePath[list[Approval | Objection]] = reviews.gather(approval, objection)
+weigh_node: NodeHandle[tuple[Approval, Objection], Prompt] = reviews.add(weigh)
+tally_node: NodeHandle[list[Review], Prompt] = reviews.add(tally)
+weighed.to(weigh_node)
+gathered.to(tally_node)
+reviews.merge(weigh_node, tally_node).transform(to_combined).to(
+    reviews.call(answers, id="answers")
+).to_end(reviews.end)

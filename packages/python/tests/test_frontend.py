@@ -6,6 +6,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from massive import canonical_json
 
 
@@ -40,13 +42,11 @@ def test_emit_writes_only_the_spec_to_its_output_whatever_author_code_prints(tmp
         assert line in result.stdout
 
 
-def test_checked_python_workflow_matches_shared_conformance_fixture() -> None:
+@pytest.mark.parametrize("fixture", ["python-linear", "python-fan-in"])
+def test_checked_python_workflow_matches_shared_conformance_fixture(fixture: str) -> None:
     repository = Path(__file__).resolve().parents[3]
-    workflow = repository / "conformance/workflows/python-linear/workflow.py"
-    expected = (
-        repository
-        / "conformance/fixtures/specs/python-linear/workflow-spec.json"
-    ).read_text()
+    workflow = repository / f"conformance/workflows/{fixture}/workflow.py"
+    expected = (repository / f"conformance/fixtures/specs/{fixture}/workflow-spec.json").read_text()
 
     result = _emit(workflow, "graph")
 

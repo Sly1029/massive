@@ -20,10 +20,10 @@ but decision and finite-map authoring are currently Python-only surfaces.
 
 This document describes the intended author-facing model, including features
 beyond the first portable compiler wedge. `WorkflowSpec` transport schema v0
-carries Graph IR 0.3 for static DAGs, exhaustive data-only decisions
+carries Graph IR 0.3 for static DAGs with ordered static fan-in, exhaustive data-only decisions
 and selects, and finite single-step maps with ordered collection. Older Graph IR
 artifacts must be rebuilt with the current SDK.
-Multi-step map bodies, broadcast/gather, and reducer-backed joins
+Multi-step map bodies, dynamic broadcast/gather, and reducer-backed joins
 remain future portable-schema work even where this document sketches their
 eventual shape.
 
@@ -31,11 +31,11 @@ Authors define:
 
 - a workflow,
 - typed steps,
-- declarative edges,
+- declarative edges, including static fan-in,
 - optional exhaustive decisions, typed selects, and finite maps,
 - execution contracts on workflow defaults and step overrides.
 
-Multi-step or streaming maps, broadcasts, gathers, and
+Multi-step or streaming maps, dynamic broadcasts and gathers, and
 reducers are deferred surfaces rather than current portable authoring
 features. The current Python finite-map surface is documented in its SDK
 README.
@@ -223,6 +223,17 @@ precise mismatch at the offending edge. `graph.call(child, id=...)` returns a
 handle typed by the child's input and output. `.transform(function)` is
 shorthand for adding a named step and an edge; it adds no IR construct, and the
 function must still be top-level so it has a stable symbol.
+
+Static fan-in uses the IR's ordered `mergeInputs`. Python's
+`graph.merge(a, b, ...)` returns `EdgePath[tuple[A, B, ...]]` (typed per
+position for up to eight sources) and `graph.gather(a, b, ...)` returns
+`EdgePath[list[A | B]]`; the consumer receives the values as one ordered array.
+A gather of different models must be decoded through a Pydantic discriminated
+union of exactly those models, the same tagging rule as decisions, because
+undiscriminated union decoding may choose a different model than the producer.
+The portable compiler checks only that `mergeInputs` matches the inbound edges,
+so the SDK checks the consumer's input type when the edge is created and the
+runtime validates the assembled array against the consumer's input schema.
 
 TypeScript `call()` and `.transform()` parity is future work.
 

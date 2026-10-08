@@ -7,7 +7,7 @@ with ``GraphBuilder.call()`` and hand-inlined, pass it to ``massive run`` throug
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -120,6 +120,28 @@ def collect(ctx: StepContext[list[Item]]) -> Token:
     return token.model_copy(update={"trace": [*token.trace, entry]})
 
 
+def _join(tokens: Sequence[Token], step_id: str) -> Token:
+    """Continue the first input's state; record every input's last step in order."""
+    first = tokens[0]
+    entry = f"{step_id}<" + "|".join(token.trace[-1] for token in tokens)
+    return first.model_copy(update={"trace": [*first.trace, entry]})
+
+
+def join_pair(ctx: StepContext[tuple[Token, Token]]) -> Token:
+    return _join(ctx.inputs, ctx.invocation.step_id)
+
+
+def join_triple(ctx: StepContext[tuple[Token, Token, Token]]) -> Token:
+    return _join(ctx.inputs, ctx.invocation.step_id)
+
+
+def join_list(ctx: StepContext[list[Token]]) -> Token:
+    return _join(ctx.inputs, ctx.invocation.step_id)
+
+
+MERGE_JOINERS = {2: join_pair, 3: join_triple}
+
+
 class StepNode(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -175,9 +197,33 @@ class FanNode(BaseModel):
     asynchronous: bool = False
 
 
-Node = Annotated[StepNode | CallNode | DecideNode | FanNode, Field(discriminator="kind")]
+class Branch(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    body: tuple[Node, ...] = Field(min_length=1)
+
+
+class JoinNode(BaseModel):
+    """A split step fans out to branches whose results meet in one join step.
+
+    ``gather`` joins them as a list instead of a positional tuple; ``via`` wraps
+    the join step in a call, which then receives the fan-in.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: Literal["join"] = "join"
+    split: str
+    branches: tuple[Branch, ...] = Field(min_length=2, max_length=3)
+    gather: bool = False
+    join: str
+    via: str | None = None
+
+
+Node = Annotated[StepNode | CallNode | DecideNode | FanNode | JoinNode, Field(discriminator="kind")]
 CallNode.model_rebuild()
 Arm.model_rebuild()
+Branch.model_rebuild()
 
 
 class GraphDescription(BaseModel):
@@ -270,6 +316,23 @@ def _node(
                 graph, decision.case(case), arm.via, prefix, inline, (case, Token), enter_arm
             )
         return decision.select(Token, **outcomes)
+    if isinstance(node, JoinNode):
+        split = _then(graph, source, graph.add(advance, id=prefix + node.split))
+        ends = [_block(graph, split, branch.body, prefix, inline) for branch in node.branches]
+        path = graph.gather(*ends) if node.gather else graph.merge(*ends)
+        joiner = join_list if node.gather else MERGE_JOINERS[len(ends)]
+        if node.via is None or inline:
+            scope = prefix if node.via is None else f"{prefix}{node.via}--"
+            target = graph.add(joiner, id=scope + node.join)
+        else:
+            joined = list[Token] if node.gather else tuple[(Token,) * len(ends)]
+            child = GraphBuilder(
+                name=node.via, input_type=joined, output_type=Token, defaults=DEFAULTS
+            )
+            child.edge_from(child.start).transform(joiner, id=node.join).to_end(child.end)
+            target = graph.call(child, id=prefix + node.via)
+        path.to(target)
+        return target
     explode_id = node.explode
     items = _within(
         graph,

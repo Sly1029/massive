@@ -1135,7 +1135,7 @@ def test_workflow_call_rejects_child_without_single_entry_and_exit(shape: str) -
     second = child.add(passthrough_request, id="second")
     if shape == "multiple-entries":
         child.edge_from(child.start).to(first).to_end(child.end)
-        child.edge_from(child.start).to(second).to(first)
+        child.edge_from(child.start).to(second)
     elif shape == "multiple-exits":
         child.edge_from(child.start).to(first).to_end(child.end)
         child.edge_from(first).to(second).to_end(child.end)
