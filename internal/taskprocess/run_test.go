@@ -1,6 +1,7 @@
 package taskprocess
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -177,5 +178,26 @@ func TestRunRejectsMissingExecutableAndCancelledContext(t *testing.T) {
 	}
 	if _, err := Run(ctx, []string{executable, "process-fixture", "failure", "unused"}, ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("pre-cancelled invocation = %v", err)
+	}
+}
+
+func TestRunToPreservesProtocolOutputAndSeparateDiagnostics(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := RunTo(t.Context(), []string{executable, "process-fixture", "output", "unused"}, "", &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != strings.Repeat("x", outputLimit*2) || stderr.Len() != 0 {
+		t.Fatalf("protocol output truncated or mixed: stdout=%d stderr=%d", stdout.Len(), stderr.Len())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	err = RunTo(t.Context(), []string{executable, "process-fixture", "failure", "unused"}, "", &stdout, &stderr)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 42 || stdout.Len() != 0 || stderr.String() != "author diagnostic\n" {
+		t.Fatalf("diagnostic output mixed or exit lost: stdout=%q stderr=%q err=%v", stdout.String(), stderr.String(), err)
 	}
 }

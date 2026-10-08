@@ -21,6 +21,7 @@ import (
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
 	"github.com/Sly1029/massive/internal/target/argo"
+	"github.com/Sly1029/massive/internal/taskprocess"
 )
 
 // Version is injected by the wheel build; source builds report a development version.
@@ -45,7 +46,7 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	}
 	resolvedEntry := absolute + strings.TrimPrefix(entry, path)
 
-	var command *exec.Cmd
+	var argv []string
 	language := "Python"
 	packageRoot := filepath.Dir(absolute)
 	extension := filepath.Ext(absolute)
@@ -59,13 +60,13 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	switch extension {
 	case ".py":
 		if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
-			command = exec.CommandContext(ctx, python, "-m", "massive.frontend", "emit", resolvedEntry)
+			argv = []string{python, "-m", "massive.frontend", "emit", resolvedEntry}
 		} else {
 			frontend := os.Getenv("MASSIVE_PYTHON_FRONTEND")
 			if frontend == "" {
 				frontend = "massive-python-frontend"
 			}
-			command = exec.CommandContext(ctx, frontend, "emit", resolvedEntry)
+			argv = []string{frontend, "emit", resolvedEntry}
 		}
 	case ".ts":
 		language = "TypeScript"
@@ -73,7 +74,7 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 		if frontend == "" {
 			frontend = "massive-typescript-frontend"
 		}
-		command = exec.CommandContext(ctx, frontend, "emit", resolvedEntry)
+		argv = []string{frontend, "emit", resolvedEntry}
 		for directory := packageRoot; ; directory = filepath.Dir(directory) {
 			if _, err := os.Stat(filepath.Join(directory, "massive.config.ts")); err == nil {
 				packageRoot = directory
@@ -86,12 +87,15 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	default:
 		return nil, fmt.Errorf("unsupported workflow entrypoint %q; use a Python or TypeScript entrypoint", entry)
 	}
-	command.Dir = filepath.Dir(absolute)
 	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+	if err := taskprocess.RunTo(ctx, argv, filepath.Dir(absolute), &stdout, &stderr); err != nil {
 		diagnostic := strings.TrimSpace(stderr.String())
+		if errors.Is(err, exec.ErrWaitDelay) {
+			if diagnostic != "" {
+				return nil, fmt.Errorf("%s frontend failed: %s: %w", language, diagnostic, err)
+			}
+			return nil, fmt.Errorf("%s frontend failed: %w", language, err)
+		}
 		if diagnostic == "" {
 			diagnostic = err.Error()
 		}

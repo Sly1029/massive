@@ -5,6 +5,10 @@ captured output budget. Keep platform handling here; the orchestrator translates
 errors into invocation outcomes. Signal ingress and journal state belong to the
 CLI and orchestrator, respectively.
 
+Frontend adapters use the same process owner with separate stdout and stderr.
+Keep their WorkflowSpec output intact; the combined task-log truncation policy
+does not apply to frontend specifications.
+
 On Windows, start suspended and assign the job before resuming the initial
 thread. Assignment after startup permits early children to escape. Serialize
 assignment with cancellation so a closed job handle cannot be reused during
