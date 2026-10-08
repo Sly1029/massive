@@ -51,6 +51,11 @@ curl -fsSL https://raw.githubusercontent.com/argoproj/argo-workflows/v3.7.16/man
 # The tagged source manifest deliberately uses :latest for development images.
 # Pin controller/server explicitly; the controller derives the executor version.
 sed -i 's|argoproj/argocli:latest|argoproj/argocli:v3.7.16|g; s|argoproj/workflow-controller:latest|argoproj/workflow-controller:v3.7.16|g' "$scratch/install.yaml"
+# The quick-start keeps only 10 completed and 3 failed workflows; the gate
+# submits more than that, and the controller would garbage-collect runs before
+# their assertions read them.
+sed -i 's/^    completed: 10$/    completed: 100/; s/^    failed: 3$/    failed: 100/; s/^    errored: 3$/    errored: 100/' "$scratch/install.yaml"
+grep -q '^    failed: 100$' "$scratch/install.yaml"
 # Use the same source-built S3 fixture as the language and Go contract tests.
 sed -i "s|quay.io/minio/minio:[^[:space:]]*|$minio_reference|g" "$scratch/install.yaml"
 "$KUBECTL" create namespace argo
