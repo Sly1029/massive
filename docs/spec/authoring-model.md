@@ -47,6 +47,14 @@ Graphology is an internal implementation detail. Authors do not manipulate Graph
 The simplest case is step output flowing into the next step's input:
 
 ```ts
+export async function double({ input }: { readonly input: number }) {
+  return input * 2;
+}
+
+export async function stringify({ input }: { readonly input: number }) {
+  return `Result: ${input}`;
+}
+
 const g = workflow({
   name: "math",
   input: z.int(),
@@ -54,20 +62,24 @@ const g = workflow({
   defaults: nodeDefaults,
 });
 
-const double = g.step("double", {
+const doubleStep = g.step("double", {
   input: z.int(),
   output: z.int(),
-  run: async ({ input }) => input * 2,
+  run: double,
 });
 
-const stringify = g.step("stringify", {
+const stringifyStep = g.step("stringify", {
   input: z.int(),
   output: z.string(),
-  run: async ({ input }) => `Result: ${input}`,
+  run: stringify,
 });
 
-g.start().to(double).to(stringify).to(g.end());
+g.start().to(doubleStep).to(stringifyStep).to(g.end());
 ```
+
+A step's `run` must be the entrypoint module's export named by the step id. The
+runner resolves steps by that export in a fresh process, so emission rejects
+inline closures and steps whose id names a different export.
 
 Each step return value is persisted as a step output artifact. It is not automatically promoted to a named channel.
 

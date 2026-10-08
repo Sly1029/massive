@@ -52,9 +52,10 @@ schema, and executable code. The path builder tracks the current output type,
 so `.to(next)` only accepts a step whose input type accepts that output: a wider
 input such as a union is allowed, a narrower one is a type error.
 
-The step functions are top-level named exports. The emitted plan stores symbol
-references, not function bodies, and the runner resolves those exports in a
-fresh step process.
+The step functions are top-level named exports, and each step's `run` must be
+the entrypoint export named by the step id; emission rejects inline closures and
+mismatched names. The emitted plan stores symbol references, not function
+bodies, and the runner resolves those exports in a fresh step process.
 
 ```sh
 massive run examples/02-linear.ts --input '{"value":21}'

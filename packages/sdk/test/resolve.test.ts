@@ -161,6 +161,42 @@ Deno.test("resolver rejects retired WorkflowSpec targets", async () => {
   });
 });
 
+for (
+  const [label, steps] of [
+    ["an inline run closure", "const run = ({ input }: { readonly input: number }) => input;"],
+    [
+      "an export of the step id that is a different function",
+      "export function shout({ input }: { readonly input: number }) { return input + 1; }\n" +
+      "export function run({ input }: { readonly input: number }) { return input; }",
+    ],
+  ] as const
+) {
+  Deno.test(`resolver rejects a step whose id does not export its run: ${label}`, async () => {
+    await withTempDir(async (root) => {
+      const file = join(root, "workflow.ts");
+      await Deno.writeTextFile(
+        file,
+        [
+          `import { workflow } from "${sdkUrl}";`,
+          `import { z } from "${zodUrl}";`,
+          steps,
+          "const g = workflow({ name: 'binding', input: z.int(), output: z.int() });",
+          "const node = g.step('shout', { input: z.int(), output: z.int(), run });",
+          "g.start().to(node).to(g.end());",
+          "export default g;",
+          "",
+        ].join("\n"),
+      );
+
+      await assertRejects(
+        () => resolveWorkflowEntrypoint(file),
+        MassiveError,
+        `step "shout" must use the run function exported as "shout"`,
+      );
+    });
+  });
+}
+
 function workflowModule(config: {
   readonly defaultName?: string;
   readonly named?: readonly string[];
@@ -168,10 +204,11 @@ function workflowModule(config: {
   const lines = [
     `import { workflow } from "${sdkUrl}";`,
     `import { z } from "${zodUrl}";`,
+    "export function step({ input }: { readonly input: number }) { return input; }",
     "function build(name: string) {",
     "  const g = workflow({ name, input: z.int(), output: z.int() });",
-    "  const step = g.step('step', { input: z.int(), output: z.int(), run: ({ input }) => input });",
-    "  g.start().to(step).to(g.end());",
+    "  const node = g.step('step', { input: z.int(), output: z.int(), run: step });",
+    "  g.start().to(node).to(g.end());",
     "  return g;",
     "}",
   ];
