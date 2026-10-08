@@ -169,7 +169,7 @@ graph.edge_from(approved_input).to(approved)
 graph.edge_from(rejected_input).to(rejected)
 
 selected = route.select(Result, approved=approved, rejected=rejected)
-graph.edge_from(selected).to(graph.end)
+graph.edge_from(selected).to_end(graph.end)
 ```
 
 The decision IR contains only a selector, string tags, and schema references;
@@ -213,6 +213,18 @@ Join behavior is driven by reducers. If multiple upstream paths publish into the
 `g.start().to(a).to(b)` is supported as linear sugar. It should return addressable handles internally, not an opaque cursor. Non-linear structures should use explicit operations such as `branch`, `foreach`, `fanout`, and `join`.
 
 This keeps the linear path readable while avoiding a fluent API that becomes confusing at fan-in/fan-out boundaries.
+
+The Python builder types paths end to end. A `NodeHandle[Input, Output]` is
+invariant in its input, because portable edges require exact schema equality,
+and covariant in its output. `EdgePath[Value].to(node)` accepts only a node
+whose input is `Value`, and `.to_end(graph.end)` closes a path whose value is
+the workflow output; neither is overloaded, so Pyright and ty report one
+precise mismatch at the offending edge. `graph.call(child, id=...)` returns a
+handle typed by the child's input and output. `.transform(function)` is
+shorthand for adding a named step and an edge; it adds no IR construct, and the
+function must still be top-level so it has a stable symbol.
+
+TypeScript `call()` and `.transform()` parity is future work.
 
 ## Execution Contracts In Authoring
 

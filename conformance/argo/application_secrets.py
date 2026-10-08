@@ -56,4 +56,4 @@ results = graph.map(
 )
 summary = graph.add(collect)
 graph.edge_from(graph.start).to(items)
-graph.edge_from(results).to(summary).to(graph.end)
+graph.edge_from(results).to(summary).to_end(graph.end)

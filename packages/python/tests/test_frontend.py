@@ -162,7 +162,7 @@ def test_emit_rejects_imported_workflow_modules_outside_the_source_package(
         '        "example.invalid/python@sha256:" + "0" * 64\n'
         "    )),\n"
         ")\n"
-        "graph.edge_from(graph.start).to(graph.add(identity)).to(graph.end)\n"
+        "graph.edge_from(graph.start).to(graph.add(identity)).to_end(graph.end)\n"
     )
 
     rejected = _emit(workflow)
@@ -288,5 +288,5 @@ def identity(context: StepContext[Request]) -> Result:
 
 
 identity_node = {export}.add(identity)
-{export}.edge_from({export}.start).to(identity_node).to({export}.end)
+{export}.edge_from({export}.start).to(identity_node).to_end({export}.end)
 '''

@@ -33,4 +33,4 @@ def add_one(context: StepContext[Request]) -> Result:
 
 
 step = graph.add(add_one)
-graph.edge_from(graph.start).to(step).to(graph.end)
+graph.edge_from(graph.start).to(step).to_end(graph.end)

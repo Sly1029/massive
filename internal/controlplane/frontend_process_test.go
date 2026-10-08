@@ -54,7 +54,7 @@ graph = GraphBuilder(name="frontend-owner", input_type=int, output_type=int,
     defaults=execution(environment=container("example.invalid/runner@sha256:"+"1"*64, platform="linux/amd64")))
 task = graph.add(echo)
 graph.edge_from(graph.start).to(task)
-graph.edge_from(task).to(graph.end)
+graph.edge_from(task).to_end(graph.end)
 `, child, ready, ready, mode, mode)
 			if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
 				t.Fatal(err)

@@ -8,6 +8,13 @@ in `_step.py`, shared by emission and runner loading. `StepContext[Input]` has n
 dependency generic: live application clients are constructed within tasks.
 Keep authoring graph composition separate from worker imports. The runner loads
 the function by its archived module/export without importing an SDK wrapper type.
+`NodeHandle[Input, Output]` is invariant in input (edges need equal schemas)
+and covariant in output; only steps and calls accept edges, and value-only
+handles (start, map, select, case) are `NodeHandle[Never, Output]`. Keep
+`EdgePath.to`/`to_end` non-overloaded so checkers report one precise error;
+`add`/`map`/`transform` overload Awaitable first because ty cannot solve
+`Output | Awaitable[Output]`. `tests/typecheck/rejected_wiring.py` pins
+rejected wiring for pyright and ty through their unused-ignore rules.
 `GraphBuilder.call()` is statically expanded at emission into scoped node IDs.
 Require one child entry and one child exit before rewiring the parent's edges.
 Keep reference-bearing fields (`decisionRef`, `selectInputs`, and `mergeInputs`)

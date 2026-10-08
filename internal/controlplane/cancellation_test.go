@@ -48,7 +48,7 @@ items = graph.map(prepared, work, id="workers", concurrency=1)
 collected = graph.add(collect)
 graph.edge_from(graph.start).to(prepared)
 graph.edge_from(items).to(collected)
-graph.edge_from(collected).to(graph.end)
+graph.edge_from(collected).to_end(graph.end)
 `
 	if err := os.WriteFile(entry, []byte(source), 0600); err != nil {
 		t.Fatal(err)
@@ -242,7 +242,7 @@ graph.edge_from(graph.start).to(blocked)
 graph.edge_from(blocked).to(collected)
 `
 			}
-			source += "graph.edge_from(collected).to(graph.end)\n"
+			source += "graph.edge_from(collected).to_end(graph.end)\n"
 			if err := os.WriteFile(entry, []byte(source), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -335,7 +335,7 @@ failed = graph.add(fail)
 next_node = graph.add(next_step)
 graph.edge_from(graph.start).to(failed)
 graph.edge_from(failed).to(next_node)
-graph.edge_from(next_node).to(graph.end)
+graph.edge_from(next_node).to_end(graph.end)
 `
 	if err := os.WriteFile(entry, []byte(source), 0600); err != nil {
 		t.Fatal(err)

@@ -30,7 +30,10 @@ class StepDefinition(Generic[InputT, OutputT]):
             or function.__qualname__ != function.__name__
             or function.__name__ == "<lambda>"
         ):
-            raise TypeError("workflow steps must be top-level named functions")
+            raise TypeError(
+                "workflow steps must be top-level named functions; define the step with "
+                "`def` at module level instead of a lambda, nested function, method, or partial"
+            )
         hints = get_type_hints(function, include_extras=True)
         parameters = list(inspect.signature(function).parameters.values())
         if (
