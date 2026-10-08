@@ -42,4 +42,4 @@ items = graph.add(unpack)
 results = graph.map(items, square, id="square-items", concurrency=4)
 
 graph.edge_from(graph.start).to(items)
-graph.edge_from(results).to(graph.end)
+graph.edge_from(results).to_end(graph.end)

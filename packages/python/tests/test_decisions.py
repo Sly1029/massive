@@ -144,7 +144,7 @@ def test_emit_serializes_an_exhaustive_pydantic_decision_as_data_only_ir() -> No
     graph.edge_from(graph.start).to(classified)
     graph.edge_from(approved_input).to(approved)
     graph.edge_from(rejected_input).to(rejected)
-    graph.edge_from(selected).to(graph.end)
+    graph.edge_from(selected).to_end(graph.end)
 
     specification = _emit(graph)
     graph_ir = specification.value["graph"]
@@ -188,7 +188,7 @@ def test_map_can_follow_a_decision_branch_and_select_its_downstream_result() -> 
     graph.edge_from(approved_input).to(approved_source)
     graph.edge_from(approved_map).to(approved_result)
     graph.edge_from(rejected_input).to(rejected_result)
-    graph.edge_from(selected).to(graph.end)
+    graph.edge_from(selected).to_end(graph.end)
 
     graph_ir = _emit(graph).value["graph"]
 
@@ -215,7 +215,7 @@ def test_select_accepts_a_direct_map_result_with_a_synthesized_list_output_type(
     graph.edge_from(graph.start).to(classified)
     graph.edge_from(approved_input).to(approved_source)
     graph.edge_from(rejected_input).to(rejected_result)
-    graph.edge_from(selected).to(graph.end)
+    graph.edge_from(selected).to_end(graph.end)
 
     graph_ir = _emit(graph).value["graph"]
 
@@ -312,7 +312,7 @@ def test_decision_cases_and_select_inputs_use_utf16_ordering() -> None:
             "\U00010000": astral_result,
         },
     )
-    graph.edge_from(selected).to(graph.end)
+    graph.edge_from(selected).to_end(graph.end)
 
     graph_ir = _emit(graph).value["graph"]
     nodes = {node["id"]: node for node in graph_ir["nodes"]}
@@ -355,7 +355,7 @@ def test_emit_allows_an_outer_select_to_choose_a_nested_select() -> None:
         approved=selected_inner,
         rejected=rejected_result,
     )
-    graph.edge_from(selected_outer).to(graph.end)
+    graph.edge_from(selected_outer).to_end(graph.end)
 
     nodes = {node["id"]: node for node in _emit(graph).value["graph"]["nodes"]}
     assert nodes["outer-select"]["selectInputs"] == [

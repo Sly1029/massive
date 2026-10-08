@@ -49,6 +49,7 @@ dev = [
   "pyright>=1.1.390,<2",
   "ruff>=0.9,<1",
   "hypothesis>=6.130,<7",
+  "ty>=0.0.85,<0.1",
 ]
 
 [build-system]
@@ -76,3 +77,15 @@ ignore = ["UP046"]
 include = ["src", "tests/typecheck"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
+reportUnnecessaryTypeIgnoreComment = "error"
+
+# pyright owns strict checking of the SDK source; ty checks that authoring
+# wiring type-checks, and that rejected wiring stays rejected, in both checkers.
+[tool.ty.src]
+include = ["tests/typecheck"]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.rules]
+unused-ignore-comment = "error"

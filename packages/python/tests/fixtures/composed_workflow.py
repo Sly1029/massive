@@ -52,13 +52,13 @@ defaults = execution(
 increment_graph = GraphBuilder(
     name="increment-step", input_type=Approved, output_type=Approved, defaults=defaults
 )
-increment_graph.edge_from(increment_graph.start).to(increment_graph.add(increment)).to(
+increment_graph.edge_from(increment_graph.start).to(increment_graph.add(increment)).to_end(
     increment_graph.end
 )
 child = GraphBuilder(
     name="increment-child", input_type=Approved, output_type=Approved, defaults=defaults
 )
-child.edge_from(child.start).to(child.call(increment_graph, id="nested")).to(child.end)
+child.edge_from(child.start).to(child.call(increment_graph, id="nested")).to_end(child.end)
 
 graph = GraphBuilder(name="composed", input_type=Request, output_type=Request, defaults=defaults)
 classified = graph.add(classify)
@@ -72,4 +72,4 @@ graph.edge_from(second).to(accepted)
 rejected = graph.add(reject)
 graph.edge_from(decision.case(Rejected)).to(rejected)
 selected = decision.select(Request, approved=accepted, rejected=rejected)
-graph.edge_from(selected).to(graph.end)
+graph.edge_from(selected).to_end(graph.end)

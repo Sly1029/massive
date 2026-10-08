@@ -75,11 +75,11 @@ Connect the returned handle with ordinary edges:
 
 ```python
 child = GraphBuilder(name="normalize", input_type=Request, output_type=Result, defaults=defaults)
-child.edge_from(child.start).to(child.add(normalize)).to(child.end)
+child.edge_from(child.start).to(child.add(normalize)).to_end(child.end)
 
 parent = GraphBuilder(name="pipeline", input_type=Request, output_type=Result, defaults=defaults)
 called = parent.call(child, id="normalize-input")
-parent.edge_from(parent.start).to(called).to(parent.end)
+parent.edge_from(parent.start).to(called).to_end(parent.end)
 ```
 
 A child graph may be called more than once, including in a decision branch.
@@ -132,14 +132,49 @@ async def double(context: StepContext[Request]) -> Result:
 
 
 node = graph.add(double)
-graph.edge_from(graph.start).to(node).to(graph.end)
+graph.edge_from(graph.start).to(node).to_end(graph.end)
 ```
 
 `GraphBuilder.add` and `GraphBuilder.map` accept synchronous and asynchronous
 top-level functions directly. Functions remain callable and reusable across
 graphs; registration attaches execution settings without changing the function.
-The type of `node` is `NodeHandle[Result]` in either form, so the graph's edge
-types still follow the value a step produces rather than its coroutine.
+The type of `node` is `NodeHandle[Request, Result]` in either form, so the
+graph's edge types still follow the value a step produces rather than its
+coroutine.
+
+## Typed wiring
+
+`NodeHandle[Input, Output]` carries what a node consumes and produces, and
+`EdgePath[Value]` carries the value flowing along a path. Pyright and ty check
+every edge statically:
+
+- `path.to(node)` requires the node's input to be exactly the path's value and
+  continues with the node's output. Schemas must be equal at runtime, so a
+  subclass output does not satisfy a base-class input.
+- `path.to_end(graph.end)` closes a path whose value is the workflow output.
+- `graph.call(child, id=...)` returns `NodeHandle[ChildInput, ChildOutput]`,
+  so wiring one graph's output into another graph's mismatched input is a type
+  error rather than an emission failure.
+- Start, map, select, and `case()` handles are `NodeHandle[Never, Output]`:
+  they are value sources that cannot be edge targets.
+
+`path.transform(function)` adapts a value between nodes. It is shorthand for
+`path.to(graph.add(function))`, accepts the same `id`, `contract`, `retry`, and
+`timeout` arguments, and emits an ordinary named step:
+
+```python
+def to_prompt(context: StepContext[Summary]) -> Prompt:
+    return Prompt(text=context.inputs.text)
+
+
+pipeline.edge_from(pipeline.start).to(pipeline.call(summaries, id="summarize")).transform(
+    to_prompt
+).to(pipeline.call(answers, id="answer")).to_end(pipeline.end)
+```
+
+Like every step, a transform must be a top-level named function so workers can
+import it by module and name; lambdas and nested functions are rejected when
+the graph is built.
 
 ## Reusable functions and execution settings
 
@@ -255,7 +290,7 @@ decision_graph.edge_from(approved_input).to(approved)
 decision_graph.edge_from(rejected_input).to(rejected)
 
 selected = route.select(Result, approved=approved, rejected=rejected)
-decision_graph.edge_from(selected).to(decision_graph.end)
+decision_graph.edge_from(selected).to_end(decision_graph.end)
 ```
 
 `case()` narrows the routed value for Pyright and for the receiving step's
@@ -267,7 +302,7 @@ model per tag so `case(Model)` remains unambiguous.
 
 Only the selected branch runs. Inactive branch steps are recorded as skipped,
 not invoked. `select()` then exposes the selected branch result as an ordinary
-`NodeHandle[Result]`; at runtime it aliases the already crystallized artifact
+`NodeHandle[Never, Result]`; at runtime it aliases the already crystallized artifact
 without launching another step, copying its body, or uploading it again.
 Declaration order does not affect the emitted graph: authors may create the
 select before or after adding the case edges, and `emit()` validates the final
@@ -309,7 +344,7 @@ def increment_item(context: StepContext[Request]) -> Result:
 requests = map_graph.add(unpack)
 results = map_graph.map(requests, increment_item, id="increment-items", concurrency=20)
 map_graph.edge_from(map_graph.start).to(requests)
-map_graph.edge_from(results).to(map_graph.end)
+map_graph.edge_from(results).to_end(map_graph.end)
 ```
 
 `map()` accepts only a direct, concrete `list[T]` source and requires the mapper

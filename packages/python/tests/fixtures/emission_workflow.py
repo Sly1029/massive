@@ -33,4 +33,4 @@ def increment(context: StepContext[Request]) -> Result:
 
 
 increment_node = graph.add(increment)
-graph.edge_from(graph.start).to(increment_node).to(graph.end)
+graph.edge_from(graph.start).to(increment_node).to_end(graph.end)

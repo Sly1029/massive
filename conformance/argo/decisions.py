@@ -95,4 +95,4 @@ inner_result = inner.select(int, positive=total, zero=zero_value)
 outer_result = outer.select(
     int, **{"work'{{arbitrary}}": inner_result, "skip": skip_value}
 )
-graph.edge_from(outer_result).to(graph.end)
+graph.edge_from(outer_result).to_end(graph.end)

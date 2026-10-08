@@ -43,4 +43,4 @@ graph = GraphBuilder(
 items = graph.add(load_items)
 results = graph.map(items, render_item, id="render-items", concurrency=3)
 graph.edge_from(graph.start).to(items)
-graph.edge_from(results).to(graph.end)
+graph.edge_from(results).to_end(graph.end)

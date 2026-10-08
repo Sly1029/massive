@@ -12,6 +12,7 @@ from typing import (
     Annotated,
     Any,
     Generic,
+    Never,
     TypeVar,
     cast,
     overload,
@@ -37,6 +38,11 @@ from .identity import SAFE_PATH_SEGMENT, SafePathSegment
 from .source_package import SourcePackage
 
 OutputT = TypeVar("OutputT")
+# A node's input is invariant because edges require exact schema equality; its
+# output is covariant so heterogeneous handles solve to a union of outputs.
+NodeInputT = TypeVar("NodeInputT")
+NodeOutputT_co = TypeVar("NodeOutputT_co", covariant=True)
+ValueT = TypeVar("ValueT")
 ItemT = TypeVar("ItemT")
 ResultT = TypeVar("ResultT")
 WorkflowInputT = TypeVar("WorkflowInputT")
@@ -88,7 +94,13 @@ class _MapIdentity(BaseModel):
 
 
 @dataclass(frozen=True, slots=True)
-class NodeHandle(Generic[OutputT]):
+class NodeHandle(Generic[NodeInputT, NodeOutputT_co]):
+    """A graph node that consumes ``NodeInputT`` and produces ``NodeOutputT_co``.
+
+    Only steps and calls accept edges. Start, map, select, and decision-case
+    handles are value sources typed ``NodeHandle[Never, Output]``.
+    """
+
     graph_token: object = field(repr=False, compare=False)
     node_id: str
     input_type: Any
@@ -96,7 +108,7 @@ class NodeHandle(Generic[OutputT]):
 
 
 @dataclass(frozen=True, slots=True)
-class CaseHandle(NodeHandle[CaseT], Generic[CaseT]):
+class CaseHandle(NodeHandle[Never, CaseT], Generic[CaseT]):
     decision_id: str
     tag: str
 
@@ -104,7 +116,7 @@ class CaseHandle(NodeHandle[CaseT], Generic[CaseT]):
 @dataclass(slots=True)
 class _DecisionDefinition:
     id: str
-    source: NodeHandle[Any]
+    source: NodeHandle[Any, Any]
     selector: str
     cases: dict[str, type[BaseModel]]
     claimed_cases: set[str]
@@ -116,15 +128,15 @@ class _SelectDefinition:
     id: str
     decision_id: str
     output_type: Any
-    inputs: dict[str, NodeHandle[Any]]
+    inputs: dict[str, NodeHandle[Any, Any]]
 
 
 @dataclass(frozen=True, slots=True)
 class _MapDefinition:
     id: str
-    source: _StartHandle[Any] | NodeHandle[Any]
+    source: NodeHandle[Any, Any]
     mapper: _Step[Any, Any]
-    handle: NodeHandle[Any]
+    handle: NodeHandle[Any, Any]
     concurrency: int
 
 
@@ -139,17 +151,11 @@ class DecisionHandle(Generic[OutputT]):
         )
 
     def select(
-        self, output_type: TypeForm[SelectT], **inputs: NodeHandle[SelectT]
-    ) -> NodeHandle[SelectT]:
+        self, output_type: TypeForm[SelectT], **inputs: NodeHandle[Any, SelectT]
+    ) -> NodeHandle[Never, SelectT]:
         return self._graph._select_decision(  # pyright: ignore[reportPrivateUsage]
             self._definition.id, output_type, inputs
         )
-
-
-@dataclass(frozen=True, slots=True)
-class _StartHandle(Generic[WorkflowInputT]):
-    output_type: Any
-    graph_token: object = field(repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,41 +164,60 @@ class _EndHandle(Generic[WorkflowOutputT]):
     graph_token: object = field(repr=False, compare=False)
 
 
-class EdgePath(Generic[OutputT]):
-    def __init__(
-        self,
-        add_edge: Callable[[str, str, str | None], None],
-        source: str,
-        output_type: Any,
-        case: str | None = None,
-        *,
-        graph_token: object,
-    ) -> None:
-        self._graph_token = graph_token
-        self._add_edge = add_edge
+class EdgePath(Generic[ValueT]):
+    """A ``ValueT`` flowing out of a node, wired onward with ``to``/``to_end``.
+
+    The methods are deliberately not overloaded so a type checker reports one
+    precise mismatch at the offending edge.
+    """
+
+    def __init__(self, graph: GraphBuilder[Any, Any], source: NodeHandle[Any, ValueT]) -> None:
+        self._graph = graph
         self._source = source
-        self._output_type = output_type
-        self._case = case
+
+    def to(self, target: NodeHandle[ValueT, OutputT]) -> EdgePath[OutputT]:
+        self._graph._connect(self._source, target)  # pyright: ignore[reportPrivateUsage]
+        return EdgePath(self._graph, target)
+
+    def to_end(self, end: _EndHandle[ValueT]) -> None:
+        self._graph._connect(self._source, end)  # pyright: ignore[reportPrivateUsage]
+
+    # Awaitable-first overloads let every checker solve an async step's output
+    # to the awaited value; ``OutputT | Awaitable[OutputT]`` is ambiguous to ty.
+    @overload
+    def transform(
+        self,
+        function: Callable[[StepContext[ValueT]], Awaitable[OutputT]],
+        *,
+        id: str | None = None,
+        contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
+    ) -> EdgePath[OutputT]: ...
 
     @overload
-    def to(self, target: NodeHandle[Any]) -> EdgePath[Any]: ...
+    def transform(
+        self,
+        function: Callable[[StepContext[ValueT]], OutputT],
+        *,
+        id: str | None = None,
+        contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
+    ) -> EdgePath[OutputT]: ...
 
-    @overload
-    def to(self, target: _EndHandle[Any]) -> None: ...
-
-    def to(self, target: NodeHandle[Any] | _EndHandle[Any]) -> EdgePath[Any] | None:
-        if target.graph_token is not self._graph_token:
-            raise ValueError("edge target belongs to a different graph")
-        expected = target.input_type
-        if self._output_type != expected:
-            raise TypeError(f"edge from {self._source!r} has incompatible input type")
-        target_id = target.node_id if isinstance(target, NodeHandle) else _END
-        self._add_edge(self._source, target_id, self._case)
-        if isinstance(target, NodeHandle):
-            return EdgePath(
-                self._add_edge, target_id, target.output_type, graph_token=self._graph_token
-            )
-        return None
+    def transform(
+        self,
+        function: Callable[[StepContext[ValueT]], Any],
+        *,
+        id: str | None = None,
+        contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
+    ) -> EdgePath[Any]:
+        """Register ``function`` as an ordinary named step and wire this path into it."""
+        step = self._graph.add(function, id=id, contract=contract, retry=retry, timeout=timeout)
+        return self.to(step)
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,15 +243,17 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self.output_type = output_type
         self.defaults = defaults
         self._graph_token = object()
-        self.start = _StartHandle[WorkflowInputT](
-            output_type=input_type,
+        self.start = NodeHandle[Never, WorkflowInputT](
             graph_token=self._graph_token,
+            node_id=_START,
+            input_type=Never,
+            output_type=input_type,
         )
         self.end = _EndHandle[WorkflowOutputT](
             input_type=output_type, graph_token=self._graph_token
         )
-        self._nodes: dict[str, tuple[_Step[Any, Any], NodeHandle[Any]]] = {}
-        self._handles: dict[str, NodeHandle[Any]] = {}
+        self._nodes: dict[str, tuple[_Step[Any, Any], NodeHandle[Any, Any]]] = {}
+        self._handles: dict[str, NodeHandle[Any, Any]] = {}
         self._edges: set[tuple[str, str]] = set()
         self._conditional_edges: set[tuple[str, str, str]] = set()
         self._decisions: dict[str, _DecisionDefinition] = {}
@@ -243,95 +270,115 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         graph: GraphBuilder[InputT, OutputT],
         *,
         id: str,
-    ) -> NodeHandle[OutputT]:
+    ) -> NodeHandle[InputT, OutputT]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
         node_id = SAFE_PATH_SEGMENT.validate_python(id)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved call id {node_id!r}")
-        handle: NodeHandle[OutputT] = NodeHandle(
+        handle = NodeHandle[InputT, OutputT](
             graph_token=self._graph_token,
             node_id=node_id,
             input_type=graph.input_type,
             output_type=graph.output_type,
         )
         self._calls[node_id] = graph
-        self._handles[node_id] = cast(NodeHandle[Any], handle)
+        self._handles[node_id] = handle
         return handle
 
+    @overload
     def add(
         self,
-        function: Callable[[StepContext[InputT]], OutputT | Awaitable[OutputT]],
+        function: Callable[[StepContext[InputT]], Awaitable[OutputT]],
         *,
         id: str | None = None,
         contract: ExecutionContract | None = None,
         retry: Retry | None = None,
         timeout: timedelta | None = None,
-    ) -> NodeHandle[OutputT]:
+    ) -> NodeHandle[InputT, OutputT]: ...
+
+    @overload
+    def add(
+        self,
+        function: Callable[[StepContext[InputT]], OutputT],
+        *,
+        id: str | None = None,
+        contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
+    ) -> NodeHandle[InputT, OutputT]: ...
+
+    def add(
+        self,
+        function: Callable[[StepContext[Any]], Any],
+        *,
+        id: str | None = None,
+        contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
+    ) -> NodeHandle[Any, Any]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        item = _Step[InputT, OutputT].from_callable(
+        item = _Step[Any, Any].from_callable(
             function, contract=self._registration_contract(contract, retry, timeout)
         )
         node_id = SAFE_PATH_SEGMENT.validate_python(id or item.function.__name__)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved step id {node_id!r}")
-        handle = NodeHandle[OutputT](
+        handle = NodeHandle[Any, Any](
             graph_token=self._graph_token,
             node_id=node_id,
             input_type=item.input_type,
             output_type=item.output_type,
         )
         self._nodes[node_id] = (item, handle)
-        self._handles[node_id] = cast(NodeHandle[Any], handle)
+        self._handles[node_id] = handle
         return handle
 
     @overload
     def map(
         self,
-        source: _StartHandle[list[ItemT]],
-        mapper: Callable[[StepContext[ItemT]], ResultT | Awaitable[ResultT]],
+        source: NodeHandle[Any, list[ItemT]],
+        mapper: Callable[[StepContext[ItemT]], Awaitable[ResultT]],
         *,
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
         contract: ExecutionContract | None = None,
         retry: Retry | None = None,
         timeout: timedelta | None = None,
-    ) -> NodeHandle[list[ResultT]]: ...
+    ) -> NodeHandle[Never, list[ResultT]]: ...
 
     @overload
     def map(
         self,
-        source: NodeHandle[list[ItemT]],
-        mapper: Callable[[StepContext[ItemT]], ResultT | Awaitable[ResultT]],
+        source: NodeHandle[Any, list[ItemT]],
+        mapper: Callable[[StepContext[ItemT]], ResultT],
         *,
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
         contract: ExecutionContract | None = None,
         retry: Retry | None = None,
         timeout: timedelta | None = None,
-    ) -> NodeHandle[list[ResultT]]: ...
+    ) -> NodeHandle[Never, list[ResultT]]: ...
 
     def map(
         self,
-        source: _StartHandle[Any] | NodeHandle[Any],
-        mapper: Callable[[StepContext[Any]], ResultT | Awaitable[ResultT]],
+        source: NodeHandle[Any, Any],
+        mapper: Callable[[StepContext[Any]], Any],
         *,
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
         contract: ExecutionContract | None = None,
         retry: Retry | None = None,
         timeout: timedelta | None = None,
-    ) -> NodeHandle[list[ResultT]]:
+    ) -> NodeHandle[Never, Any]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
-        step = _Step[Any, ResultT].from_callable(
+        step = _Step[Any, Any].from_callable(
             mapper, contract=self._registration_contract(contract, retry, timeout)
         )
-        source_id = _START if isinstance(source, _StartHandle) else source.node_id
-        if isinstance(source, _StartHandle) and source.graph_token is not self._graph_token:
-            raise ValueError(f"map source {source_id!r} belongs to a different graph")
-        if not isinstance(source, _StartHandle) and self._handles.get(source_id) is not source:
+        source_id = source.node_id
+        if source.graph_token is not self._graph_token:
             raise ValueError(f"map source {source_id!r} belongs to a different graph")
         source_item_schema = _direct_list_item_schema(
             source.output_type,
@@ -347,43 +394,50 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         if map_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved map id {map_id!r}")
         output_type = list[step.output_type]
-        handle = NodeHandle[list[ResultT]](
+        handle = NodeHandle[Never, Any](
             graph_token=self._graph_token,
             node_id=map_id,
-            input_type=source.output_type,
+            input_type=Never,
             output_type=output_type,
         )
         self._maps[map_id] = _MapDefinition(
             id=map_id,
             source=source,
             mapper=step,
-            handle=cast(NodeHandle[Any], handle),
+            handle=handle,
             concurrency=identity.concurrency,
         )
-        self._handles[map_id] = cast(NodeHandle[Any], handle)
+        self._handles[map_id] = handle
         self._add_edge(source_id, map_id)
         return handle
 
-    @overload
-    def edge_from(self, source: _StartHandle[WorkflowInputT]) -> EdgePath[WorkflowInputT]: ...
-
-    @overload
-    def edge_from(self, source: NodeHandle[OutputT]) -> EdgePath[OutputT]: ...
-
-    def edge_from(self, source: _StartHandle[Any] | NodeHandle[Any]) -> EdgePath[Any]:
-        node_id = _START if isinstance(source, _StartHandle) else source.node_id
+    def edge_from(self, source: NodeHandle[Any, OutputT]) -> EdgePath[OutputT]:
         if source.graph_token is not self._graph_token:
             raise ValueError("edge source belongs to a different graph")
-        case = source.tag if isinstance(source, CaseHandle) else None
-        return EdgePath(
-            self._add_edge, node_id, source.output_type, case, graph_token=self._graph_token
-        )
+        return EdgePath(self, source)
 
-    def decision(self, source: NodeHandle[OutputT], *, on: str, id: str) -> DecisionHandle[OutputT]:
+    def _connect(
+        self, source: NodeHandle[Any, Any], target: NodeHandle[Any, Any] | _EndHandle[Any]
+    ) -> None:
+        if target.graph_token is not self._graph_token:
+            raise ValueError("edge target belongs to a different graph")
+        target_id = target.node_id if isinstance(target, NodeHandle) else _END
+        if target_id != _END and target_id not in self._nodes and target_id not in self._calls:
+            raise TypeError(f"edge target {target_id!r} is not a step or call")
+        if source.output_type != target.input_type:
+            raise TypeError(f"edge from {source.node_id!r} has incompatible input type")
+        case = source.tag if isinstance(source, CaseHandle) else None
+        self._add_edge(source.node_id, target_id, case)
+
+    def decision(
+        self, source: NodeHandle[Any, OutputT], *, on: str, id: str
+    ) -> DecisionHandle[OutputT]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
         if source.graph_token is not self._graph_token:
             raise ValueError("decision source belongs to a different graph")
+        if source.node_id == _START:
+            raise TypeError("decision source must be a step, map, select, or call")
         identity = _DecisionIdentity(id=id)
         if identity.id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved decision id {identity.id!r}")
@@ -414,7 +468,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         return CaseHandle(
             graph_token=self._graph_token,
             node_id=decision_id,
-            input_type=case_type,
+            input_type=Never,
             output_type=case_type,
             decision_id=decision_id,
             tag=tag,
@@ -424,8 +478,8 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self,
         decision_id: str,
         output_type: TypeForm[SelectT],
-        inputs: dict[str, NodeHandle[SelectT]],
-    ) -> NodeHandle[SelectT]:
+        inputs: dict[str, NodeHandle[Any, SelectT]],
+    ) -> NodeHandle[Never, SelectT]:
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
         definition = self._decisions[decision_id]
@@ -472,16 +526,15 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
             id=select_id,
             decision_id=decision_id,
             output_type=output_type,
-            inputs=cast(dict[str, NodeHandle[Any]], inputs),
+            inputs=dict(inputs),
         )
         for source in inputs.values():
             self._add_edge(source.node_id, select_id, None)
-        output_annotation = cast(Any, output_type)
-        handle: NodeHandle[SelectT] = NodeHandle(
+        handle = NodeHandle[Never, SelectT](
             graph_token=self._graph_token,
             node_id=select_id,
-            input_type=output_annotation,
-            output_type=output_annotation,
+            input_type=Never,
+            output_type=output_type,
         )
         self._handles[select_id] = handle
         return handle
@@ -601,7 +654,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self,
         definition: _DecisionDefinition,
         tag: str,
-        source: NodeHandle[Any],
+        source: NodeHandle[Any, Any],
         lineages: dict[str, dict[str, str]],
     ) -> None:
         enclosing = lineages.get(definition.id)
@@ -649,21 +702,9 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         if not any(target_id == _END for _, target_id in self._edges):
             raise ValueError("workflow end has no edge")
 
-        for definition in self._maps.values():
-            incoming = [
-                (edge_source, edge_target)
-                for edge_source, edge_target in self._edges
-                if edge_target == definition.id
-            ]
-            outgoing = [
-                (edge_source, edge_target)
-                for edge_source, edge_target in self._edges
-                if edge_source == definition.id
-            ]
-            if len(incoming) != 1:
-                raise ValueError(f"map {definition.id!r} must have exactly one incoming edge")
-            if not outgoing:
-                raise ValueError(f"map {definition.id!r} must have an outgoing edge")
+        for map_id in self._maps:
+            if not any(edge_source == map_id for edge_source, _ in self._edges):
+                raise ValueError(f"map {map_id!r} must have an outgoing edge")
 
         for call_id in self._calls:
             incoming = [edge for edge in self._edges if edge[1] == call_id]

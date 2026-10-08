@@ -453,7 +453,7 @@ def test_scoped_id_collisions_are_rejected_in_either_declaration_order(
 
     def child(name: str, step_id: str):
         graph = GraphBuilder(name=name, input_type=Value, output_type=Value, defaults=DEFAULTS)
-        graph.edge_from(graph.start).to(graph.add(identity, id=step_id)).to(graph.end)
+        graph.edge_from(graph.start).to(graph.add(identity, id=step_id)).to_end(graph.end)
         return graph
 
     parent = new_graph()
@@ -466,13 +466,13 @@ def test_scoped_id_collisions_are_rejected_in_either_declaration_order(
         second = parent.call(child("inner", child_id), id=f"{call_id}--{middle}")
     else:
         nested = GraphBuilder(name="nested", input_type=Value, output_type=Value, defaults=DEFAULTS)
-        nested.edge_from(nested.start).to(nested.call(child("leaf", child_id), id=middle)).to(
+        nested.edge_from(nested.start).to(nested.call(child("leaf", child_id), id=middle)).to_end(
             nested.end
         )
         first = parent.call(nested, id=call_id)
         second = parent.add(identity, id=f"{call_id}--{middle}--{child_id}")
     ordered = (first, second) if call_first else (second, first)
-    parent.edge_from(parent.start).to(ordered[0]).to(ordered[1]).to(parent.end)
+    parent.edge_from(parent.start).to(ordered[0]).to(ordered[1]).to_end(parent.end)
     with pytest.raises(ValueError, match="duplicate scoped node id"):
         parent.emit(source=TEST_SOURCE)
 
@@ -485,12 +485,12 @@ def test_scoped_id_collisions_are_rejected_in_either_declaration_order(
 )
 def test_nested_calls_fail_clearly_beyond_the_id_limit(scopes: list[int], leaf: int) -> None:
     graph = GraphBuilder(name="leaf", input_type=Value, output_type=Value, defaults=DEFAULTS)
-    graph.edge_from(graph.start).to(graph.add(identity, id="s" * leaf)).to(graph.end)
+    graph.edge_from(graph.start).to(graph.add(identity, id="s" * leaf)).to_end(graph.end)
     for depth, length in enumerate(scopes):
         parent = GraphBuilder(
             name=f"level{depth}", input_type=Value, output_type=Value, defaults=DEFAULTS
         )
-        parent.edge_from(parent.start).to(parent.call(graph, id="c" * length)).to(parent.end)
+        parent.edge_from(parent.start).to(parent.call(graph, id="c" * length)).to_end(parent.end)
         graph = parent
     scoped_id = "--".join(["c" * length for length in reversed(scopes)] + ["s" * leaf])
     if len(scoped_id) <= MAX_ID:
@@ -517,7 +517,7 @@ def test_handles_cannot_cross_graphs_with_colliding_ids(node_id: str, endpoint: 
         elif endpoint == "start":
             a.edge_from(b.start)
         else:
-            a.edge_from(local).to(b.end)
+            a.edge_from(local).to_end(b.end)
 
 
 @given(
@@ -572,7 +572,7 @@ def test_emission_freezes_previously_created_edge_paths() -> None:
     graph = new_graph()
     node = graph.add(identity)
     path = graph.edge_from(graph.start)
-    path.to(node).to(graph.end)
+    path.to(node).to_end(graph.end)
     graph.emit(
         source=source_package(
             root=Path(__file__).parent, include=[Path(__file__).name], package_id="frozen"

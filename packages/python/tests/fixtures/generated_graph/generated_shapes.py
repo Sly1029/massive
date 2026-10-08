@@ -189,7 +189,7 @@ class GraphDescription(BaseModel):
 def build_graph(description: GraphDescription, *, inline: bool) -> GraphBuilder[Token, Token]:
     """Build with ``call()``, or inline the same nodes under '<call>--' prefixes."""
     graph = GraphBuilder(name="generated", input_type=Token, output_type=Token, defaults=DEFAULTS)
-    graph.edge_from(_block(graph, graph.start, description.body, "", inline)).to(graph.end)
+    graph.edge_from(_block(graph, graph.start, description.body, "", inline)).to_end(graph.end)
     return graph
 
 
@@ -223,7 +223,7 @@ def _within(
     if inline:
         return populate(graph, source, f"{prefix}{via}--")
     child = GraphBuilder(name=via, input_type=types[0], output_type=types[1], defaults=DEFAULTS)
-    child.edge_from(populate(child, child.start, "")).to(child.end)
+    child.edge_from(populate(child, child.start, "")).to_end(child.end)
     return _then(graph, source, graph.call(child, id=f"{prefix}{via}"))
 
 
@@ -241,7 +241,7 @@ def _node(
         child = GraphBuilder(
             name=node.ids[0], input_type=Token, output_type=Token, defaults=DEFAULTS
         )
-        child.edge_from(_block(child, child.start, node.body, "", inline)).to(child.end)
+        child.edge_from(_block(child, child.start, node.body, "", inline)).to_end(child.end)
         for call_id in node.ids:
             source = _then(graph, source, graph.call(child, id=prefix + call_id))
         return source

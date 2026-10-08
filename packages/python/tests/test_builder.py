@@ -243,7 +243,7 @@ def test_plain_functions_carry_execution_settings_at_registration() -> None:
         contract=execution(environment=_defaults().environment, memory="1Gi"),
     )
     graph.edge_from(graph.start).to(source)
-    graph.edge_from(mapped).to(graph.end)
+    graph.edge_from(mapped).to_end(graph.end)
     spec = _emit(graph).value
     nodes = {node["id"]: node for node in spec["graph"]["nodes"]}
     assert spec["contracts"][nodes["load_requests"]["contractRef"]]["resources"] == {"cpu": "2"}
@@ -260,7 +260,7 @@ def test_one_function_can_have_two_node_identities_and_contracts() -> None:
     )
     first = graph.add(result_identity, id="first", contract=replace(defaults, cpu="2"))
     second = graph.add(result_identity, id="second", contract=replace(defaults, memory="1Gi"))
-    graph.edge_from(graph.start).to(first).to(second).to(graph.end)
+    graph.edge_from(graph.start).to(first).to(second).to_end(graph.end)
     spec = _emit(graph).value
     nodes = {node["id"]: node for node in spec["graph"]["nodes"]}
     assert nodes["first"]["symbolRef"] == nodes["second"]["symbolRef"]
@@ -287,7 +287,7 @@ def test_retry_and_timeout_override_only_those_fields_of_the_graph_defaults() ->
     source = graph.add(load_requests, retry=retry(5, delay=timedelta(seconds=30)))
     mapped = graph.map(source, increment_request, id="items", timeout=timedelta(hours=2))
     graph.edge_from(graph.start).to(source)
-    graph.edge_from(mapped).to(graph.end)
+    graph.edge_from(mapped).to_end(graph.end)
 
     spec = _emit(graph).value
 
@@ -321,7 +321,7 @@ def test_retry_and_timeout_override_an_explicit_contract() -> None:
         contract=replace(_defaults(), memory="1Gi", timeout=timedelta(minutes=1)),
         retry=retry(1),
     )
-    graph.edge_from(graph.start).to(node).to(graph.end)
+    graph.edge_from(graph.start).to(node).to_end(graph.end)
 
     spec = _emit(graph).value
 
@@ -338,7 +338,7 @@ def test_steps_without_retry_or_timeout_emit_neither() -> None:
         name="no-retry", input_type=Request, output_type=Result, defaults=_defaults()
     )
     node = graph.add(identity)
-    graph.edge_from(graph.start).to(node).to(graph.end)
+    graph.edge_from(graph.start).to(node).to_end(graph.end)
 
     spec = _emit(graph).value
 
@@ -411,7 +411,45 @@ def test_end_is_terminal() -> None:
 
     node = graph.add(identity)
 
-    assert graph.edge_from(graph.start).to(node).to(graph.end) is None
+    assert graph.edge_from(graph.start).to(node).to_end(graph.end) is None
+
+
+async def result_to_request(context: StepContext[Result]) -> Request:
+    return Request(value=context.inputs.value)
+
+
+def test_transform_emits_an_ordinary_step_and_edge() -> None:
+    def build(*, transform: bool) -> GraphBuilder[Request, Request]:
+        graph = GraphBuilder(
+            name="transform", input_type=Request, output_type=Request, defaults=_defaults()
+        )
+        path = graph.edge_from(graph.start)
+        if transform:
+            path.transform(identity).transform(result_to_request, id="back").to_end(graph.end)
+        else:
+            path.to(graph.add(identity)).to(graph.add(result_to_request, id="back")).to_end(
+                graph.end
+            )
+        return graph
+
+    assert _emit(build(transform=True)).to_json() == _emit(build(transform=False)).to_json()
+
+
+def test_transform_rejects_a_lambda_when_the_graph_is_built() -> None:
+    graph = GraphBuilder(
+        name="lambda", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    path = graph.edge_from(graph.start)
+    with pytest.raises(TypeError, match="`def` at module level instead of a lambda"):
+        path.transform(lambda context: Result(value=context.inputs.value))
+
+
+def test_decision_source_must_produce_a_value() -> None:
+    graph = GraphBuilder(
+        name="start-route", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    with pytest.raises(TypeError, match="decision source must be a step"):
+        graph.decision(graph.start, on="kind", id="route")
 
 
 def test_map_emits_one_ordered_collection_node_with_its_registered_mapper() -> None:
@@ -424,7 +462,7 @@ def test_map_emits_one_ordered_collection_node_with_its_registered_mapper() -> N
     requests = graph.add(load_requests)
     mapped = graph.map(requests, increment_request, id="increment-all", concurrency=3)
     graph.edge_from(graph.start).to(requests)
-    graph.edge_from(mapped).to(graph.end)
+    graph.edge_from(mapped).to_end(graph.end)
 
     specification = _emit(graph)
     graph_ir = specification.value["graph"]
@@ -484,7 +522,7 @@ def test_map_can_be_the_only_node_and_uses_the_shared_default_concurrency() -> N
         defaults=_defaults(),
     )
     mapped = graph.map(graph.start, increment_request, id="increment-items")
-    graph.edge_from(mapped).to(graph.end)
+    graph.edge_from(mapped).to_end(graph.end)
 
     nodes = {node["id"]: node for node in _emit(graph).value["graph"]["nodes"]}
 
@@ -501,8 +539,8 @@ def test_map_allows_fan_out_to_multiple_list_consumers() -> None:
     mapped = graph.map(graph.start, result_identity, id="copy-items")
     first = graph.add(list_result_identity, id="first")
     second = graph.add(list_result_identity, id="second")
-    graph.edge_from(mapped).to(first).to(graph.end)
-    graph.edge_from(mapped).to(second).to(graph.end)
+    graph.edge_from(mapped).to(first).to_end(graph.end)
+    graph.edge_from(mapped).to(second).to_end(graph.end)
 
     graph_ir = _emit(graph).value["graph"]
 
@@ -520,7 +558,7 @@ def test_map_accepts_recursive_and_reused_model_item_schemas() -> None:
     source = graph.add(load_recursive_items)
     mapped = graph.map(source, recursive_item_identity, id="copy-recursive")
     graph.edge_from(graph.start).to(source)
-    graph.edge_from(mapped).to(graph.end)
+    graph.edge_from(mapped).to_end(graph.end)
 
     assert _emit(graph).value["graph"]["irVersion"] == "0.3"
 
@@ -597,7 +635,7 @@ def test_map_uses_the_mapper_symbol_and_contract_override() -> None:
     )
     mapped = graph.map(source, increment_request, id="overridden", contract=contract)
     graph.edge_from(graph.start).to(source)
-    graph.edge_from(mapped).to(graph.end)
+    graph.edge_from(mapped).to_end(graph.end)
 
     specification = _emit(graph).value
     map_node = next(node for node in specification["graph"]["nodes"] if node["id"] == "overridden")
@@ -662,7 +700,7 @@ def test_map_allows_sequential_composition() -> None:
     mapped = graph.map(source, increment_request, id="first-map")
     remapped = graph.map(mapped, result_identity, id="second-map")
     graph.edge_from(graph.start).to(source)
-    graph.edge_from(remapped).to(graph.end)
+    graph.edge_from(remapped).to_end(graph.end)
 
     graph_ir = _emit(graph).value["graph"]
 
@@ -680,15 +718,15 @@ def test_map_emit_requires_an_outgoing_edge() -> None:
     graph.map(source, increment_request, id="increment-all")
     alternate_result = graph.add(load_results)
     graph.edge_from(graph.start).to(source)
-    graph.edge_from(graph.start).to(alternate_result).to(graph.end)
+    graph.edge_from(graph.start).to(alternate_result).to_end(graph.end)
 
     with pytest.raises(ValueError, match="map 'increment-all' must have an outgoing edge"):
         _emit(graph)
 
 
-def test_map_emit_requires_exactly_one_incoming_edge() -> None:
+def test_only_steps_and_calls_accept_edges() -> None:
     graph = GraphBuilder(
-        name="map-multiple-sources",
+        name="value-sources",
         input_type=Request,
         output_type=list[Result],
         defaults=_defaults(),
@@ -696,13 +734,13 @@ def test_map_emit_requires_exactly_one_incoming_edge() -> None:
     source = graph.add(load_requests, id="first-source")
     additional_source = graph.add(load_requests, id="second-source")
     mapped = graph.map(source, increment_request, id="increment-all")
-    graph.edge_from(graph.start).to(source)
-    graph.edge_from(graph.start).to(additional_source)
-    graph.edge_from(additional_source).to(mapped)
-    graph.edge_from(mapped).to(graph.end)
+    path = graph.edge_from(additional_source)
+    untyped = cast(Any, path)
 
-    with pytest.raises(ValueError, match="map 'increment-all' must have exactly one incoming edge"):
-        _emit(graph)
+    with pytest.raises(TypeError, match="edge target 'increment-all' is not a step or call"):
+        untyped.to(mapped)
+    with pytest.raises(TypeError, match="edge target '__start' is not a step or call"):
+        untyped.to(graph.start)
 
 
 @pytest.mark.parametrize(
@@ -731,7 +769,7 @@ def test_emit_rejects_schemas_that_admit_non_integer_json_numbers(
         ),
     )
     node = graph.add(step)
-    graph.edge_from(graph.start).to(node).to(graph.end)
+    graph.edge_from(graph.start).to(node).to_end(graph.end)
 
     with pytest.raises(ValueError, match=message + ".*integer-only"):
         graph.emit(
@@ -751,7 +789,7 @@ def test_emit_uses_validation_schemas_for_inputs_and_serialization_schemas_for_o
         defaults=_defaults(),
     )
     node = graph.add(decimal_result)
-    graph.edge_from(graph.start).to(node).to(graph.end)
+    graph.edge_from(graph.start).to(node).to_end(graph.end)
 
     specification = _emit(graph)
     workflow = specification.value["workflow"]
@@ -788,7 +826,7 @@ def test_emit_accepts_decimal_string_transport_between_steps() -> None:
     )
     first = graph.add(decimal_result)
     second = graph.add(decimal_echo)
-    graph.edge_from(graph.start).to(first).to(second).to(graph.end)
+    graph.edge_from(graph.start).to(first).to(second).to_end(graph.end)
 
     specification = _emit(graph)
     schemas = specification.value["schemas"]
@@ -815,7 +853,7 @@ def test_emit_accepts_nested_decimal_validation_inputs_by_their_serialized_shape
         defaults=_defaults(),
     )
     node = graph.add(nested_decimal_echo)
-    graph.edge_from(graph.start).to(node).to(graph.end)
+    graph.edge_from(graph.start).to(node).to_end(graph.end)
 
     specification = _emit(graph)
     schemas = specification.value["schemas"]
@@ -841,7 +879,9 @@ def test_emit_rejects_bare_float_workflow_and_registered_step_inputs() -> None:
         defaults=_defaults(),
     )
     workflow_float_node = workflow_float.add(float_input)
-    workflow_float.edge_from(workflow_float.start).to(workflow_float_node).to(workflow_float.end)
+    workflow_float.edge_from(workflow_float.start).to(workflow_float_node).to_end(
+        workflow_float.end
+    )
 
     with pytest.raises(ValueError, match="workflow input schema.*integer-only"):
         _emit(workflow_float)
@@ -856,7 +896,7 @@ def test_emit_rejects_bare_float_workflow_and_registered_step_inputs() -> None:
     # role-specific diagnostic. Emission validates every registered step; the
     # compiler separately owns reachability validation.
     step_float.add(float_input)
-    assert step_float.edge_from(step_float.start).to(step_float.end) is None
+    assert step_float.edge_from(step_float.start).to_end(step_float.end) is None
 
     with pytest.raises(ValueError, match="step 'float_input' input schema.*integer-only"):
         _emit(step_float)
@@ -918,7 +958,7 @@ def test_emit_rejects_step_schemas_with_float_constants_or_enums(
         defaults=_defaults(),
     )
     node = graph.add(step, id=step.__name__.removesuffix("_result").replace("_", "-"))
-    graph.edge_from(graph.start).to(node).to(graph.end)
+    graph.edge_from(graph.start).to(node).to_end(graph.end)
 
     with pytest.raises(ValueError, match="workflow output schema.*canonical-json-v0"):
         _emit(graph)
@@ -943,7 +983,7 @@ def test_emit_rejects_an_unconstrained_pydantic_any_schema(
         defaults=_defaults(),
     )
     node = graph.add(step, id=step_id)
-    graph.edge_from(graph.start).to(node).to(graph.end)
+    graph.edge_from(graph.start).to(node).to_end(graph.end)
 
     with pytest.raises(ValueError, match="workflow output schema.*unconstrained"):
         _emit(graph)
@@ -957,7 +997,7 @@ def test_emit_accepts_supported_integer_and_string_json_shapes() -> None:
         defaults=_defaults(),
     )
     node = graph.add(canonical_shape_identity)
-    graph.edge_from(graph.start).to(node).to(graph.end)
+    graph.edge_from(graph.start).to(node).to_end(graph.end)
 
     specification = _emit(graph)
 
@@ -972,7 +1012,7 @@ def test_public_json_value_models_portable_escape_hatches() -> None:
         defaults=_defaults(),
     )
     node = graph.add(portable_metadata_identity)
-    graph.edge_from(graph.start).to(node).to(graph.end)
+    graph.edge_from(graph.start).to(node).to_end(graph.end)
 
     specification = _emit(graph)
 
@@ -1058,22 +1098,22 @@ def test_workflow_call_rejects_recursion_and_duplicate_scoped_ids() -> None:
     a = GraphBuilder(name="a", input_type=Request, output_type=Request, defaults=_defaults())
     b = GraphBuilder(name="b", input_type=Request, output_type=Request, defaults=_defaults())
     a_call = a.call(b, id="call-b")
-    a.edge_from(a.start).to(a_call).to(a.end)
+    a.edge_from(a.start).to(a_call).to_end(a.end)
     b_call = b.call(a, id="call-a")
-    b.edge_from(b.start).to(b_call).to(b.end)
+    b.edge_from(b.start).to(b_call).to_end(b.end)
     with pytest.raises(ValueError, match="recursive workflow call"):
         _emit(a)
 
     child = GraphBuilder(
         name="child", input_type=Request, output_type=Request, defaults=_defaults()
     )
-    child.edge_from(child.start).to(child.add(passthrough_request, id="identity")).to(child.end)
+    child.edge_from(child.start).to(child.add(passthrough_request, id="identity")).to_end(child.end)
     parent = GraphBuilder(
         name="parent", input_type=Request, output_type=Request, defaults=_defaults()
     )
     call = parent.call(child, id="first")
     conflicting = parent.add(passthrough_request, id="first--identity")
-    parent.edge_from(parent.start).to(call).to(conflicting).to(parent.end)
+    parent.edge_from(parent.start).to(call).to(conflicting).to_end(parent.end)
     with pytest.raises(ValueError, match="duplicate scoped node id"):
         _emit(parent)
 
@@ -1086,18 +1126,18 @@ def test_workflow_call_rejects_child_without_single_entry_and_exit(shape: str) -
     first = child.add(passthrough_request, id="first")
     second = child.add(passthrough_request, id="second")
     if shape == "multiple-entries":
-        child.edge_from(child.start).to(first).to(child.end)
+        child.edge_from(child.start).to(first).to_end(child.end)
         child.edge_from(child.start).to(second).to(first)
     elif shape == "multiple-exits":
-        child.edge_from(child.start).to(first).to(child.end)
-        child.edge_from(first).to(second).to(child.end)
+        child.edge_from(child.start).to(first).to_end(child.end)
+        child.edge_from(first).to(second).to_end(child.end)
     else:
-        child.edge_from(child.start).to(child.end)
+        child.edge_from(child.start).to_end(child.end)
 
     parent = GraphBuilder(
         name="parent", input_type=Request, output_type=Request, defaults=_defaults()
     )
-    parent.edge_from(parent.start).to(parent.call(child, id="child-call")).to(parent.end)
+    parent.edge_from(parent.start).to(parent.call(child, id="child-call")).to_end(parent.end)
     with pytest.raises(ValueError, match="exactly one start successor and one end predecessor"):
         _emit(parent)
 
@@ -1106,19 +1146,19 @@ def test_workflow_call_emits_the_same_spec_as_its_inlined_graph() -> None:
     child = GraphBuilder(
         name="child", input_type=Request, output_type=Request, defaults=_defaults()
     )
-    child.edge_from(child.start).to(child.add(passthrough_request, id="step")).to(child.end)
+    child.edge_from(child.start).to(child.add(passthrough_request, id="step")).to_end(child.end)
     composed = GraphBuilder(
         name="parent", input_type=Request, output_type=Request, defaults=_defaults()
     )
     composed.edge_from(composed.start).to(composed.call(child, id="call")).to(
         composed.add(passthrough_request, id="after")
-    ).to(composed.end)
+    ).to_end(composed.end)
     inlined = GraphBuilder(
         name="parent", input_type=Request, output_type=Request, defaults=_defaults()
     )
     inlined.edge_from(inlined.start).to(inlined.add(passthrough_request, id="call--step")).to(
         inlined.add(passthrough_request, id="after")
-    ).to(inlined.end)
+    ).to_end(inlined.end)
 
     assert _emit(composed).to_json() == _emit(inlined).to_json()
 
@@ -1130,12 +1170,12 @@ def test_workflow_call_rejects_scoped_ids_beyond_the_identifier_limit(
     child = GraphBuilder(
         name="child", input_type=Request, output_type=Request, defaults=_defaults()
     )
-    child.edge_from(child.start).to(child.add(passthrough_request, id="s" * 100)).to(child.end)
+    child.edge_from(child.start).to(child.add(passthrough_request, id="s" * 100)).to_end(child.end)
     parent = GraphBuilder(
         name="parent", input_type=Request, output_type=Request, defaults=_defaults()
     )
     call_id = "c" * call_length
-    parent.edge_from(parent.start).to(parent.call(child, id=call_id)).to(parent.end)
+    parent.edge_from(parent.start).to(parent.call(child, id=call_id)).to_end(parent.end)
     if valid:
         nodes = cast(dict[str, Any], _emit(parent).value["graph"])["nodes"]
         assert f"{call_id}--{'s' * 100}" in {node["id"] for node in nodes}
