@@ -63,6 +63,12 @@ export async function executeStep(
 
     return await withResolvedStepSymbol(descriptor, store, async (run) => {
       let output: unknown;
+      // The runner owns the process status: a step must not end it as success or
+      // impersonate a protocol exit code. node:process.exit delegates here too.
+      const exit = Deno.exit;
+      Deno.exit = (code?: number): never => {
+        throw new Error(`step called exit(${code ?? 0})`);
+      };
       try {
         output = await run({
           input,
@@ -78,6 +84,8 @@ export async function executeStep(
         if (error instanceof NonRetryableError) throw error;
         const message = error instanceof Error ? error.message : String(error);
         throw new StepExecutionError(message);
+      } finally {
+        Deno.exit = exit;
       }
 
       validateJson(outputSchema, output, "output");
