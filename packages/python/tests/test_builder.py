@@ -418,6 +418,14 @@ async def result_to_request(context: StepContext[Result]) -> Request:
     return Request(value=context.inputs.value)
 
 
+def test_to_rejects_the_graph_end_with_the_to_end_diagnostic() -> None:
+    graph = GraphBuilder(
+        name="old-end", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    with pytest.raises(TypeError, match=r"close a path with \.to_end\(graph\.end\)"):
+        cast(Any, graph.edge_from(graph.start)).to(graph.end)
+
+
 def test_transform_emits_an_ordinary_step_and_edge() -> None:
     def build(*, transform: bool) -> GraphBuilder[Request, Request]:
         graph = GraphBuilder(

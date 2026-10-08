@@ -58,7 +58,7 @@ def wait(ctx: StepContext[Request]) -> int:
 
 graph = GraphBuilder(name="interrupt", input_type=Request, output_type=int,
     defaults=execution(environment=container("example.invalid/runner@sha256:"+"1"*64)))
-graph.edge_from(graph.start).to(graph.add(wait)).to(graph.end)
+graph.edge_from(graph.start).to(graph.add(wait)).to_end(graph.end)
 `
 	entry := filepath.Join(root, "workflow.py")
 	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {

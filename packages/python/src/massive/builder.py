@@ -176,6 +176,8 @@ class EdgePath(Generic[ValueT]):
         self._source = source
 
     def to(self, target: NodeHandle[ValueT, OutputT]) -> EdgePath[OutputT]:
+        if isinstance(target, _EndHandle):  # Untyped workflows written for the old overload.
+            raise TypeError("close a path with .to_end(graph.end) instead of .to(graph.end)")
         self._graph._connect(self._source, target)  # pyright: ignore[reportPrivateUsage]
         return EdgePath(self._graph, target)
 
