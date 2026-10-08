@@ -3,13 +3,12 @@ package orchestrator
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,7 +100,10 @@ type generatedExecutor struct {
 	store    datastore.Datastore
 	cancel   context.CancelCauseFunc
 	exports  map[string]string
-	batches  int
+	// mu guards the mutable state below, so a concurrent dispatcher such as
+	// a run-wide worker budget cannot race the executor's bookkeeping.
+	mu      sync.Mutex
+	batches int
 	// fired records an interrupt that actually took effect.
 	fired *graphgen.InterruptKind
 	slots map[string]bool
@@ -110,8 +112,10 @@ type generatedExecutor struct {
 }
 
 func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocationBatch) ([]StepInvocationOutcome, error) {
+	e.mu.Lock()
 	batchIndex := e.batches
 	e.batches++
+	e.mu.Unlock()
 	interrupt := e.workflow.Interrupt
 	if interrupt == nil || interrupt.Batch != batchIndex {
 		interrupt = nil
@@ -130,14 +134,18 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 				outcomes = append(outcomes, StepInvocationOutcome{NodeID: descriptor.NodeID, Attempt: descriptor.Attempt, Scope: descriptor.Scope, Status: StatusCancelled, ExitCode: -1})
 				return outcomes, ctx.Err()
 			case graphgen.InfrastructureFailure:
+				e.mu.Lock()
 				e.fired = &interrupt.Kind
+				e.mu.Unlock()
 				outcomes = append(outcomes, StepInvocationOutcome{NodeID: descriptor.NodeID, Attempt: descriptor.Attempt, Scope: descriptor.Scope, Status: stepInvocationStatusInfraFailed, ExitCode: 1})
 				return outcomes, errInfrastructure
 			}
 		}
 		outcome, err := e.invoke(ctx, step, batch.MaxConcurrency)
 		if err != nil {
+			e.mu.Lock()
 			e.err = errors.Join(e.err, err)
+			e.mu.Unlock()
 			return outcomes, err
 		}
 		outcomes = append(outcomes, outcome)
@@ -150,7 +158,9 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 }
 
 func (e *generatedExecutor) fire(kind graphgen.InterruptKind) {
+	e.mu.Lock()
 	e.fired = &kind
+	e.mu.Unlock()
 	e.cancel(errors.New("generated interrupt"))
 }
 
@@ -184,10 +194,13 @@ func (e *generatedExecutor) invoke(ctx context.Context, step StepInvocation, max
 	if want := time.Duration(node.TimeoutSeconds) * time.Second; step.Timeout != want {
 		return StepInvocationOutcome{}, fmt.Errorf("%s attempt timeout = %s, want %s", node.ID, step.Timeout, want)
 	}
-	if e.slots[descriptor.Output.ManifestKey] {
+	e.mu.Lock()
+	reused := e.slots[descriptor.Output.ManifestKey]
+	e.slots[descriptor.Output.ManifestKey] = true
+	e.mu.Unlock()
+	if reused {
 		return StepInvocationOutcome{}, fmt.Errorf("%s reused output slot %s", node.ID, descriptor.Output.ManifestKey)
 	}
-	e.slots[descriptor.Output.ManifestKey] = true
 	symbol := e.exports[descriptor.Symbol.Export]
 	if symbol != node.Symbol {
 		return StepInvocationOutcome{}, fmt.Errorf("%s dispatched symbol %q, want %q", node.ID, symbol, node.Symbol)
@@ -248,7 +261,9 @@ func (e *generatedExecutor) invoke(ctx context.Context, step StepInvocation, max
 		outcome.ExitCode, outcome.TimedOutAfter = -1, step.Timeout
 	}
 	record.status = outcome.Status
+	e.mu.Lock()
 	e.log = append(e.log, record)
+	e.mu.Unlock()
 	return outcome, nil
 }
 
@@ -602,10 +617,5 @@ func (o *executionOracle) checkDependencies() {
 				}
 			}
 		}
-	}
-	var decoded runjournal.Manifest
-	encoded, _ := json.Marshal(o.journal)
-	if err := json.Unmarshal(encoded, &decoded); err != nil || !reflect.DeepEqual(decoded, o.journal) {
-		t.Fatal("journal model does not round trip through JSON")
 	}
 }

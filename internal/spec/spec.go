@@ -746,6 +746,9 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 
 // schemaAdmitsObject rejects a schema whose top-level type excludes objects.
 // Decisions read their selector from an object, so such a route never runs.
+// This is an early, permissive rejection rather than schema analysis: a schema
+// without a top-level type, such as a $ref or allOf form, passes, and routing
+// still validates the value against the case schema at run time.
 func schemaAdmitsObject(schema json.RawMessage) bool {
 	var declared struct {
 		Type json.RawMessage `json:"type"`
