@@ -225,7 +225,7 @@ func TestLockCheckRequiresTheLockedRuntimeSetOnly(t *testing.T) {
 	}
 
 	t.Run("identities exclude interpreter paths", func(t *testing.T) {
-		other := check(t, venvPython(syncedEnvironment(t, root, "--extra", "report")), root, "")
+		other := check(t, venvPython(syncedEnvironment(t, root, "--extra", "report", "--no-install-project")), root, "")
 		if other.Interpreter.Executable == report.Interpreter.Executable {
 			t.Fatal("expected two distinct environments")
 		}
@@ -448,5 +448,33 @@ func TestRecordsAreVerifiedAgainstTheirIdentities(t *testing.T) {
 				t.Fatalf("%s: tampered record accepted", name)
 			}
 		}
+	}
+}
+
+// Records keep direct references without credentials or local paths, so the
+// requirement identity cannot leak a token or depend on a checkout location.
+func TestRecordedDirectReferencesAreRedacted(t *testing.T) {
+	python := sdkEnvironment(t)
+	helper := writeProject(t, "", "[project]\nname = \"local-helper\"\nversion = \"0.1.0\"\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n[tool.hatch.build.targets.wheel]\nonly-include = [\"local_helper.py\"]\n",
+		map[string]string{"local_helper.py": "VALUE = 1\n"})
+	run(t, "", nil, "uv", "pip", "install", "--quiet", "--python", python, helper)
+	project := func(reference string) *environment.Report {
+		root := writeProject(t, "", "[project]\nname = \"direct\"\nversion = \"0.1.0\"\ndependencies = [\"local-helper @ "+reference+"\"]\n", map[string]string{"workflow.py": ""})
+		report := check(t, python, root, "")
+		ready(t, report, environment.DirectRequirementsSatisfied)
+		return report
+	}
+	first := project("file://" + filepath.ToSlash(filepath.Join(t.TempDir(), "one", "local_helper-0.1.0.tar.gz")))
+	second := project("file://" + filepath.ToSlash(filepath.Join(t.TempDir(), "two", "local_helper-0.1.0.tar.gz")))
+	if first.Record.GetRequirementHash() != second.Record.GetRequirementHash() {
+		t.Fatalf("local paths changed the requirement identity: %v vs %v", first.Record.GetRequirement(), second.Record.GetRequirement())
+	}
+	remote := project("https://user:s3cr3t@packages.example.invalid/local_helper-0.1.0.tar.gz?token=s3cr3t")
+	body, err := environment.MarshalRecord(remote.Record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "s3cr3t") || !strings.Contains(string(body), "local-helper @ https://packages.example.invalid/local_helper-0.1.0.tar.gz") {
+		t.Fatalf("record = %s", body)
 	}
 }

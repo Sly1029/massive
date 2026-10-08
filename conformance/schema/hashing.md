@@ -224,7 +224,10 @@ Recipe `python-requirement@1`:
 
 `lockHash` is the SHA-256 of the exact `uv.lock` bytes, or `null` without a
 lock. With a lock, `dependencies` is empty; otherwise it lists
-`[project].dependencies` as PEP 508 strings with canonical names, sorted.
+`[project].dependencies` as PEP 508 strings with canonical names, sorted. Direct
+references keep only scheme, host, port, and path; credentials, queries, and
+fragments are dropped, and a local file reference is just `file:`. Identities are
+therefore independent of checkout paths and never contain index tokens.
 `requiresPython` is `null` when undeclared.
 
 Recipe `existing-python@1` covers `implementation`, `pythonVersion`, `cacheTag`

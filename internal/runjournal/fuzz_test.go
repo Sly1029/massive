@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -64,6 +65,20 @@ func FuzzJournalParsing(f *testing.F) {
 	succeeded.Steps = succeeded.Steps[2:4]
 	succeeded.Result = &succeeded.Steps[0].Attempts[0].Input
 	body, err := json.Marshal(succeeded)
+	if err != nil {
+		f.Fatal(err)
+	}
+	if _, err := Parse(body); err != nil {
+		f.Fatal(err)
+	}
+	f.Add(body)
+	// A checked Python run binds its realization; mutations reach the
+	// identity hashes and the record reference.
+	succeeded.Environment = &Environment{
+		RequirementHash: "sha256:" + strings.Repeat("1", 64), RealizationHash: "sha256:" + strings.Repeat("2", 64),
+		Record: ArtifactRef{Key: "environments/sha256-" + strings.Repeat("3", 64) + "/realized-environment.json", Hash: "sha256:" + strings.Repeat("3", 64), Size: 1902, ContentType: "application/vnd.massive.realized-environment+json"},
+	}
+	body, err = json.Marshal(succeeded)
 	if err != nil {
 		f.Fatal(err)
 	}
