@@ -74,6 +74,11 @@ func TestS3DeniedReadsAreAccessDenied(t *testing.T) {
 	if _, err := denied.Get(context.Background(), key); !errors.Is(err, ErrAccessDenied) {
 		t.Fatalf("denied read error = %v", err)
 	}
+	// Open classifies the same response and keeps the S3 error code in its
+	// diagnostic; a wrong secret is refused as SignatureDoesNotMatch.
+	if _, _, err := denied.Open(context.Background(), key); !errors.Is(err, ErrAccessDenied) || !strings.Contains(err.Error(), "SignatureDoesNotMatch") {
+		t.Fatalf("denied open error = %v", err)
+	}
 	if _, err := store.Get(context.Background(), MustKey("packages/missing.tar")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing object error = %v", err)
 	}

@@ -306,3 +306,17 @@ func TestEnvelopeValidationRejectsAmbiguousOrInvalidEnvelopes(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeIsBoundedByDeclaredSizesBeforeReading(t *testing.T) {
+	codec, _ := newCodec(t)
+	// Two referenced sources at the value limit: their bodies were never
+	// stored, so rejection proves the bound is checked before any read.
+	half := fmt.Sprintf(`@{"hash":"sha256:%s","size":%d}`, strings.Repeat("0", 64), valueparam.MaxValueBytes/2)
+	if _, err := codec.DecodeMerge(context.Background(), []string{half, half}); !errors.Is(err, valueparam.ErrContract) || !strings.Contains(err.Error(), "merging 2 sources") {
+		t.Fatalf("oversized merge error = %v", err)
+	}
+	merged, err := codec.DecodeMerge(context.Background(), []string{`{"a":1}`, `[2]`})
+	if err != nil || string(merged) != `[{"a":1},[2]]` {
+		t.Fatalf("merged = %s, %v", merged, err)
+	}
+}

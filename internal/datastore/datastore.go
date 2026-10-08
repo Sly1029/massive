@@ -2,11 +2,11 @@ package datastore
 
 import (
 	"context"
-	"io"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"path/filepath"
 	"regexp"

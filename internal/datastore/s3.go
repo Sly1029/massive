@@ -147,6 +147,12 @@ func (d *S3Datastore) Open(ctx context.Context, key Key) (io.ReadCloser, ObjectI
 		if isS3NotFound(err) {
 			return nil, ObjectInfo{}, fmt.Errorf("open %s: %w", key, ErrNotFound)
 		}
+		if isS3AccessDenied(err) {
+			// Keep the S3 response, whose message omits its error code.
+			var response minio.ErrorResponse
+			errors.As(err, &response)
+			return nil, ObjectInfo{}, fmt.Errorf("open %s: %w (S3 %s): %w", key, ErrAccessDenied, response.Code, err)
+		}
 		return nil, ObjectInfo{}, fmt.Errorf("stat s3 object %s: %w", key, err)
 	}
 	return reader, ObjectInfo{Key: key, Size: info.Size, ContentType: defaultContentType(info.ContentType)}, nil

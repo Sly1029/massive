@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 
@@ -151,6 +152,37 @@ func (codec Codec) Decode(ctx context.Context, parameter []byte) (Value, error) 
 		return Value{}, contractError("an inline value of %d bytes must be a reference", len(parameter))
 	}
 	return Value{Body: parameter}, nil
+}
+
+// DecodeMerge assembles a merge step's ordered array input from one parameter
+// per source. It sums the sources' declared sizes before reading any
+// referenced body, so k sources cannot build an input above MaxValueBytes.
+func (codec Codec) DecodeMerge(ctx context.Context, parameters []string) ([]byte, error) {
+	// The brackets and separating commas add one byte per source plus one.
+	total := int64(len(parameters) + 1)
+	for index, parameter := range parameters {
+		size := int64(len(parameter))
+		if len(parameter) > 0 && parameter[0] == referencePrefix {
+			ref, err := parseRef([]byte(parameter[1:]), InlineLimit)
+			if err != nil {
+				return nil, fmt.Errorf("merge input %d: %w", index, err)
+			}
+			size = ref.Size
+		}
+		total += size
+	}
+	if total > MaxValueBytes {
+		return nil, contractError("merging %d sources would build a %d-byte input, above the %d-byte value limit", len(parameters), total, MaxValueBytes)
+	}
+	bodies := make([][]byte, len(parameters))
+	for index, parameter := range parameters {
+		value, err := codec.Decode(ctx, []byte(parameter))
+		if err != nil {
+			return nil, fmt.Errorf("merge input %d: %w", index, err)
+		}
+		bodies[index] = value.Body
+	}
+	return slices.Concat([]byte("["), bytes.Join(bodies, []byte(",")), []byte("]")), nil
 }
 
 // envelope is one Argo loop item or mapper result. Argo re-serializes these

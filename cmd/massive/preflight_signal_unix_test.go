@@ -57,7 +57,7 @@ func TestTerminationDuringPodPreflightIsRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	step := exec.Command(binary, "runtime", "step", "--plan", filepath.Join(bundle, "massive-plan.json"),
-		"--bundle-dir", filepath.Join(bundle, "runtime-assets"), "--node", "add_one", "--input", `{"value": 41}`,
+		"--bundle-dir", filepath.Join(bundle, "runtime-assets"), "--node", "add_one", "--workflow-input", `{"value": 41}`,
 		"--output", filepath.Join(root, "result.json"), "--project", "argo/preflight", "--run-id", "pod",
 		"--datastore-config", descriptor)
 	step.Env = append(os.Environ(), "MASSIVE_PYTHON="+slowPython)

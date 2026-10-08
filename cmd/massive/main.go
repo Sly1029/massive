@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -410,15 +409,7 @@ func (command *RuntimeStepCommand) input(ctx context.Context, codec valueparam.C
 	if sources := len(workflowPlan.GetGraph().GetNodes()[index].GetMergeInputs()); sources != len(command.MergeInputs) {
 		return nil, fmt.Errorf("%w: step %q merges %d sources but received %d merge inputs", valueparam.ErrContract, command.Node, sources, len(command.MergeInputs))
 	}
-	bodies := make([][]byte, len(command.MergeInputs))
-	for index, parameter := range command.MergeInputs {
-		value, err := codec.Decode(ctx, []byte(parameter))
-		if err != nil {
-			return nil, fmt.Errorf("merge input %d: %w", index, err)
-		}
-		bodies[index] = value.Body
-	}
-	return slices.Concat([]byte("["), bytes.Join(bodies, []byte(",")), []byte("]")), nil
+	return codec.DecodeMerge(ctx, command.MergeInputs)
 }
 
 func (command *RuntimeMapExpandCommand) Run(ctx context.Context) error {
