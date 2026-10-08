@@ -33,7 +33,8 @@ type FrontendResult struct {
 }
 
 // Emit loads a language frontend as a process adapter. The only data crossing
-// this seam is the canonical WorkflowSpec projection.
+// this seam is the canonical WorkflowSpec projection, which the frontend writes
+// to its --output file; its stdout and stderr belong to author code.
 func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	path := entry
 	if index := strings.LastIndex(entry, "#"); index >= 0 {
@@ -59,13 +60,13 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	switch extension {
 	case ".py":
 		if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
-			argv = []string{python, "-m", "massive.frontend", "emit", resolvedEntry}
+			argv = []string{python, "-m", "massive.frontend"}
 		} else {
 			frontend := os.Getenv("MASSIVE_PYTHON_FRONTEND")
 			if frontend == "" {
 				frontend = "massive-python-frontend"
 			}
-			argv = []string{frontend, "emit", resolvedEntry}
+			argv = []string{frontend}
 		}
 	case ".ts":
 		language = "TypeScript"
@@ -73,7 +74,7 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 		if frontend == "" {
 			frontend = "massive-typescript-frontend"
 		}
-		argv = []string{frontend, "emit", resolvedEntry}
+		argv = []string{frontend}
 		for directory := packageRoot; ; directory = filepath.Dir(directory) {
 			if _, err := os.Stat(filepath.Join(directory, "massive.config.ts")); err == nil {
 				packageRoot = directory
@@ -86,9 +87,17 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	default:
 		return nil, fmt.Errorf("unsupported workflow entrypoint %q; use a Python or TypeScript entrypoint", entry)
 	}
-	var stdout, stderr bytes.Buffer
-	if err := taskprocess.RunTo(ctx, argv, filepath.Dir(absolute), &stdout, &stderr); err != nil {
-		diagnostic := strings.TrimSpace(stderr.String())
+	outputDirectory, err := os.MkdirTemp("", "massive-emit-")
+	if err != nil {
+		return nil, fmt.Errorf("create frontend output directory: %w", err)
+	}
+	defer os.RemoveAll(outputDirectory)
+	output := filepath.Join(outputDirectory, "workflow-spec.json")
+	argv = append(argv, "emit", "--output", output, resolvedEntry)
+	// Author output from either stream is only a diagnostic.
+	var authorOutput bytes.Buffer
+	if err := taskprocess.RunTo(ctx, argv, filepath.Dir(absolute), &authorOutput, &authorOutput); err != nil {
+		diagnostic := strings.TrimSpace(authorOutput.String())
 		if errors.Is(err, exec.ErrWaitDelay) {
 			if diagnostic != "" {
 				return nil, fmt.Errorf("%s frontend failed: %s: %w", language, diagnostic, err)
@@ -103,14 +112,17 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 		}
 		return nil, fmt.Errorf("%s frontend failed: %s", language, diagnostic)
 	}
-	canonicalBytes := stdout.Bytes()
+	canonicalBytes, err := os.ReadFile(output)
+	if err != nil {
+		return nil, fmt.Errorf("%s frontend did not write a WorkflowSpec: %w", language, err)
+	}
 	workflowSpec, err := spec.Parse(canonicalBytes)
 	if err != nil {
 		return nil, fmt.Errorf("%s frontend emitted an invalid WorkflowSpec: %w", language, err)
 	}
 	return &FrontendResult{
 		Spec:        workflowSpec,
-		Canonical:   append([]byte(nil), canonicalBytes...),
+		Canonical:   canonicalBytes,
 		PackageRoot: packageRoot,
 	}, nil
 }

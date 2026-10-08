@@ -294,7 +294,10 @@ func TestTypeScriptFrontendStreamsLargeSpecsAndSeparatesAuthorLogs(t *testing.T)
 	entry := filepath.Join(t.TempDir(), "workflow.ts")
 	source := `import { workflow } from "@massive/sdk";
 import { z } from "zod";
-console.log("author diagnostic belongs on stderr");
+console.log("author diagnostic on stdout");
+console.debug("console.debug on stdout");
+console.table([{ author: "table" }]);
+Deno.stdout.writeSync(new TextEncoder().encode("raw stdout write\n"));
 const schema = z.string().describe("x".repeat(100000));
 const flow = workflow({name:"large-spec",input:schema,output:schema});
 flow.start().to(flow.end());

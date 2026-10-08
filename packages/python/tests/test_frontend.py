@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from massive import canonical_json
@@ -15,12 +17,12 @@ def test_emit_writes_a_canonical_spec_for_the_single_exported_graph(tmp_path: Pa
 
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""
-    assert result.stdout == canonical_json(json.loads(result.stdout))
-    assert not result.stdout.endswith("\n")
-    assert json.loads(result.stdout)["workflow"]["name"] == "frontend-graph"
+    assert result.spec == canonical_json(json.loads(result.spec))
+    assert not result.spec.endswith("\n")
+    assert json.loads(result.spec)["workflow"]["name"] == "frontend-graph"
 
 
-def test_emit_keeps_import_time_output_from_any_writer_off_stdout(tmp_path: Path) -> None:
+def test_emit_writes_only_the_spec_to_its_output_whatever_author_code_prints(tmp_path: Path) -> None:
     workflow = tmp_path / "workflow.py"
     workflow.write_text(
         "import os\nimport subprocess\nimport sys\n\n"
@@ -33,9 +35,9 @@ def test_emit_keeps_import_time_output_from_any_writer_off_stdout(tmp_path: Path
     result = _emit(workflow)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == canonical_json(json.loads(result.stdout))
+    assert result.spec == canonical_json(json.loads(result.spec))
     for line in ("from print", "from file descriptor", "from subprocess"):
-        assert line in result.stderr
+        assert line in result.stdout
 
 
 def test_checked_python_workflow_matches_shared_conformance_fixture() -> None:
@@ -50,7 +52,7 @@ def test_checked_python_workflow_matches_shared_conformance_fixture() -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""
-    assert result.stdout == expected.rstrip("\n")
+    assert result.spec == expected.rstrip("\n")
 
 
 def test_emit_selects_the_requested_named_graph(tmp_path: Path) -> None:
@@ -61,7 +63,7 @@ def test_emit_selects_the_requested_named_graph(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""
-    assert json.loads(result.stdout)["workflow"]["name"] == "frontend-second"
+    assert json.loads(result.spec)["workflow"]["name"] == "frontend-second"
 
 
 def test_emit_rejects_an_explicit_selector_that_is_not_a_graph(tmp_path: Path) -> None:
@@ -71,7 +73,7 @@ def test_emit_rejects_an_explicit_selector_that_is_not_a_graph(tmp_path: Path) -
     result = _emit(workflow, "Request")
 
     assert result.returncode == 2
-    assert result.stdout == ""
+    assert result.spec == ""
     assert result.stderr == (
         f'massive-python-frontend: workflow entrypoint "{workflow}#Request" '
         "does not export a GraphBuilder\n"
@@ -85,7 +87,7 @@ def test_emit_reports_sorted_candidates_for_ambiguous_graph_exports(tmp_path: Pa
     result = _emit(workflow)
 
     assert result.returncode == 2
-    assert result.stdout == ""
+    assert result.spec == ""
     assert result.stderr == (
         f'massive-python-frontend: workflow entrypoint "{workflow}" is ambiguous; '
         "GraphBuilder candidates: first, second\n"
@@ -99,7 +101,7 @@ def test_emit_reports_when_the_module_exports_no_graphs(tmp_path: Path) -> None:
     result = _emit(workflow)
 
     assert result.returncode == 2
-    assert result.stdout == ""
+    assert result.spec == ""
     assert result.stderr == (
         f'massive-python-frontend: workflow entrypoint "{workflow}" '
         "exports no GraphBuilder values (candidates: none)\n"
@@ -125,7 +127,7 @@ def test_emit_includes_the_entry_and_root_level_sibling_python_files(tmp_path: P
     result = _emit(workflow)
 
     assert result.returncode == 0, result.stderr
-    package = json.loads(result.stdout)["sourcePackages"]["python-main"]
+    package = json.loads(result.spec)["sourcePackages"]["python-main"]
     assert package["packageId"] == "python-main"
     assert [file["path"] for file in package["files"]] == ["helper.py", "workflow.py"]
 
@@ -166,7 +168,7 @@ def test_emit_rejects_imported_workflow_modules_outside_the_source_package(
     rejected = _emit(workflow)
 
     assert rejected.returncode == 2
-    assert rejected.stdout == ""
+    assert rejected.spec == ""
     assert rejected.stderr == (
         "massive-python-frontend: source include does not select imported workflow "
         "modules: steps/__init__.py, steps/work.py; add them to "
@@ -179,7 +181,7 @@ def test_emit_rejects_imported_workflow_modules_outside_the_source_package(
     accepted = _emit(workflow)
 
     assert accepted.returncode == 0, accepted.stderr
-    package = json.loads(accepted.stdout)["sourcePackages"]["python-main"]
+    package = json.loads(accepted.spec)["sourcePackages"]["python-main"]
     assert [file["path"] for file in package["files"]] == [
         "models.py",
         "pyproject.toml",
@@ -197,7 +199,7 @@ def test_emit_errors_have_a_stable_nonzero_exit(tmp_path: Path) -> None:
     second = _emit(workflow)
 
     assert first.returncode == second.returncode == 2
-    assert first.stdout == second.stdout == ""
+    assert first.spec == second.spec == ""
     assert first.stderr == second.stderr
 
 
@@ -209,7 +211,7 @@ def test_missing_entrypoint_in_source_fails_before_import(tmp_path: Path) -> Non
     )
     result = _emit(workflow)
     assert result.returncode == 2
-    assert result.stdout == ""
+    assert result.spec == ""
     assert "source include must select the workflow entrypoint" in result.stderr
     assert "must not import" not in result.stderr
 
@@ -220,20 +222,38 @@ def test_malformed_packaging_fails_before_import(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[invalid toml")
     result = _emit(workflow)
     assert result.returncode == 2
-    assert result.stdout == ""
+    assert result.spec == ""
     assert "must not import" not in result.stderr
 
 
-def _emit(workflow: Path, selector: str | None = None) -> subprocess.CompletedProcess[str]:
+@dataclass(frozen=True)
+class _Emitted:
+    returncode: int
+    stdout: str
+    stderr: str
+    spec: str
+
+
+def _emit(workflow: Path, selector: str | None = None) -> _Emitted:
     package = Path(__file__).resolve().parents[1]
     entry = str(workflow) if selector is None else f"{workflow}#{selector}"
-    return subprocess.run(
-        [str(package / ".venv/bin/massive-python-frontend"), "emit", entry],
-        cwd=package,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / "workflow-spec.json"
+        result = subprocess.run(
+            [
+                str(package / ".venv/bin/massive-python-frontend"),
+                "emit",
+                "--output",
+                str(output),
+                entry,
+            ],
+            cwd=package,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        spec = output.read_text() if output.exists() else ""
+    return _Emitted(result.returncode, result.stdout, result.stderr, spec)
 
 
 def _workflow_source(export: str) -> str:

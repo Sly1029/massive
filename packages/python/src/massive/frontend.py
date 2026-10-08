@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-import os
 import sys
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -93,25 +92,21 @@ def emit(request: EntrypointRequest) -> EmitResult:
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = tuple(sys.argv[1:] if argv is None else argv)
-    if len(arguments) != 2 or arguments[0] != "emit":
-        _write_diagnostic("usage: massive-python-frontend emit path/to/workflow.py[#export]")
+    if len(arguments) != 4 or arguments[:2] != ("emit", "--output"):
+        _write_diagnostic(
+            "usage: massive-python-frontend emit --output spec.json path/to/workflow.py[#export]"
+        )
         return _ERROR_EXIT
-    # stdout carries only the spec. Point file descriptor 1 at stderr while author
-    # code runs, so its prints, native writes, and subprocesses cannot corrupt it.
-    sys.stdout.flush()
-    spec_output = os.fdopen(os.dup(1), "w", encoding="utf-8")
-    os.dup2(2, 1)
     try:
-        result = emit(EntrypointRequest.parse(arguments[1]))
+        result = emit(EntrypointRequest.parse(arguments[3]))
     except FrontendError as error:
         _write_diagnostic(str(error))
         return _ERROR_EXIT
     except Exception as error:  # noqa: BLE001 -- this is the process boundary.
         _write_diagnostic(str(error))
         return _ERROR_EXIT
-    sys.stdout.flush()
-    with spec_output:
-        spec_output.write(result.canonical_json)
+    # The spec travels only through --output; stdout and stderr belong to author code.
+    Path(arguments[2]).write_bytes(result.canonical_json.encode())
     return 0
 
 
