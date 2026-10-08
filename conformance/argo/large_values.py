@@ -123,7 +123,7 @@ graph.edge_from(annotated).to(joined)
 graph.edge_from(route.case(Few)).to(small)
 records = route.select(list[Record], many=joined, few=small)
 summary = graph.add(summarize)
-graph.edge_from(records).to(summary).to(graph.end)
+graph.edge_from(records).to(summary).to_end(graph.end)
 
 
 def score(ctx: StepContext[Record]) -> int:
@@ -144,4 +144,4 @@ entry_graph = GraphBuilder(
 )
 scores = entry_graph.map(entry_graph.start, score, id="score", concurrency=4)
 entry_total = entry_graph.add(total)
-entry_graph.edge_from(scores).to(entry_total).to(entry_graph.end)
+entry_graph.edge_from(scores).to(entry_total).to_end(entry_graph.end)

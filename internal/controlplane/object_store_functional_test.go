@@ -362,7 +362,7 @@ func TestMultiMegabyteValuesRunLocally(t *testing.T) {
 		t.Fatal(err)
 	}
 	requirePythonSDK(t, repository)
-	frontend, err := Emit(context.Background(), filepath.Join(repository, "conformance", "argo", "large_values.py")+"#graph")
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "conformance", "argo", "large_values.py")+"#graph", environment.Execution)
 	if err != nil {
 		t.Fatal(err)
 	}
