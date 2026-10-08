@@ -51,6 +51,7 @@ def install_workflow(
     build_args: tuple[str, ...] = (),
     pyproject: str | None = None,
     lock: str | None = None,
+    publish: bool = False,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="massive-argo-") as directory:
         root = Path(directory)
@@ -88,6 +89,8 @@ def install_workflow(
             check=True,
             timeout=120,
         )
+        if publish:
+            publish_bundle(bundle)
         kubectl(
             "apply",
             "-f",
@@ -107,6 +110,61 @@ def massive(*args: str, environment: dict[str, str] | None = None) -> str:
         text=True,
         timeout=300,
     ).stdout
+
+
+def publish_bundle(bundle: Path) -> None:
+    """Upload an object-store-v0 bundle's source archives to the cluster's MinIO
+    through a port-forward, as `massive publish` does for a real deployment."""
+    root = bundle.parent
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    forward = subprocess.Popen(
+        [
+            os.environ.get("KUBECTL", "kubectl"),
+            "-n",
+            "argo",
+            "port-forward",
+            "svc/minio",
+            f"{port}:9000",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert forward.stdout is not None
+        forward.stdout.readline()  # "Forwarding from 127.0.0.1:<port> -> 9000"
+        descriptor = root / "datastore.json"
+        descriptor.write_text(
+            json.dumps({**DATASTORE, "endpoint": f"http://127.0.0.1:{port}"})
+        )
+        credentials = kubectl("get", "secret", "my-minio-cred", "-o", "json")[
+            "data"
+        ]
+        published = json.loads(
+            massive(
+                "publish",
+                str(bundle),
+                "--datastore-config",
+                str(descriptor),
+                "--json",
+                environment={
+                    "AWS_ACCESS_KEY_ID": base64.b64decode(
+                        credentials["accesskey"]
+                    ).decode(),
+                    "AWS_SECRET_ACCESS_KEY": base64.b64decode(
+                        credentials["secretkey"]
+                    ).decode(),
+                },
+            )
+        )
+        assert [archive["created"] for archive in published["sourceArchives"]] == [
+            True
+        ], published
+    finally:
+        forward.terminate()
+        forward.wait(timeout=30)
 
 
 def install_large_source() -> dict:
@@ -182,55 +240,7 @@ def install_large_source() -> dict:
         assert sorted(configmap["binaryData"]) == ["massive-plan.json"], configmap[
             "binaryData"
         ].keys()
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
-        forward = subprocess.Popen(
-            [
-                os.environ.get("KUBECTL", "kubectl"),
-                "-n",
-                "argo",
-                "port-forward",
-                "svc/minio",
-                f"{port}:9000",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        try:
-            assert forward.stdout is not None
-            forward.stdout.readline()  # "Forwarding from 127.0.0.1:<port> -> 9000"
-            descriptor = root / "datastore.json"
-            descriptor.write_text(
-                json.dumps({**DATASTORE, "endpoint": f"http://127.0.0.1:{port}"})
-            )
-            credentials = kubectl("get", "secret", "my-minio-cred", "-o", "json")[
-                "data"
-            ]
-            published = json.loads(
-                massive(
-                    "publish",
-                    str(bundle),
-                    "--datastore-config",
-                    str(descriptor),
-                    "--json",
-                    environment={
-                        "AWS_ACCESS_KEY_ID": base64.b64decode(
-                            credentials["accesskey"]
-                        ).decode(),
-                        "AWS_SECRET_ACCESS_KEY": base64.b64decode(
-                            credentials["secretkey"]
-                        ).decode(),
-                    },
-                )
-            )
-            assert [archive["created"] for archive in published["sourceArchives"]] == [
-                True
-            ], published
-        finally:
-            forward.terminate()
-            forward.wait(timeout=30)
+        publish_bundle(bundle)
         kubectl(
             "apply",
             "-f",
@@ -335,7 +345,7 @@ class DecisionConformance(unittest.TestCase):
         )
         install_workflow(retry_source)
         # Never published: a changed source identity whose archive is absent
-        # from the store must fail once (exit 64), not exhaust its retries.
+        # from the store is refused by the pod's preflight (exit 68), never retried.
         install_workflow(
             retry_source + "\n# unpublished object-store variant\n",
             build_args=(
@@ -387,10 +397,13 @@ class DecisionConformance(unittest.TestCase):
             pyproject=(locked / "pyproject.toml").read_text(),
             lock=(locked / "uv.lock").read_text(),
         )
-        for name, dependency in {
-            "argo-preflight": "pydantic>=2",
-            "argo-preflight-missing": "absent-package-for-preflight>=1",
-        }.items():
+        # The published variant proves pods check the fetched object-store
+        # archive: an empty extraction would pass as an undeclared project.
+        for name, dependency, published in (
+            ("argo-preflight", "pydantic>=2", False),
+            ("argo-preflight-missing", "absent-package-for-preflight>=1", False),
+            ("argo-preflight-published", "absent-package-for-preflight>=1", True),
+        ):
             install_workflow(
                 preflight_source.replace('NAME = "argo-preflight"', f"NAME = {name!r}"),
                 pyproject=(
@@ -399,6 +412,8 @@ class DecisionConformance(unittest.TestCase):
                     'version = "0.1.0"\n'
                     f'dependencies = ["massive-workflows", "{dependency}"]\n'
                 ),
+                build_args=("--runtime-transport", "object-store-v0") if published else (),
+                publish=published,
             )
         cls.runs = {}
         for label, inputs in {
@@ -421,6 +436,7 @@ class DecisionConformance(unittest.TestCase):
             "preflight": {"value": 21},
             "locked": {"value": 21},
             "preflight-missing": {"value": 21},
+            "preflight-published": {"value": 21},
         }.items():
             run = kubectl(
                 "create",
@@ -446,6 +462,7 @@ class DecisionConformance(unittest.TestCase):
                                 "preflight": "argo-preflight",
                                 "locked": "argo-locked",
                                 "preflight-missing": "argo-preflight-missing",
+                                "preflight-published": "argo-preflight-published",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -526,7 +543,8 @@ class DecisionConformance(unittest.TestCase):
         attempts = self.pods(run, "step-flaky")
         self.assertEqual(len(attempts), 1, attempts)
         self.assertEqual(attempts[0]["phase"], "Failed")
-        self.assertIn("exit code 64", attempts[0].get("message", ""), attempts[0])
+        self.assertIn("exit code 68", attempts[0].get("message", ""), attempts[0])
+        self.assertIn("massive publish", self.main_log(run))
 
     def test_empty_map_inside_selected_branch(self) -> None:
         self.successful("empty", 0)
@@ -640,6 +658,33 @@ class DecisionConformance(unittest.TestCase):
         root = run["status"]["nodes"][run["metadata"]["name"]]
         self.assertEqual(json.loads(root["outputs"]["parameters"][0]["value"]), "value  42")
         self.assertEqual([node["phase"] for node in self.pods(run, "step-render")], ["Succeeded"])
+
+    def main_log(self, run: dict) -> str:
+        """The runtime's own diagnostics from the workflow's pods."""
+        return subprocess.run(
+            [
+                os.environ.get("KUBECTL", "kubectl"),
+                "-n",
+                "argo",
+                "logs",
+                "-l",
+                f"workflows.argoproj.io/workflow={run['metadata']['name']}",
+                "-c",
+                "main",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+
+    def test_pod_preflight_reads_the_published_object_store_archive(self) -> None:
+        run = self.completed("preflight-published")
+        self.assertEqual(run["status"]["phase"], "Failed")
+        pods = self.pods(run, "step-double")
+        self.assertEqual([node["phase"] for node in pods], ["Failed"])
+        self.assertIn("exit code 68", pods[0].get("message", ""))
+        self.assertIn("MISSING_REQUIREMENT", self.main_log(run))
 
     def test_pod_preflight_failure_is_not_retried(self) -> None:
         # retry(3) would schedule three pods; exit 68 is non-retryable, and

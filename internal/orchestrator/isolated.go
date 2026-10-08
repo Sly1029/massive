@@ -41,8 +41,9 @@ type SourceArchive struct {
 	Digest string
 	// Body holds embedded-v0 bytes mounted beside the plan. Each invocation
 	// verifies and installs them. Without a body the archive must already be
-	// published (object-store-v0); the language runner reports a missing or
-	// mismatched object as a non-retryable descriptor failure.
+	// published (object-store-v0). Python preflight fetches and verifies it
+	// before the runner does; both refuse a missing or mismatched object
+	// without a retry.
 	Body []byte
 }
 

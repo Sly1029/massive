@@ -2,6 +2,7 @@ package datastore
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -45,5 +46,35 @@ func TestS3RequiresExplicitApplicationCredentials(t *testing.T) {
 	_, err := NewS3Datastore(context.Background(), S3Config{Endpoint: "localhost:9000", Bucket: "test", Region: "us-east-1"})
 	if err == nil || !strings.Contains(err.Error(), "bind AWS access credentials") {
 		t.Fatalf("missing credentials: %v", err)
+	}
+}
+
+// A read the credentials may not perform is classified, so callers can treat a
+// denied archive like a missing one instead of retrying it.
+func TestS3DeniedReadsAreAccessDenied(t *testing.T) {
+	endpoint := miniotest.Start(t)
+	t.Setenv("AWS_ACCESS_KEY_ID", miniotest.AccessKey)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", miniotest.SecretKey)
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	config := S3Config{Endpoint: endpoint, Bucket: "massive-denied", Region: "us-east-1", CreateBucket: true}
+	store, err := NewS3Datastore(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := MustKey("packages/archive.tar")
+	if _, err := store.Put(context.Background(), key, []byte("archive"), PutOptions{ContentType: "application/octet-stream"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "not-the-secret")
+	config.CreateBucket = false
+	denied, err := NewS3Datastore(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := denied.Get(context.Background(), key); !errors.Is(err, ErrAccessDenied) {
+		t.Fatalf("denied read error = %v", err)
+	}
+	if _, err := store.Get(context.Background(), MustKey("packages/missing.tar")); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing object error = %v", err)
 	}
 }

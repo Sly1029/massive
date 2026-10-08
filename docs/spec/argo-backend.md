@@ -78,10 +78,13 @@ the `massive.dev/runtime-transport` annotation.
   `--source-archive=<package-hash>=<archive-digest>`. The language runner
   streams `packages/sha256-<package>/archives/sha256-<archive>.tar` from the
   bound datastore to private scratch and rejects it unless its SHA-256 equals
-  the pinned digest, before reading any entry or importing code. A missing
-  object, an object above the largest valid archive size, or a digest mismatch
-  is a descriptor failure (exit 64), which Argo's retry expression never
-  retries; the missing-object diagnostic names `massive publish`. With
+  the pinned digest, before reading any entry or importing code. Python attempts
+  first fetch and verify the same object for dependency preflight; a missing,
+  denied, or digest-mismatched archive exits 68 there, and a datastore outage
+  stays retryable. Otherwise a missing object, an object above the largest
+  valid archive size, or a digest mismatch is a descriptor failure (exit 64).
+  Argo's retry expression retries neither, and the missing-object diagnostic
+  names `massive publish`. With
   least-privilege credentials that lack `s3:ListBucket`, S3 reports a missing
   key as 403 AccessDenied; the runner treats a denied archive read the same
   way and names both causes: an unpublished archive or missing read

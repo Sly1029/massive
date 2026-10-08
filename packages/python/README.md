@@ -586,11 +586,15 @@ inside the steps that use them. With a `uv.lock`, the build host needs `uv` on
 then runs the full preflight against the container's interpreter and the
 archived project, before any author code runs. Findings or unreadable project
 metadata exit 68, which Argo does not retry, and they appear in the pod log. A
-terminated or evicted pod keeps its ordinary, retryable failure. Pods see only
-the source archive: a `[tool.uv.sources]` path outside the workflow directory
-cannot be resolved there and fails with `UV_FAILED`, so lock such dependencies
-from an index or keep them inside the workflow directory. An attempt that passes stores its `RealizedEnvironment` and writes
-an `environment.json` reference beside its output manifest.
+terminated or evicted pod keeps its ordinary, retryable failure. With
+`--runtime-transport object-store-v0`, the pod checks the published archive, so
+an unpublished, unreadable, or mismatched archive also exits 68.
+
+Pods see only the source archive. A `[tool.uv.sources]` path outside the
+workflow directory cannot be resolved there and fails with `UV_FAILED`; lock such
+dependencies from an index or keep them inside the workflow directory. An
+attempt that passes stores its `RealizedEnvironment` and writes an
+`environment.json` reference beside its output manifest.
 
 See the [packaged map example](https://github.com/Sly1029/massive/blob/main/examples/07-package/workflow.py) for a
 nested module, a text resource, and ordered collection into a typed result.

@@ -46,6 +46,10 @@ Python tasks run as `python -I -m massive.runner`. Local runs pin the interprete
 that passed dependency preflight; do not resolve `MASSIVE_PYTHON` again per task.
 Isolated Python attempts extract the verified source archive and run the full
 dependency preflight with the executor's interpreter before invoking the runner.
+Under object-store-v0 (`SourceArchive.Body == nil`) fetch the pinned object and
+check its digest and package identity. Refuse a missing, denied, or mismatched
+one (exit 68) like the runner does, and never preflight an empty extraction.
+Other datastore errors stay retryable.
 Only findings and `environment.ProjectError` become a `PreflightError` (CLI
 exit 68, never retried); return context cancellation and other infrastructure
 errors unchanged so a terminated pod is retried. A

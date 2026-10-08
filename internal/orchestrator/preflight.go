@@ -52,8 +52,10 @@ func isolatedPreflight(ctx context.Context, store datastore.Datastore, request e
 	archive := source.Body
 	if archive == nil {
 		object, err := store.Get(ctx, datastore.MustKey(sourceArchiveKey(packageHash, source.Digest)))
-		if errors.Is(err, datastore.ErrNotFound) {
-			return fail(fmt.Errorf("source archive %s for package %s is not in the datastore; publish the bundle with `massive publish`", source.Digest, packageHash))
+		// Like the runner, treat a denied read as missing: without
+		// s3:ListBucket, S3 reports an unpublished key as AccessDenied.
+		if errors.Is(err, datastore.ErrNotFound) || errors.Is(err, datastore.ErrAccessDenied) {
+			return fail(fmt.Errorf("source archive %s for package %s is not readable from the datastore; publish the bundle with `massive publish`, or grant the pod read access to it", source.Digest, packageHash))
 		}
 		if err != nil {
 			return "", fmt.Errorf("read source archive for preflight: %w", err)
