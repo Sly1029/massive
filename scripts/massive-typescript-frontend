@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec deno run --config "$repository/deno.json" --allow-read --allow-env --allow-sys=cpus "$repository/packages/sdk/src/frontend.ts" "$@"
+# Grant write access only to the spec path from `emit --output <path> <entry>`.
+write=()
+if [[ "${1-}" == emit && "${2-}" == --output && -n "${3-}" ]]; then
+  write=("--allow-write=$3")
+fi
+exec deno run --config "$repository/deno.json" --allow-read --allow-env --allow-sys=cpus \
+  ${write[@]+"${write[@]}"} "$repository/packages/sdk/src/frontend.ts" "$@"

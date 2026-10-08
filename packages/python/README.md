@@ -452,11 +452,12 @@ The Python frontend emits a portable `WorkflowSpec` from a Python workflow
 file:
 
 ```sh
-massive-python-frontend emit path/to/workflow.py[#graph_export]
+massive-python-frontend emit --output spec.json path/to/workflow.py[#graph_export]
 ```
 
-The command writes only canonical `WorkflowSpec` JSON to stdout. Diagnostics
-are written to stderr and return exit status 2. The `massive run` CLI uses this
+The command writes canonical `WorkflowSpec` JSON only to the `--output` file;
+stdout and stderr belong to workflow code. Diagnostics are written to stderr and
+return exit status 2 without creating the output file. The `massive run` CLI uses this
 process seam internally; workflow authors normally invoke `massive run`
 instead.
 
