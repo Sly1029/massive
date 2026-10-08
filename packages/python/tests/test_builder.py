@@ -8,7 +8,7 @@ from decimal import Decimal
 from enum import Enum
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 import pytest
@@ -1099,6 +1099,50 @@ def test_workflow_call_rejects_child_without_single_entry_and_exit(shape: str) -
     )
     parent.edge_from(parent.start).to(parent.call(child, id="child-call")).to(parent.end)
     with pytest.raises(ValueError, match="exactly one start successor and one end predecessor"):
+        _emit(parent)
+
+
+def test_workflow_call_emits_the_same_spec_as_its_inlined_graph() -> None:
+    child = GraphBuilder(
+        name="child", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    child.edge_from(child.start).to(child.add(passthrough_request, id="step")).to(child.end)
+    composed = GraphBuilder(
+        name="parent", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    composed.edge_from(composed.start).to(composed.call(child, id="call")).to(
+        composed.add(passthrough_request, id="after")
+    ).to(composed.end)
+    inlined = GraphBuilder(
+        name="parent", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    inlined.edge_from(inlined.start).to(inlined.add(passthrough_request, id="call--step")).to(
+        inlined.add(passthrough_request, id="after")
+    ).to(inlined.end)
+
+    assert _emit(composed).to_json() == _emit(inlined).to_json()
+
+
+@pytest.mark.parametrize(("call_length", "valid"), [(26, True), (27, False)])
+def test_workflow_call_rejects_scoped_ids_beyond_the_identifier_limit(
+    call_length: int, valid: bool
+) -> None:
+    child = GraphBuilder(
+        name="child", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    child.edge_from(child.start).to(child.add(passthrough_request, id="s" * 100)).to(child.end)
+    parent = GraphBuilder(
+        name="parent", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    call_id = "c" * call_length
+    parent.edge_from(parent.start).to(parent.call(child, id=call_id)).to(parent.end)
+    if valid:
+        nodes = cast(dict[str, Any], _emit(parent).value["graph"])["nodes"]
+        assert f"{call_id}--{'s' * 100}" in {node["id"] for node in nodes}
+        return
+    with pytest.raises(
+        ValueError, match=rf"call '{call_id}' scopes child node 's+' as a 129-character id"
+    ):
         _emit(parent)
 
 

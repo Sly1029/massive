@@ -12,7 +12,9 @@ the function by its archived module/export without importing an SDK wrapper type
 Require one child entry and one child exit before rewiring the parent's edges.
 Keep reference-bearing fields (`decisionRef`, `selectInputs`, and `mergeInputs`)
 and edges scoped together; the emitted Graph IR has no `call` nodes. Reject
-recursive composition and scoped ID collisions before producing a spec.
+recursive composition, scoped ID collisions, and over-long scoped IDs before
+producing a spec. Expansion must stay spec-transparent: a composed graph emits
+the same canonical spec as its hand-inlined twin using `<call>--<child>` IDs.
 The Go compiler owns environment identity; `Container` describes requirements.
 
 Blob/Tree values carry immutable references. Publish bodies before committing
