@@ -26,4 +26,4 @@ def render(ctx: StepContext[Request]) -> str:
     return tabulate([["value", ctx.inputs.value * 2]], tablefmt="plain")
 
 
-graph.edge_from(graph.start).to(graph.add(render)).to(graph.end)
+graph.edge_from(graph.start).to(graph.add(render)).to_end(graph.end)

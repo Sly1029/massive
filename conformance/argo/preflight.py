@@ -24,4 +24,4 @@ def double(ctx: StepContext[Request]) -> int:
     return ctx.inputs.value * 2
 
 
-graph.edge_from(graph.start).to(graph.add(double)).to(graph.end)
+graph.edge_from(graph.start).to(graph.add(double)).to_end(graph.end)
