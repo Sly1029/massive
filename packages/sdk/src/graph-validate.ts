@@ -2,7 +2,7 @@ import { GraphValidationError } from "./errors.ts";
 import { END_NODE, START_NODE, type WorkflowBuilder } from "./workflow.ts";
 
 export function validateGraphShape(
-  builder: WorkflowBuilder<unknown, unknown>,
+  builder: WorkflowBuilder<unknown, never>,
 ): void {
   const graph = builder.graph;
 
@@ -35,7 +35,7 @@ export function validateGraphShape(
   }
 }
 
-function assertAcyclic(builder: WorkflowBuilder<unknown, unknown>): void {
+function assertAcyclic(builder: WorkflowBuilder<unknown, never>): void {
   const graph = builder.graph;
   const visiting = new Set<string>();
   const visited = new Set<string>();
@@ -62,7 +62,7 @@ function assertAcyclic(builder: WorkflowBuilder<unknown, unknown>): void {
 }
 
 function traverse(
-  builder: WorkflowBuilder<unknown, unknown>,
+  builder: WorkflowBuilder<unknown, never>,
   start: string,
   direction: "inbound" | "outbound",
 ): Set<string> {

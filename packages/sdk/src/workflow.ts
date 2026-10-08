@@ -60,7 +60,7 @@ export class EndHandle<Output> {
 
 export class PathBuilder<Current> {
   constructor(
-    private readonly builder: WorkflowBuilder<unknown, unknown>,
+    private readonly builder: WorkflowBuilder<unknown, never>,
     private readonly currentNodeId: string
   ) {}
 
@@ -79,7 +79,7 @@ export class PathBuilder<Current> {
 
 export class MergeBuilder<Current> {
   constructor(
-    private readonly builder: WorkflowBuilder<unknown, unknown>,
+    private readonly builder: WorkflowBuilder<unknown, never>,
     private readonly sourceNodeIds: readonly string[]
   ) {}
 
@@ -131,11 +131,11 @@ export class WorkflowBuilder<Input, Output> {
   }
 
   start(): PathBuilder<Input> {
-    return new PathBuilder<Input>(this as WorkflowBuilder<unknown, unknown>, START_NODE);
+    return new PathBuilder<Input>(this, START_NODE);
   }
 
   from<StepInput, StepOutput>(step: StepHandle<StepInput, StepOutput>): PathBuilder<StepOutput> {
-    return new PathBuilder<StepOutput>(this as WorkflowBuilder<unknown, unknown>, step.nodeId);
+    return new PathBuilder<StepOutput>(this, step.nodeId);
   }
 
   merge<StepOutput>(steps: readonly StepHandle<never, StepOutput>[]): MergeBuilder<StepOutput> {
@@ -143,7 +143,7 @@ export class WorkflowBuilder<Input, Output> {
       throw new GraphValidationError("Merge requires at least one upstream step");
     }
     return new MergeBuilder<StepOutput>(
-      this as WorkflowBuilder<unknown, unknown>,
+      this,
       steps.map((step) => step.nodeId)
     );
   }
