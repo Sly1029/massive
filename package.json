@@ -2,7 +2,7 @@
   "name": "massive",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.7.0",
+  "packageManager": "pnpm@12.10.1",
   "scripts": {
     "generate:proto": "./scripts/generate-proto.sh",
     "check:mocks": "node scripts/check-no-test-mocks.mjs",
