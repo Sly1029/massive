@@ -82,3 +82,34 @@ def test_probe_rejects_invalid_requirements_without_partial_output(tmp_path: Pat
     assert result.stderr.startswith(prefix)
     assert result.stderr.count("\n") == 1
     assert "errors.pydantic.dev" not in result.stderr
+
+
+def test_direct_references_never_carry_credentials_or_local_paths(tmp_path: Path) -> None:
+    secret = "user:s3cr3t-token"
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "direct"\n'
+        'version = "0.1.0"\n'
+        "dependencies = [\n"
+        f'  "Private_Pkg @ https://{secret}@packages.example.invalid:8443/p/pkg-1.0.tar.gz?t=1#sha256=0",\n'
+        f'  "local-pkg @ file://{tmp_path}/wheels/local_pkg-1.0-py3-none-any.whl",\n'
+        "]\n"
+    )
+    facts = _facts(tmp_path)
+    assert facts["project"]["dependencies"] == [
+        "local-pkg @ file:",
+        "private-pkg @ https://packages.example.invalid:8443/p/pkg-1.0.tar.gz",
+    ]
+    reported = json.dumps(facts["findings"])
+    assert [finding["code"] for finding in facts["findings"]] == ["MISSING_REQUIREMENT"] * 2
+    assert "s3cr3t" not in reported and str(tmp_path / "wheels") not in reported
+
+
+def test_locked_sdk_version_must_match_the_installed_sdk(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "locked"\nversion = "0.1.0"\n')
+    (tmp_path / "uv.lock").write_text(
+        'version = 1\n[[package]]\nname = "massive-workflows"\nversion = "9.9.9"\n'
+    )
+    findings = _facts(tmp_path)["findings"]
+    assert [finding["code"] for finding in findings] == ["LOCKED_SDK_VERSION"]
+    assert "uv.lock pins massive-workflows 9.9.9" in findings[0]["message"]

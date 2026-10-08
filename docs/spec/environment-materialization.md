@@ -64,16 +64,23 @@ metadata with `importlib.metadata` and `packaging`. Its output is validated
 against `conformance/schema/environment-probe.schema.json`, which is generated
 from the probe's Pydantic model. The Go control plane then adds the SDK release
 check and, when `uv.lock` exists, runs `uv lock --check`, followed by
-`uv sync --locked --check --inexact --no-dev`. Both run offline against the probed
+`uv sync --locked --check --inexact --no-default-groups --no-install-project
+--no-install-package massive-workflows`. Both run offline against the probed
 prefix (`UV_PROJECT_ENVIRONMENT`) and interpreter (`--python`), with an
 allowlisted environment: inherited `UV_*` settings keep only cache, index, and
 resolution options.
 
 The lock check verifies the locked **runtime** set: every package the lock
-installs without dev groups or extras is present at its locked version. Extra
-installed packages, including dev groups and extras, are allowed. That way a
+installs without dependency groups or extras is present at its locked version.
+Extra installed packages, including groups and extras, are allowed, so a
 container synced with `--no-dev` and a development environment synced with
-extras both pass.
+extras both pass. The workflow project itself is never required to be installed:
+pods run it from its source archive. `massive-workflows` is excluded from the uv
+comparison, because a runner image installs it from a local wheel whose
+recorded `file://` source never equals the locked index source. The probe
+instead compares its installed version with the version `uv.lock` pins
+(`LOCKED_SDK_VERSION`). Direct references are recorded and reported without
+credentials, query strings, fragments, or local paths.
 
 | Code | Meaning |
 | --- | --- |
@@ -81,7 +88,8 @@ extras both pass.
 | `MISSING_REQUIREMENT`, `REQUIREMENT_VERSION` | An applicable direct requirement is absent or the wrong version. |
 | `DUPLICATE_DISTRIBUTION` | Two copies of a direct requirement or `massive-workflows` are on `sys.path`; the first shadows the rest. |
 | `SHADOWED_MODULE` | A workflow-directory module shadows a standard-library or installed module. |
-| `WORKSPACE_LOCK` | The workflow is a uv workspace member whose `uv.lock` is in a parent directory, so it is neither archived nor checked. |
+| `WORKSPACE_LOCK` | The workflow is a member of a uv workspace in a parent directory; uv resolves it with the workspace lock (even when the member has its own), which is neither archived nor checked. |
+| `LOCKED_SDK_VERSION` | The installed `massive-workflows` differs from the version `uv.lock` pins. |
 | `SDK_VERSION` | `massive-workflows` differs from the control plane release. Source-built control planes skip this check. |
 | `UV_UNAVAILABLE` | `uv.lock` exists but `uv` is not on `PATH`. There is no silent downgrade. |
 | `LOCK_STALE` | `uv.lock` does not match `pyproject.toml`. |

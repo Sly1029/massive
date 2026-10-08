@@ -239,9 +239,10 @@ func sdkVersionFinding(probe *Probe, version, root string, locked bool) *Finding
 	}
 }
 
-// uv prints planned changes as " + name==version" lines; only those package
-// names and versions are reported, never other uv output.
-var plannedChange = regexp.MustCompile(`(?m)^ ([+-]) ([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9.+!_-]+)`)
+// uv prints planned changes as " + name==version" lines, or " + name @ url"
+// for direct references. Only package names and registry versions are
+// reported, never URLs (which can carry credentials) or other uv output.
+var plannedChange = regexp.MustCompile(`(?m)^ ([+-]) ([A-Za-z0-9][A-Za-z0-9._-]*)(?:==([A-Za-z0-9.+!_-]+)| @ )`)
 
 // uvSettings may be inherited: they locate the cache and indexes or are
 // recorded lock inputs. Every other UV_* variable (UV_FROZEN, UV_NO_SYNC,
@@ -296,9 +297,13 @@ func lockFindings(ctx context.Context, root string, interpreter Interpreter) []F
 			Fix:     fmt.Sprintf("run `uv lock` in %s and commit the updated uv.lock", root),
 		}}
 	}
-	// --inexact --no-dev checks the locked runtime set only: dev groups,
-	// extras, and tools installed alongside it are permitted.
-	exit, output, failure := run("sync", "--locked", "--check", "--inexact", "--no-dev")
+	// The locked runtime set only: dependency groups (including
+	// [tool.uv] default-groups), extras, and tools beside it are permitted. The
+	// project itself ships as a source archive and is never installed. The SDK
+	// is excluded because images install it from a local wheel, whose recorded
+	// source differs from the lock; the probe compares its locked version.
+	exit, output, failure := run("sync", "--locked", "--check", "--inexact", "--no-default-groups",
+		"--no-install-project", "--no-install-package", sdkDistribution)
 	switch exit {
 	case -1:
 		return []Finding{failure}
@@ -307,7 +312,10 @@ func lockFindings(ctx context.Context, root string, interpreter Interpreter) []F
 	}
 	var required, replaced []string
 	for _, match := range plannedChange.FindAllStringSubmatch(output, -1) {
-		change := match[2] + "==" + match[3]
+		change := match[2] + " (direct reference)"
+		if match[3] != "" {
+			change = match[2] + "==" + match[3]
+		}
 		if match[1] == "+" {
 			required = append(required, change)
 		} else {

@@ -16,10 +16,12 @@ import sys
 import sysconfig
 import tomllib
 from collections.abc import Sequence
+from fnmatch import fnmatchcase
 from importlib.metadata import Distribution as InstalledDistribution
 from importlib.metadata import distributions, packages_distributions
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
@@ -47,6 +49,7 @@ FindingCode = Literal[
     "DUPLICATE_DISTRIBUTION",
     "SHADOWED_MODULE",
     "WORKSPACE_LOCK",
+    "LOCKED_SDK_VERSION",
 ]
 
 
@@ -74,10 +77,17 @@ class _Project(BaseModel):
     dependencies: tuple[Annotated[str, AfterValidator(_requirement)], ...] = ()
 
 
+class _Workspace(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    members: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+
+
 class _UVTool(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    workspace: dict[str, Any] | None = None
+    workspace: _Workspace | None = None
 
 
 class _Tools(BaseModel):
@@ -91,6 +101,27 @@ class _Pyproject(BaseModel):
 
     project: _Project | None = None
     tool: _Tools = Field(default_factory=_Tools)
+
+
+class _WorkspaceCandidate(BaseModel):
+    """An ancestor pyproject.toml; only its uv workspace table matters."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    tool: _Tools = Field(default_factory=_Tools)
+
+
+class _LockedPackage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    version: str | None = None
+
+
+class _Lock(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    package: tuple[_LockedPackage, ...] = ()
 
 
 class _Output(BaseModel):
@@ -152,7 +183,7 @@ class Probe(_Output):
 
 def probe(root: Path) -> Probe:
     """Compare the running interpreter with the project at ``root`` without importing it."""
-    project = _read(root / "pyproject.toml").project
+    project = _read(root / "pyproject.toml", _Pyproject).project
     locked = (root / "uv.lock").is_file()
     installed: dict[str, list[InstalledDistribution]] = {}
     for distribution in distributions():
@@ -179,16 +210,20 @@ def probe(root: Path) -> Probe:
                     f"environment: {_sync_command(root)}",
                 )
             )
-    if not locked and (workspace := _workspace_root(root)) is not None:
+    # uv resolves a workspace member with the workspace's lock, even when the
+    # member has a uv.lock of its own, so neither lock would really be checked.
+    if (workspace := _workspace_root(root)) is not None:
         findings.append(
             Finding(
                 code="WORKSPACE_LOCK",
-                message=f"{root} is a member of the uv workspace at {workspace}; that "
-                "uv.lock is neither archived with the workflow nor checked",
+                message=f"{root} is a member of the uv workspace at {workspace}; uv resolves "
+                "it with the workspace's uv.lock, which is neither archived nor checked",
                 fix=f"give the workflow its own lock: exclude it from [tool.uv.workspace] in "
                 f"{workspace / 'pyproject.toml'} and run `uv lock` in {root}",
             )
         )
+    if locked and (finding := _locked_sdk_finding(root, effective.get(SDK_DISTRIBUTION))):
+        findings.append(finding)
     findings.extend(_shadowing_findings(root, project))
 
     return Probe(
@@ -198,7 +233,9 @@ def probe(root: Path) -> Probe:
         if project is None
         else ProjectRequirements(
             requiresPython=project.requires_python,
-            dependencies=tuple(sorted(_normalized(text) for text in project.dependencies)),
+            dependencies=tuple(
+                sorted(_normalized(Requirement(text)) for text in project.dependencies)
+            ),
         ),
         distributions=tuple(
             _distribution_facts(name, distribution) for name, distribution in effective.items()
@@ -207,11 +244,11 @@ def probe(root: Path) -> Probe:
     )
 
 
-def _read(path: Path) -> _Pyproject:
+def _read[Model: BaseModel](path: Path, model: type[Model]) -> Model:
     if not path.is_file():
-        return _Pyproject()
+        return model()
     try:
-        return _Pyproject.model_validate(tomllib.loads(path.read_text(encoding="utf-8")))
+        return model.model_validate(tomllib.loads(path.read_text(encoding="utf-8")))
     except OSError as error:
         raise ProjectError(f"cannot read {path}: {error.strerror}") from error
     except tomllib.TOMLDecodeError as error:
@@ -271,17 +308,20 @@ def _requirement_findings(
         )
     for requirement in applicable:
         installed = effective.get(canonicalize_name(requirement.name))
-        install = (
-            _sync_command(root)
-            if locked
-            else f"run `uv pip install --python {shlex.quote(sys.executable)} "
-            f"{shlex.quote(str(requirement))}`"
-        )
+        shown = _normalized(requirement)
+        if locked:
+            install = _sync_command(root)
+        elif requirement.url is not None:
+            install = f"install {requirement.name} from its direct reference in [project].dependencies"
+        else:
+            install = (
+                f"run `uv pip install --python {shlex.quote(sys.executable)} {shlex.quote(shown)}`"
+            )
         if installed is None:
             findings.append(
                 Finding(
                     code="MISSING_REQUIREMENT",
-                    message=f"{str(requirement)!r} is declared in [project].dependencies but "
+                    message=f"{shown!r} is declared in [project].dependencies but "
                     f"not installed in {sys.prefix}",
                     fix=install,
                 )
@@ -291,7 +331,7 @@ def _requirement_findings(
                 Finding(
                     code="REQUIREMENT_VERSION",
                     message=f"{requirement.name} {installed.version} is installed, but "
-                    f"[project].dependencies requires {str(requirement)!r}",
+                    f"[project].dependencies requires {shown!r}",
                     fix=install,
                 )
             )
@@ -300,9 +340,36 @@ def _requirement_findings(
 
 def _workspace_root(root: Path) -> Path | None:
     for parent in root.parents:
-        if (parent / "uv.lock").is_file() and _read(parent / "pyproject.toml").tool.uv.workspace:
+        workspace = _read(parent / "pyproject.toml", _WorkspaceCandidate).tool.uv.workspace
+        if workspace is None:
+            continue
+        member = root.relative_to(parent).as_posix()
+        if any(fnmatchcase(member, pattern) for pattern in workspace.members) and not any(
+            fnmatchcase(member, pattern) for pattern in workspace.exclude
+        ):
             return parent
     return None
+
+
+def _locked_sdk_finding(root: Path, installed: InstalledDistribution | None) -> Finding | None:
+    """The uv sync check excludes the SDK, whose image install records a local
+    wheel rather than the locked source; its locked version must still match."""
+    try:
+        lock = _Lock.model_validate(tomllib.loads((root / "uv.lock").read_text(encoding="utf-8")))
+    except (tomllib.TOMLDecodeError, ValidationError):
+        return None  # the uv lock check reports a malformed lock
+    locked = next(
+        (item.version for item in lock.package if canonicalize_name(item.name) == SDK_DISTRIBUTION),
+        None,
+    )
+    if locked is None or (installed is not None and installed.version == locked):
+        return None
+    return Finding(
+        code="LOCKED_SDK_VERSION",
+        message=f"uv.lock pins {SDK_DISTRIBUTION} {locked}, but "
+        f"{'none' if installed is None else installed.version} is installed in {sys.prefix}",
+        fix=_sync_command(root),
+    )
 
 
 def _shadowing_findings(root: Path, project: _Project | None) -> list[Finding]:
@@ -342,10 +409,19 @@ def _shadowing_findings(root: Path, project: _Project | None) -> list[Finding]:
     return findings
 
 
-def _normalized(text: str) -> str:
-    requirement = Requirement(text)
-    requirement.name = canonicalize_name(requirement.name)
-    return str(requirement)
+def _normalized(requirement: Requirement) -> str:
+    """A requirement safe to report and hash: a canonical name, and a direct
+    reference without credentials, query, fragment, or local path."""
+    normalized = Requirement(str(requirement))
+    normalized.name = canonicalize_name(normalized.name)
+    if normalized.url is not None:
+        url = urlsplit(normalized.url)
+        if url.scheme == "file" or not url.hostname:
+            normalized.url = "file:"
+        else:
+            port = f":{url.port}" if url.port is not None else ""
+            normalized.url = f"{url.scheme}://{url.hostname}{port}{url.path}"
+    return str(normalized)
 
 
 def _distribution_facts(name: str, distribution: InstalledDistribution) -> Distribution:

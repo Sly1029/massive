@@ -42,7 +42,8 @@
             "REQUIREMENT_VERSION",
             "DUPLICATE_DISTRIBUTION",
             "SHADOWED_MODULE",
-            "WORKSPACE_LOCK"
+            "WORKSPACE_LOCK",
+            "LOCKED_SDK_VERSION"
           ],
           "title": "Code",
           "type": "string"

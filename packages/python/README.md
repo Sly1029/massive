@@ -534,19 +534,27 @@ fails with one fix line per problem when:
 - a module in the workflow directory, such as `json.py`, shadows a standard-library
   or installed module;
 - `massive-workflows` differs from the control plane's release;
-- the workflow belongs to a uv workspace whose `uv.lock` lives in a parent
-  directory; Massive neither archives nor checks that lock;
-- with a `uv.lock`: the lock is stale (`uv lock --check`), or a locked runtime
+- the workflow is a member of a uv workspace in a parent directory. uv then
+  resolves it with the workspace's `uv.lock`, even if the workflow has its own,
+  and Massive neither archives nor checks that lock;
+- with a `uv.lock`: the lock is stale (`uv lock --check`), a locked runtime
   package is missing or at another version
-  (`uv sync --locked --check --inexact --no-dev`). Dev groups, extras, and
-  other packages installed alongside the locked runtime set are allowed, so an
-  image built with `uv sync --locked --no-dev` passes. A lock without `uv` on
-  `PATH` fails too.
+  (`uv sync --locked --check --inexact --no-default-groups --no-install-project
+  --no-install-package massive-workflows`), or the installed `massive-workflows`
+  differs from the version the lock pins. Dependency groups (including
+  `[tool.uv] default-groups`), extras, and other packages beside the locked
+  runtime set are allowed. A packaged workflow (`uv init --package`) is never
+  installed itself, because it runs from its source archive. The SDK is compared
+  by version only, because images usually install it from a local wheel. An
+  image built with `uv sync --locked --no-dev`, or from `uv export` requirements
+  plus the SDK wheel, passes. A lock without `uv` on `PATH` fails too.
 
 The uv checks run offline against the checked interpreter (`--python`), ignore
 `UV_*` settings that would change their meaning (such as `UV_FROZEN` or
 `UV_PYTHON`), never install anything, and never print uv's output, because index
-URLs can carry credentials. The verification level is `LOCK_SYNC_CHECKED` with a
+URLs can carry credentials. For the same reason, direct references in
+`[project].dependencies` are reported without credentials, query strings, or
+fragments, and local `file:` references without their path. The verification level is `LOCK_SYNC_CHECKED` with a
 lock and `DIRECT_REQUIREMENTS_SATISFIED` without one; transitive versions are then
 unchecked. A workflow without `[project]` metadata is `UNDECLARED`: it runs, but
 nothing beyond interpreter safety and the SDK release was verified. Check an

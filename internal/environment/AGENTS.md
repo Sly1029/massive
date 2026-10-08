@@ -18,10 +18,16 @@ or `UV_PYTHON` would change the check's meaning. Exit 1 means "not current"; any
 other failure is a `UV_FAILED` finding that keeps the probe's findings. Findings
 may carry only package names and versions parsed from uv's planned-change lines.
 Raw uv output can contain index URLs with credentials, so never report or persist it.
-The lock check is `--inexact --no-dev`: the locked runtime set must be installed,
-and dev groups, extras, or tools beside it are allowed. Fix lines must name the
-checked environment unless it is `<root>/.venv`. A missing `uv` with a lock, or a
-parent workspace lock, is a finding. Never downgrade the verification level
+The lock check is `--inexact --no-default-groups --no-install-project
+--no-install-package massive-workflows`: the locked runtime set must be
+installed, while groups, extras, or tools beside it are allowed. The project
+ships as an archive and is never installed. The SDK's recorded image source (a
+local wheel) never matches its lock source, so the probe compares only its
+locked version. Name direct-reference packages without their URL. Fix lines must
+name the checked environment unless it is `<root>/.venv`. A missing `uv` with a
+lock, or membership in a parent uv workspace (whether or not the member has its
+own lock), is a finding. Requirements leave the probe without URL credentials,
+queries, fragments, or local paths. Never downgrade the verification level
 silently; a project without `[project]` metadata is `UNDECLARED`.
 
 Test against real environments built with `uv venv` and `uv sync --locked`.

@@ -72,7 +72,8 @@ func run(t *testing.T, dir string, environment []string, name string, args ...st
 }
 
 // lockedProject copies the committed locked fixture with an absolute SDK source
-// plus a dev group and an optional extra, then locks it.
+// and makes it a packaged project (`uv init --package`) with default dependency
+// groups, an optional extra, and a local path dependency, then locks it.
 func lockedProject(t *testing.T) string {
 	t.Helper()
 	repository := repositoryRoot(t)
@@ -86,13 +87,32 @@ func lockedProject(t *testing.T) string {
 		if name == "pyproject.toml" {
 			sdk := filepath.ToSlash(filepath.Join(repository, "packages", "python"))
 			text := strings.Replace(string(body), `"../../../packages/python"`, `"`+sdk+`"`, 1)
-			text = strings.Replace(text, "\n# Conformance", "\n[project.optional-dependencies]\nreport = [\"six\"]\n\n[dependency-groups]\ndev = [\"iniconfig\"]\n\n# Conformance", 1)
+			text = strings.Replace(text, `"tabulate>=0.9,<1"]`, `"tabulate>=0.9,<1", "local-helper"]`, 1)
+			text = strings.Replace(text, "\n# Conformance", `
+[project.optional-dependencies]
+report = ["six"]
+
+[dependency-groups]
+dev = ["iniconfig"]
+docs = ["six"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+default-groups = ["dev", "docs"]
+
+# Conformance`, 1)
+			text += "local-helper = { path = \"helper\" }\n"
 			body = []byte(text)
 		}
 		if err := os.WriteFile(filepath.Join(root, name), body, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
+	writeProject(t, filepath.Join(root, "helper"), "[project]\nname = \"local-helper\"\nversion = \"0.1.0\"\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n",
+		map[string]string{"local_helper.py": "VALUE = 1\n"})
 	run(t, root, nil, "uv", "lock", "--quiet", "--python", sdkPython(t))
 	return root
 }
@@ -185,16 +205,27 @@ func ready(t *testing.T, report *environment.Report, verification environment.Ve
 func TestLockCheckRequiresTheLockedRuntimeSetOnly(t *testing.T) {
 	root := lockedProject(t)
 
-	t.Run("a --no-dev environment is ready", func(t *testing.T) {
-		ready(t, check(t, venvPython(syncedEnvironment(t, root, "--no-dev")), root, ""), environment.LockSyncChecked)
+	// Like an image: no default groups, and the packaged project itself is
+	// never installed because it ships as a source archive.
+	t.Run("an image-like environment is ready", func(t *testing.T) {
+		ready(t, check(t, venvPython(syncedEnvironment(t, root, "--no-default-groups", "--no-install-project")), root, ""), environment.LockSyncChecked)
 	})
 
-	python := venvPython(syncedEnvironment(t, root, "--extra", "report"))
+	python := venvPython(syncedEnvironment(t, root, "--extra", "report", "--no-install-project"))
 	report := check(t, python, root, "")
 	ready(t, report, environment.LockSyncChecked)
-	if report.Project == nil || strings.Join(report.Project.Dependencies, ",") != "massive-workflows,tabulate<1,>=0.9" {
+	if report.Project == nil || strings.Join(report.Project.Dependencies, ",") != "local-helper,massive-workflows,tabulate<1,>=0.9" {
 		t.Fatalf("project requirements = %#v", report.Project)
 	}
+
+	t.Run("a missing direct reference is named without its URL", func(t *testing.T) {
+		other := venvPython(syncedEnvironment(t, root, "--no-install-project"))
+		run(t, root, nil, "uv", "pip", "uninstall", "--quiet", "--python", other, "local-helper")
+		got := finding(t, check(t, other, root, ""), environment.LockOutOfSync)
+		if !strings.Contains(got.Message, "local-helper") || strings.Contains(got.Message, root) || strings.Contains(got.Message, "file:") {
+			t.Fatalf("finding = %#v", got)
+		}
+	})
 
 	t.Run("SDK version must match the control plane", func(t *testing.T) {
 		mismatch := check(t, python, root, "9.9.9")
@@ -290,10 +321,27 @@ dependencies = ["absent-package>=1", "pydantic<1"]
 }
 
 func TestWorkspaceMemberLockIsNotSilentlyIgnored(t *testing.T) {
-	workspace := writeProject(t, "", "[project]\nname = \"root\"\nversion = \"0.1.0\"\n[tool.uv.workspace]\nmembers = [\"member\"]\n", map[string]string{"uv.lock": "version = 1\n"})
-	member := writeProject(t, filepath.Join(workspace, "member"), "[project]\nname = \"member\"\nversion = \"0.1.0\"\n", map[string]string{"workflow.py": ""})
-	if got := finding(t, check(t, sdkEnvironment(t), member, ""), "WORKSPACE_LOCK"); !strings.Contains(got.Message, workspace) {
+	python := sdkEnvironment(t)
+	workspace := writeProject(t, "", "[project]\nname = \"root\"\nversion = \"0.1.0\"\n[tool.uv.workspace]\nmembers = [\"members/*\"]\nexclude = [\"members/standalone\"]\n", map[string]string{"uv.lock": "version = 1\n"})
+	// The member's own uv.lock would be ignored by uv in favor of the workspace lock.
+	member := writeProject(t, filepath.Join(workspace, "members", "flow"), "[project]\nname = \"flow\"\nversion = \"0.1.0\"\n", map[string]string{"workflow.py": "", "uv.lock": "not a lock"})
+	if got := finding(t, check(t, python, member, ""), "WORKSPACE_LOCK"); !strings.Contains(got.Message, workspace) {
 		t.Fatalf("finding = %#v", got)
+	}
+	standalone := writeProject(t, filepath.Join(workspace, "members", "standalone"), "[project]\nname = \"standalone\"\nversion = \"0.1.0\"\n", map[string]string{"workflow.py": ""})
+	ready(t, check(t, python, standalone, ""), environment.DirectRequirementsSatisfied)
+}
+
+// A uv failure is a finding with the exact rerun command, and it keeps every
+// probe finding instead of replacing the report with an error.
+func TestUVFailureKeepsProbeFindings(t *testing.T) {
+	python := sdkEnvironment(t)
+	root := writeProject(t, "", "[project]\nname = \"broken\"\nversion = \"0.1.0\"\ndependencies = [\"absent-package\"]\n", map[string]string{"workflow.py": "", "uv.lock": "this is [not a lock"})
+	report := check(t, python, root, "")
+	finding(t, report, "MISSING_REQUIREMENT")
+	failed := finding(t, report, environment.UVFailed)
+	if !strings.Contains(failed.Fix, "uv lock --check --offline") || !strings.Contains(failed.Fix, "UV_PROJECT_ENVIRONMENT=") || !strings.Contains(failed.Fix, "--project "+root) {
+		t.Fatalf("finding = %#v", failed)
 	}
 }
 

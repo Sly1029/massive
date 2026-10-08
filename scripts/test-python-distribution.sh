@@ -308,6 +308,47 @@ assert "lacks locked runtime packages: tabulate==" in diagnostic, diagnostic
 assert "uv sync --locked" in diagnostic, diagnostic
 PY
 
+# A stock runner image installs the SDK from a local wheel, recording a file://
+# source, while the workflow locks it from an index. The lock check excludes
+# the SDK and compares its locked version instead.
+stock="$test_root/stock"
+mkdir -p "$stock/project"
+cp "$repository/conformance/workflows/python-locked/workflow.py" "$stock/project/workflow.py"
+cat > "$stock/project/pyproject.toml" <<TOML
+[project]
+name = "stock-image"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["massive-workflows==$version", "tabulate>=0.9,<1"]
+
+[tool.uv]
+find-links = ["$(dirname "$wheel")"]
+TOML
+(
+  cd "$stock/project"
+  uv lock --quiet
+  grep -q 'name = "massive-workflows"' uv.lock
+  ! grep -A3 'name = "massive-workflows"' uv.lock | grep -q 'path\|editable'
+  uv export --frozen --no-dev --no-emit-project --no-emit-package massive-workflows \
+    --format requirements-txt --output-file "$stock/requirements.txt" > /dev/null
+)
+uv venv --quiet "$stock/image"
+uv pip install --quiet --python "$stock/image/bin/python" --require-hashes -r "$stock/requirements.txt"
+uv pip install --quiet --python "$stock/image/bin/python" --no-deps "$wheel"
+"$stock/image/bin/massive" env check "$stock/project/workflow.py" --json > "$test_root/stock-ready.json"
+"$python" - "$test_root/stock-ready.json" "$stock/image" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+ready = json.loads(Path(sys.argv[1]).read_text())
+assert ready["status"] == "ready", ready
+assert ready["verification"] == "LOCK_SYNC_CHECKED", ready
+sdk = next(item for item in ready["distributions"] if item["name"] == "massive-workflows")
+assert sdk["direct"] is True and sdk["editable"] is False, sdk
+assert Path(ready["interpreter"]["prefix"]).resolve() == Path(sys.argv[2]).resolve(), ready
+PY
+
 # The shipped Go CLI dispatches to the TypeScript adapters even when the Python
 # launcher supplies MASSIVE_PYTHON. No repository CLI or binary build cache runs.
 cp -R "$repository/conformance/workflows/linear-chain" "$test_root/typescript"
