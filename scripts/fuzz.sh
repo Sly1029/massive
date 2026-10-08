@@ -6,6 +6,7 @@
 #
 #   ./scripts/fuzz.sh                       # all packages
 #   ./scripts/fuzz.sh ./internal/plan       # selected packages
+#   ./scripts/fuzz.sh --list-packages       # JSON array of fuzzed packages
 #   FUZZ_TIME=5m FUZZ_WORKERS=4 ./scripts/fuzz.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -14,10 +15,23 @@ fuzz_time="${FUZZ_TIME:-30s}"
 workers="${FUZZ_WORKERS:-2}"
 minimize_time="${FUZZ_MINIMIZE_TIME:-30s}"
 
+mapfile -t discovered < <(git ls-files '*_test.go' | xargs grep -l '^func Fuzz' | xargs -n1 dirname | sort -u | sed 's|^|./|')
+
+if [ "${1:-}" = "--list-packages" ]; then
+  separator=""
+  printf '['
+  for package in "${discovered[@]}"; do
+    printf '%s"%s"' "$separator" "$package"
+    separator=","
+  done
+  printf ']\n'
+  exit 0
+fi
+
 if [ "$#" -gt 0 ]; then
   packages=("$@")
 else
-  mapfile -t packages < <(git ls-files '*_test.go' | xargs grep -l '^func Fuzz' | xargs -n1 dirname | sort -u | sed 's|^|./|')
+  packages=("${discovered[@]}")
 fi
 
 failures=()

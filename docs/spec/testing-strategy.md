@@ -178,10 +178,12 @@ with the orchestrator.
   targets cover their parsers.
 
 Set `FUZZ_TIME=5m` and `FUZZ_WORKERS=4` for a longer local campaign, or pass
-package paths to fuzz a subset. CI fuzzes each package in its own job: bounded
-campaigns on pull requests that touch fuzzed code, longer ones nightly. Only
-runs on main (nightly or dispatched) save the corpus cache; pull requests
-restore it. Failing inputs are written to the package's
+package paths to fuzz a subset. Pull requests that touch fuzzed code run one
+serial smoke job: every target for 15s with minimization capped at 5s. The
+nightly run, and a manual dispatch, fuzz each package in its own job for 120s
+per target. Those runs on main own the corpus cache: each job restores and
+saves only its package's key, and setup-go's build cache is disabled so it
+cannot capture the corpus too. Failing inputs are written to the package's
 `testdata/fuzz/<target>/` and uploaded by CI. Commit minimized reproducers with
 the fix; `go test ./...` replays them as normal tests. Committed scenario seeds
 keep rare fault combinations covered without a fuzzing run.
