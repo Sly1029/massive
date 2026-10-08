@@ -111,9 +111,21 @@ cannot shadow the archived source, and emission and execution cannot resolve
 different interpreters.
 
 For Argo, build an image with the same locked dependencies and Massive version,
-then reference its immutable digest using `container(...)`. Argo currently executes
-that image; local execution uses the active Python environment, **not** the declared
-container. They are not yet verified-equivalent realizations.
+then reference its immutable digest using `container(...)`. `massive build` checks
+only what emission needs (scope `EMISSION_CHECKED`): interpreter safety, the SDK
+release, workspace locks, and `uv lock --check`. Every Python attempt in a pod
+runs the full preflight against the image's interpreter and the archived
+`pyproject.toml`/`uv.lock`. Findings and unreadable project metadata exit 68,
+which Argo does not retry. Cancellation, eviction, and other infrastructure
+errors keep their retryable exit. A passing attempt records its realization
+beside its output manifest. The build host needs `uv` when a `uv.lock` exists;
+`massive build` fails rather than silently skip the lock check. Pods see only the
+source archive, so `[tool.uv.sources]` paths outside the workflow directory fail
+there (`UV_FAILED`). Local
+execution uses the active Python environment, **not** the declared container;
+each realization is checked and recorded, but the two are not proven
+equivalent to each other. A locked workflow's image needs `uv` and a writable
+`UV_CACHE_DIR`, as in the reference Dockerfile.
 
 ## The next small contract
 
@@ -146,8 +158,7 @@ installation command. A container materializer must commit an actual image befor
 recording an artifact; a recipe is not a built artifact.
 
 Local dependency preflight runs before any author code is imported (see above),
-and each local run records the realized environment (below). Argo pods do not
-yet check their image against the archived project inputs. Optional Docker-based
+and each local run and Argo attempt records the realized environment (below). Optional Docker-based
 local execution can later reuse an existing image rather than invent a new
 scheduler; it is not implemented.
 

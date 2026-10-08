@@ -120,6 +120,6 @@ massive-compiler bundle-argo \
 ```
 
 No automatic installation, registry verification, server build workers, provider
-registry, or local Docker execution is included. Local dependency preflight checks
-the emitting interpreter ([environment materialization](environment-materialization.md));
-it does not verify the container image this manifest selects.
+registry, or local Docker execution is included. This offline manifest does not
+verify the selected image's dependencies; each Argo attempt does so at runtime
+through dependency preflight ([environment materialization](environment-materialization.md)).

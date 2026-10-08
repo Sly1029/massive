@@ -28,7 +28,7 @@ type envCheckOutput struct {
 }
 
 func (command *EnvCheckCommand) Run(ctx context.Context, stdout io.Writer) error {
-	report, err := controlplane.CheckEnvironment(ctx, command.Entry)
+	report, err := controlplane.CheckEnvironment(ctx, command.Entry, environment.Execution)
 	if err != nil {
 		return err
 	}

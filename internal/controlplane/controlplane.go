@@ -15,8 +15,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Sly1029/massive/conformance/schema/materializationpb"
-	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/environment"
@@ -43,25 +41,38 @@ type FrontendResult struct {
 
 // CheckEnvironment runs dependency preflight for a Python workflow file without
 // importing it. Findings are returned in the report, not as an error.
-func CheckEnvironment(ctx context.Context, workflowFile string) (*environment.Report, error) {
+func CheckEnvironment(ctx context.Context, workflowFile string, scope environment.Scope) (*environment.Report, error) {
 	if info, err := os.Stat(workflowFile); err != nil || info.IsDir() || filepath.Ext(workflowFile) != ".py" {
 		return nil, fmt.Errorf("dependency preflight requires a Python workflow file, not %q", workflowFile)
 	}
+	request, err := PythonEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	request.ProjectRoot, request.Scope = filepath.Dir(workflowFile), scope
+	return environment.Check(ctx, request)
+}
+
+// PythonEnvironment is the preflight request for the launching interpreter and
+// this control plane; callers choose the project root and scope.
+func PythonEnvironment() (environment.Request, error) {
 	python := os.Getenv("MASSIVE_PYTHON")
 	if python == "" {
-		return nil, errors.New("Python workflows need the project interpreter; launch the massive command installed by massive-workflows (for example `uv run --locked massive …`) or set MASSIVE_PYTHON")
+		return environment.Request{}, errors.New("Python workflows need the project interpreter; launch the massive command installed by massive-workflows (for example `uv run --locked massive …`) or set MASSIVE_PYTHON")
 	}
-	return environment.Check(ctx, environment.Request{
-		Python: python, ProjectRoot: filepath.Dir(workflowFile), ControlPlaneVersion: Version,
+	return environment.Request{
+		Python: python, ControlPlaneVersion: Version,
 		// A source-built control plane is paired with its checkout's SDK.
 		RequireSDK: Version != developmentVersion,
-	})
+	}, nil
 }
 
 // Emit loads a language frontend as a process adapter. The only data crossing
 // this seam is the canonical WorkflowSpec projection, which the frontend writes
-// to its --output file; its stdout and stderr belong to author code.
-func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
+// to its --output file; its stdout and stderr belong to author code. Scope
+// states whether the Python interpreter will also run tasks (Execution) or only
+// emit a graph for a container target (Emission).
+func Emit(ctx context.Context, entry string, scope environment.Scope) (*FrontendResult, error) {
 	path := entry
 	if index := strings.LastIndex(entry, "#"); index >= 0 {
 		path = entry[:index]
@@ -86,7 +97,7 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	}
 	switch extension {
 	case ".py":
-		report, err = CheckEnvironment(ctx, absolute)
+		report, err = CheckEnvironment(ctx, absolute, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -210,8 +221,11 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 	var runnerCommand []string
 	var realized *runjournal.Environment
 	if report := request.Frontend.Environment; report != nil {
+		if report.Record == nil {
+			return nil, errors.New("this workflow was checked only for emission; emit it with environment.Execution to run it locally")
+		}
 		runnerCommand = orchestrator.PythonRunnerCommand(report.Interpreter.Executable)
-		if realized, err = putEnvironmentRecord(ctx, store, report.Record); err != nil {
+		if realized, err = environment.Store(ctx, store, report.Record); err != nil {
 			return nil, err
 		}
 	}
@@ -240,24 +254,6 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 	return &LocalRunResult{
 		Run: runResult, Plan: compiled, Result: append(json.RawMessage(nil), body.Body...),
 		Reused: reused, Store: storeRoot,
-	}, nil
-}
-
-// putEnvironmentRecord stores the realization content-addressed, so runs in
-// identical environments share one record.
-func putEnvironmentRecord(ctx context.Context, store datastore.Datastore, record *materializationpb.RealizedEnvironment) (*runjournal.Environment, error) {
-	body, err := environment.MarshalRecord(record)
-	if err != nil {
-		return nil, err
-	}
-	hash := canonical.DigestBytes(body)
-	key := datastore.MustKey("environments/sha256-" + strings.TrimPrefix(hash, "sha256:") + "/realized-environment.json")
-	if _, err := store.Put(ctx, key, body, datastore.PutOptions{ContentType: environment.RecordContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
-		return nil, fmt.Errorf("persist realized environment: %w", err)
-	}
-	return &runjournal.Environment{
-		RequirementHash: record.GetRequirementHash(), RealizationHash: record.GetRealizationHash(),
-		Record: runjournal.ArtifactRef{Key: key.String(), Hash: hash, Size: len(body), ContentType: environment.RecordContentType},
 	}, nil
 }
 

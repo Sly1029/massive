@@ -118,6 +118,9 @@ func (d *S3Datastore) Get(ctx context.Context, key Key) (Object, error) {
 		if isS3NotFound(err) {
 			return Object{}, fmt.Errorf("get %s: %w", key, ErrNotFound)
 		}
+		if isS3AccessDenied(err) {
+			return Object{}, fmt.Errorf("get %s: %w", key, ErrAccessDenied)
+		}
 		return Object{}, fmt.Errorf("stat s3 object %s: %w", key, err)
 	}
 
@@ -199,6 +202,15 @@ func isS3NotFound(err error) bool {
 		return false
 	}
 	return response.Code == "NoSuchKey" || response.Code == "NoSuchBucket" || response.StatusCode == 404
+}
+
+// isS3AccessDenied matches the Python runner's classification of denied reads.
+func isS3AccessDenied(err error) bool {
+	var response minio.ErrorResponse
+	if !errors.As(err, &response) {
+		return false
+	}
+	return response.Code == "AccessDenied" || response.StatusCode == 403
 }
 
 func isS3Conflict(err error) bool {

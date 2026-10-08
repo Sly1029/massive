@@ -68,6 +68,10 @@ run the isolated step adapter and Python runner. Source files are verified at
 build time and delivered by the selected runtime transport; they do not need to
 be baked into the runner image. If a container recipe supplies `command=`, that
 command must launch the Massive CLI and accept the generated runtime arguments.
+Each Python attempt checks the image against the workflow's archived
+`pyproject.toml` and `uv.lock` before running author code; a workflow with a
+`uv.lock` needs `uv` and a writable `UV_CACHE_DIR` in the image, as in the
+[reference Dockerfile](https://github.com/Sly1029/massive/blob/main/packages/python/Dockerfile).
 
 Local and Argo execution support steps, exhaustive decisions/selects, and finite
 maps. Python workflows can reuse a typed child graph with `graph.call(child, id="name")`.
@@ -356,7 +360,8 @@ The important runtime categories are:
 
 At the command boundary, descriptor errors exit 64, schema/artifact failures
 exit 65, a user-step exception exits 66, and a `NonRetryableError` exits 67 so
-the orchestrator does not retry it. Datastore outages are deliberately
+the orchestrator does not retry it. On Argo, a failed dependency preflight of
+the image exits 68 and is not retried either. Datastore outages are deliberately
 not rewritten as artifact conflicts so retry policy can recognize them as
 transient infrastructure failures.
 
@@ -572,9 +577,24 @@ nor `PYTHONPATH` can shadow the verified source snapshot. Launch through the
 `massive` command installed by `massive-workflows`, which always supplies its own
 interpreter as `MASSIVE_PYTHON`, overriding any exported value.
 
-For Argo, build an immutable runner image with the same locked dependencies and
-Massive version. Preflight checks the local emission environment, not the
-container declared in the contract.
+`massive build` only emits a graph locally, so it checks what emission relies on
+(`EMISSION_CHECKED`): interpreter safety, the SDK release, workspace locks, and a
+current `uv.lock` (`uv lock --check`). The build host does not need the workflow's
+dependencies, but it does import the workflow: import container-only packages
+inside the steps that use them. With a `uv.lock`, the build host needs `uv` on
+`PATH`; `massive build` fails rather than skip the lock check. Each Argo attempt
+then runs the full preflight against the container's interpreter and the
+archived project, before any author code runs. Findings or unreadable project
+metadata exit 68, which Argo does not retry, and they appear in the pod log. A
+terminated or evicted pod keeps its ordinary, retryable failure. With
+`--runtime-transport object-store-v0`, the pod checks the published archive, so
+an unpublished, unreadable, or mismatched archive also exits 68.
+
+Pods see only the source archive. A `[tool.uv.sources]` path outside the
+workflow directory cannot be resolved there and fails with `UV_FAILED`; lock such
+dependencies from an index or keep them inside the workflow directory. An
+attempt that passes stores its `RealizedEnvironment` and writes an
+`environment.json` reference beside its output manifest.
 
 See the [packaged map example](https://github.com/Sly1029/massive/blob/main/examples/07-package/workflow.py) for a
 nested module, a text resource, and ordered collection into a typed result.

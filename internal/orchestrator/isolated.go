@@ -11,6 +11,7 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 )
@@ -19,12 +20,14 @@ import (
 // executor pod. SourceArchives pins each plan source package, by package hash,
 // to the archive the language runner fetches and verifies by digest.
 type IsolatedStepConfig struct {
-	Plan           *planpb.WorkflowPlan
-	NodeID         string
-	Datastore      DatastoreDescriptor
-	ProjectID      string
-	RunID          string
-	RunnerCommand  []string
+	Plan      *planpb.WorkflowPlan
+	NodeID    string
+	Datastore DatastoreDescriptor
+	ProjectID string
+	RunID     string
+	// Environment checks the executor's Python interpreter against a Python
+	// node's archived project; ProjectRoot is filled in per invocation.
+	Environment    environment.Request
 	WorkingDir     string
 	SourceArchives map[string]SourceArchive
 	// Attempt is the 1-based attempt the target is dispatching. Zero means 1.
@@ -38,8 +41,9 @@ type SourceArchive struct {
 	Digest string
 	// Body holds embedded-v0 bytes mounted beside the plan. Each invocation
 	// verifies and installs them. Without a body the archive must already be
-	// published (object-store-v0); the language runner reports a missing or
-	// mismatched object as a non-retryable descriptor failure.
+	// published (object-store-v0). Python preflight fetches and verifies it
+	// before the runner does; both refuse a missing or mismatched object
+	// without a retry.
 	Body []byte
 }
 
@@ -191,7 +195,18 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	if err != nil {
 		return nil, err
 	}
-	invoker := ProcessStepInvoker{CommandTemplate: config.RunnerCommand, WorkingDir: config.WorkingDir, ProcessLimit: 1}
+	var runnerCommand []string
+	if descriptor.Symbol.Language == "python" {
+		if config.Environment.Python == "" {
+			return nil, &PreflightError{NodeID: node.GetId(), Err: errors.New("Python tasks need MASSIVE_PYTHON; launch through the massive command installed by massive-workflows")}
+		}
+		python, err := isolatedPreflight(ctx, store, config.Environment, descriptor, config.SourceArchives[descriptor.SourcePackage.PackageHash])
+		if err != nil {
+			return nil, err
+		}
+		runnerCommand = PythonRunnerCommand(python)
+	}
+	invoker := ProcessStepInvoker{CommandTemplate: runnerCommand, WorkingDir: config.WorkingDir, ProcessLimit: 1}
 	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, MaxConcurrency: 1})
 	if err != nil {
 		return nil, err

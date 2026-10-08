@@ -28,12 +28,13 @@ whatever object is present at a key.
 
 Source archive keys include the archive digest, not only the package identity:
 different tar encodings of one package must never contend for a key. A missing,
-oversized, or mismatched published archive must surface as runner exit 64 so
-the retry expression stops; do not add a Go-side precheck that turns it into a
-retryable infrastructure error.
+oversized, or mismatched published archive must stop the retry expression:
+runner exit 64, or 68 when Python pod preflight fetches and verifies it first.
+Do not add a Go-side precheck that turns it into a retryable infrastructure
+error, and never preflight a missing body as an empty project.
 
 Retry strategies belong only on runner templates. Keep the non-retryable exit
-list aligned with the runner exit codes, pass `{{retries}}` so the runtime
+list aligned with the runner exit codes and the runtime's preflight exit (68), pass `{{retries}}` so the runtime
 derives the attempt, and enforce timeouts inside the runtime instead of with
 `activeDeadlineSeconds`.
 

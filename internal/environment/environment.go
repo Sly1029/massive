@@ -38,7 +38,26 @@ const (
 	// Undeclared means the workflow has no [project] metadata, so nothing beyond
 	// interpreter safety and the SDK release was verified.
 	Undeclared Verification = "UNDECLARED"
+	// EmissionChecked covers only what emitting a graph relies on. Requirements
+	// are verified where tasks run, so it never yields a realization record.
+	EmissionChecked Verification = "EMISSION_CHECKED"
 )
+
+// Scope selects what the checked interpreter is used for.
+type Scope int
+
+const (
+	// Execution checks an interpreter that runs tasks: the full preflight.
+	Execution Scope = iota
+	// Emission checks an interpreter that only emits a graph whose tasks run in
+	// a container: interpreter safety, the SDK release, workspace locks, and a
+	// current uv.lock (`uv lock --check`), but not installed requirements.
+	Emission
+)
+
+// requirementCodes are probe findings about installed requirements, which an
+// emission-only interpreter does not need to satisfy.
+var requirementCodes = map[FindingCode]bool{"REQUIRES_PYTHON": true, "MISSING_REQUIREMENT": true, "REQUIREMENT_VERSION": true}
 
 // FindingCode classifies a preflight failure. The probe contract defines the
 // interpreter and project codes; these are added by the control plane.
@@ -102,6 +121,7 @@ type Request struct {
 	// RequireSDK requires massive-workflows to be the ControlPlaneVersion
 	// release. A source-built control plane has no release to match.
 	RequireSDK bool
+	Scope      Scope
 }
 
 type Report struct {
@@ -119,6 +139,14 @@ func (report *Report) Err() error {
 	}
 	return &PreflightError{ProjectRoot: report.ProjectRoot, Findings: report.Findings}
 }
+
+// ProjectError reports project metadata the probe cannot read. Like a finding,
+// it is a property of the project, so retrying cannot help.
+type ProjectError struct {
+	Message string
+}
+
+func (e *ProjectError) Error() string { return e.Message }
 
 type PreflightError struct {
 	ProjectRoot string
@@ -147,6 +175,15 @@ func Check(ctx context.Context, request Request) (*Report, error) {
 	if probe.Project == nil {
 		report.Verification = Undeclared
 	}
+	if request.Scope == Emission {
+		report.Verification = EmissionChecked
+		report.Findings = nil
+		for _, finding := range probe.Findings {
+			if !requirementCodes[finding.Code] {
+				report.Findings = append(report.Findings, finding)
+			}
+		}
+	}
 	lock, err := os.ReadFile(filepath.Join(request.ProjectRoot, "uv.lock"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read uv.lock: %w", err)
@@ -161,14 +198,16 @@ func Check(ctx context.Context, request Request) (*Report, error) {
 		}
 	}
 	if lockHash != nil {
-		report.Verification = LockSyncChecked
-		report.Findings = append(report.Findings, lockFindings(ctx, request.ProjectRoot, probe.Interpreter)...)
+		if request.Scope == Execution {
+			report.Verification = LockSyncChecked
+		}
+		report.Findings = append(report.Findings, lockFindings(ctx, request.ProjectRoot, probe.Interpreter, request.Scope)...)
 		// A cancelled uv check is not a finding about the environment.
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 	}
-	if len(report.Findings) == 0 {
+	if len(report.Findings) == 0 && request.Scope == Execution {
 		if report.Record, err = newRecord(report, lockHash, request.ControlPlaneVersion); err != nil {
 			return nil, err
 		}
@@ -204,7 +243,7 @@ func runProbe(ctx context.Context, python, root string) (*Probe, error) {
 		switch {
 		case errors.As(err, &exit) && exit.ExitCode() == probeProjectError:
 			// The probe reports unreadable project metadata as one line.
-			return nil, errors.New(strings.TrimSpace(stderr.String()))
+			return nil, &ProjectError{Message: strings.TrimSpace(stderr.String())}
 		case missingProbe.MatchString(detail):
 			return nil, fmt.Errorf("%s does not have massive-workflows installed; install it in the project environment with `uv sync --locked`, or launch through `uv run --locked massive`", python)
 		case detail == "":
@@ -266,7 +305,7 @@ var plannedChange = regexp.MustCompile(`(?m)^ ([+-]) ([A-Za-z0-9][A-Za-z0-9._-]*
 // UV_PYTHON, UV_NO_DEV, ...) could change what the check means.
 var uvSettings = regexp.MustCompile(`^UV_(CACHE_DIR|NO_CACHE|CONFIG_FILE|NO_CONFIG|INDEX|INDEX_[A-Z0-9_]+|DEFAULT_INDEX|EXTRA_INDEX_URL|FIND_LINKS|INDEX_STRATEGY|KEYRING_PROVIDER|NATIVE_TLS|INSECURE_HOST|EXCLUDE_NEWER|RESOLUTION|PRERELEASE)=`)
 
-func lockFindings(ctx context.Context, root string, interpreter Interpreter) []Finding {
+func lockFindings(ctx context.Context, root string, interpreter Interpreter, scope Scope) []Finding {
 	uv, err := exec.LookPath("uv")
 	if err != nil {
 		return []Finding{{
@@ -314,6 +353,9 @@ func lockFindings(ctx context.Context, root string, interpreter Interpreter) []F
 			Message: fmt.Sprintf("uv.lock in %s does not match pyproject.toml", root),
 			Fix:     fmt.Sprintf("run `uv lock` in %s and commit the updated uv.lock", root),
 		}}
+	}
+	if scope == Emission {
+		return nil
 	}
 	// The locked runtime set only: dependency groups (including
 	// [tool.uv] default-groups), extras, and tools beside it are permitted. The

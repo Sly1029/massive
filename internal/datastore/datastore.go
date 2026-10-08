@@ -14,8 +14,11 @@ import (
 )
 
 var (
-	ErrInvalidKey    = errors.New("invalid datastore key")
-	ErrNotFound      = errors.New("datastore object not found")
+	ErrInvalidKey = errors.New("invalid datastore key")
+	ErrNotFound   = errors.New("datastore object not found")
+	// ErrAccessDenied is a read the credentials may not perform. Without
+	// s3:ListBucket, S3 also reports a missing key this way.
+	ErrAccessDenied  = errors.New("datastore read denied")
 	ErrAlreadyExists = errors.New("datastore object already exists")
 )
 

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Sly1029/massive/internal/environment"
 )
 
 func TestFrontendOwnsDescendantsAndInheritedPipes(t *testing.T) {
@@ -61,7 +63,7 @@ graph.edge_from(task).to(graph.end)
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := Emit(ctx, entry)
+				_, err := Emit(ctx, entry, environment.Execution)
 				done <- err
 			}()
 			address := ""

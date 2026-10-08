@@ -15,6 +15,7 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/controlplane"
 	"github.com/Sly1029/massive/internal/deployment"
+	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
@@ -185,7 +186,7 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	frontend, err := controlplane.Emit(ctx, command.Entry)
+	frontend, err := controlplane.Emit(ctx, command.Entry, environment.Execution)
 	if err != nil {
 		return err
 	}
@@ -270,7 +271,8 @@ func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
 			return fmt.Errorf("invalid secret bindings: %w", err)
 		}
 	}
-	frontend, err := controlplane.Emit(ctx, command.Entry)
+	// The container realizes requirements; its pods run the full preflight.
+	frontend, err := controlplane.Emit(ctx, command.Entry, environment.Emission)
 	if err != nil {
 		return err
 	}
@@ -403,8 +405,13 @@ func runRuntimeInvocation(ctx context.Context, planPath string, runtimeSources R
 	if err != nil {
 		return nil, err
 	}
+	// The container image realizes the plan's requirements; every Python
+	// attempt checks it against the archived project before running.
+	// Without MASSIVE_PYTHON, a Python node fails its preflight (exit 68).
+	pythonEnvironment, _ := controlplane.PythonEnvironment()
 	config := orchestrator.IsolatedStepConfig{
-		Plan: workflowPlan, NodeID: nodeID, Datastore: binding,
+		Environment: pythonEnvironment,
+		Plan:        workflowPlan, NodeID: nodeID, Datastore: binding,
 		ProjectID: project, RunID: runID,
 		SourceArchives: sources, Attempt: retryCount + 1,
 	}
@@ -456,9 +463,13 @@ func main() {
 }
 
 // exitCodeFor lets a target scheduler classify a failed runtime attempt from
-// the process exit alone: runner exit codes pass through, and a per-attempt
-// timeout exits 124 like timeout(1).
+// the process exit alone: runner exit codes pass through, a per-attempt
+// timeout exits 124 like timeout(1), and dependency preflight exits 68.
 func exitCodeFor(err error) int {
+	var preflight *orchestrator.PreflightError
+	if errors.As(err, &preflight) {
+		return runtimeExitPreflight
+	}
 	var failure *orchestrator.InvocationFailure
 	if !errors.As(err, &failure) {
 		return 1
@@ -472,4 +483,8 @@ func exitCodeFor(err error) int {
 	return 1
 }
 
-const runtimeExitTimeout = 124
+const (
+	runtimeExitTimeout = 124
+	// runtimeExitPreflight is non-retryable: the image cannot run the project.
+	runtimeExitPreflight = 68
+)

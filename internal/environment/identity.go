@@ -1,10 +1,15 @@
 package environment
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	pb "github.com/Sly1029/massive/conformance/schema/materializationpb"
 	"github.com/Sly1029/massive/internal/canonical"
+	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -128,6 +133,24 @@ func ParseRecord(data []byte) (*pb.RealizedEnvironment, error) {
 		return nil, fmt.Errorf("realized environment record identities do not match its contents")
 	}
 	return &record, nil
+}
+
+// Store writes the record content-addressed, so runs and attempts in identical
+// environments share one object, and returns its journal binding.
+func Store(ctx context.Context, store datastore.Datastore, record *pb.RealizedEnvironment) (*runjournal.Environment, error) {
+	body, err := MarshalRecord(record)
+	if err != nil {
+		return nil, err
+	}
+	hash := canonical.DigestBytes(body)
+	key := datastore.MustKey("environments/sha256-" + strings.TrimPrefix(hash, "sha256:") + "/realized-environment.json")
+	if _, err := store.Put(ctx, key, body, datastore.PutOptions{ContentType: RecordContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
+		return nil, fmt.Errorf("persist realized environment: %w", err)
+	}
+	return &runjournal.Environment{
+		RequirementHash: record.GetRequirementHash(), RealizationHash: record.GetRealizationHash(),
+		Record: runjournal.ArtifactRef{Key: key.String(), Hash: hash, Size: len(body), ContentType: RecordContentType},
+	}, nil
 }
 
 func digest(fields map[string]any) (string, error) {

@@ -38,15 +38,14 @@ Implemented:
   modules, the SDK release, and with `uv.lock` an offline check that the locked
   runtime set is installed. Local run journals (v5) bind the content-addressed
   `RealizedEnvironment` and its requirement/realization identities, shown by
-  `massive inspect --environment`. `massive env check --json` exposes it to CI. The
+  `massive inspect --environment`. Each Argo attempt checks its image against the
+  archived project before author code runs (exit 68, not retried) and records
+  its realization; `massive build` checks only emission and lock freshness. `massive env check --json` exposes it to CI. The
   checked interpreter runs emission and every local task in isolated mode.
 
 Next:
 
 - Exercise installation and execution on clean Linux CI runners.
-- Check Argo pods against the archived project inputs. Local dependency preflight
-  and realized-environment journal records are implemented (below); keep using
-  standard Python project metadata and lockfiles, not a second dependency language.
 - Add artifact references for large arbitrary JSON values. File bodies already
   use references; ordinary JSON values still pass through Argo parameters.
 

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/datastore/miniotest"
+	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/target/argo"
@@ -42,7 +43,7 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 	if output, err := exec.Command(python, filepath.Join(fixture, "generate.py"), workflowRoot).CombinedOutput(); err != nil {
 		t.Fatalf("generate resources: %v\n%s", err, output)
 	}
-	frontend, err := Emit(context.Background(), filepath.Join(workflowRoot, "workflow.py"))
+	frontend, err := Emit(context.Background(), filepath.Join(workflowRoot, "workflow.py"), environment.Execution)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,17 +121,20 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 		t.Fatalf("template pins %v for %d source packages", pinned, len(workflowPlan.GetSourcePackages()))
 	}
 
-	run := func(t *testing.T, descriptor orchestrator.DatastoreDescriptor) {
-		config := orchestrator.IsolatedStepConfig{
-			Plan: workflowPlan, Datastore: descriptor, ProjectID: "argo/large-source", RunID: "remote",
-			RunnerCommand: []string{python, "-m", "massive.runner", "{descriptor}"}, SourceArchives: pinned,
+	config := func(descriptor orchestrator.DatastoreDescriptor) orchestrator.IsolatedStepConfig {
+		return orchestrator.IsolatedStepConfig{
+			Plan: workflowPlan, NodeID: "areas", Datastore: descriptor, ProjectID: "argo/large-source", RunID: "remote",
+			Environment: environment.Request{Python: python, ControlPlaneVersion: Version}, SourceArchives: pinned,
 		}
-		config.NodeID = "areas"
-		// A missing archive is a deterministic descriptor failure (exit 64),
-		// which Argo's retry expression never retries.
+	}
+	// read returns an object from a filesystem store; S3 stores pass nil.
+	run := func(t *testing.T, descriptor orchestrator.DatastoreDescriptor, read func(key string) ([]byte, error)) {
+		config := config(descriptor)
+		// The pod's dependency preflight refuses a missing archive (exit 68),
+		// which Argo's retry expression never retries, before any author code.
 		_, err := orchestrator.RunIsolatedStep(context.Background(), config, []byte(`{}`))
-		var failure *orchestrator.InvocationFailure
-		if !errors.As(err, &failure) || failure.ExitCode != 64 || !strings.Contains(failure.Diagnostic, "massive publish") {
+		var preflight *orchestrator.PreflightError
+		if !errors.As(err, &preflight) || !strings.Contains(err.Error(), "massive publish") {
 			t.Fatalf("unpublished archive error = %v", err)
 		}
 		for attempt, created := range []bool{true, false} {
@@ -145,6 +149,26 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 		areasJSON, err := orchestrator.RunIsolatedStep(context.Background(), config, []byte(`{}`))
 		if err != nil {
 			t.Fatal(err)
+		}
+		if read != nil {
+			// Preflight read the fetched archive's pyproject.toml: an empty
+			// extraction would have been an undeclared project.
+			binding, err := read("projects/" + orchestrator.NormalizeProjectKey("argo/large-source") + "/runs/remote/steps/areas/1/environment.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var realized struct{ Record struct{ Key string } }
+			if err := json.Unmarshal(binding, &realized); err != nil {
+				t.Fatal(err)
+			}
+			body, err := read(realized.Record.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err := environment.ParseRecord(body)
+			if err != nil || record.GetRealization().GetVerification().String() != string(environment.DirectRequirementsSatisfied) {
+				t.Fatalf("attempt realization = %v, %v", record, err)
+			}
 		}
 		var areas []string
 		if err := json.Unmarshal(areasJSON, &areas); err != nil {
@@ -180,7 +204,28 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 		}
 	}
 	t.Run("filesystem", func(t *testing.T) {
-		run(t, orchestrator.LocalDatastoreDescriptor{Kind: "local", Path: writableStoreForTest(t)})
+		root := writableStoreForTest(t)
+		run(t, orchestrator.LocalDatastoreDescriptor{Kind: "local", Path: root}, func(key string) ([]byte, error) {
+			return os.ReadFile(filepath.Join(root, filepath.FromSlash(key)))
+		})
+	})
+	t.Run("mismatched object", func(t *testing.T) {
+		root := writableStoreForTest(t)
+		store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for packageHash, archive := range pinned {
+			key := "packages/" + strings.Replace(packageHash, "sha256:", "sha256-", 1) + "/archives/" + strings.Replace(archive.Digest, "sha256:", "sha256-", 1) + ".tar"
+			if _, err := store.Put(context.Background(), datastore.MustKey(key), []byte("not the pinned archive"), datastore.PutOptions{ContentType: orchestrator.SourceArchiveContentType}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_, err = orchestrator.RunIsolatedStep(context.Background(), config(orchestrator.LocalDatastoreDescriptor{Kind: "local", Path: root}), []byte(`{}`))
+		var preflight *orchestrator.PreflightError
+		if !errors.As(err, &preflight) || !strings.Contains(err.Error(), "does not match its pinned digest") {
+			t.Fatalf("mismatched archive error = %v", err)
+		}
 	})
 	t.Run("minio", func(t *testing.T) {
 		endpoint := miniotest.Start(t)
@@ -196,7 +241,7 @@ func TestObjectStoreSourcesRunThroughPublishedArchives(t *testing.T) {
 		run(t, orchestrator.S3DatastoreDescriptor{
 			Kind: "s3", Bucket: "massive-sources", Region: "us-east-1", Prefix: "published",
 			Endpoint: "http://" + endpoint, ForcePathStyle: &forcePathStyle,
-		})
+		}, nil)
 	})
 }
 
@@ -221,7 +266,7 @@ func TestPublishRejectsUnsafeBundlesAndNeverOverwrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	requirePythonSDK(t, repository)
-	frontend, err := Emit(context.Background(), filepath.Join(repository, "examples", "06-map", "workflow.py"))
+	frontend, err := Emit(context.Background(), filepath.Join(repository, "examples", "06-map", "workflow.py"), environment.Emission)
 	if err != nil {
 		t.Fatal(err)
 	}
