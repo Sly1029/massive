@@ -15,11 +15,14 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Sly1029/massive/conformance/schema/materializationpb"
+	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/spec"
 	"github.com/Sly1029/massive/internal/taskprocess"
 )
@@ -205,12 +208,17 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 	}
 
 	var runnerCommand []string
-	if request.Frontend.Environment != nil {
-		runnerCommand = orchestrator.PythonRunnerCommand(request.Frontend.Environment.Interpreter.Executable)
+	var realized *runjournal.Environment
+	if report := request.Frontend.Environment; report != nil {
+		runnerCommand = orchestrator.PythonRunnerCommand(report.Interpreter.Executable)
+		if realized, err = putEnvironmentRecord(ctx, store, report.Record); err != nil {
+			return nil, err
+		}
 	}
 	runResult, runErr := orchestrator.Run(ctx, orchestrator.RunConfig{
 		Plan:              compiled.Plan,
 		RunnerCommand:     runnerCommand,
+		Environment:       realized,
 		DatastoreRoot:     storeRoot,
 		ProjectID:         project,
 		RunID:             request.RunID,
@@ -232,6 +240,24 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 	return &LocalRunResult{
 		Run: runResult, Plan: compiled, Result: append(json.RawMessage(nil), body.Body...),
 		Reused: reused, Store: storeRoot,
+	}, nil
+}
+
+// putEnvironmentRecord stores the realization content-addressed, so runs in
+// identical environments share one record.
+func putEnvironmentRecord(ctx context.Context, store datastore.Datastore, record *materializationpb.RealizedEnvironment) (*runjournal.Environment, error) {
+	body, err := environment.MarshalRecord(record)
+	if err != nil {
+		return nil, err
+	}
+	hash := canonical.DigestBytes(body)
+	key := datastore.MustKey("environments/sha256-" + strings.TrimPrefix(hash, "sha256:") + "/realized-environment.json")
+	if _, err := store.Put(ctx, key, body, datastore.PutOptions{ContentType: environment.RecordContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
+		return nil, fmt.Errorf("persist realized environment: %w", err)
+	}
+	return &runjournal.Environment{
+		RequirementHash: record.GetRequirementHash(), RealizationHash: record.GetRealizationHash(),
+		Record: runjournal.ArtifactRef{Key: key.String(), Hash: hash, Size: len(body), ContentType: environment.RecordContentType},
 	}, nil
 }
 

@@ -69,6 +69,62 @@ func (ContainerVerification) EnumDescriptor() ([]byte, []int) {
 	return file_materialization_proto_rawDescGZIP(), []int{0}
 }
 
+type PythonVerification int32
+
+const (
+	PythonVerification_PYTHON_VERIFICATION_UNSPECIFIED PythonVerification = 0
+	// Every locked runtime package (no dev groups or extras) is installed at its
+	// version from a current uv.lock; other installed packages are permitted.
+	PythonVerification_LOCK_SYNC_CHECKED PythonVerification = 1
+	// Only requires-python and applicable direct requirements were checked.
+	PythonVerification_DIRECT_REQUIREMENTS_SATISFIED PythonVerification = 2
+	// No [project] metadata was declared, so no requirement was checked.
+	PythonVerification_UNDECLARED PythonVerification = 3
+)
+
+// Enum value maps for PythonVerification.
+var (
+	PythonVerification_name = map[int32]string{
+		0: "PYTHON_VERIFICATION_UNSPECIFIED",
+		1: "LOCK_SYNC_CHECKED",
+		2: "DIRECT_REQUIREMENTS_SATISFIED",
+		3: "UNDECLARED",
+	}
+	PythonVerification_value = map[string]int32{
+		"PYTHON_VERIFICATION_UNSPECIFIED": 0,
+		"LOCK_SYNC_CHECKED":               1,
+		"DIRECT_REQUIREMENTS_SATISFIED":   2,
+		"UNDECLARED":                      3,
+	}
+)
+
+func (x PythonVerification) Enum() *PythonVerification {
+	p := new(PythonVerification)
+	*p = x
+	return p
+}
+
+func (x PythonVerification) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PythonVerification) Descriptor() protoreflect.EnumDescriptor {
+	return file_materialization_proto_enumTypes[1].Descriptor()
+}
+
+func (PythonVerification) Type() protoreflect.EnumType {
+	return &file_materialization_proto_enumTypes[1]
+}
+
+func (x PythonVerification) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PythonVerification.Descriptor instead.
+func (PythonVerification) EnumDescriptor() ([]byte, []int) {
+	return file_materialization_proto_rawDescGZIP(), []int{1}
+}
+
 // Portable inputs, independent of a checkout, compiler process, and target.
 // Environment refs refer to requirement identities in the compiled plan, not
 // frontend aliases. Source package identity and archive byte identity differ.
@@ -462,6 +518,341 @@ func (x *EnvironmentRealization) GetVerification() ContainerVerification {
 	return ContainerVerification_CONTAINER_VERIFICATION_UNSPECIFIED
 }
 
+// RealizedEnvironment records an existing Python environment that passed
+// dependency preflight. It is stored content-addressed as canonical protobuf
+// JSON and referenced from the run journal. Interpreter paths, installer
+// records, and RECORD file hashes are excluded: they differ between equivalent
+// environments (console-script shebangs embed paths).
+type RealizedEnvironment struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SchemaVersion *uint32                `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3,oneof" json:"schema_version,omitempty"`
+	// canonical-json-v0 of recipe "python-requirement" v1; see hashing.md.
+	RequirementHash *string `protobuf:"bytes,2,opt,name=requirement_hash,json=requirementHash,proto3,oneof" json:"requirement_hash,omitempty"`
+	// canonical-json-v0 of recipe "existing-python" v1; see hashing.md.
+	RealizationHash *string                    `protobuf:"bytes,3,opt,name=realization_hash,json=realizationHash,proto3,oneof" json:"realization_hash,omitempty"`
+	Requirement     *PythonRequirement         `protobuf:"bytes,4,opt,name=requirement,proto3,oneof" json:"requirement,omitempty"`
+	Realization     *ExistingPythonRealization `protobuf:"bytes,5,opt,name=realization,proto3,oneof" json:"realization,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RealizedEnvironment) Reset() {
+	*x = RealizedEnvironment{}
+	mi := &file_materialization_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RealizedEnvironment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RealizedEnvironment) ProtoMessage() {}
+
+func (x *RealizedEnvironment) ProtoReflect() protoreflect.Message {
+	mi := &file_materialization_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RealizedEnvironment.ProtoReflect.Descriptor instead.
+func (*RealizedEnvironment) Descriptor() ([]byte, []int) {
+	return file_materialization_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RealizedEnvironment) GetSchemaVersion() uint32 {
+	if x != nil && x.SchemaVersion != nil {
+		return *x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *RealizedEnvironment) GetRequirementHash() string {
+	if x != nil && x.RequirementHash != nil {
+		return *x.RequirementHash
+	}
+	return ""
+}
+
+func (x *RealizedEnvironment) GetRealizationHash() string {
+	if x != nil && x.RealizationHash != nil {
+		return *x.RealizationHash
+	}
+	return ""
+}
+
+func (x *RealizedEnvironment) GetRequirement() *PythonRequirement {
+	if x != nil {
+		return x.Requirement
+	}
+	return nil
+}
+
+func (x *RealizedEnvironment) GetRealization() *ExistingPythonRealization {
+	if x != nil {
+		return x.Realization
+	}
+	return nil
+}
+
+// Dependency inputs only. [tool.massive.source] is source identity, not here.
+type PythonRequirement struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Absent when pyproject.toml declares no requires-python.
+	RequiresPython *string `protobuf:"bytes,1,opt,name=requires_python,json=requiresPython,proto3,oneof" json:"requires_python,omitempty"`
+	// SHA-256 of the exact uv.lock bytes. When present, the lock defines the
+	// dependency set and `dependencies` is empty.
+	LockHash *string `protobuf:"bytes,2,opt,name=lock_hash,json=lockHash,proto3,oneof" json:"lock_hash,omitempty"`
+	// [project].dependencies with canonical names, sorted; only without a lock.
+	Dependencies  []string `protobuf:"bytes,3,rep,name=dependencies,proto3" json:"dependencies,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PythonRequirement) Reset() {
+	*x = PythonRequirement{}
+	mi := &file_materialization_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PythonRequirement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PythonRequirement) ProtoMessage() {}
+
+func (x *PythonRequirement) ProtoReflect() protoreflect.Message {
+	mi := &file_materialization_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PythonRequirement.ProtoReflect.Descriptor instead.
+func (*PythonRequirement) Descriptor() ([]byte, []int) {
+	return file_materialization_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *PythonRequirement) GetRequiresPython() string {
+	if x != nil && x.RequiresPython != nil {
+		return *x.RequiresPython
+	}
+	return ""
+}
+
+func (x *PythonRequirement) GetLockHash() string {
+	if x != nil && x.LockHash != nil {
+		return *x.LockHash
+	}
+	return ""
+}
+
+func (x *PythonRequirement) GetDependencies() []string {
+	if x != nil {
+		return x.Dependencies
+	}
+	return nil
+}
+
+type ExistingPythonRealization struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Implementation *string                `protobuf:"bytes,1,opt,name=implementation,proto3,oneof" json:"implementation,omitempty"`
+	PythonVersion  *string                `protobuf:"bytes,2,opt,name=python_version,json=pythonVersion,proto3,oneof" json:"python_version,omitempty"`
+	CacheTag       *string                `protobuf:"bytes,3,opt,name=cache_tag,json=cacheTag,proto3,oneof" json:"cache_tag,omitempty"`
+	// sysconfig.get_platform(), such as linux-x86_64 or macosx-14.0-arm64.
+	SysconfigPlatform *string `protobuf:"bytes,4,opt,name=sysconfig_platform,json=sysconfigPlatform,proto3,oneof" json:"sysconfig_platform,omitempty"`
+	Os                *string `protobuf:"bytes,5,opt,name=os,proto3,oneof" json:"os,omitempty"`
+	Arch              *string `protobuf:"bytes,6,opt,name=arch,proto3,oneof" json:"arch,omitempty"`
+	// Sorted by canonical name; the first copy on sys.path.
+	Distributions       []*InstalledDistribution `protobuf:"bytes,7,rep,name=distributions,proto3" json:"distributions,omitempty"`
+	MaterializerName    *string                  `protobuf:"bytes,8,opt,name=materializer_name,json=materializerName,proto3,oneof" json:"materializer_name,omitempty"`
+	MaterializerVersion *string                  `protobuf:"bytes,9,opt,name=materializer_version,json=materializerVersion,proto3,oneof" json:"materializer_version,omitempty"`
+	Verification        *PythonVerification      `protobuf:"varint,10,opt,name=verification,proto3,enum=massive.materialization.v0.PythonVerification,oneof" json:"verification,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ExistingPythonRealization) Reset() {
+	*x = ExistingPythonRealization{}
+	mi := &file_materialization_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExistingPythonRealization) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExistingPythonRealization) ProtoMessage() {}
+
+func (x *ExistingPythonRealization) ProtoReflect() protoreflect.Message {
+	mi := &file_materialization_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExistingPythonRealization.ProtoReflect.Descriptor instead.
+func (*ExistingPythonRealization) Descriptor() ([]byte, []int) {
+	return file_materialization_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ExistingPythonRealization) GetImplementation() string {
+	if x != nil && x.Implementation != nil {
+		return *x.Implementation
+	}
+	return ""
+}
+
+func (x *ExistingPythonRealization) GetPythonVersion() string {
+	if x != nil && x.PythonVersion != nil {
+		return *x.PythonVersion
+	}
+	return ""
+}
+
+func (x *ExistingPythonRealization) GetCacheTag() string {
+	if x != nil && x.CacheTag != nil {
+		return *x.CacheTag
+	}
+	return ""
+}
+
+func (x *ExistingPythonRealization) GetSysconfigPlatform() string {
+	if x != nil && x.SysconfigPlatform != nil {
+		return *x.SysconfigPlatform
+	}
+	return ""
+}
+
+func (x *ExistingPythonRealization) GetOs() string {
+	if x != nil && x.Os != nil {
+		return *x.Os
+	}
+	return ""
+}
+
+func (x *ExistingPythonRealization) GetArch() string {
+	if x != nil && x.Arch != nil {
+		return *x.Arch
+	}
+	return ""
+}
+
+func (x *ExistingPythonRealization) GetDistributions() []*InstalledDistribution {
+	if x != nil {
+		return x.Distributions
+	}
+	return nil
+}
+
+func (x *ExistingPythonRealization) GetMaterializerName() string {
+	if x != nil && x.MaterializerName != nil {
+		return *x.MaterializerName
+	}
+	return ""
+}
+
+func (x *ExistingPythonRealization) GetMaterializerVersion() string {
+	if x != nil && x.MaterializerVersion != nil {
+		return *x.MaterializerVersion
+	}
+	return ""
+}
+
+func (x *ExistingPythonRealization) GetVerification() PythonVerification {
+	if x != nil && x.Verification != nil {
+		return *x.Verification
+	}
+	return PythonVerification_PYTHON_VERIFICATION_UNSPECIFIED
+}
+
+type InstalledDistribution struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Name    *string                `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	Version *string                `protobuf:"bytes,2,opt,name=version,proto3,oneof" json:"version,omitempty"`
+	// PEP 610 direct_url.json is present (a path, URL, or VCS install).
+	Direct        *bool `protobuf:"varint,3,opt,name=direct,proto3,oneof" json:"direct,omitempty"`
+	Editable      *bool `protobuf:"varint,4,opt,name=editable,proto3,oneof" json:"editable,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstalledDistribution) Reset() {
+	*x = InstalledDistribution{}
+	mi := &file_materialization_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstalledDistribution) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstalledDistribution) ProtoMessage() {}
+
+func (x *InstalledDistribution) ProtoReflect() protoreflect.Message {
+	mi := &file_materialization_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstalledDistribution.ProtoReflect.Descriptor instead.
+func (*InstalledDistribution) Descriptor() ([]byte, []int) {
+	return file_materialization_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *InstalledDistribution) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *InstalledDistribution) GetVersion() string {
+	if x != nil && x.Version != nil {
+		return *x.Version
+	}
+	return ""
+}
+
+func (x *InstalledDistribution) GetDirect() bool {
+	if x != nil && x.Direct != nil {
+		return *x.Direct
+	}
+	return false
+}
+
+func (x *InstalledDistribution) GetEditable() bool {
+	if x != nil && x.Editable != nil {
+		return *x.Editable
+	}
+	return false
+}
+
 var File_materialization_proto protoreflect.FileDescriptor
 
 const file_materialization_proto_rawDesc = "" +
@@ -512,10 +903,66 @@ const file_materialization_proto_rawDesc = "" +
 	"\x10_environment_refB\x13\n" +
 	"\x11_realization_hashB\x15\n" +
 	"\x13_existing_containerB\x0f\n" +
-	"\r_verification*Z\n" +
+	"\r_verification\"\xb2\x03\n" +
+	"\x13RealizedEnvironment\x12*\n" +
+	"\x0eschema_version\x18\x01 \x01(\rH\x00R\rschemaVersion\x88\x01\x01\x12.\n" +
+	"\x10requirement_hash\x18\x02 \x01(\tH\x01R\x0frequirementHash\x88\x01\x01\x12.\n" +
+	"\x10realization_hash\x18\x03 \x01(\tH\x02R\x0frealizationHash\x88\x01\x01\x12T\n" +
+	"\vrequirement\x18\x04 \x01(\v2-.massive.materialization.v0.PythonRequirementH\x03R\vrequirement\x88\x01\x01\x12\\\n" +
+	"\vrealization\x18\x05 \x01(\v25.massive.materialization.v0.ExistingPythonRealizationH\x04R\vrealization\x88\x01\x01B\x11\n" +
+	"\x0f_schema_versionB\x13\n" +
+	"\x11_requirement_hashB\x13\n" +
+	"\x11_realization_hashB\x0e\n" +
+	"\f_requirementB\x0e\n" +
+	"\f_realization\"\xa9\x01\n" +
+	"\x11PythonRequirement\x12,\n" +
+	"\x0frequires_python\x18\x01 \x01(\tH\x00R\x0erequiresPython\x88\x01\x01\x12 \n" +
+	"\tlock_hash\x18\x02 \x01(\tH\x01R\blockHash\x88\x01\x01\x12\"\n" +
+	"\fdependencies\x18\x03 \x03(\tR\fdependenciesB\x12\n" +
+	"\x10_requires_pythonB\f\n" +
+	"\n" +
+	"_lock_hash\"\xaf\x05\n" +
+	"\x19ExistingPythonRealization\x12+\n" +
+	"\x0eimplementation\x18\x01 \x01(\tH\x00R\x0eimplementation\x88\x01\x01\x12*\n" +
+	"\x0epython_version\x18\x02 \x01(\tH\x01R\rpythonVersion\x88\x01\x01\x12 \n" +
+	"\tcache_tag\x18\x03 \x01(\tH\x02R\bcacheTag\x88\x01\x01\x122\n" +
+	"\x12sysconfig_platform\x18\x04 \x01(\tH\x03R\x11sysconfigPlatform\x88\x01\x01\x12\x13\n" +
+	"\x02os\x18\x05 \x01(\tH\x04R\x02os\x88\x01\x01\x12\x17\n" +
+	"\x04arch\x18\x06 \x01(\tH\x05R\x04arch\x88\x01\x01\x12W\n" +
+	"\rdistributions\x18\a \x03(\v21.massive.materialization.v0.InstalledDistributionR\rdistributions\x120\n" +
+	"\x11materializer_name\x18\b \x01(\tH\x06R\x10materializerName\x88\x01\x01\x126\n" +
+	"\x14materializer_version\x18\t \x01(\tH\aR\x13materializerVersion\x88\x01\x01\x12W\n" +
+	"\fverification\x18\n" +
+	" \x01(\x0e2..massive.materialization.v0.PythonVerificationH\bR\fverification\x88\x01\x01B\x11\n" +
+	"\x0f_implementationB\x11\n" +
+	"\x0f_python_versionB\f\n" +
+	"\n" +
+	"_cache_tagB\x15\n" +
+	"\x13_sysconfig_platformB\x05\n" +
+	"\x03_osB\a\n" +
+	"\x05_archB\x14\n" +
+	"\x12_materializer_nameB\x17\n" +
+	"\x15_materializer_versionB\x0f\n" +
+	"\r_verification\"\xba\x01\n" +
+	"\x15InstalledDistribution\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x1d\n" +
+	"\aversion\x18\x02 \x01(\tH\x01R\aversion\x88\x01\x01\x12\x1b\n" +
+	"\x06direct\x18\x03 \x01(\bH\x02R\x06direct\x88\x01\x01\x12\x1f\n" +
+	"\beditable\x18\x04 \x01(\bH\x03R\beditable\x88\x01\x01B\a\n" +
+	"\x05_nameB\n" +
+	"\n" +
+	"\b_versionB\t\n" +
+	"\a_directB\v\n" +
+	"\t_editable*Z\n" +
 	"\x15ContainerVerification\x12&\n" +
 	"\"CONTAINER_VERIFICATION_UNSPECIFIED\x10\x00\x12\x19\n" +
-	"\x15PINNED_REFERENCE_ONLY\x10\x01BSZQgithub.com/Sly1029/massive/conformance/schema/materializationpb;materializationpbb\x06proto3"
+	"\x15PINNED_REFERENCE_ONLY\x10\x01*\x83\x01\n" +
+	"\x12PythonVerification\x12#\n" +
+	"\x1fPYTHON_VERIFICATION_UNSPECIFIED\x10\x00\x12\x15\n" +
+	"\x11LOCK_SYNC_CHECKED\x10\x01\x12!\n" +
+	"\x1dDIRECT_REQUIREMENTS_SATISFIED\x10\x02\x12\x0e\n" +
+	"\n" +
+	"UNDECLARED\x10\x03BSZQgithub.com/Sly1029/massive/conformance/schema/materializationpb;materializationpbb\x06proto3"
 
 var (
 	file_materialization_proto_rawDescOnce sync.Once
@@ -529,30 +976,39 @@ func file_materialization_proto_rawDescGZIP() []byte {
 	return file_materialization_proto_rawDescData
 }
 
-var file_materialization_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_materialization_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_materialization_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_materialization_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_materialization_proto_goTypes = []any{
-	(ContainerVerification)(0),      // 0: massive.materialization.v0.ContainerVerification
-	(*MaterializationSpec)(nil),     // 1: massive.materialization.v0.MaterializationSpec
-	(*EnvironmentSelection)(nil),    // 2: massive.materialization.v0.EnvironmentSelection
-	(*ExistingContainer)(nil),       // 3: massive.materialization.v0.ExistingContainer
-	(*SourceArchive)(nil),           // 4: massive.materialization.v0.SourceArchive
-	(*MaterializationManifest)(nil), // 5: massive.materialization.v0.MaterializationManifest
-	(*EnvironmentRealization)(nil),  // 6: massive.materialization.v0.EnvironmentRealization
+	(ContainerVerification)(0),        // 0: massive.materialization.v0.ContainerVerification
+	(PythonVerification)(0),           // 1: massive.materialization.v0.PythonVerification
+	(*MaterializationSpec)(nil),       // 2: massive.materialization.v0.MaterializationSpec
+	(*EnvironmentSelection)(nil),      // 3: massive.materialization.v0.EnvironmentSelection
+	(*ExistingContainer)(nil),         // 4: massive.materialization.v0.ExistingContainer
+	(*SourceArchive)(nil),             // 5: massive.materialization.v0.SourceArchive
+	(*MaterializationManifest)(nil),   // 6: massive.materialization.v0.MaterializationManifest
+	(*EnvironmentRealization)(nil),    // 7: massive.materialization.v0.EnvironmentRealization
+	(*RealizedEnvironment)(nil),       // 8: massive.materialization.v0.RealizedEnvironment
+	(*PythonRequirement)(nil),         // 9: massive.materialization.v0.PythonRequirement
+	(*ExistingPythonRealization)(nil), // 10: massive.materialization.v0.ExistingPythonRealization
+	(*InstalledDistribution)(nil),     // 11: massive.materialization.v0.InstalledDistribution
 }
 var file_materialization_proto_depIdxs = []int32{
-	2, // 0: massive.materialization.v0.MaterializationSpec.environments:type_name -> massive.materialization.v0.EnvironmentSelection
-	4, // 1: massive.materialization.v0.MaterializationSpec.source_archives:type_name -> massive.materialization.v0.SourceArchive
-	3, // 2: massive.materialization.v0.EnvironmentSelection.existing_container:type_name -> massive.materialization.v0.ExistingContainer
-	6, // 3: massive.materialization.v0.MaterializationManifest.environments:type_name -> massive.materialization.v0.EnvironmentRealization
-	4, // 4: massive.materialization.v0.MaterializationManifest.source_archives:type_name -> massive.materialization.v0.SourceArchive
-	3, // 5: massive.materialization.v0.EnvironmentRealization.existing_container:type_name -> massive.materialization.v0.ExistingContainer
-	0, // 6: massive.materialization.v0.EnvironmentRealization.verification:type_name -> massive.materialization.v0.ContainerVerification
-	7, // [7:7] is the sub-list for method output_type
-	7, // [7:7] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	3,  // 0: massive.materialization.v0.MaterializationSpec.environments:type_name -> massive.materialization.v0.EnvironmentSelection
+	5,  // 1: massive.materialization.v0.MaterializationSpec.source_archives:type_name -> massive.materialization.v0.SourceArchive
+	4,  // 2: massive.materialization.v0.EnvironmentSelection.existing_container:type_name -> massive.materialization.v0.ExistingContainer
+	7,  // 3: massive.materialization.v0.MaterializationManifest.environments:type_name -> massive.materialization.v0.EnvironmentRealization
+	5,  // 4: massive.materialization.v0.MaterializationManifest.source_archives:type_name -> massive.materialization.v0.SourceArchive
+	4,  // 5: massive.materialization.v0.EnvironmentRealization.existing_container:type_name -> massive.materialization.v0.ExistingContainer
+	0,  // 6: massive.materialization.v0.EnvironmentRealization.verification:type_name -> massive.materialization.v0.ContainerVerification
+	9,  // 7: massive.materialization.v0.RealizedEnvironment.requirement:type_name -> massive.materialization.v0.PythonRequirement
+	10, // 8: massive.materialization.v0.RealizedEnvironment.realization:type_name -> massive.materialization.v0.ExistingPythonRealization
+	11, // 9: massive.materialization.v0.ExistingPythonRealization.distributions:type_name -> massive.materialization.v0.InstalledDistribution
+	1,  // 10: massive.materialization.v0.ExistingPythonRealization.verification:type_name -> massive.materialization.v0.PythonVerification
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_materialization_proto_init() }
@@ -566,13 +1022,17 @@ func file_materialization_proto_init() {
 	file_materialization_proto_msgTypes[3].OneofWrappers = []any{}
 	file_materialization_proto_msgTypes[4].OneofWrappers = []any{}
 	file_materialization_proto_msgTypes[5].OneofWrappers = []any{}
+	file_materialization_proto_msgTypes[6].OneofWrappers = []any{}
+	file_materialization_proto_msgTypes[7].OneofWrappers = []any{}
+	file_materialization_proto_msgTypes[8].OneofWrappers = []any{}
+	file_materialization_proto_msgTypes[9].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_materialization_proto_rawDesc), len(file_materialization_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   6,
+			NumEnums:      2,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

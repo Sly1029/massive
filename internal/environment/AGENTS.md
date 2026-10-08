@@ -30,6 +30,12 @@ own lock), is a finding. Requirements leave the probe without URL credentials,
 queries, fragments, or local paths. Never downgrade the verification level
 silently; a project without `[project]` metadata is `UNDECLARED`.
 
+`identity.go` owns the `python-requirement` and `existing-python` recipes. Only
+a report without findings has a `Record`. Never add interpreter paths, install
+locations, or RECORD hashes to the realization identity. Changing a recipe means
+bumping its recipeVersion and regenerating the hashing vectors from the
+implementation; `conformance/schema` re-derives them independently.
+
 Test against real environments built with `uv venv` and `uv sync --locked`.
 `conformance/workflows/python-locked/uv.lock` is generated with `uv lock`;
 regenerate it when the SDK's dependencies or version change, and never edit it by hand.

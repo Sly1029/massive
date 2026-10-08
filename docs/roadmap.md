@@ -36,16 +36,17 @@ Implemented:
 - Dependency preflight checks the launching interpreter before importing author
   code: `requires-python`, direct requirements, shadowed distributions and
   modules, the SDK release, and with `uv.lock` an offline check that the locked
-  runtime set is installed. `massive env check --json` exposes it to CI. The
+  runtime set is installed. Local run journals (v5) bind the content-addressed
+  `RealizedEnvironment` and its requirement/realization identities, shown by
+  `massive inspect --environment`. `massive env check --json` exposes it to CI. The
   checked interpreter runs emission and every local task in isolated mode.
 
 Next:
 
 - Exercise installation and execution on clean Linux CI runners.
-- Record the realized environment identity in run journals, and check Argo pods
-  against the archived project inputs. Local dependency preflight is implemented
-  (below); keep using standard Python project metadata and lockfiles, not a
-  second dependency language.
+- Check Argo pods against the archived project inputs. Local dependency preflight
+  and realized-environment journal records are implemented (below); keep using
+  standard Python project metadata and lockfiles, not a second dependency language.
 - Add artifact references for large arbitrary JSON values. File bodies already
   use references; ordinary JSON values still pass through Argo parameters.
 
@@ -62,7 +63,7 @@ for what works today.
   independent DAG branches should share the same budget rather than multiply it.
 - Local task subprocesses now own ordinary descendants through OS process groups
   or Windows jobs, with bounded pipe drainage and captured output. Context
-  cancellation persists terminal v4 journals and retains verified completed map
+  cancellation persists terminal journals and retains verified completed map
   outputs. SIGINT and SIGTERM to the CLI cancel the run through the same path;
   SIGKILL still leaves the journal unterminated.
 - Per-task timeout, bounded retry with backoff, a non-retryable author signal,

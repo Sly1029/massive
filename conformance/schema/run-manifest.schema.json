@@ -48,6 +48,9 @@
         "status": {
           "type": "string",
           "const": "running"
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
         }
       },
       "required": [
@@ -59,7 +62,8 @@
         "runId",
         "steps",
         "decisions",
-        "status"
+        "status",
+        "environment"
       ],
       "additionalProperties": false
     },
@@ -69,11 +73,11 @@
     },
     "version": {
       "type": "number",
-      "const": 4
+      "const": 5
     },
     "encoding": {
       "type": "string",
-      "const": "json-v4"
+      "const": "json-v5"
     },
     "planHash": {
       "type": "string"
@@ -998,6 +1002,9 @@
         "diagnostic": {
           "type": "string",
           "minLength": 1
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
         }
       },
       "required": [
@@ -1010,7 +1017,8 @@
         "steps",
         "decisions",
         "status",
-        "diagnostic"
+        "diagnostic",
+        "environment"
       ],
       "additionalProperties": false
     },
@@ -1047,6 +1055,9 @@
         "status": {
           "type": "string",
           "const": "succeeded"
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
         }
       },
       "required": [
@@ -1059,7 +1070,8 @@
         "steps",
         "decisions",
         "result",
-        "status"
+        "status",
+        "environment"
       ],
       "additionalProperties": false
     },
@@ -1100,6 +1112,9 @@
         "diagnostic": {
           "type": "string",
           "minLength": 1
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
         }
       },
       "required": [
@@ -1112,9 +1127,40 @@
         "steps",
         "decisions",
         "status",
-        "diagnostic"
+        "diagnostic",
+        "environment"
       ],
       "additionalProperties": false
+    },
+    "environment": {
+      "description": "The dependency realization checked before the run, or null when the frontend has no dependency preflight (TypeScript or the low-level orchestrator).",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "requirementHash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "realizationHash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "record": {
+              "$ref": "#/$defs/artifactRef"
+            }
+          },
+          "required": [
+            "requirementHash",
+            "realizationHash",
+            "record"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
   },
   "$id": "https://massive.dev/conformance/schema/run-manifest.schema.json",

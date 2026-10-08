@@ -11,7 +11,7 @@ func TestTerminatePreservesEarlierFailedAttempts(t *testing.T) {
 		{Attempt: 1, Status: "failed", Input: input, Diagnostic: "item flake"},
 		{Attempt: 2, Status: "running", Input: input},
 	}}}
-	manifest := Manifest{Kind: "RunManifest", SchemaVersion: 4, Encoding: "json-v4", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{}, Steps: []Step{
+	manifest := Manifest{Kind: "RunManifest", SchemaVersion: 5, Encoding: "json-v5", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{}, Steps: []Step{
 		{NodeID: "step", Status: "running", Attempts: []Attempt{
 			{Attempt: 1, Status: "failed", Input: input, Diagnostic: "step flake"},
 			{Attempt: 2, Status: "running", Input: input},
@@ -63,7 +63,7 @@ func TestTerminatePreservesEarlierFailedAttempts(t *testing.T) {
 func TestJournalAcceptsFailedAttemptAwaitingRetryAndCancelledDuringWait(t *testing.T) {
 	input := DataArtifact{Key: "inputs/step", Hash: "sha256:input", ContentType: "application/json", Schema: "sha256:schema"}
 	items := []MapItem{{Index: 0, Status: "running", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "item flake"}}}}
-	manifest := Manifest{Kind: "RunManifest", SchemaVersion: 4, Encoding: "json-v4", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{}, Steps: []Step{
+	manifest := Manifest{Kind: "RunManifest", SchemaVersion: 5, Encoding: "json-v5", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{}, Steps: []Step{
 		{NodeID: "step", Status: "running", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "step flake"}}},
 		{NodeID: "map", Status: "running", Attempts: []Attempt{{Attempt: 1, Status: "running", Input: input}}, Items: &items},
 	}}

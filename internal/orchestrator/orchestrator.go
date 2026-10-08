@@ -136,6 +136,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 	}
 
 	manifest := newRunManifest(config.Plan.GetPlanHash(), projectKey, runID, index.stepOrder, index.nodesByID)
+	manifest.Environment = config.Environment
 	manifestKey := runManifestKey(projectKey, runID)
 	// Creating the journal claims the run id, so a reused id cannot overwrite
 	// an earlier run's record; later journal updates replace it in place.
@@ -1272,8 +1273,8 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 	}
 	return runjournal.Manifest{
 		Kind:          "RunManifest",
-		SchemaVersion: 4,
-		Encoding:      "json-v4",
+		SchemaVersion: 5,
+		Encoding:      "json-v5",
 		PlanHash:      planHash,
 		ProjectKey:    projectKey,
 		RunID:         runID,

@@ -660,8 +660,17 @@ Inspect a past local run without executing author code:
 massive inspect <run-id> --project <project> --store <store> --json
 ```
 
-The current run journal includes step attempts, decisions, ordered map items,
-and result references. Project identity is required so matching run IDs remain
+The current run journal includes the checked dependency environment, step
+attempts, decisions, ordered map items, and result references. Show the recorded
+environment, its requirement and realization identities, and installed
+distributions with `--environment` (add `--json` for the record itself):
+
+```sh
+massive inspect <run-id> --project <project> --store <store> --environment
+```
+
+The journal entry is `null` for runs without dependency preflight, such as
+TypeScript runs. Project identity is required so matching run IDs remain
 isolated. Obsolete journal transports are rejected; no compatibility reader is
 retained. The same CLI supports TypeScript through separately installed frontend
 and runner adapters.

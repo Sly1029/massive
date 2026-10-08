@@ -7,18 +7,23 @@ import (
 	"io"
 
 	"github.com/Sly1029/massive/internal/controlplane"
+	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/runjournal"
 )
 
 type InspectCommand struct {
-	RunID   string `arg:"" name:"run-id" help:"Run identifier."`
-	Project string `help:"Project identity used when submitting the run." required:""`
-	Store   string `help:"Local datastore root."`
-	Step    string `help:"Show one step in text output." xor:"view"`
-	JSON    bool   `help:"Print the complete validated run journal as JSON." xor:"view"`
+	RunID       string `arg:"" name:"run-id" help:"Run identifier."`
+	Project     string `help:"Project identity used when submitting the run." required:""`
+	Store       string `help:"Local datastore root."`
+	Step        string `help:"Show one step in text output." xor:"view,scope"`
+	Environment bool   `help:"Show the verified dependency environment the run recorded." xor:"scope"`
+	JSON        bool   `help:"Print the complete validated run journal, or with --environment its record, as JSON." xor:"view"`
 }
 
 func (command *InspectCommand) Run(ctx context.Context, stdout io.Writer) error {
+	if command.Environment {
+		return command.renderEnvironment(ctx, stdout)
+	}
 	journal, err := controlplane.Inspect(ctx, command.Store, command.Project, command.RunID)
 	if err != nil {
 		return err
@@ -38,6 +43,9 @@ func (command *InspectCommand) Run(ctx context.Context, stdout io.Writer) error 
 		return json.NewEncoder(stdout).Encode(journal)
 	}
 	fmt.Fprintf(stdout, "run %s  %s\nplan %s\n", journal.RunID, journal.Status, journal.PlanHash)
+	if journal.Environment != nil {
+		fmt.Fprintf(stdout, "environment %s\n", journal.Environment.RealizationHash)
+	}
 	for _, step := range journal.Steps {
 		if command.Step != "" && command.Step != step.NodeID {
 			continue
@@ -77,4 +85,44 @@ func renderAttempts(stdout io.Writer, attempts []runjournal.Attempt, indent stri
 			fmt.Fprintf(stdout, "%serror %s\n", indent, attempt.Diagnostic)
 		}
 	}
+}
+
+func (command *InspectCommand) renderEnvironment(ctx context.Context, stdout io.Writer) error {
+	journal, record, err := controlplane.InspectEnvironment(ctx, command.Store, command.Project, command.RunID)
+	if err != nil {
+		return err
+	}
+	if command.JSON {
+		body, err := environment.MarshalRecord(record)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "%s\n", body)
+		return err
+	}
+	requirement, realization := record.GetRequirement(), record.GetRealization()
+	fmt.Fprintf(stdout, "run %s  %s\nrequirement  %s\n", journal.RunID, journal.Status, record.GetRequirementHash())
+	if requirement.RequiresPython != nil {
+		fmt.Fprintf(stdout, "  requires-python  %s\n", requirement.GetRequiresPython())
+	}
+	if requirement.LockHash != nil {
+		fmt.Fprintf(stdout, "  uv.lock          %s\n", requirement.GetLockHash())
+	}
+	for _, dependency := range requirement.GetDependencies() {
+		fmt.Fprintf(stdout, "  dependency       %s\n", dependency)
+	}
+	fmt.Fprintf(stdout, "realization  %s\n  verification     %s\n  python           %s %s (%s, %s/%s)\n  materializer     %s %s\n",
+		record.GetRealizationHash(), realization.GetVerification(),
+		realization.GetImplementation(), realization.GetPythonVersion(), realization.GetSysconfigPlatform(),
+		realization.GetOs(), realization.GetArch(), realization.GetMaterializerName(), realization.GetMaterializerVersion())
+	for _, distribution := range realization.GetDistributions() {
+		source := ""
+		if distribution.GetEditable() {
+			source = "  (editable)"
+		} else if distribution.GetDirect() {
+			source = "  (direct)"
+		}
+		fmt.Fprintf(stdout, "  %s==%s%s\n", distribution.GetName(), distribution.GetVersion(), source)
+	}
+	return nil
 }

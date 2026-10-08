@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func journalWithPartialMap(states []byte) Manifest {
 		}
 		items[index] = item
 	}
-	return Manifest{Kind: "RunManifest", SchemaVersion: 4, Encoding: "json-v4", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{{NodeID: "route", Status: "selected", SelectedCase: "active"}}, Steps: []Step{
+	return Manifest{Kind: "RunManifest", SchemaVersion: 5, Encoding: "json-v5", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{{NodeID: "route", Status: "selected", SelectedCase: "active"}}, Steps: []Step{
 		{NodeID: "map", Status: "running", Attempts: []Attempt{{Attempt: 1, Status: "running", Input: input}}, Items: &items},
 		{NodeID: "next", Status: "pending", Attempts: []Attempt{}},
 		{NodeID: "complete", Status: "succeeded", Attempts: []Attempt{{Attempt: 1, Status: "succeeded", Input: input, Output: &output}}},
@@ -64,6 +65,20 @@ func FuzzJournalParsing(f *testing.F) {
 	succeeded.Steps = succeeded.Steps[2:4]
 	succeeded.Result = &succeeded.Steps[0].Attempts[0].Input
 	body, err := json.Marshal(succeeded)
+	if err != nil {
+		f.Fatal(err)
+	}
+	if _, err := Parse(body); err != nil {
+		f.Fatal(err)
+	}
+	f.Add(body)
+	// A checked Python run binds its realization; mutations reach the
+	// identity hashes and the record reference.
+	succeeded.Environment = &Environment{
+		RequirementHash: "sha256:" + strings.Repeat("1", 64), RealizationHash: "sha256:" + strings.Repeat("2", 64),
+		Record: ArtifactRef{Key: "environments/sha256-" + strings.Repeat("3", 64) + "/realized-environment.json", Hash: "sha256:" + strings.Repeat("3", 64), Size: 1902, ContentType: "application/vnd.massive.realized-environment+json"},
+	}
+	body, err = json.Marshal(succeeded)
 	if err != nil {
 		f.Fatal(err)
 	}

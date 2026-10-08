@@ -12,7 +12,7 @@ func TestJournalReaderValidatesTerminalMapState(t *testing.T) {
 		{Index: 0, Status: "failed", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "user error"}}},
 		{Index: 1, Status: "not-started", Attempts: []Attempt{}, Diagnostic: "sibling failed"},
 	}
-	original := Manifest{Kind: "RunManifest", SchemaVersion: 4, Encoding: "json-v4", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "failed", Diagnostic: "map failed", Decisions: []Decision{}, Steps: []Step{{NodeID: "map", Status: "failed", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "map failed"}}, Items: &items}}}
+	original := Manifest{Kind: "RunManifest", SchemaVersion: 5, Encoding: "json-v5", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "failed", Diagnostic: "map failed", Decisions: []Decision{}, Steps: []Step{{NodeID: "map", Status: "failed", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "map failed"}}, Items: &items}}}
 	body, err := json.Marshal(original)
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +25,7 @@ func TestJournalReaderValidatesTerminalMapState(t *testing.T) {
 		change func(*Manifest)
 	}{
 		{"obsolete transport", func(m *Manifest) { m.SchemaVersion = 3; m.Encoding = "json-v3" }},
+		{"journal without an environment record", func(m *Manifest) { m.SchemaVersion = 4; m.Encoding = "json-v4" }},
 		{"sparse source order", func(m *Manifest) { (*m.Steps[0].Items)[1].Index = 5 }},
 		{"attempt disagreement", func(m *Manifest) { (*m.Steps[0].Items)[0].Status = "succeeded" }},
 		{"unfinished failed map", func(m *Manifest) { (*m.Steps[0].Items)[1].Status = "pending" }},

@@ -58,3 +58,63 @@ enum ContainerVerification {
   // lookup, pull, dependency inspection, or hermetic build was performed.
   PINNED_REFERENCE_ONLY = 1;
 }
+
+// RealizedEnvironment records an existing Python environment that passed
+// dependency preflight. It is stored content-addressed as canonical protobuf
+// JSON and referenced from the run journal. Interpreter paths, installer
+// records, and RECORD file hashes are excluded: they differ between equivalent
+// environments (console-script shebangs embed paths).
+message RealizedEnvironment {
+  optional uint32 schema_version = 1;
+  // canonical-json-v0 of recipe "python-requirement" v1; see hashing.md.
+  optional string requirement_hash = 2;
+  // canonical-json-v0 of recipe "existing-python" v1; see hashing.md.
+  optional string realization_hash = 3;
+  optional PythonRequirement requirement = 4;
+  optional ExistingPythonRealization realization = 5;
+}
+
+// Dependency inputs only. [tool.massive.source] is source identity, not here.
+message PythonRequirement {
+  // Absent when pyproject.toml declares no requires-python.
+  optional string requires_python = 1;
+  // SHA-256 of the exact uv.lock bytes. When present, the lock defines the
+  // dependency set and `dependencies` is empty.
+  optional string lock_hash = 2;
+  // [project].dependencies with canonical names, sorted; only without a lock.
+  repeated string dependencies = 3;
+}
+
+message ExistingPythonRealization {
+  optional string implementation = 1;
+  optional string python_version = 2;
+  optional string cache_tag = 3;
+  // sysconfig.get_platform(), such as linux-x86_64 or macosx-14.0-arm64.
+  optional string sysconfig_platform = 4;
+  optional string os = 5;
+  optional string arch = 6;
+  // Sorted by canonical name; the first copy on sys.path.
+  repeated InstalledDistribution distributions = 7;
+  optional string materializer_name = 8;
+  optional string materializer_version = 9;
+  optional PythonVerification verification = 10;
+}
+
+message InstalledDistribution {
+  optional string name = 1;
+  optional string version = 2;
+  // PEP 610 direct_url.json is present (a path, URL, or VCS install).
+  optional bool direct = 3;
+  optional bool editable = 4;
+}
+
+enum PythonVerification {
+  PYTHON_VERIFICATION_UNSPECIFIED = 0;
+  // Every locked runtime package (no dev groups or extras) is installed at its
+  // version from a current uv.lock; other installed packages are permitted.
+  LOCK_SYNC_CHECKED = 1;
+  // Only requires-python and applicable direct requirements were checked.
+  DIRECT_REQUIREMENTS_SATISFIED = 2;
+  // No [project] metadata was declared, so no requirement was checked.
+  UNDECLARED = 3;
+}

@@ -54,7 +54,8 @@ from pathlib import Path
 journal=json.loads(Path(sys.argv[1]).read_text())
 assert journal["status"] == "succeeded"
 assert journal["runId"] == "clean-wheel"
-assert journal["schemaVersion"] == 4
+assert journal["schemaVersion"] == 5
+assert journal["environment"]["realizationHash"].startswith("sha256:"), journal
 assert journal["steps"][0]["attempts"][0]["output"]["manifest"]["key"]
 PYJOURNAL
 
@@ -278,6 +279,8 @@ TOML
   uv run --locked massive run workflow.py --input '{"value": 21}' \
     --store "$test_root/locked-store" --project massive/distribution-locked \
     --run-id locked --json > "$test_root/locked-result.json"
+  .venv/bin/massive inspect locked --project massive/distribution-locked \
+    --store "$test_root/locked-store" --environment --json > "$test_root/locked-environment.json"
   rm imported
   uv pip uninstall --quiet --python .venv/bin/python tabulate
   if .venv/bin/massive run workflow.py --input '{"value": 21}' \
@@ -300,6 +303,13 @@ assert ready["verification"] == "LOCK_SYNC_CHECKED", ready
 assert ready["interpreter"]["executable"].startswith(str(root / "locked/.venv")), ready
 sdk = next(item for item in ready["distributions"] if item["name"] == "massive-workflows")
 assert sdk == {"name": "massive-workflows", "version": sys.argv[2], "direct": True, "editable": False}, sdk
+record = json.loads((root / "locked-environment.json").read_text())
+assert record["requirementHash"] == ready["requirementHash"], (record, ready)
+assert record["realizationHash"] == ready["realizationHash"], (record, ready)
+assert record["realization"]["verification"] == "LOCK_SYNC_CHECKED", record
+assert record["realization"]["materializerVersion"] == sys.argv[2], record
+assert "lockHash" in record["requirement"] and "dependencies" not in record["requirement"], record
+assert str(root) not in json.dumps(record), "realization records must not contain local paths"
 run = json.loads((root / "locked-result.json").read_text())
 assert run["status"] == "succeeded" and run["result"]["value"] == 42, run
 diagnostic = (root / "locked-preflight.txt").read_text()

@@ -174,3 +174,46 @@ func jsonQuote(value string) string {
 	out.WriteByte('"')
 	return out.String()
 }
+
+// The realized-environment vectors are checked here with an independent
+// canonicalizer: each recipe field tree is rebuilt from the record's JSON.
+func TestRealizedEnvironmentHashingVectors(t *testing.T) {
+	for _, name := range []string{"realized-environment-locked-v1.json", "realized-environment-direct-v1.json"} {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "fixtures", "hashing", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			decoder.UseNumber()
+			var record map[string]any
+			if err := decoder.Decode(&record); err != nil {
+				t.Fatal(err)
+			}
+			requirement := record["requirement"].(map[string]any)
+			dependencies, ok := requirement["dependencies"]
+			if !ok {
+				dependencies = []any{}
+			}
+			requirementTree := map[string]any{
+				"recipe": "python-requirement", "recipeVersion": json.Number("1"),
+				"requiresPython": requirement["requiresPython"], "lockHash": requirement["lockHash"],
+				"dependencies": dependencies,
+			}
+			realizationTree := map[string]any{"recipe": "existing-python", "recipeVersion": json.Number("1"), "cacheTag": nil}
+			for member, value := range record["realization"].(map[string]any) {
+				realizationTree[member] = value
+			}
+			for tree, member := range map[*map[string]any]string{&requirementTree: "requirementHash", &realizationTree: "realizationHash"} {
+				canonical, err := canonicalJSON(*tree)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sum := sha256.Sum256(canonical)
+				if actual := "sha256:" + hex.EncodeToString(sum[:]); actual != record[member] {
+					t.Fatalf("%s = %s, record has %s\njson: %s", member, actual, record[member], canonical)
+				}
+			}
+		})
+	}
+}

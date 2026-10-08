@@ -26,6 +26,10 @@ contracts:
   A caller-supplied manifest is never accepted as proof: compilation derives it
   again from the spec, plan, and actual source bytes.
 
+The same file defines **RealizedEnvironment**, the record of an existing Python
+environment that passed dependency preflight. It is referenced from run journals,
+not from deployments; see [environment materialization](environment-materialization.md#recorded-python-realizations-implemented-locally).
+
 Source package hashes authenticate normalized file paths and their bytes.
 Archive hashes authenticate the exact tar bytes. Both must match; an archive
 with different metadata can retain source identity but changes materialization
