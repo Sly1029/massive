@@ -49,7 +49,8 @@ __start -> double -> label -> __end
 
 Each `graph.step(id, { input, output, run })` has an input schema, an output
 schema, and executable code. The path builder tracks the current output type,
-so `.to(next)` only accepts a step whose input matches it.
+so `.to(next)` only accepts a step whose input type accepts that output: a wider
+input such as a union is allowed, a narrower one is a type error.
 
 The step functions are top-level named exports. The emitted plan stores symbol
 references, not function bodies, and the runner resolves those exports in a

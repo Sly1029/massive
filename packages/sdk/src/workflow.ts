@@ -43,15 +43,17 @@ export interface StepNode {
   mergeInputs?: string[];
 }
 
+// Handles consume values, so their input slot is contravariant: an edge accepts
+// a producer whose output is assignable to the consumer's input, never a wider one.
 export class StepHandle<Input, Output> {
-  readonly __input?: Input;
+  readonly __input?: (value: Input) => void;
   readonly __output?: Output;
 
   constructor(readonly nodeId: string) {}
 }
 
 export class EndHandle<Output> {
-  readonly __input?: Output;
+  readonly __input?: (value: Output) => void;
 
   constructor(readonly nodeId: string) {}
 }
@@ -136,7 +138,7 @@ export class WorkflowBuilder<Input, Output> {
     return new PathBuilder<StepOutput>(this as WorkflowBuilder<unknown, unknown>, step.nodeId);
   }
 
-  merge<StepOutput>(steps: readonly StepHandle<unknown, StepOutput>[]): MergeBuilder<StepOutput> {
+  merge<StepOutput>(steps: readonly StepHandle<never, StepOutput>[]): MergeBuilder<StepOutput> {
     if (steps.length === 0) {
       throw new GraphValidationError("Merge requires at least one upstream step");
     }
