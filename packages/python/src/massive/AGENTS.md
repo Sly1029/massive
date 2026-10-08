@@ -16,6 +16,11 @@ recursive composition, scoped ID collisions, and over-long scoped IDs before
 producing a spec. Expansion must stay spec-transparent: a composed graph emits
 the same canonical spec as its hand-inlined twin using `<call>--<child>` IDs.
 The Go compiler owns environment identity; `Container` describes requirements.
+The dependency preflight probe is the separate top-level `massive_environment`
+package. It must not import `massive` or workflow modules.
+The frontend and runner also run under `-I`, with an explicit `sys.path`
+entry for the workflow directory or verified snapshot. The `massive` launcher
+always sets `MASSIVE_PYTHON` to its own interpreter; Go has no runner fallback.
 
 Blob/Tree values carry immutable references. Publish bodies before committing
 an output manifest; hydrate into invocation-local scratch. A changed working

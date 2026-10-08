@@ -51,8 +51,64 @@ uv run --locked massive run workflow.py --project example/analysis --input '{}'
 
 Create/update the lock deliberately with `uv lock`, not as an implicit side effect
 of compilation. Each workflow can have its own directory, project metadata,
-lockfile, and virtual environment. `massive` uses the launching Python interpreter
-for both emission and task execution. It does not install dependencies itself.
+lockfile, and virtual environment. `massive` does not install dependencies itself.
+
+### Dependency preflight (implemented for existing Python environments)
+
+Before importing any workflow module, `massive run`, `massive build`, and
+`massive env check` run `python -I -m massive_environment probe <dir>` with the
+launching interpreter (`MASSIVE_PYTHON`, which the wheel launcher always sets to
+its own interpreter). The probe is a small top-level module that does not import
+the SDK. It reads `[project]` metadata with Pydantic and installed distribution
+metadata with `importlib.metadata` and `packaging`. Its output is validated
+against `conformance/schema/environment-probe.schema.json`, which is generated
+from the probe's Pydantic model. The Go control plane then adds the SDK release
+check and, when `uv.lock` exists, runs `uv lock --check`, followed by
+`uv sync --locked --check --inexact --no-default-groups --no-install-project
+--no-install-package massive-workflows`. Both run offline against the probed
+prefix (`UV_PROJECT_ENVIRONMENT`) and interpreter (`--python`), with an
+allowlisted environment: inherited `UV_*` settings keep only cache, index, and
+resolution options.
+
+The lock check verifies the locked **runtime** set: every package the lock
+installs without dependency groups or extras is present at its locked version.
+Extra installed packages, including groups and extras, are allowed, so a
+container synced with `--no-dev` and a development environment synced with
+extras both pass. The workflow project itself is never required to be installed:
+pods run it from its source archive. `massive-workflows` is excluded from the uv
+comparison, because a runner image installs it from a local wheel whose
+recorded `file://` source never equals the locked index source. The probe
+instead compares its installed version with the version `uv.lock` pins
+(`LOCKED_SDK_VERSION`). Direct references are recorded and reported without
+credentials, query strings, fragments, or local paths.
+
+| Code | Meaning |
+| --- | --- |
+| `REQUIRES_PYTHON` | The interpreter is outside `requires-python`. |
+| `MISSING_REQUIREMENT`, `REQUIREMENT_VERSION` | An applicable direct requirement is absent or the wrong version. |
+| `DUPLICATE_DISTRIBUTION` | Two copies of a direct requirement or `massive-workflows` are on `sys.path`; the first shadows the rest. |
+| `SHADOWED_MODULE` | A workflow-directory module shadows a standard-library or installed module. |
+| `WORKSPACE_LOCK` | The workflow is a member of a uv workspace in a parent directory; uv resolves it with the workspace lock (even when the member has its own), which is neither archived nor checked. |
+| `LOCKED_SDK_VERSION` | The installed `massive-workflows` differs from the version `uv.lock` pins. |
+| `SDK_VERSION` | `massive-workflows` differs from the control plane release. Source-built control planes skip this check. |
+| `UV_UNAVAILABLE` | `uv.lock` exists but `uv` is not on `PATH`. There is no silent downgrade. |
+| `LOCK_STALE` | `uv.lock` does not match `pyproject.toml`. |
+| `LOCK_OUT_OF_SYNC` | A locked runtime package is missing or at another version. |
+| `UV_FAILED` | uv could not run the check; the fix line is the exact command to rerun. |
+
+Each finding has a one-line fix. A finding names only the package names and
+versions from uv's planned changes; raw uv output is never reported. Fix lines
+name the checked environment (`UV_PROJECT_ENVIRONMENT=<prefix>`) unless it is the
+project's `.venv`. The verification level is `LOCK_SYNC_CHECKED` with a lock,
+`DIRECT_REQUIREMENTS_SATISFIED` without one, and `UNDECLARED` without `[project]`
+metadata. `UNDECLARED` is not a failure, but `env check` reports it as
+`unverified`. Unreadable project metadata is a one-line error. An interpreter
+without `massive-workflows` is an error with an installation command.
+
+After the check passes, the probed `sys.executable` runs the frontend and every
+local task, both with `-I`. The working directory and `PYTHONPATH` therefore
+cannot shadow the archived source, and emission and execution cannot resolve
+different interpreters.
 
 For Argo, build an image with the same locked dependencies and Massive version,
 then reference its immutable digest using `container(...)`. Argo currently executes
@@ -89,10 +145,11 @@ incompatible dependencies should fail before scheduling work, with an actionable
 installation command. A container materializer must commit an actual image before
 recording an artifact; a recipe is not a built artifact.
 
-Dependency preflight should eventually happen before importing author code. That
-requires reading project metadata without graph evaluation. Optional Docker-based
-local execution can then reuse an existing image rather than invent a new scheduler.
-Neither dependency preflight nor local Docker execution is implemented by this change.
+Local dependency preflight runs before any author code is imported (see above).
+The realized environment is not yet recorded in run journals, and Argo pods do not
+yet check their image against the archived project inputs. Optional Docker-based
+local execution can later reuse an existing image rather than invent a new
+scheduler; it is not implemented.
 
 ## Identity and sharing
 

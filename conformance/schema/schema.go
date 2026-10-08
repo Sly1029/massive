@@ -42,3 +42,9 @@ var ArgoWorkflowsCRDSchemaJSON []byte
 //
 //go:embed run-manifest.schema.json
 var RunManifestSchemaJSON []byte
+
+// EnvironmentProbeSchemaJSON is the Python environment probe's report of an
+// interpreter and its installed distributions.
+//
+//go:embed environment-probe.schema.json
+var EnvironmentProbeSchemaJSON []byte

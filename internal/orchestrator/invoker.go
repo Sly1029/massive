@@ -27,10 +27,12 @@ const (
 func DefaultRunnerCommand(language string) ([]string, error) {
 	switch language {
 	case "python":
-		if python := os.Getenv("MASSIVE_PYTHON"); python != "" {
-			return []string{python, "-m", "massive.runner", descriptorPathToken}, nil
+		// Always one isolated launch path; the massive launcher sets MASSIVE_PYTHON.
+		python := os.Getenv("MASSIVE_PYTHON")
+		if python == "" {
+			return nil, errors.New("Python tasks need MASSIVE_PYTHON; launch through the massive command installed by massive-workflows")
 		}
-		return []string{"massive-python-runner", descriptorPathToken}, nil
+		return PythonRunnerCommand(python), nil
 	case "typescript":
 		runner := os.Getenv("MASSIVE_TYPESCRIPT_RUNNER")
 		if runner == "" {
@@ -40,6 +42,12 @@ func DefaultRunnerCommand(language string) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported runner language %q", language)
 	}
+}
+
+// PythonRunnerCommand runs tasks with a pinned interpreter in isolated mode, so
+// the working directory and PYTHONPATH cannot shadow the verified source snapshot.
+func PythonRunnerCommand(python string) []string {
+	return []string{python, "-I", "-m", "massive.runner", descriptorPathToken}
 }
 
 type ProcessStepInvoker struct {

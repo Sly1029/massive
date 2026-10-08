@@ -17,13 +17,16 @@ import (
 func TestDefaultRunnerCommandSelectsLanguageAdapters(t *testing.T) {
 	t.Setenv("MASSIVE_PYTHON", "")
 	t.Setenv("MASSIVE_TYPESCRIPT_RUNNER", "")
-	for language, executable := range map[string]string{"python": "massive-python-runner", "typescript": "massive-typescript-runner"} {
-		argv, err := DefaultRunnerCommand(language)
-		if err != nil || !reflect.DeepEqual(argv, []string{executable, descriptorPathToken}) {
-			t.Fatalf("%s: %v %v", language, argv, err)
-		}
+	if argv, err := DefaultRunnerCommand("typescript"); err != nil || !reflect.DeepEqual(argv, []string{"massive-typescript-runner", descriptorPathToken}) {
+		t.Fatalf("typescript: %v %v", argv, err)
+	}
+	if _, err := DefaultRunnerCommand("python"); err == nil || !strings.Contains(err.Error(), "MASSIVE_PYTHON") {
+		t.Fatalf("Python without MASSIVE_PYTHON = %v, want an error", err)
 	}
 	t.Setenv("MASSIVE_PYTHON", "/active/python")
+	if argv, err := DefaultRunnerCommand("python"); err != nil || !reflect.DeepEqual(argv, []string{"/active/python", "-I", "-m", "massive.runner", descriptorPathToken}) {
+		t.Fatalf("python: %v %v", argv, err)
+	}
 	argv, err := DefaultRunnerCommand("typescript")
 	if err != nil || argv[0] != "massive-typescript-runner" {
 		t.Fatalf("Python environment overrode TypeScript: %v %v", argv, err)

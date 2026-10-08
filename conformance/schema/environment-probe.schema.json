@@ -1,0 +1,215 @@
+{
+  "$defs": {
+    "Distribution": {
+      "additionalProperties": false,
+      "description": "The first installed copy of a distribution on sys.path.",
+      "properties": {
+        "name": {
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        },
+        "direct": {
+          "title": "Direct",
+          "type": "boolean"
+        },
+        "editable": {
+          "title": "Editable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "direct",
+        "editable"
+      ],
+      "title": "Distribution",
+      "type": "object"
+    },
+    "Finding": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "REQUIRES_PYTHON",
+            "MISSING_REQUIREMENT",
+            "REQUIREMENT_VERSION",
+            "DUPLICATE_DISTRIBUTION",
+            "SHADOWED_MODULE",
+            "WORKSPACE_LOCK",
+            "LOCKED_SDK_VERSION"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "fix": {
+          "minLength": 1,
+          "title": "Fix",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "fix"
+      ],
+      "title": "Finding",
+      "type": "object"
+    },
+    "Interpreter": {
+      "additionalProperties": false,
+      "description": "The probed interpreter. Paths pin execution; they are not identity.",
+      "properties": {
+        "executable": {
+          "minLength": 1,
+          "title": "Executable",
+          "type": "string"
+        },
+        "prefix": {
+          "minLength": 1,
+          "title": "Prefix",
+          "type": "string"
+        },
+        "implementation": {
+          "minLength": 1,
+          "title": "Implementation",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        },
+        "cacheTag": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cachetag"
+        },
+        "platform": {
+          "minLength": 1,
+          "title": "Platform",
+          "type": "string"
+        },
+        "os": {
+          "minLength": 1,
+          "title": "Os",
+          "type": "string"
+        },
+        "arch": {
+          "minLength": 1,
+          "title": "Arch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "executable",
+        "prefix",
+        "implementation",
+        "version",
+        "cacheTag",
+        "platform",
+        "os",
+        "arch"
+      ],
+      "title": "Interpreter",
+      "type": "object"
+    },
+    "ProjectRequirements": {
+      "additionalProperties": false,
+      "description": "[project] dependency inputs; dependencies use canonical names, sorted.",
+      "properties": {
+        "requiresPython": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Requirespython"
+        },
+        "dependencies": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Dependencies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "requiresPython",
+        "dependencies"
+      ],
+      "title": "ProjectRequirements",
+      "type": "object"
+    }
+  },
+  "$id": "https://massive.dev/conformance/schema/environment-probe.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Facts reported before any workflow module is imported.",
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "interpreter": {
+      "$ref": "#/$defs/Interpreter"
+    },
+    "project": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProjectRequirements"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "distributions": {
+      "items": {
+        "$ref": "#/$defs/Distribution"
+      },
+      "title": "Distributions",
+      "type": "array"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/Finding"
+      },
+      "title": "Findings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "interpreter",
+    "project",
+    "distributions",
+    "findings"
+  ],
+  "title": "Massive Python environment probe",
+  "type": "object"
+}
