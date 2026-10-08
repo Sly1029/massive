@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	contract "github.com/Sly1029/massive/conformance/schema"
+	"github.com/Sly1029/massive/internal/taskprocess"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -156,6 +157,10 @@ func Check(ctx context.Context, request Request) (*Report, error) {
 	}
 	report.Verification = LockSyncChecked
 	report.Findings = append(report.Findings, lockFindings(ctx, request.ProjectRoot, probe.Interpreter)...)
+	// A cancelled uv check is not a finding about the environment.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return report, nil
 }
 
@@ -177,11 +182,11 @@ var missingProbe = regexp.MustCompile(`No module named '?massive_environment'?$`
 
 func runProbe(ctx context.Context, python, root string) (*Probe, error) {
 	// Isolated mode keeps the workflow directory and PYTHONPATH off sys.path.
-	command := exec.CommandContext(ctx, python, "-I", "-m", "massive_environment", "probe", root)
-	command.Dir = root
 	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	if err := command.Run(); err != nil {
+	if err := taskprocess.RunTo(ctx, []string{python, "-I", "-m", "massive_environment", "probe", root}, root, nil, &stdout, &stderr); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		var exit *exec.ExitError
 		detail := lastLine(stderr.String())
 		switch {
@@ -269,12 +274,13 @@ func lockFindings(ctx context.Context, root string, interpreter Interpreter) []F
 	run := func(arguments ...string) (int, string, Finding) {
 		arguments = append(arguments, common...)
 		var output bytes.Buffer
-		command := exec.CommandContext(ctx, uv, arguments...)
-		command.Dir, command.Env, command.Stdout, command.Stderr = root, environment, &output, &output
-		err := command.Run()
+		err := taskprocess.RunTo(ctx, append([]string{uv}, arguments...), root, environment, &output, &output)
 		var exit *exec.ExitError
-		if err == nil || (errors.As(err, &exit) && exit.ExitCode() == 1) {
-			return command.ProcessState.ExitCode(), output.String(), Finding{}
+		switch {
+		case err == nil:
+			return 0, output.String(), Finding{}
+		case errors.As(err, &exit) && exit.ExitCode() == 1:
+			return 1, output.String(), Finding{}
 		}
 		rerun := "UV_PROJECT_ENVIRONMENT=" + shellQuote(interpreter.Prefix) + " uv"
 		for _, argument := range arguments {

@@ -33,3 +33,7 @@ silently; a project without `[project]` metadata is `UNDECLARED`.
 Test against real environments built with `uv venv` and `uv sync --locked`.
 `conformance/workflows/python-locked/uv.lock` is generated with `uv lock`;
 regenerate it when the SDK's dependencies or version change, and never edit it by hand.
+
+Launch the probe and uv through `taskprocess.RunTo` so descendants are owned and
+inherited-pipe drainage is bounded, as for the frontend. A cancelled context is
+returned as the error, never reported as a finding.

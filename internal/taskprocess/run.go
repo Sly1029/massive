@@ -21,16 +21,17 @@ const (
 // Tasks must await children whose work contributes to their result.
 func Run(ctx context.Context, argv []string, directory string) (string, error) {
 	var output boundedOutput
-	err := RunTo(ctx, argv, directory, &output, &output)
+	err := RunTo(ctx, argv, directory, nil, &output, &output)
 	return output.String(), err
 }
 
 // RunTo runs an adapter with separate output streams and owns its descendants.
 // Callers choose their output policy; frontend specifications must remain intact
 // rather than share the bounded combined log capture used by task invocations.
-func RunTo(ctx context.Context, argv []string, directory string, stdout, stderr io.Writer) error {
+// A nil environment inherits this process's environment.
+func RunTo(ctx context.Context, argv []string, directory string, environment []string, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir = directory
+	cmd.Dir, cmd.Env = directory, environment
 	// Bound inherited-pipe drainage even if a descendant leaves the ownership
 	// group. Local author code is trusted execution, not an OS sandbox.
 	cmd.WaitDelay = pipeDrainLimit
