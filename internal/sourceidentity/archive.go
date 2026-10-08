@@ -3,9 +3,13 @@ package sourceidentity
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path"
 	"sort"
 
 	"github.com/Sly1029/massive/internal/canonical"
@@ -34,14 +38,28 @@ const (
 // VerifyArchive derives source-package-v1 identity from exact tar entry bytes.
 // Both target compilation and remote execution use this same trust boundary.
 func VerifyArchive(archive []byte, expectedHash string) error {
-	_, _, err := verifyArchive(archive, expectedHash)
+	_, _, err := walkArchive(bytes.NewReader(archive), int64(len(archive)), expectedHash, nil)
+	return err
+}
+
+// ExtractArchive applies VerifyArchive's checks to size bytes read from input
+// while writing each file beneath directory. Bodies stream through their hash,
+// so memory stays bounded by tar blocks rather than by package size. On error
+// directory may hold partial files; callers discard it.
+func ExtractArchive(input io.Reader, size int64, expectedHash, directory string) error {
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return fmt.Errorf("open extraction directory: %w", err)
+	}
+	defer root.Close()
+	_, _, err = walkArchive(input, size, expectedHash, root)
 	return err
 }
 
 // VerifyLanguageArchive is VerifyArchive plus the limits of the runner that
 // will extract the archive, so a build fails instead of every pod.
 func VerifyLanguageArchive(archive []byte, expectedHash, language string) error {
-	files, size, err := verifyArchive(archive, expectedHash)
+	files, size, err := walkArchive(bytes.NewReader(archive), int64(len(archive)), expectedHash, nil)
 	if err != nil {
 		return err
 	}
@@ -51,28 +69,51 @@ func VerifyLanguageArchive(archive []byte, expectedHash, language string) error 
 	return nil
 }
 
-func verifyArchive(archive []byte, expectedHash string) (int, int64, error) {
-	input := bytes.NewReader(archive)
-	reader := tar.NewReader(input)
+// countingReader records how many archive bytes archive/tar has consumed; tar
+// reads exactly the blocks it parses, so the count locates entry boundaries.
+type countingReader struct {
+	reader io.Reader
+	read   int64
+}
+
+func (counter *countingReader) Read(buffer []byte) (int, error) {
+	n, err := counter.reader.Read(buffer)
+	counter.read += int64(n)
+	return n, err
+}
+
+// walkArchive verifies an archive of exactly size bytes and, with a root,
+// writes each file beneath it as the entry streams past.
+func walkArchive(input io.Reader, size int64, expectedHash string, root *os.Root) (int, int64, error) {
+	counter := &countingReader{reader: input}
+	reader := tar.NewReader(counter)
 	files := make([]File, 0)
 	seen := map[string]bool{}
 	totalSize := int64(0)
-	dataEnd := 0
+	dataEnd := int64(0)
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
 			// archive/tar accepts a missing terminator and stops before trailing
 			// data. The portable runners require two zero blocks and no hidden
-			// trailing content. dataEnd excludes the last file's block padding.
+			// trailing content. dataEnd excludes the last file's block padding;
+			// tar has already checked the end blocks it consumed.
 			end := dataEnd + (512-dataEnd%512)%512
-			if len(archive)-end < 1024 {
+			if size-end < 1024 {
 				return 0, 0, errors.New("source archive is missing its two zero end blocks")
 			}
-			if len(archive)-end > MaxEndPadding {
+			if size-end > MaxEndPadding {
 				return 0, 0, errors.New("source archive has more end padding than one tar record")
 			}
-			if len(bytes.Trim(archive[end:], "\x00")) != 0 {
+			trailing, err := io.ReadAll(io.LimitReader(counter, MaxEndPadding+1))
+			if err != nil {
+				return 0, 0, fmt.Errorf("read source archive: %w", err)
+			}
+			if len(bytes.Trim(trailing, "\x00")) != 0 {
 				return 0, 0, errors.New("source archive has trailing data after its files")
+			}
+			if counter.read != size {
+				return 0, 0, fmt.Errorf("source archive is %d bytes, not the expected %d", counter.read, size)
 			}
 			break
 		}
@@ -87,12 +128,12 @@ func verifyArchive(archive []byte, expectedHash string) (int, int64, error) {
 			return 0, 0, errors.New("source archive exceeds source package limits")
 		}
 		totalSize += header.Size
-		body, err := io.ReadAll(reader)
-		if err != nil {
-			return 0, 0, fmt.Errorf("read source archive entry %q: %w", header.Name, err)
+		hash := sha256.New()
+		if err := copyEntry(root, header.Name, reader, hash); err != nil {
+			return 0, 0, err
 		}
-		dataEnd = len(archive) - input.Len()
-		files = append(files, File{Path: header.Name, Hash: canonical.DigestBytes(body)})
+		dataEnd = counter.read
+		files = append(files, File{Path: header.Name, Hash: "sha256:" + hex.EncodeToString(hash.Sum(nil))})
 	}
 	sort.Slice(files, func(i, j int) bool { return canonical.LessUTF16(files[i].Path, files[j].Path) })
 	// Digest validates normalized, unique paths before computing identity.
@@ -104,4 +145,32 @@ func verifyArchive(archive []byte, expectedHash string) (int, int64, error) {
 		return 0, 0, fmt.Errorf("source archive identity %s does not match plan package hash %s", actual, expectedHash)
 	}
 	return len(files), totalSize, nil
+}
+
+// copyEntry streams one body through its hash and, with a root, into a new
+// file beneath it; the root confines every path.
+func copyEntry(root *os.Root, name string, body io.Reader, hash io.Writer) error {
+	if root == nil {
+		if _, err := io.Copy(hash, body); err != nil {
+			return fmt.Errorf("read source archive entry %q: %w", name, err)
+		}
+		return nil
+	}
+	if directory := path.Dir(name); directory != "." {
+		if err := root.MkdirAll(directory, 0o755); err != nil {
+			return fmt.Errorf("extract source archive entry %q: %w", name, err)
+		}
+	}
+	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("extract source archive entry %q: %w", name, err)
+	}
+	_, err = io.Copy(io.MultiWriter(file, hash), body)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("extract source archive entry %q: %w", name, err)
+	}
+	return nil
 }

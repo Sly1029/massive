@@ -119,7 +119,10 @@ func (d *S3Datastore) Get(ctx context.Context, key Key) (Object, error) {
 			return Object{}, fmt.Errorf("get %s: %w", key, ErrNotFound)
 		}
 		if isS3AccessDenied(err) {
-			return Object{}, fmt.Errorf("get %s: %w", key, ErrAccessDenied)
+			// Keep the S3 response, whose message omits its error code.
+			var response minio.ErrorResponse
+			errors.As(err, &response)
+			return Object{}, fmt.Errorf("get %s: %w (S3 %s): %w", key, ErrAccessDenied, response.Code, err)
 		}
 		return Object{}, fmt.Errorf("stat s3 object %s: %w", key, err)
 	}

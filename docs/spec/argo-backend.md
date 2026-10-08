@@ -80,9 +80,12 @@ the `massive.dev/runtime-transport` annotation.
   streams `packages/sha256-<package>/archives/sha256-<archive>.tar` from the
   bound datastore to private scratch and rejects it unless its SHA-256 equals
   the pinned digest, before reading any entry or importing code. Python attempts
-  first fetch and verify the same object for dependency preflight; a missing,
-  denied, or digest-mismatched archive exits 68 there, and a datastore outage
-  stays retryable. Otherwise a missing object, an object above the largest
+  first fetch and verify the same object for dependency preflight. Like the
+  runner, the pod checks the object's declared size against the largest valid
+  archive before reading it, then streams it to scratch through its digest
+  and extracts from disk, so pod memory does not grow with the package. A
+  missing, denied, oversized, or digest-mismatched archive exits 68 there; a
+  datastore outage or interrupted read stays retryable. Otherwise a missing object, an object above the largest
   valid archive size, or a digest mismatch is a descriptor failure (exit 64).
   Argo's retry expression retries neither, and the missing-object diagnostic
   names `massive publish`. With
