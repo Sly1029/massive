@@ -37,11 +37,21 @@ export async function withResolvedStepSymbol<Result>(
   const packageRoot = await fetchSourcePackage(descriptor, store);
   try {
     const modulePath = resolveModulePath(packageRoot, descriptor.symbol.module);
-    const module = (await import(
-      `${pathToFileURL(modulePath).href}?packageHash=${
-        encodeURIComponent(descriptor.sourcePackage.packageHash)
-      }`
-    )) as Record<string, unknown>;
+    let module: Record<string, unknown>;
+    try {
+      module = await import(
+        `${pathToFileURL(modulePath).href}?packageHash=${
+          encodeURIComponent(descriptor.sourcePackage.packageHash)
+        }`
+      );
+    } catch (error) {
+      // A module that cannot load fails identically on every attempt.
+      throw new SymbolResolutionError(
+        `cannot import module "${descriptor.symbol.module}": ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
     const run = stepRunFromExport(module[descriptor.symbol.export]);
     if (run === undefined) {
       throw new SymbolResolutionError(
