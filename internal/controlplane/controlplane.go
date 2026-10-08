@@ -90,6 +90,12 @@ func Emit(ctx context.Context, entry string) (*FrontendResult, error) {
 	var stdout, stderr bytes.Buffer
 	if err := taskprocess.RunTo(ctx, argv, filepath.Dir(absolute), &stdout, &stderr); err != nil {
 		diagnostic := strings.TrimSpace(stderr.String())
+		if errors.Is(err, exec.ErrWaitDelay) {
+			if diagnostic != "" {
+				return nil, fmt.Errorf("%s frontend failed: %s: %w", language, diagnostic, err)
+			}
+			return nil, fmt.Errorf("%s frontend failed: %w", language, err)
+		}
 		if diagnostic == "" {
 			diagnostic = err.Error()
 		}

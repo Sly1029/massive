@@ -2,9 +2,11 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,7 +15,7 @@ import (
 
 func TestFrontendOwnsDescendantsAndInheritedPipes(t *testing.T) {
 	useCancellationPython(t)
-	for _, mode := range []string{"cancel", "return"} {
+	for _, mode := range []string{"cancel", "return", "return-stderr"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			ready := filepath.Join(root, "ready")
@@ -40,6 +42,8 @@ from massive import GraphBuilder, StepContext, container, execution
 subprocess.Popen([sys.executable, %q, %q])
 while not Path(%q).exists():
     time.sleep(0.01)
+if %q == "return-stderr":
+    print("frontend diagnostic", file=sys.stderr)
 if %q == "cancel":
     time.sleep(60)
 def echo(ctx: StepContext[int]) -> int:
@@ -49,7 +53,7 @@ graph = GraphBuilder(name="frontend-owner", input_type=int, output_type=int,
 task = graph.add(echo)
 graph.edge_from(graph.start).to(task)
 graph.edge_from(task).to(graph.end)
-`, child, ready, ready, mode)
+`, child, ready, ready, mode, mode)
 			if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -86,8 +90,14 @@ graph.edge_from(task).to(graph.end)
 				if err == nil {
 					t.Fatal("frontend with an unawaited descendant unexpectedly succeeded")
 				}
-				if mode == "return" && !strings.Contains(err.Error(), "descendants kept output open") {
+				if mode != "cancel" && !strings.Contains(err.Error(), "descendants kept output open") {
 					t.Fatalf("unawaited descendant error = %v", err)
+				}
+				if mode == "return-stderr" && !strings.Contains(err.Error(), "frontend diagnostic") {
+					t.Fatalf("frontend diagnostic missing from error: %v", err)
+				}
+				if mode != "cancel" && !errors.Is(err, exec.ErrWaitDelay) {
+					t.Fatalf("drain deadline error lost its cause: %v", err)
 				}
 			case <-time.After(2 * time.Second):
 				t.Fatal("frontend completion hung on its descendant's inherited pipes")

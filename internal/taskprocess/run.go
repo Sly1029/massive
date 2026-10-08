@@ -58,7 +58,7 @@ func RunTo(ctx context.Context, argv []string, directory string, stdout, stderr 
 		return ctx.Err()
 	}
 	if errors.Is(err, exec.ErrWaitDelay) {
-		err = fmt.Errorf("task descendants kept output open after the adapter exited; ensure tasks await child processes: %w", err)
+		err = fmt.Errorf("descendants kept output open after the parent process exited; ensure child processes are awaited: %w", err)
 	}
 	return err
 }
