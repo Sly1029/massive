@@ -99,6 +99,7 @@ dev = [
     { name = "pyright", specifier = ">=1.1.390,<2" },
     { name = "pytest", specifier = ">=8.3,<9" },
     { name = "ruff", specifier = ">=0.9,<1" },
+    { name = "ty", specifier = ">=0.0.85,<0.1" },
 ]
 
 [[package]]

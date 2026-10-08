@@ -34,4 +34,4 @@ def double(context: StepContext[Request]) -> Result:
 
 
 step = graph.add(double)
-graph.edge_from(graph.start).to(step).to(graph.end)
+graph.edge_from(graph.start).to(step).to_end(graph.end)
