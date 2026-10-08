@@ -8,6 +8,6 @@
   "required": ["hash", "size"],
   "properties": {
     "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-    "size": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+    "size": { "type": "integer", "minimum": 1, "maximum": 268435456 }
   }
 }

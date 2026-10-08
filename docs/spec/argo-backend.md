@@ -477,38 +477,72 @@ Argo passes values between tasks as parameters. It copies them into pod
 arguments and its template environment, which Linux limits to 128 KiB per
 string, and into the workflow status. A merge step or a map collector receives
 several values at once. So Massive runtime commands exchange **value
-parameters**:
+parameters**, and between tasks each value has exactly one valid spelling:
 
 - canonical JSON text when the canonical body is at most **4,096 bytes**; or
 - `@` followed by the canonical JSON of a reference,
   `{"hash":"sha256:<hex>","size":<bytes>}`, to the canonical body stored at
   `blobs/sha256/<hex>` with content type `application/json`.
 
-`@` cannot begin JSON text, so the forms are unambiguous for every value. The
-reference schema is `conformance/schema/value-reference.schema.json`. Its hash is
-the SHA-256 of the same canonical bytes recorded in artifact manifests and step
-descriptors, so a reference never changes a value's identity, input hashes,
-output manifests, or idempotency keys. Step outputs are already committed at
-that key by the language runner; control tasks and collectors publish their
-outputs with an if-absent put. Every reader verifies hash, size, content type,
-and canonical encoding before use. Vectors, with hashes computed independently
-of the Go implementation, live in `conformance/fixtures/value-parameters`.
+`@` cannot begin JSON text, so the forms are unambiguous for every value.
+Runtimes reject whitespace, reordered or duplicate keys, inline values above
+4 KiB, and references to bodies small enough to be inline, with a
+non-retryable exit 64. The reference schema is
+`conformance/schema/value-reference.schema.json`; referenced bodies are at most
+256 MiB. A reference's hash is the SHA-256 of the same canonical bytes recorded
+in artifact manifests and step descriptors, so carrying a value by reference
+never changes its identity, input hashes, output manifests, or idempotency
+keys. Readers check the object's declared size against the reference before
+reading, never read past it, and verify hash, content type, and canonical
+encoding before use. Vectors, with hashes computed independently of the Go
+implementation, live in `conformance/fixtures/value-parameters`.
 
-Map envelopes carry each item as `{"index":i,"value":v}` when the item's body
-is at most **256 bytes**, otherwise as `{"index":i,"ref":{...}}`. The smaller
-limit applies because Argo concatenates every item result into the collector's
-single parameter. A map's collected envelopes must still fit that parameter, so
-very wide maps remain bounded by Argo (each referenced item costs about 120
-bytes). A merge step receives one parameter per source (`--merge-input`, in
+**Workflow inputs** are inline JSON only. A submitted reference is rejected,
+because it could point pods at any body in the shared store, including another
+project's. A step fed by the workflow input canonicalizes it itself
+(`--workflow-input`). When a decision or map consumes the workflow input, an
+inserted `workflow-entry` task normalizes it once, publishing it when it exceeds
+4 KiB, so those control tasks only read. A workflow result above 4 KiB is
+returned as a reference; read its body from the datastore.
+
+**Maps.** Expansion never writes. Items of an inline list travel inline. Items
+of a referenced list carry that list's reference as
+`{"index":i,"listRef":{...}}`, and each item pod reads the list and selects its
+own index, so every item pod downloads the whole list. Mapper results travel as
+`{"index":i,"value":v}` when the result is at most **100 bytes**, otherwise as
+`{"index":i,"ref":{...}}`, which costs about 120 bytes. Argo concatenates every
+result envelope into the collector's single parameter, and that aggregate
+appears twice, JSON-escaped, in the collector's template environment. Expansion
+therefore rejects maps wider than **341 items** with a clear exit-64 error
+rather than letting the collector fail with "argument list too long". Split
+wider work into fewer, larger items.
+
+**Merges.** A merge step receives one parameter per source (`--merge-input`, in
 `mergeInputs` order) rather than a concatenated array, because a reference is
 not JSON text.
 
 Typed step inputs are hydrated by the Go runtime before the language runner
 starts, so runners and author code see ordinary values in both targets. The
 local target already passes every value as a datastore artifact and never needs
-references. A workflow input submitted with `-p input=` may itself be a
-reference to a body published at its blob key. A workflow result above 4 KiB is
-returned as a reference; read its body from the datastore.
+references.
+
+**Datastore access by template.** All pods mount the same datastore descriptor
+and, when `--artifact-credentials-secret` is set, receive the same storage
+credentials. The minimum S3 permissions each template needs are:
+
+| Template | Reads | Writes |
+| --- | --- | --- |
+| step, map item (author code) | run inputs, schemas, source archives, Blob/Tree bodies, `blobs/sha256/*` | run inputs and output manifests, `blobs/sha256/*`, file artifacts |
+| decision, select | `blobs/sha256/*` (referenced inputs) | none |
+| map expand | `blobs/sha256/*` (referenced list) | none |
+| map collect | `blobs/sha256/*` (referenced results) | `blobs/sha256/*` (collected list) |
+| `workflow-entry` (only before a decision or map) | none | `blobs/sha256/*` (normalized input) |
+
+Control tasks never receive application secrets, resources, or an author
+network contract. Binding control templates to a separate, narrower credential
+(for example a control-pod service account with object read on
+`blobs/sha256/*` and put only for collect and entry) is a follow-up; today one
+binding serves every pod.
 
 ## Shared invocation datastore
 
@@ -540,7 +574,8 @@ credentials from the execution environment, including workload identity. The
 Go provider refreshes IAM credentials; Python uses its SDK credential chain.
 With the flag, Massive binds only `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
 and optional `AWS_SESSION_TOKEN` from that Secret to runtime containers. Control
-tasks receive them only to read and publish value references. No credential bytes
+tasks receive them only to read value references; map collection and the
+workflow entry task also publish them. No credential bytes
 are included in plans, descriptors, source archives, or deploy bundles.
 
 An `egress: none` execution contract cannot reach remote storage, so the Argo

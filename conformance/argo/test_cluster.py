@@ -20,6 +20,18 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# Above the 4 KiB inline limit, so the entry task must publish it.
+ENTRY_RECORDS = [
+    {
+        "id": index,
+        "path": f"rules/{index:04d}.yaml",
+        "severity": "high" if index % 3 == 0 else "low",
+        "message": "m" * 200,
+    }
+    for index in range(40)
+]
+# Submitters may not point pods at bodies in the shared store.
+REFERENCE_INPUT = '@{"hash":"sha256:' + "0" * 64 + '","size":5000}'
 DATASTORE = {
     "kind": "s3",
     "bucket": "my-bucket",
@@ -179,7 +191,7 @@ def fixture_source(path: Path) -> str:
     )
 
 
-def run_locally(source: str, inputs: dict) -> dict:
+def run_locally(source: str, inputs: object, *, selector: str = "") -> object:
     """Run a workflow with the local target, the expected result on Argo."""
     with tempfile.TemporaryDirectory(prefix="massive-argo-local-") as directory:
         entry = Path(directory) / "workflow.py"
@@ -187,7 +199,7 @@ def run_locally(source: str, inputs: dict) -> dict:
         return json.loads(
             massive(
                 "run",
-                str(entry),
+                str(entry) + selector,
                 "--input",
                 json.dumps(inputs),
                 "--store",
@@ -450,14 +462,18 @@ class DecisionConformance(unittest.TestCase):
                 publish=published,
             )
         large_values = fixture_source(Path(__file__).parent / "large_values.py")
-        install_workflow(large_values)
+        install_workflow(large_values, selector="#graph")
+        install_workflow(large_values, selector="#entry_graph")
         cls.local_values = {
-            label: run_locally(large_values, inputs)
+            label: run_locally(large_values, inputs, selector="#graph")
             for label, inputs in {
                 "large-values": {"count": 20000},
                 "small-values": {"count": 10},
             }.items()
         }
+        cls.local_values["entry-values"] = run_locally(
+            large_values, ENTRY_RECORDS, selector="#entry_graph"
+        )
         cls.runs = {}
         for label, inputs in {
             "positive": {"score": 3},
@@ -482,6 +498,8 @@ class DecisionConformance(unittest.TestCase):
             "preflight-published": {"value": 21},
             "large-values": {"count": 20000},
             "small-values": {"count": 10},
+            "entry-values": ENTRY_RECORDS,
+            "reference-input": REFERENCE_INPUT,
         }.items():
             run = kubectl(
                 "create",
@@ -510,11 +528,18 @@ class DecisionConformance(unittest.TestCase):
                                 "preflight-published": "argo-preflight-published",
                                 "large-values": "large-values",
                                 "small-values": "large-values",
+                                "entry-values": "large-values-entry",
+                                "reference-input": "large-values",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
                             "parameters": [
-                                {"name": "input", "value": json.dumps(inputs)}
+                                {
+                                    "name": "input",
+                                    "value": inputs
+                                    if isinstance(inputs, str)
+                                    else json.dumps(inputs),
+                                }
                             ]
                         },
                     },
@@ -613,6 +638,11 @@ class DecisionConformance(unittest.TestCase):
                 outputs[task].startswith('@{"hash":"sha256:'), outputs[task][:80]
             )
         self.assertTrue(outputs["summarize"].startswith("{"), outputs["summarize"])
+        # Expansion only reads: items of a referenced list carry that list's
+        # reference, and each item pod selects its own index.
+        expanded = json.loads(outputs["expand"])
+        self.assertEqual([item["index"] for item in expanded], [0, 1, 2, 3])
+        self.assertTrue(all(set(item) == {"index", "listRef"} for item in expanded))
         items = [
             json.loads(value)
             for name, value in outputs.items()
@@ -620,6 +650,36 @@ class DecisionConformance(unittest.TestCase):
         ]
         self.assertEqual(len(items), 4)
         self.assertTrue(all("ref" in item for item in items), items)
+
+    def test_large_workflow_input_is_normalized_once_before_a_map(self) -> None:
+        run = self.completed("entry-values")
+        self.assertEqual(
+            run["status"]["phase"], "Succeeded", str(run["status"].get("message"))
+        )
+        root = run["status"]["nodes"][run["metadata"]["name"]]
+        self.assertEqual(
+            json.loads(root["outputs"]["parameters"][0]["value"]),
+            self.local_values["entry-values"],
+        )
+        entry = next(
+            node
+            for node in run["status"]["nodes"].values()
+            if node.get("templateName") == "workflow-entry"
+        )
+        self.assertTrue(
+            entry["outputs"]["parameters"][0]["value"].startswith('@{"hash":"sha256:')
+        )
+
+    def test_reference_workflow_inputs_are_rejected(self) -> None:
+        run = self.completed("reference-input")
+        self.assertEqual(run["status"]["phase"], "Failed")
+        generate = [
+            node
+            for node in run["status"]["nodes"].values()
+            if node.get("type") == "Pod" and node.get("templateName") == "step-generate"
+        ]
+        self.assertEqual(len(generate), 1, generate)
+        self.assertIn("exit code 64", generate[0].get("message", ""), generate[0])
 
     def test_missing_published_source_is_not_retried(self) -> None:
         run = self.completed("unpublished")

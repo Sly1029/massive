@@ -44,6 +44,11 @@ For lowering or transport changes, exercise `../../../scripts/test-argo.sh`.
 Schema-valid YAML and isolated runtime tests do not prove live controller behavior.
 
 Value parameters are canonical JSON up to 4 KiB, otherwise `@` plus a value
-reference; map envelopes inline at most 256 bytes. Keep values unambiguous:
-never concatenate parameters into JSON text (merge sources are separate
-parameters), and forward a received reference instead of republishing it.
+reference, with exactly one valid spelling between tasks; mapper results inline
+at most 100 bytes. Never concatenate parameters into JSON text (merge sources
+are separate parameters). Workflow inputs are inline JSON only: steps take them
+with `--workflow-input`, and a decision or map reads them through the
+`workflow-entry` task. Keep decisions, selects, and map expansion read-only:
+forward received references and slice referenced lists in item pods. Only map
+collection and the entry task publish values. Bound reads by the reference's
+declared size, and keep maps within the collector's parameter budget.

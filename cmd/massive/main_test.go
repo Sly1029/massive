@@ -110,12 +110,23 @@ func TestRunInputReadsARealJSONFile(t *testing.T) {
 
 func localDatastoreConfig(t *testing.T) string {
 	t.Helper()
+	config, _ := localDatastore(t)
+	return config
+}
+
+func localDatastore(t *testing.T) (string, datastore.Datastore) {
+	t.Helper()
+	root := t.TempDir()
 	path := filepath.Join(t.TempDir(), "datastore.json")
-	body, _ := json.Marshal(map[string]string{"kind": "local", "path": t.TempDir()})
+	body, _ := json.Marshal(map[string]string{"kind": "local", "path": root})
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path, store
 }
 
 func TestRuntimeMapTransportExpandsAndCollectsThroughFiles(t *testing.T) {
@@ -148,10 +159,23 @@ func TestRuntimeMapTransportExpandsAndCollectsThroughFiles(t *testing.T) {
 		t.Fatalf("collected = %s, want %s", got, want)
 	}
 
-	// A large map input travels by reference; its large items are referenced
-	// again, and the collected list returns as one reference.
+	// A large workflow input is normalized once at the entry into a reference;
+	// expansion stays read-only and items carry the list's reference.
+	datastoreConfig, store := localDatastore(t)
 	large := `"` + strings.Repeat("v", 4096) + `"`
-	if err := (&RuntimeMapExpandCommand{Input: `[` + large + `]`, Output: expandedPath, DatastoreConfig: datastoreConfig}).Run(t.Context()); err != nil {
+	entryPath := filepath.Join(root, "entry.json")
+	if err := (&RuntimeEntryCommand{Input: `[ ` + large + ` ]`, Output: entryPath, DatastoreConfig: datastoreConfig}).Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := os.ReadFile(entryPath)
+	if err != nil || !strings.HasPrefix(string(entry), `@{"hash":"sha256:`) {
+		t.Fatalf("normalized entry = %.80s, %v", entry, err)
+	}
+	err = (&RuntimeEntryCommand{Input: string(entry), Output: entryPath, DatastoreConfig: datastoreConfig}).Run(t.Context())
+	if exitCodeFor(err) != 64 || !strings.Contains(err.Error(), "inline JSON") {
+		t.Fatalf("referenced workflow input error = %v (exit %d)", err, exitCodeFor(err))
+	}
+	if err := (&RuntimeMapExpandCommand{Input: string(entry), Output: expandedPath, DatastoreConfig: datastoreConfig}).Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	expanded, err = os.ReadFile(expandedPath)
@@ -159,19 +183,28 @@ func TestRuntimeMapTransportExpandsAndCollectsThroughFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	var items []json.RawMessage
-	if err := json.Unmarshal(expanded, &items); err != nil || len(items) != 1 || !strings.Contains(string(items[0]), `"ref":`) {
+	if err := json.Unmarshal(expanded, &items); err != nil || len(items) != 1 || !strings.Contains(string(items[0]), `"listRef":`) {
 		t.Fatalf("large expanded items = %.200s, %v", expanded, err)
 	}
-	// An item pod forwards the referenced item body as its published result.
-	if err := (&RuntimeMapCollectCommand{Input: `[` + string(items[0]) + `]`, Output: collectedPath, DatastoreConfig: datastoreConfig}).Run(t.Context()); err != nil {
+	// An item pod's runner commits its result body before the item envelope.
+	if _, err := store.Put(t.Context(), datastore.BlobKeyForBytes([]byte(large)), []byte(large), datastore.PutOptions{ContentType: valueparam.ContentType}); err != nil {
 		t.Fatal(err)
 	}
-	collected, err = os.ReadFile(collectedPath)
+	result, err := valueparam.EncodePublishedItemResult(0, []byte(large))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(collected), `@{"hash":"sha256:`) {
-		t.Fatalf("large collection = %.80s, want a reference", collected)
+	if err := (&RuntimeMapCollectCommand{Input: `[` + string(result) + `]`, Output: collectedPath, DatastoreConfig: datastoreConfig}).Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	collected, err = os.ReadFile(collectedPath)
+	if err != nil || string(collected) != string(entry) {
+		t.Fatalf("large collection = %.80s, want the normalized list reference", collected)
+	}
+	// Between tasks only the canonical spelling is accepted.
+	err = (&RuntimeMapExpandCommand{Input: `[3, 3]`, Output: expandedPath, DatastoreConfig: datastoreConfig}).Run(t.Context())
+	if exitCodeFor(err) != 64 {
+		t.Fatalf("noncanonical parameter error = %v (exit %d)", err, exitCodeFor(err))
 	}
 }
 
@@ -189,7 +222,7 @@ func TestMergeInputsAssembleInlineAndReferencedSourcesInOrder(t *testing.T) {
 	workflowPlan := &planpb.WorkflowPlan{Graph: &planpb.GraphIR{Nodes: []*planpb.GraphNode{{
 		Id: proto.String("merge"), Kind: proto.String("step"), MergeInputs: []string{"left", "right"},
 	}}}}
-	command := RuntimeStepCommand{Node: "merge", MergeInputs: []string{`{ "left": 1 }`, string(referenced)}}
+	command := RuntimeStepCommand{Node: "merge", MergeInputs: []string{`{"left":1}`, string(referenced)}}
 	input, err := command.input(t.Context(), codec, workflowPlan)
 	if err != nil {
 		t.Fatal(err)
@@ -198,8 +231,12 @@ func TestMergeInputsAssembleInlineAndReferencedSourcesInOrder(t *testing.T) {
 		t.Fatalf("merged input = %.60s, want %.60s", got, want)
 	}
 	command.MergeInputs = command.MergeInputs[:1]
-	if _, err := command.input(t.Context(), codec, workflowPlan); err == nil || !strings.Contains(err.Error(), "merges 2 sources") {
+	if _, err := command.input(t.Context(), codec, workflowPlan); exitCodeFor(err) != 64 || !strings.Contains(err.Error(), "merges 2 sources") {
 		t.Fatalf("short merge error = %v", err)
+	}
+	command.Node = "absent"
+	if _, err := command.input(t.Context(), codec, workflowPlan); exitCodeFor(err) != 64 || !strings.Contains(err.Error(), "not in the plan") {
+		t.Fatalf("unknown merge node error = %v", err)
 	}
 }
 

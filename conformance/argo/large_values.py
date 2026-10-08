@@ -124,3 +124,24 @@ graph.edge_from(route.case(Few)).to(small)
 records = route.select(list[Record], many=joined, few=small)
 summary = graph.add(summarize)
 graph.edge_from(records).to(summary).to(graph.end)
+
+
+def score(ctx: StepContext[Record]) -> int:
+    return 10 if ctx.inputs.severity == "high" else 1
+
+
+def total(ctx: StepContext[list[int]]) -> int:
+    return sum(ctx.inputs)
+
+
+# The workflow input feeds a map directly: Argo normalizes it once in an entry
+# task (publishing it when above 4 KiB) before read-only expansion.
+entry_graph = GraphBuilder(
+    name="large-values-entry",
+    input_type=list[Record],
+    output_type=int,
+    defaults=execution(environment=container(IMAGE, platform=PLATFORM)),
+)
+scores = entry_graph.map(entry_graph.start, score, id="score", concurrency=4)
+entry_total = entry_graph.add(total)
+entry_graph.edge_from(scores).to(entry_total).to(entry_graph.end)

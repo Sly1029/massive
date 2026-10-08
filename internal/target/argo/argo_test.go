@@ -942,3 +942,51 @@ func TestBuildRejectsTypeScriptPackagesAboveTheirRunnerCap(t *testing.T) {
 		})
 	}
 }
+
+// Workflow inputs are inline JSON. A step normalizes its own; a control task
+// fed by the workflow input reads it only after one entry task normalized it.
+func TestWorkflowInputsEnterThroughOneNormalizingTask(t *testing.T) {
+	templatesFor := func(fixture string) (map[string]any, []any) {
+		t.Helper()
+		bundle := compileFixture(t, fixture)
+		var template map[string]any
+		if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+			t.Fatal(err)
+		}
+		templates := template["spec"].(map[string]any)["templates"].([]any)
+		return templateByName(t, templates, "main"), templates
+	}
+
+	main, templates := templatesFor("linear-chain")
+	first := taskByName(t, main["dag"].(map[string]any)["tasks"].([]any), "double")
+	if value := first["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"]; value != "{{workflow.parameters.input}}" {
+		t.Fatalf("first step input = %v", value)
+	}
+	args := templateByName(t, templates, "step-double")["container"].(map[string]any)["args"].([]any)
+	if !containsArgs(args, "--workflow-input={{inputs.parameters.input}}") || containsArgs(args, "--input={{inputs.parameters.input}}") {
+		t.Fatalf("first step args = %v", args)
+	}
+	for _, item := range main["dag"].(map[string]any)["tasks"].([]any) {
+		if item.(map[string]any)["name"] == entryTaskName {
+			t.Fatal("a step fed by the workflow input needs no entry task")
+		}
+	}
+
+	main, templates = templatesFor("finite-map")
+	tasks := main["dag"].(map[string]any)["tasks"].([]any)
+	entry := taskByName(t, tasks, entryTaskName)
+	if value := entry["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"]; value != "{{workflow.parameters.input}}" {
+		t.Fatalf("entry input = %v", value)
+	}
+	mapTask := taskByName(t, tasks, "map-items")
+	if mapTask["depends"] != entryTaskName+".Succeeded" {
+		t.Fatalf("map readiness = %v", mapTask["depends"])
+	}
+	if value := mapTask["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"]; value != "{{tasks.workflow-entry.outputs.parameters.result}}" {
+		t.Fatalf("map input = %v", value)
+	}
+	entryArgs := templateByName(t, templates, entryTaskName)["container"].(map[string]any)["args"].([]any)
+	if !containsArgs(entryArgs, "runtime", "entry", "--input={{inputs.parameters.input}}") {
+		t.Fatalf("entry args = %v", entryArgs)
+	}
+}

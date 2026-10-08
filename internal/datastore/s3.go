@@ -135,6 +135,23 @@ func (d *S3Datastore) Get(ctx context.Context, key Key) (Object, error) {
 	}, nil
 }
 
+func (d *S3Datastore) Open(ctx context.Context, key Key) (io.ReadCloser, ObjectInfo, error) {
+	reader, err := d.client.GetObject(ctx, d.bucket, d.objectName(key), minio.GetObjectOptions{})
+	if err != nil {
+		return nil, ObjectInfo{}, fmt.Errorf("get s3 object %s: %w", key, err)
+	}
+	// Stat issues the request and reads only the response headers.
+	info, err := reader.Stat()
+	if err != nil {
+		_ = reader.Close()
+		if isS3NotFound(err) {
+			return nil, ObjectInfo{}, fmt.Errorf("open %s: %w", key, ErrNotFound)
+		}
+		return nil, ObjectInfo{}, fmt.Errorf("stat s3 object %s: %w", key, err)
+	}
+	return reader, ObjectInfo{Key: key, Size: info.Size, ContentType: defaultContentType(info.ContentType)}, nil
+}
+
 func (d *S3Datastore) Exists(ctx context.Context, key Key) (bool, error) {
 	_, err := d.client.StatObject(ctx, d.bucket, d.objectName(key), minio.StatObjectOptions{})
 	if err != nil {

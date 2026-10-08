@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,7 @@ import (
 type vectors struct {
 	InlineLimit     int `json:"inlineLimit"`
 	ItemInlineLimit int `json:"itemInlineLimit"`
+	MaxValueBytes   int `json:"maxValueBytes"`
 	Cases           []struct {
 		Name      string          `json:"name"`
 		Kind      string          `json:"kind"`
@@ -28,6 +31,7 @@ type vectors struct {
 	} `json:"cases"`
 	Invalid []struct {
 		Name      string `json:"name"`
+		Context   string `json:"context"`
 		Parameter string `json:"parameter"`
 	} `json:"invalid"`
 }
@@ -50,8 +54,8 @@ func TestConformanceVectors(t *testing.T) {
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	if fixture.InlineLimit != valueparam.InlineLimit || fixture.ItemInlineLimit != valueparam.ItemInlineLimit {
-		t.Fatalf("vector limits %d/%d differ from implementation", fixture.InlineLimit, fixture.ItemInlineLimit)
+	if fixture.InlineLimit != valueparam.InlineLimit || fixture.ItemInlineLimit != valueparam.ItemInlineLimit || fixture.MaxValueBytes != valueparam.MaxValueBytes {
+		t.Fatalf("vector limits %d/%d/%d differ from implementation", fixture.InlineLimit, fixture.ItemInlineLimit, fixture.MaxValueBytes)
 	}
 	for _, vector := range fixture.Cases {
 		t.Run(vector.Name, func(t *testing.T) {
@@ -62,15 +66,7 @@ func TestConformanceVectors(t *testing.T) {
 			}
 			switch vector.Kind {
 			case "standalone":
-				input := []byte(vector.Input)
-				if vector.Input == "" {
-					input = body
-				}
-				decoded, err := codec.Decode(context.Background(), input)
-				if err != nil {
-					t.Fatal(err)
-				}
-				parameter, err := codec.Encode(context.Background(), decoded.Body)
+				parameter, err := codec.Encode(context.Background(), body)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -88,6 +84,11 @@ func TestConformanceVectors(t *testing.T) {
 				if !bytes.Equal(resolved.Body, body) || !bytes.Equal(resolved.Parameter(), parameter) {
 					t.Fatal("decoded value or forwarded parameter changed")
 				}
+			case "workflow-entry":
+				entry, err := valueparam.DecodeEntry([]byte(vector.Input))
+				if err != nil || !bytes.Equal(entry.Body, body) || entry.Ref != nil {
+					t.Fatalf("entry = %.80s, %v", entry.Body, err)
+				}
 			case "item-result":
 				envelope, err := valueparam.EncodePublishedItemResult(vector.Index, body)
 				if err != nil {
@@ -104,14 +105,23 @@ func TestConformanceVectors(t *testing.T) {
 	for _, vector := range fixture.Invalid {
 		t.Run(vector.Name, func(t *testing.T) {
 			codec, _ := newCodec(t)
-			if _, err := codec.Decode(context.Background(), []byte(vector.Parameter)); err == nil {
-				t.Fatal("expected rejection")
+			var err error
+			switch vector.Context {
+			case "standalone":
+				_, err = codec.Decode(context.Background(), []byte(vector.Parameter))
+			case "workflow-entry":
+				_, err = valueparam.DecodeEntry([]byte(vector.Parameter))
+			default:
+				t.Fatalf("unknown context %q", vector.Context)
+			}
+			if !errors.Is(err, valueparam.ErrContract) {
+				t.Fatalf("error = %v, want a contract violation", err)
 			}
 		})
 	}
 }
 
-func TestReferencesResolveOnlyVerifiedBodies(t *testing.T) {
+func TestReferencesResolveOnlyVerifiedBoundedBodies(t *testing.T) {
 	codec, store := newCodec(t)
 	large := []byte(`"` + strings.Repeat("x", valueparam.InlineLimit) + `"`)
 	parameter, err := codec.Encode(context.Background(), large)
@@ -127,12 +137,20 @@ func TestReferencesResolveOnlyVerifiedBodies(t *testing.T) {
 		t.Fatalf("published body = %v, %v", object.Info, err)
 	}
 
-	tampered, _ := newCodec(t)
-	if _, err := tampered.Store.Put(context.Background(), key, []byte(`"different"`), datastore.PutOptions{ContentType: valueparam.ContentType}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tampered.Decode(context.Background(), parameter); err == nil || !strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("tampered reference error = %v", err)
+	for name, planted := range map[string][]byte{
+		"different bytes": append([]byte(`"`), append(bytes.Repeat([]byte("y"), valueparam.InlineLimit), '"')...),
+		// A larger planted object is refused from its declared size.
+		"larger object": append([]byte(`"`), append(bytes.Repeat([]byte("x"), 4*valueparam.InlineLimit), '"')...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			tampered, store := newCodec(t)
+			if _, err := store.Put(context.Background(), key, planted, datastore.PutOptions{ContentType: valueparam.ContentType}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tampered.Decode(context.Background(), parameter); !errors.Is(err, valueparam.ErrContract) {
+				t.Fatalf("tampered reference error = %v", err)
+			}
+		})
 	}
 	missing, _ := newCodec(t)
 	if _, err := missing.Decode(context.Background(), parameter); err == nil {
@@ -146,25 +164,54 @@ func TestReferencesResolveOnlyVerifiedBodies(t *testing.T) {
 	}
 }
 
-func TestMapEnvelopesKeepDuplicatesDistinctAndRoundTripReferences(t *testing.T) {
-	codec, _ := newCodec(t)
-	large := `"` + strings.Repeat("y", valueparam.ItemInlineLimit) + `"`
-	items, err := codec.ExpandItems(context.Background(), []byte(`[3, 3, {"name": "x"}, `+large+`]`))
+func TestExpandIsReadOnlyAndItemsSliceReferencedLists(t *testing.T) {
+	codec, store := newCodec(t)
+	inline, err := codec.ExpandItems(context.Background(), []byte(`[3,3,{"name":"x"}]`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var envelopes []json.RawMessage
-	if err := json.Unmarshal(items, &envelopes); err != nil {
+	if got, want := string(inline), `[{"index":0,"value":3},{"index":1,"value":3},{"index":2,"value":{"name":"x"}}]`; got != want {
+		t.Fatalf("inline items = %s, want %s", got, want)
+	}
+
+	values := make([]string, 40)
+	for index := range values {
+		values[index] = fmt.Sprintf(`"%03d%s"`, index, strings.Repeat("z", 200))
+	}
+	list := []byte("[" + strings.Join(values, ",") + "]")
+	parameter, err := codec.Encode(context.Background(), list)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(envelopes) != 4 || string(envelopes[0]) != `{"index":0,"value":3}` || string(envelopes[1]) != `{"index":1,"value":3}` || string(envelopes[2]) != `{"index":2,"value":{"name":"x"}}` || !strings.HasPrefix(string(envelopes[3]), `{"index":3,"ref":{"hash":"sha256:`) {
-		t.Fatalf("Argo items = %s", items)
+	// Expansion must not write: an empty store holding only the list proves it.
+	before, err := store.List(context.Background(), datastore.MustKey("blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expanded, err := codec.ExpandItems(context.Background(), parameter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.List(context.Background(), datastore.MustKey("blobs"))
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("expansion wrote to the store: %d objects before, %d after, %v", len(before), len(after), err)
+	}
+	var envelopes []json.RawMessage
+	if err := json.Unmarshal(expanded, &envelopes); err != nil || len(envelopes) != len(values) {
+		t.Fatalf("expanded = %.200s, %v", expanded, err)
 	}
 	results := make([]json.RawMessage, 0, len(envelopes))
 	for position := len(envelopes) - 1; position >= 0; position-- {
+		if !strings.Contains(string(envelopes[position]), `"listRef":`) {
+			t.Fatalf("item %d = %s, want a list reference", position, envelopes[position])
+		}
 		item, empty, err := codec.DecodeItem(context.Background(), envelopes[position])
-		if err != nil || empty || item.Index != position {
+		if err != nil || empty || item.Index != position || string(item.Body) != values[position] {
 			t.Fatalf("item %d = %#v, %v, %v", position, item, empty, err)
+		}
+		// A real item pod's runner commits its output before the envelope.
+		if _, err := store.Put(context.Background(), datastore.BlobKeyForBytes(item.Body), item.Body, datastore.PutOptions{ContentType: valueparam.ContentType}); err != nil {
+			t.Fatal(err)
 		}
 		result, err := valueparam.EncodePublishedItemResult(item.Index, item.Body)
 		if err != nil {
@@ -177,8 +224,8 @@ func TestMapEnvelopesKeepDuplicatesDistinctAndRoundTripReferences(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(collected), `[3,3,{"name":"x"},`+large+`]`; got != want {
-		t.Fatalf("collected = %.80s, want %.80s", got, want)
+	if !bytes.Equal(collected, parameter) {
+		t.Fatalf("collected = %.80s, want the original list reference", collected)
 	}
 
 	empty, err := codec.ExpandItems(context.Background(), []byte(`[]`))
@@ -187,6 +234,26 @@ func TestMapEnvelopesKeepDuplicatesDistinctAndRoundTripReferences(t *testing.T) 
 	}
 	if collected, err := codec.CollectResults(context.Background(), []byte(`[{"empty":true}]`)); err != nil || string(collected) != `[]` {
 		t.Fatalf("empty collection = %s, %v", collected, err)
+	}
+}
+
+func TestExpandRejectsMapsWiderThanArgoCanCollect(t *testing.T) {
+	codec, _ := newCodec(t)
+	items := strings.TrimSuffix(strings.Repeat("0,", valueparam.MaxMapItems+1), ",")
+	parameter, err := codec.Encode(context.Background(), []byte("["+items+"]"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := codec.ExpandItems(context.Background(), parameter); !errors.Is(err, valueparam.ErrContract) || !strings.Contains(err.Error(), "at most") {
+		t.Fatalf("wide map error = %v", err)
+	}
+	items = strings.TrimSuffix(strings.Repeat("0,", valueparam.MaxMapItems), ",")
+	parameter, err = codec.Encode(context.Background(), []byte("["+items+"]"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := codec.ExpandItems(context.Background(), parameter); err != nil {
+		t.Fatalf("map at the width limit: %v", err)
 	}
 }
 
@@ -208,25 +275,29 @@ func TestCollectAcceptsArgoRawAndStringAggregates(t *testing.T) {
 	}
 }
 
-func TestEnvelopeValidationRejectsAmbiguousOrInvalidCollections(t *testing.T) {
+func TestEnvelopeValidationRejectsAmbiguousOrInvalidEnvelopes(t *testing.T) {
 	codec, _ := newCodec(t)
-	ref := `{"hash":"sha256:` + strings.Repeat("0", 64) + `","size":1}`
+	ref := `{"hash":"sha256:` + strings.Repeat("0", 64) + `","size":5000}`
 	for name, body := range map[string]string{
 		"negative index":     `{"index":-1,"value":1}`,
 		"extra item field":   `{"extra":true,"index":0,"value":1}`,
-		"value and ref":      `{"index":0,"ref":` + ref + `,"value":1}`,
+		"value and listRef":  `{"index":0,"listRef":` + ref + `,"value":1}`,
+		"result ref as item": `{"index":0,"ref":` + ref + `}`,
 		"neither value":      `{"index":0}`,
 		"empty with an item": `{"empty":true,"index":0}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := codec.DecodeItem(context.Background(), []byte(body)); err == nil {
-				t.Fatal("expected item validation failure")
+			if _, _, err := codec.DecodeItem(context.Background(), []byte(body)); !errors.Is(err, valueparam.ErrContract) {
+				t.Fatalf("item error = %v, want a contract violation", err)
 			}
 		})
 	}
+	small := `{"hash":"sha256:` + strings.Repeat("0", 64) + `","size":50}`
 	for name, body := range map[string]string{
-		"empty mixed with result": `[{"empty":true},{"index":0,"value":1}]`,
-		"missing dense result":    `[{"index":1,"value":1}]`,
+		"empty mixed with result":   `[{"empty":true},{"index":0,"value":1}]`,
+		"missing dense result":      `[{"index":1,"value":1}]`,
+		"oversized inline result":   `[{"index":0,"value":"` + strings.Repeat("v", valueparam.ItemInlineLimit) + `"}]`,
+		"reference to small result": `[{"index":0,"ref":` + small + `}]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := codec.CollectResults(context.Background(), []byte(body)); err == nil {

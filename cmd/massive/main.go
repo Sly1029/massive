@@ -98,19 +98,38 @@ func (command *RuntimeControlCommand) Run(ctx context.Context) error {
 			return err
 		}
 	}
-	// Control tasks pass the validated value through; a reference is forwarded
-	// rather than downloaded again by a second publication.
-	output := input.Parameter()
-	if input.Ref == nil {
-		if output, err = codec.Encode(ctx, result.Value); err != nil {
-			return err
-		}
+	// Control tasks forward the validated parameter unchanged, so they only
+	// ever read from the store.
+	return writeRuntimeOutput(command.Output, input.Parameter())
+}
+
+type RuntimeEntryCommand struct {
+	Input           string `help:"Submitted workflow input: inline JSON only." required:""`
+	Output          string `help:"Write the normalized value parameter here." required:"" type:"path"`
+	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
+}
+
+// Run normalizes a workflow input once before a control task consumes it, so
+// decisions and map expansion never publish values themselves.
+func (command *RuntimeEntryCommand) Run(ctx context.Context) error {
+	input, err := valueparam.DecodeEntry([]byte(command.Input))
+	if err != nil {
+		return err
 	}
-	return writeRuntimeOutput(command.Output, output)
+	codec, _, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
+	if err != nil {
+		return err
+	}
+	parameter, err := codec.Encode(ctx, input.Body)
+	if err != nil {
+		return err
+	}
+	return writeRuntimeOutput(command.Output, parameter)
 }
 
 type RuntimeCommand struct {
 	Control RuntimeControlCommand `cmd:"" help:"Validate a decision or selected value without invoking user code."`
+	Entry   RuntimeEntryCommand   `cmd:"" help:"Normalize a submitted workflow input for a control task."`
 	Step    RuntimeStepCommand    `cmd:"" help:"Execute one compiled step in a remote executor."`
 	Map     RuntimeMapCommand     `cmd:"" help:"Execute finite-map transport operations."`
 }
@@ -127,6 +146,7 @@ type RuntimeStepCommand struct {
 	Node            string   `help:"Static plan node to execute." required:""`
 	Input           string   `help:"Step input parameter: canonical JSON or a value reference." xor:"input" required:""`
 	MergeInputs     []string `name:"merge-input" help:"One value parameter per merge source, in the node's mergeInputs order." sep:"none" xor:"input" required:""`
+	WorkflowInput   string   `name:"workflow-input" help:"Submitted workflow input: inline JSON only." xor:"input" required:""`
 	Output          string   `help:"Write canonical JSON result to this path." required:"" type:"path"`
 	Project         string   `help:"Stable remote project identity." required:""`
 	RunID           string   `name:"run-id" help:"Remote workflow run identifier." required:""`
@@ -375,14 +395,20 @@ func (command *RuntimeStepCommand) Run(ctx context.Context) error {
 // input resolves the step's value parameter, or assembles a merge step's
 // ordered array from one parameter per source so references stay valid.
 func (command *RuntimeStepCommand) input(ctx context.Context, codec valueparam.Codec, workflowPlan *planpb.WorkflowPlan) ([]byte, error) {
+	if command.WorkflowInput != "" {
+		value, err := valueparam.DecodeEntry([]byte(command.WorkflowInput))
+		return value.Body, err
+	}
 	if command.MergeInputs == nil {
 		value, err := codec.Decode(ctx, []byte(command.Input))
 		return value.Body, err
 	}
-	for _, node := range workflowPlan.GetGraph().GetNodes() {
-		if node.GetId() == command.Node && len(node.GetMergeInputs()) != len(command.MergeInputs) {
-			return nil, fmt.Errorf("step %q merges %d sources but received %d merge inputs", command.Node, len(node.GetMergeInputs()), len(command.MergeInputs))
-		}
+	index := slices.IndexFunc(workflowPlan.GetGraph().GetNodes(), func(node *planpb.GraphNode) bool { return node.GetId() == command.Node })
+	if index < 0 {
+		return nil, fmt.Errorf("%w: step %q is not in the plan", valueparam.ErrContract, command.Node)
+	}
+	if sources := len(workflowPlan.GetGraph().GetNodes()[index].GetMergeInputs()); sources != len(command.MergeInputs) {
+		return nil, fmt.Errorf("%w: step %q merges %d sources but received %d merge inputs", valueparam.ErrContract, command.Node, sources, len(command.MergeInputs))
 	}
 	bodies := make([][]byte, len(command.MergeInputs))
 	for index, parameter := range command.MergeInputs {
@@ -541,11 +567,16 @@ func main() {
 
 // exitCodeFor lets a target scheduler classify a failed runtime attempt from
 // the process exit alone: runner exit codes pass through, a per-attempt
-// timeout exits 124 like timeout(1), and dependency preflight exits 68.
+// timeout exits 124 like timeout(1), dependency preflight exits 68, and a
+// malformed value parameter exits 64.
 func exitCodeFor(err error) int {
 	var preflight *orchestrator.PreflightError
 	if errors.As(err, &preflight) {
 		return runtimeExitPreflight
+	}
+	// A malformed value parameter is deterministic, like a bad descriptor.
+	if errors.Is(err, valueparam.ErrContract) {
+		return runtimeExitDescriptor
 	}
 	var failure *orchestrator.InvocationFailure
 	if !errors.As(err, &failure) {
@@ -561,7 +592,8 @@ func exitCodeFor(err error) int {
 }
 
 const (
-	runtimeExitTimeout = 124
+	runtimeExitTimeout    = 124
+	runtimeExitDescriptor = 64
 	// runtimeExitPreflight is non-retryable: the image cannot run the project.
 	runtimeExitPreflight = 68
 )
