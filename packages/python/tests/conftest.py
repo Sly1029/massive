@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from hypothesis import settings
@@ -36,6 +37,13 @@ class S3TestServer:
     secret_key: str
 
 
+def _unavailable(reason: str) -> NoReturn:
+    # CI must not lose the S3 evidence silently; local runs may lack Docker.
+    if os.environ.get("CI") == "true":
+        pytest.fail(f"{reason}; CI requires the real MinIO fixture", pytrace=False)
+    pytest.skip(reason)
+
+
 @pytest.fixture(scope="session")
 def s3_server() -> Generator[S3TestServer, None, None]:
     configured_endpoint = os.environ.get("MASSIVE_TEST_S3_ENDPOINT")
@@ -49,7 +57,7 @@ def s3_server() -> Generator[S3TestServer, None, None]:
 
     docker = shutil.which("docker")
     if docker is None:
-        pytest.skip("Docker is unavailable; cannot start the real MinIO fixture")
+        _unavailable("Docker is unavailable; cannot start the real MinIO fixture")
 
     access_key = "massive-python-test-access"
     secret_key = "massive-python-test-secret"
@@ -84,9 +92,9 @@ def s3_server() -> Generator[S3TestServer, None, None]:
             timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        pytest.skip(f"could not start the real MinIO fixture: {error}")
+        _unavailable(f"could not start the real MinIO fixture: {error}")
     if started.returncode != 0:
-        pytest.skip(f"could not start the real MinIO fixture: {started.stderr.strip()}")
+        _unavailable(f"could not start the real MinIO fixture: {started.stderr.strip()}")
 
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
@@ -99,7 +107,7 @@ def s3_server() -> Generator[S3TestServer, None, None]:
         logs = subprocess.run(
             [docker, "logs", container], check=False, capture_output=True, text=True
         )
-        pytest.skip(f"MinIO did not become ready: {logs.stderr}{logs.stdout}")
+        _unavailable(f"MinIO did not become ready: {logs.stderr}{logs.stdout}")
 
     try:
         yield S3TestServer(f"http://127.0.0.1:{port}", access_key, secret_key)

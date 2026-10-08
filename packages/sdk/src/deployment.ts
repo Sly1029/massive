@@ -10,6 +10,7 @@ export type DeploymentTarget =
     readonly kind: "argo";
     readonly namespace: string;
     readonly serviceAccountName: string;
+    readonly runtimeTransport: "embedded-v0" | "object-store-v0";
     readonly workflowTemplateName?: string;
     readonly artifactCredentialsSecret?: string;
   };
@@ -60,6 +61,7 @@ export const deployment = {
         kind: "argo",
         namespace: profile.namespace,
         serviceAccountName: profile.serviceAccountName,
+        runtimeTransport: profile.runtimeTransport,
         ...(profile.artifactCredentialsSecret === undefined
           ? {}
           : { artifactCredentialsSecret: profile.artifactCredentialsSecret }),

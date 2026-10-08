@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -14,8 +16,8 @@ import (
 )
 
 // IsolatedStepConfig contains the portable inputs available inside one remote
-// executor pod. SourceArchives is keyed by the semantic package hash recorded
-// in the plan; archive bytes have already been verified during target build.
+// executor pod. SourceArchives pins each plan source package, by package hash,
+// to the archive the language runner fetches and verifies by digest.
 type IsolatedStepConfig struct {
 	Plan           *planpb.WorkflowPlan
 	NodeID         string
@@ -24,10 +26,46 @@ type IsolatedStepConfig struct {
 	RunID          string
 	RunnerCommand  []string
 	WorkingDir     string
-	SourceArchives map[string][]byte
+	SourceArchives map[string]SourceArchive
 	// Attempt is the 1-based attempt the target is dispatching. Zero means 1.
 	// Targets own retry scheduling; this primitive runs exactly one attempt.
 	Attempt int
+}
+
+// SourceArchive is the runtime half of a target's source transport.
+type SourceArchive struct {
+	// Digest is the SHA-256 of the archive bytes pinned by the deployment.
+	Digest string
+	// Body holds embedded-v0 bytes mounted beside the plan. Each invocation
+	// verifies and installs them. Without a body the archive must already be
+	// published (object-store-v0); the language runner reports a missing or
+	// mismatched object as a non-retryable descriptor failure.
+	Body []byte
+}
+
+// EmbeddedSourceArchive pins mounted archive bytes by their own digest.
+func EmbeddedSourceArchive(body []byte) SourceArchive {
+	return SourceArchive{Digest: canonical.DigestBytes(body), Body: body}
+}
+
+func (archive SourceArchive) install(ctx context.Context, store datastore.Datastore, packageHash string) (string, error) {
+	if !validSHA256Ref(archive.Digest) {
+		return "", fmt.Errorf("isolated source package %s has no pinned archive digest", packageHash)
+	}
+	key := sourceArchiveKey(packageHash, archive.Digest)
+	if archive.Body == nil {
+		return key, nil
+	}
+	if canonical.DigestBytes(archive.Body) != archive.Digest {
+		return "", fmt.Errorf("isolated source archive for %s does not match its pinned digest", packageHash)
+	}
+	if err := sourceidentity.VerifyArchive(archive.Body, packageHash); err != nil {
+		return "", err
+	}
+	if _, err := store.Put(ctx, datastore.MustKey(key), archive.Body, datastore.PutOptions{ContentType: SourceArchiveContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
+		return "", fmt.Errorf("write isolated source archive: %w", err)
+	}
+	return key, nil
 }
 
 // InvocationFailure reports a runner attempt that completed unsuccessfully, so
@@ -113,21 +151,16 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	}
 	packages := make(map[string]sourcePackageArtifact, len(config.Plan.GetSourcePackages()))
 	for _, sourcePackage := range config.Plan.GetSourcePackages() {
-		archive, ok := config.SourceArchives[sourcePackage.GetPackageHash()]
-		if !ok || len(archive) == 0 {
-			return nil, fmt.Errorf("isolated source archive %s is unavailable", sourcePackage.GetPackageHash())
-		}
-		if err := sourceidentity.VerifyArchive(archive, sourcePackage.GetPackageHash()); err != nil {
+		archive := config.SourceArchives[sourcePackage.GetPackageHash()]
+		key, err := archive.install(ctx, store, sourcePackage.GetPackageHash())
+		if err != nil {
 			return nil, err
 		}
-		key := sourcePackageKey(sourcePackage.GetPackageHash())
-		if _, err := store.Put(ctx, datastore.MustKey(key), archive, datastore.PutOptions{ContentType: SourceArchiveContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
-			return nil, fmt.Errorf("write isolated source archive: %w", err)
-		}
+		archiveHash := archive.Digest
 		packages[sourcePackage.GetPackageId()] = sourcePackageArtifact{
 			PackageID: sourcePackage.GetPackageId(), Language: sourcePackage.GetLanguage(),
 			PackageHash: sourcePackage.GetPackageHash(), Key: key,
-			ArchiveHash: canonical.DigestBytes(archive), ContentType: SourceArchiveContentType,
+			ArchiveHash: archiveHash, ContentType: SourceArchiveContentType,
 		}
 	}
 	index.packagesByID = packages
@@ -178,4 +211,50 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 		return nil, err
 	}
 	return output.Body, nil
+}
+
+// PublishedSourceArchive reports one object-store source upload.
+type PublishedSourceArchive struct {
+	PackageHash string `json:"packageHash"`
+	ArchiveHash string `json:"archiveHash"`
+	Key         string `json:"key"`
+	// Created is false when an identical archive was already present.
+	Created bool `json:"created"`
+}
+
+// PublishSourceArchives installs verified archives at their content-addressed
+// keys for object-store-v0 pods. Publication is idempotent; an object with
+// different bytes at the key is a conflict and is never overwritten.
+func PublishSourceArchives(ctx context.Context, descriptor DatastoreDescriptor, archives map[string][]byte) ([]PublishedSourceArchive, error) {
+	store, err := openInvocationDatastore(ctx, descriptor)
+	if err != nil {
+		return nil, fmt.Errorf("open publication datastore: %w", err)
+	}
+	packageHashes := slices.Sorted(maps.Keys(archives))
+	published := make([]PublishedSourceArchive, 0, len(archives))
+	for _, packageHash := range packageHashes {
+		archive := archives[packageHash]
+		if err := sourceidentity.VerifyArchive(archive, packageHash); err != nil {
+			return nil, err
+		}
+		archiveHash := canonical.DigestBytes(archive)
+		key := sourceArchiveKey(packageHash, archiveHash)
+		record := PublishedSourceArchive{PackageHash: packageHash, ArchiveHash: archiveHash, Key: key, Created: true}
+		_, err := store.Put(ctx, datastore.MustKey(key), archive, datastore.PutOptions{ContentType: SourceArchiveContentType, IfAbsent: true})
+		if errors.Is(err, datastore.ErrAlreadyExists) {
+			existing, getErr := store.Get(ctx, datastore.MustKey(key))
+			if getErr != nil {
+				return nil, fmt.Errorf("verify existing source archive %s: %w", key, getErr)
+			}
+			if actual := canonical.DigestBytes(existing.Body); actual != record.ArchiveHash || existing.Info.ContentType != SourceArchiveContentType {
+				return nil, fmt.Errorf("datastore already holds a different source archive at %s (%s, %s); expected %s", key, actual, existing.Info.ContentType, record.ArchiveHash)
+			}
+			record.Created, err = false, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("publish source archive %s: %w", key, err)
+		}
+		published = append(published, record)
+	}
+	return published, nil
 }

@@ -64,9 +64,11 @@ and bindings, and bound uploads before calling the compiler. A separate
 publisher applies the generated WorkflowTemplate. Neither transport nor
 publication is implemented here.
 
-The existing embedded ConfigMap transport and size limit remain unchanged.
-Object-store upload/retrieval is a later adapter; local filesystem paths are not
-part of either materialization message.
+Runtime transport is a deployment binding, not a materialization input. With
+`object-store-v0`, `massive publish` uploads the verified archives recorded in
+the manifest and pods verify each fetched archive against its pinned digest
+(see [Argo runtime transport](argo-backend.md#runtime-transport)). Local
+filesystem paths are not part of either materialization message.
 
 ## Identity and versions
 

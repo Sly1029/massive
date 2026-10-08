@@ -19,7 +19,7 @@
     "language": "typescript",
     "packageHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
     "sourceArchive": {
-      "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar",
+      "key": "packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/archives/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.tar",
       "hash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "contentType": "application/vnd.massive.source-tar"
     }

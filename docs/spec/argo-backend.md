@@ -4,9 +4,10 @@ Status: executable DAGs, decisions/selects, and finite maps
 
 The current implementation emits an executable DAG and validates its
 `WorkflowTemplate` offline against Argo Workflows v3.7.16. The bundle mounts an
-immutable ConfigMap containing the verified plan and source archives; every pod
-runs one isolated proto-described step through the same language runner used by
-local execution. Argo output parameters carry canonical JSON values between
+immutable ConfigMap containing the verified plan and, for the `embedded-v0`
+runtime transport, its source archives; `object-store-v0` pods fetch source
+archives from the shared datastore instead. Every pod runs one isolated
+proto-described step through the same language runner used by local execution. Argo output parameters carry canonical JSON values between
 tasks. The template is annotated
 `massive.dev/execution-status: executable-dag`.
 
@@ -24,7 +25,7 @@ dist/argo/<workflow-name>/
   workflow-template.json      # canonical machine-readable projection
   runtime-configmap.json
   runtime-assets/
-    source-sha256-<digest>.tar  # verified transport-neutral source package
+    source-sha256-<digest>.tar  # verified source package (embedded or published)
   massive-plan.json
   bundle-manifest.json
   deployment-spec.json
@@ -42,7 +43,8 @@ massive build workflow.py \
   --output dist/argo \
   --namespace workflows \
   --service-account massive-runner \
-  --artifact-store massive-artifacts
+  --artifact-store massive-artifacts \
+  --runtime-transport embedded-v0   # or object-store-v0
 ```
 
 The lower-level `massive-compiler bundle-argo` command additionally requires a
@@ -52,25 +54,89 @@ Plan and deployment schema v1 are required; older artifacts must be rebuilt. See
 `massive build` is the public path: it verifies
 the authoring source manifest, creates deterministic archives, and binds them
 to the exact canonical plan. Verified source archives are exposed as standalone
-runtime assets and recorded in `bundle-manifest.json`; the 0.1 embedded
-ConfigMap contains the same bytes. This deliberate duplication keeps the first
-Argo wedge self-contained while giving an object-store transport a stable pack
-to upload without decoding Kubernetes resources.
+runtime assets and recorded in `bundle-manifest.json` for both transports, so
+the pack can be inspected or published without decoding Kubernetes resources.
 
 ## Runtime Transport
 
 Runtime packing and runtime transport are separate concerns. Compilation
 produces one immutable pack containing the canonical plan, schemas, and
-content-addressed source archives. A transport adapter then materializes that
-pack:
+content-addressed source archives. The deployment's required
+`target.runtimeTransport` binding selects how pods receive that pack. It is
+part of `DeploymentSpec` and therefore of the deployment hash and runtime
+ConfigMap name; the plan hash does not change. `bundle-manifest.json` records
+the same value as `runtimeTransport`, and the WorkflowTemplate carries it in
+the `massive.dev/runtime-transport` annotation.
 
-- `embedded-v0` stores the plan and archives in an immutable ConfigMap;
-- `object-store` will publish the same pack to the datastore and place only
-  verified artifact references in the generated template.
+- `embedded-v0` (the `massive build` default) stores the plan and archives in
+  one immutable ConfigMap. Kubernetes limits a ConfigMap to 1 MiB and
+  `binaryData` is base64-encoded, so the decoded plan plus archives must not
+  exceed 700 KiB. A larger pack fails the build with a diagnostic naming
+  `--runtime-transport object-store-v0`; files are never dropped.
+- `object-store-v0` mounts only the plan (still bounded by 700 KiB). Each
+  runner template pins every source package as
+  `--source-archive=<package-hash>=<archive-digest>`. The language runner
+  streams `packages/sha256-<package>/archives/sha256-<archive>.tar` from the
+  bound datastore to private scratch and rejects it unless its SHA-256 equals
+  the pinned digest, before reading any entry or importing code. A missing
+  object, an object above the largest valid archive size, or a digest mismatch
+  is a descriptor failure (exit 64), which Argo's retry expression never
+  retries; the missing-object diagnostic names `massive publish`. With
+  least-privilege credentials that lack `s3:ListBucket`, S3 reports a missing
+  key as 403 AccessDenied; the runner treats a denied archive read the same
+  way and names both causes: an unpublished archive or missing read
+  permission. Control pods
+  execute no author code and receive no source.
 
-The embedded adapter remains intentionally size-bounded. S3 support should be
-implemented by adding the second adapter at this seam, not by teaching Python
-workflow authors about uploads or adding S3 conditionals to graph compilation.
+Selection is explicit rather than automatic by size. `object-store-v0` adds a
+deploy step that needs datastore write credentials, so a growing workflow
+should not silently change how it must be deployed. Upload the archives before
+the first run:
+
+```sh
+massive publish .massive/argo --datastore-config datastore.json
+```
+
+`massive publish` reads `bundle-manifest.json`, checks each archive against the
+digest recorded there and pinned by `materialization-manifest.json`, re-derives
+its source-package identity, and writes it with an atomic if-absent put.
+Republishing is idempotent; an existing object with different bytes is a
+conflict, never overwritten. The descriptor uses the
+shared datastore schema and may differ from the in-cluster one only in its
+endpoint (for example, a port-forward). Credentials come from the standard
+AWS environment. A bundle built with `embedded-v0` has nothing to publish and is
+rejected.
+
+The archive key is content-addressed by both the package identity and the
+exact archive digest. Archive bytes are not uniquely determined by package
+identity (tar metadata and end padding can vary), so keying by package alone
+would let one differently encoded archive occupy the key every pod reads. Local
+runs and `embedded-v0` pods install archives under the same layout.
+
+Source packages may hold up to 16,384 files and 256 MiB of file bodies. The Go
+verifier and the Python runner share these bounds, recorded with shared
+at-limit and over-limit archives in `conformance/fixtures/source-limits`. The
+largest archive they accept is 16,384 × 1 KiB of headers and padding, plus
+256 MiB, plus one 10 KiB tar record of end padding. The Python runner refuses
+an object above that size from its declared length (S3 `ContentLength` or file
+size) and stops copying once it passes the bound, so an object planted by any
+holder of store write credentials cannot fill pod disk. The TypeScript runner
+buffers archives in memory and keeps a 1,024-file, 50 MiB cap; `massive build`
+rejects a larger TypeScript package, and the runner rejects one with a
+diagnostic naming the Python runner.
+
+Build and publish hold each archive in memory. Pods do not: the Go runtime never
+reads the archive, and the Python runner streams the download and each
+extracted file, then deletes its archive copy before user code runs. Peak pod
+scratch is therefore the archive plus the extracted tree, up to about twice the
+package size, during extraction.
+
+**Size budget.** Every runner pod, including each map item, downloads and
+extracts the full archive before invoking user code; it needs up to twice the
+package size in scratch while extracting and the extracted size afterwards. Packages of a few tens of MB suit fan-outs of about 1,000
+items. Above that, account for transfer volume (item count × archive size) and
+per-pod ephemeral storage. A node-level cache keyed by archive digest is a
+planned follow-up, not current behavior.
 
 ## Target Config
 
@@ -378,7 +444,10 @@ executor token and workflow-task-result permissions.
 
 `./scripts/test-argo.sh` builds the current wheel and a non-root runner image,
 creates a disposable kind cluster, installs Argo **v3.7.16**, and runs nested
-branches, arbitrary string tags, empty maps, and selected-item failures. It
+branches, arbitrary string tags, empty maps, and selected-item failures. It also
+builds a generated source package of more than 2,000 files and 2 MiB with
+`object-store-v0`, publishes it through a port-forward to the cluster's MinIO,
+and requires the Argo result to equal a local run of the same workflow. It
 cleans up its cluster and retains diagnostics under `dist/argo-test-logs` on
 failure. Prerequisites: Docker, kind, kubectl, curl, Go, and uv. With snap Docker,
 set `TMPDIR` to a writable directory under your home so Docker can read the build
@@ -391,14 +460,15 @@ and use its registry digest in `container(...)`. Application packages can extend
 this recipe with their own locked dependencies; the generic image contains only
 Massive and its runtime requirements.
 
-Source archives still use the bounded embedded transport, and ordinary values
-still pass through Argo parameters. All Argo invocations use the shared datastore
-for artifact publication and Blob/Tree hydration; there is no pod-local fallback.
+Source archives use the selected runtime transport, and ordinary values still
+pass through Argo parameters. All Argo invocations use the shared datastore for
+artifact publication and Blob/Tree hydration; there is no pod-local fallback.
 
 ## Shared invocation datastore
 
 `--artifact-store` is required and names a Kubernetes ConfigMap containing
-`datastore.json`. It is independent of the embedded **source** transport:
+`datastore.json`. `object-store-v0` reads source archives from this same
+store; `embedded-v0` does not:
 
 ```yaml
 apiVersion: v1
@@ -431,8 +501,9 @@ An `egress: none` execution contract cannot reach remote storage, so the Argo
 compiler rejects it. A future storage mediation implementation must provide a
 real enforcement mechanism before that combination can be supported.
 
-Rebuild existing Argo bundles: `massive runtime step` and `runtime map item` now
-require `--datastore-config <file>` instead of `--store`. There is no compatibility
+Rebuild existing Argo bundles: `massive runtime step` and `runtime map item`
+require `--datastore-config <file>` and exactly one of `--bundle-dir`
+(`embedded-v0`) or repeated `--source-archive` (`object-store-v0`). There is no compatibility
 flag or default private store. The standalone isolated invocation primitive can
 also accept an explicit local descriptor for filesystem integration tests;
 normal `massive run --store` continues to select the local backend's datastore.

@@ -111,15 +111,25 @@ Templates:
 
 ```text
 packages/<package-key>/source-manifest.json
-packages/<package-key>/source.tar
+packages/<package-key>/archives/<archive-key>.tar
 ```
 
 Examples:
 
 ```text
 packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source-manifest.json
-packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/source.tar
+packages/sha256-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/archives/sha256-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee.tar
 ```
+
+An archive is a USTAR tar whose entries derive `<package-key>`; its content
+type is `application/vnd.massive.source-tar`. `<archive-key>` is the
+`sha256-<digestHex>` of the exact archive bytes. Package identity alone does
+not determine archive bytes, so the key includes both: a differently encoded
+archive of the same package occupies a different key and cannot break readers
+that pin a digest. Local runs and `embedded-v0` pods install archives if absent.
+For Argo `object-store-v0`, `massive publish` installs them ahead of time, and
+the runner verifies the pinned digest before opening an archive. A publisher
+must not replace an existing object whose bytes differ.
 
 ### Compiled plan
 
@@ -305,7 +315,7 @@ specs/<spec-key>/workflow-spec.json
 envs/<env-key>/manifest.json
 envs/<env-key>/runtime.tar.zst
 packages/<package-key>/source-manifest.json
-packages/<package-key>/source.tar
+packages/<package-key>/archives/<archive-key>.tar
 plans/<plan-key>/workflow.json
 plans/<plan-key>/provenance.json
 targets/<plan-key>/<target>/bundle-manifest.json

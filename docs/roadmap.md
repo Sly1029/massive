@@ -19,6 +19,10 @@ Implemented:
 - The source identity includes the selected files, `pyproject.toml`, and `uv.lock`
   when present. The runner loads the same archived files locally and remotely.
 - Source packages reject selected symlinks and path escapes.
+- Argo's `object-store-v0` runtime transport carries source packages beyond the
+  700 KiB embedded ConfigMap limit: `massive publish` uploads verified archives
+  and pods verify them by pinned digest. Source packages may hold 16,384 files
+  and 256 MiB.
 - Python `Blob` and `Tree` references transport files through the existing
   filesystem/S3 datastore, including ordered subprocess maps. Hydration is
   invocation-local; explicit snapshots publish mutations.
@@ -34,9 +38,8 @@ Next:
 - Exercise installation and execution on clean Linux CI runners.
 - Add dependency preflight and record the realized environment identity. Use
   standard Python project metadata and lockfiles, not a second dependency language.
-- Add object-store source transport beyond Argo's 700 KiB embedded limit, and
-  artifact references for large arbitrary JSON values. File bodies already use
-  references; source archives and ordinary JSON parameter limits remain.
+- Add artifact references for large arbitrary JSON values. File bodies already
+  use references; ordinary JSON values still pass through Argo parameters.
 
 Acceptance: a clean checkout runs a linear workflow, a resource-bearing fan-out,
 and a conditional workflow without manually repairing the environment.
@@ -77,8 +80,9 @@ DAGs, exhaustive decisions/selects, and finite single-step maps lower to Argo.
 Live conformance covers nested inactive branches, empty maps, failed items, and
 deployment-bound native Secret references. Cloud workload identity remains a
 separate infrastructure gate.
+Source packages beyond the embedded limit use `object-store-v0`.
 Remaining work:
-- larger source/value transport and representative application images.
+- large JSON value transport and representative application images.
 
 Reject unsupported requirements instead of silently weakening them. Schema
 validation and isolated runner tests do not replace a live cluster execution gate.
@@ -89,6 +93,8 @@ validation and isolated runner tests do not replace a live cluster execution gat
   workload identity in a cloud cluster as a separate infrastructure gate.
 - Add streaming transfer and scratch budgets for repository-sized trees; current
   file operations buffer one file at a time.
+- Cache extracted source archives per node, keyed by archive digest. Today every
+  Argo runner pod downloads and extracts its full source package.
 - Preserve reference closure before adding any retention or selective resume.
 - Keep repository fetching, revision metadata, service clients, and domain policy
   in application packages composed over typed inputs and reusable contracts.

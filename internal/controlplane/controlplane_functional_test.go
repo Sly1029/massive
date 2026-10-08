@@ -63,6 +63,7 @@ func TestPythonWorkflowRunsLocallyAndBuildsForArgo(t *testing.T) {
 
 	output := t.TempDir()
 	bundle, err := BundleArgo(ArgoBundleRequest{
+		RuntimeTransport:     "embedded-v0",
 		Frontend:             frontend,
 		OutputDirectory:      output,
 		ProfileName:          "functional-test",
@@ -140,7 +141,8 @@ func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
 	}
 	output := t.TempDir()
 	if _, err := BundleArgo(ArgoBundleRequest{
-		Frontend: frontend, OutputDirectory: output, ProfileName: "functional-test",
+		RuntimeTransport: "embedded-v0",
+		Frontend:         frontend, OutputDirectory: output, ProfileName: "functional-test",
 		ArtifactStoreBinding: "massive-artifacts", Namespace: "workflows",
 		ServiceAccountName: "massive-runner", WorkflowTemplateName: "map-example",
 	}); err != nil {
@@ -159,7 +161,7 @@ func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	archives := make(map[string][]byte, len(workflowPlan.GetSourcePackages()))
+	archives := make(map[string]orchestrator.SourceArchive, len(workflowPlan.GetSourcePackages()))
 	for _, sourcePackage := range workflowPlan.GetSourcePackages() {
 		name, err := orchestrator.SourceArchiveBundleName(sourcePackage.GetPackageHash())
 		if err != nil {
@@ -169,7 +171,7 @@ func TestArgoMapItemRunsThroughTheRealPythonRunner(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		archives[sourcePackage.GetPackageHash()] = archive
+		archives[sourcePackage.GetPackageHash()] = orchestrator.EmbeddedSourceArchive(archive)
 	}
 
 	result, err := orchestrator.RunIsolatedMapItem(context.Background(), orchestrator.IsolatedStepConfig{

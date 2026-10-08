@@ -467,10 +467,10 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 			return nil, fmt.Errorf("package source archive for %q: %w", packageID, err)
 		}
 		bodyHash := canonical.DigestBytes(archive)
-		// The archive key is templated on the plan's package hash per
-		// datastore-layout.md. Writing is if-absent because deterministic bytes
-		// make repeated materialization converge.
-		key := sourcePackageKey(planPackageHash)
+		// The archive key is content-addressed by package and archive digest per
+		// datastore-layout.md, so a differently encoded archive for the same
+		// package can never occupy the key a descriptor pins.
+		key := sourceArchiveKey(planPackageHash, bodyHash)
 		if _, err := store.Put(ctx, datastore.MustKey(key), archive, datastore.PutOptions{ContentType: SourceArchiveContentType, IfAbsent: true}); err != nil && !errors.Is(err, datastore.ErrAlreadyExists) {
 			return nil, fmt.Errorf("write source package artifact for %q: %w", packageID, err)
 		}
@@ -1586,8 +1586,8 @@ func runResultKey(projectKey string, runID string) datastore.Key {
 	return datastore.MustKey("projects/" + projectKey + "/runs/" + runID + "/result.json")
 }
 
-func sourcePackageKey(hash string) string {
-	return "packages/" + strings.Replace(hash, "sha256:", "sha256-", 1) + "/source.tar"
+func sourceArchiveKey(packageHash, archiveHash string) string {
+	return "packages/" + strings.Replace(packageHash, "sha256:", "sha256-", 1) + "/archives/" + strings.Replace(archiveHash, "sha256:", "sha256-", 1) + ".tar"
 }
 
 func blobKeyForHash(hash string) (datastore.Key, error) {

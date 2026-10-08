@@ -30,6 +30,7 @@ Deno.test("deployment profiles lower separately from a package workflow spec", a
           artifactStoreBinding: "staging-artifacts",
           namespace: "workflows",
           serviceAccountName: "massive-runner",
+          runtimeTransport: "embedded-v0",
           workflowTemplateName: "math",
         }),
       ],
@@ -97,6 +98,7 @@ Deno.test("deployment profiles do not participate in WorkflowSpec hash", async (
           artifactStoreBinding: "argo-artifacts",
           namespace: "workflows",
           serviceAccountName: "massive-runner",
+          runtimeTransport: "object-store-v0",
         }),
       ],
     });

@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING, Literal, NotRequired, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, BinaryIO, Literal, NotRequired, Protocol, TypedDict, cast
 from uuid import uuid4
 
 from botocore.config import Config
@@ -15,6 +16,9 @@ from botocore.session import get_session
 
 if TYPE_CHECKING:
     from mypy_boto3_s3 import S3Client
+    from mypy_boto3_s3.type_defs import GetObjectOutputTypeDef
+
+_CHUNK_BYTES = 1024 * 1024
 
 
 class LocalDatastoreDescriptor(TypedDict):
@@ -55,12 +59,29 @@ class DatastoreNotFoundError(Exception):
     pass
 
 
+class DatastoreObjectTooLargeError(Exception):
+    pass
+
+
+class DatastoreAccessDeniedError(Exception):
+    """The store refused a read. Without list permission, S3 reports a missing
+    key this way too, so callers cannot tell the two apart."""
+
+
 class Datastore(Protocol):
     def put(
         self, key: str, body: bytes, *, content_type: str, if_absent: bool = False
     ) -> ObjectInfo: ...
 
     def get(self, key: str) -> DatastoreObject: ...
+
+    def download(self, key: str, destination: BinaryIO, *, max_bytes: int) -> ObjectInfo:
+        """Stream one object into an open file without buffering its body.
+
+        Raises DatastoreObjectTooLargeError, without writing past max_bytes,
+        when the object is larger.
+        """
+        ...
 
 
 class LocalDatastore:
@@ -104,6 +125,19 @@ class LocalDatastore:
         return DatastoreObject(
             info=ObjectInfo(key=key, size=len(body), content_type=self._read_content_type(key)),
             body=body,
+        )
+
+    def download(self, key: str, destination: BinaryIO, *, max_bytes: int) -> ObjectInfo:
+        try:
+            with self.path_for_key(key).open("rb") as source:
+                _check_size(key, os.fstat(source.fileno()).st_size, max_bytes)
+                _copy_bounded(
+                    key, iter(lambda: source.read(_CHUNK_BYTES), b""), destination, max_bytes
+                )
+        except FileNotFoundError as error:
+            raise DatastoreNotFoundError(f"datastore object not found: {key}") from error
+        return ObjectInfo(
+            key=key, size=destination.tell(), content_type=self._read_content_type(key)
         )
 
     def path_for_key(self, key: str) -> Path:
@@ -209,17 +243,7 @@ class S3Datastore:
         return ObjectInfo(key=key, size=len(body), content_type=content_type)
 
     def get(self, key: str) -> DatastoreObject:
-        _validate_key(key)
-        try:
-            result = self.client.get_object(Bucket=self.bucket, Key=self._key(key))
-        except ClientError as error:
-            if _s3_status(error) == 404 or _s3_code(error) in {
-                "NoSuchKey",
-                "NoSuchBucket",
-                "NotFound",
-            }:
-                raise DatastoreNotFoundError(f"datastore object not found: {key}") from error
-            raise
+        result = self._get_object(key)
         stream = result["Body"]
         body = stream.read()
         return DatastoreObject(
@@ -231,6 +255,34 @@ class S3Datastore:
             body=body,
         )
 
+    def download(self, key: str, destination: BinaryIO, *, max_bytes: int) -> ObjectInfo:
+        result = self._get_object(key)
+        try:
+            _check_size(key, result["ContentLength"], max_bytes)
+            _copy_bounded(key, result["Body"].iter_chunks(_CHUNK_BYTES), destination, max_bytes)
+        finally:
+            result["Body"].close()
+        return ObjectInfo(
+            key=key,
+            size=destination.tell(),
+            content_type=result.get("ContentType") or "application/octet-stream",
+        )
+
+    def _get_object(self, key: str) -> GetObjectOutputTypeDef:
+        _validate_key(key)
+        try:
+            return self.client.get_object(Bucket=self.bucket, Key=self._key(key))
+        except ClientError as error:
+            if _s3_status(error) == 404 or _s3_code(error) in {
+                "NoSuchKey",
+                "NoSuchBucket",
+                "NotFound",
+            }:
+                raise DatastoreNotFoundError(f"datastore object not found: {key}") from error
+            if _s3_status(error) == 403 or _s3_code(error) == "AccessDenied":
+                raise DatastoreAccessDeniedError(f"datastore read denied: {key}") from error
+            raise
+
     def _key(self, key: str) -> str:
         return key if self.prefix == "" else f"{self.prefix}/{key}"
 
@@ -241,6 +293,23 @@ def datastore_from_descriptor(descriptor: DatastoreDescriptor) -> Datastore:
     if descriptor["kind"] == "s3":
         return S3Datastore(descriptor)
     raise AssertionError("unreachable datastore kind")
+
+
+def _check_size(key: str, size: int, max_bytes: int) -> None:
+    if size > max_bytes:
+        raise DatastoreObjectTooLargeError(
+            f"datastore object {key} is {size} bytes, above the {max_bytes}-byte limit"
+        )
+
+
+def _copy_bounded(key: str, chunks: Iterator[bytes], destination: BinaryIO, max_bytes: int) -> None:
+    # The declared size is checked first; counting again guards a store that
+    # returns more bytes than it declared.
+    written = 0
+    for chunk in chunks:
+        written += len(chunk)
+        _check_size(key, written, max_bytes)
+        destination.write(chunk)
 
 
 def _validate_key(key: str) -> None:

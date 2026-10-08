@@ -75,7 +75,7 @@ func ForPlan(plan *planpb.WorkflowPlan, archives map[string][]byte) (*pb.Materia
 		if !exists {
 			return nil, fmt.Errorf("materialization: source archive %s is required", hash)
 		}
-		if err := sourceidentity.VerifyArchive(archive, hash); err != nil {
+		if err := sourceidentity.VerifyLanguageArchive(archive, hash, source.GetLanguage()); err != nil {
 			return nil, fmt.Errorf("materialization: source %s: %w", hash, err)
 		}
 		result.SourceArchives = append(result.SourceArchives, &pb.SourceArchive{

@@ -7,16 +7,16 @@ import importlib.resources
 import inspect
 import json
 import re
+import shutil
 import sys
 import tarfile
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cache
-from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Literal, NotRequired, Protocol, TypedDict, cast
+from typing import BinaryIO, Literal, NotRequired, Protocol, TypedDict, cast
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError as JsonSchemaError
@@ -38,8 +38,10 @@ from .canonical import (
 from .context import InvocationContext, NonRetryableError, StepContext
 from .datastore import (
     Datastore,
+    DatastoreAccessDeniedError,
     DatastoreDescriptor,
     DatastoreNotFoundError,
+    DatastoreObjectTooLargeError,
     LocalDatastore,
     S3Datastore,
 )
@@ -48,8 +50,11 @@ from .identity import SHA256_REFERENCE, InvocationIdentity
 from .identity import ExecutionScope as ArtifactExecutionScope
 
 _SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
-_MAX_SOURCE_FILES = 1024
-_MAX_SOURCE_BYTES = 50 * 1024 * 1024
+_MAX_SOURCE_FILES = 16384
+_MAX_SOURCE_BYTES = 256 * 1024 * 1024
+# The largest archive a valid package can produce: each file needs a header
+# block plus at most one block of padding, and a tar record may pad the end.
+_MAX_ARCHIVE_BYTES = _MAX_SOURCE_FILES * 1024 + _MAX_SOURCE_BYTES + 10240
 _DESCRIPTOR_EXIT = 64
 _SCHEMA_EXIT = 65
 _STEP_EXIT = 66
@@ -374,40 +379,64 @@ def _source_root(
     archive = source_package["sourceArchive"]
     if archive["contentType"] != _SOURCE_ARCHIVE_CONTENT_TYPE:
         raise DescriptorError("Python runner requires application/vnd.massive.source-tar")
-    body = datastore.get(archive["key"]).body
-    if _sha256_ref_bytes(body) != archive["hash"]:
-        raise DescriptorError("source archive hash mismatch")
     with TemporaryDirectory(prefix="massive-source-") as temporary:
-        root = Path(temporary)
-        try:
-            with tarfile.open(fileobj=BytesIO(body), mode="r:") as archive_file:
-                names: set[str] = set()
-                total_size = 0
-                for member in archive_file:
-                    if (
-                        not member.isfile()
-                        or not _safe_archive_path(member.name)
-                        or member.name in names
-                    ):
-                        raise DescriptorError(
-                            f"source archive contains unsafe entry {member.name!r}"
-                        )
-                    total_size += member.size
-                    if len(names) >= _MAX_SOURCE_FILES or total_size > _MAX_SOURCE_BYTES:
-                        raise DescriptorError("source archive exceeds source package limits")
-                    source = archive_file.extractfile(member)
-                    if source is None:
-                        raise DescriptorError(
-                            f"source archive entry {member.name!r} cannot be read"
-                        )
-                    target = root / member.name
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(source.read())
-                    target.chmod(0o444)
-                    names.add(member.name)
-        except (tarfile.TarError, OSError) as error:
-            raise DescriptorError(f"source archive is invalid: {error}") from error
+        # Stream the archive to bounded scratch and verify its digest before
+        # reading any entry; a source package can be far larger than pod memory.
+        root = Path(temporary) / "source"
+        archive_path = Path(temporary) / "source.tar"
+        with archive_path.open("w+b") as download:
+            try:
+                datastore.download(archive["key"], download, max_bytes=_MAX_ARCHIVE_BYTES)
+            except DatastoreNotFoundError as error:
+                raise DescriptorError(
+                    f"source archive is missing at {archive['key']}; for an Argo "
+                    "object-store-v0 bundle, upload it with massive publish"
+                ) from error
+            except DatastoreAccessDeniedError as error:
+                raise DescriptorError(
+                    f"source archive at {archive['key']} could not be read: either it was "
+                    "never published (upload it with massive publish) or this pod's "
+                    "storage credentials lack read permission for it"
+                ) from error
+            except DatastoreObjectTooLargeError as error:
+                raise DescriptorError(
+                    f"source archive exceeds source package limits: {error}"
+                ) from error
+            download.seek(0)
+            if "sha256:" + hashlib.file_digest(download, "sha256").hexdigest() != archive["hash"]:
+                raise DescriptorError("source archive hash mismatch")
+            download.seek(0)
+            _extract_source(download, root)
+        archive_path.unlink()
         yield root
+
+
+def _extract_source(archive: BinaryIO, root: Path) -> None:
+    try:
+        with tarfile.open(fileobj=archive, mode="r:") as archive_file:
+            names: set[str] = set()
+            total_size = 0
+            for member in archive_file:
+                if (
+                    not member.isfile()
+                    or not _safe_archive_path(member.name)
+                    or member.name in names
+                ):
+                    raise DescriptorError(f"source archive contains unsafe entry {member.name!r}")
+                total_size += member.size
+                if len(names) >= _MAX_SOURCE_FILES or total_size > _MAX_SOURCE_BYTES:
+                    raise DescriptorError("source archive exceeds source package limits")
+                source = archive_file.extractfile(member)
+                if source is None:
+                    raise DescriptorError(f"source archive entry {member.name!r} cannot be read")
+                target = root / member.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("wb") as extracted:
+                    shutil.copyfileobj(source, extracted)
+                target.chmod(0o444)
+                names.add(member.name)
+    except (tarfile.TarError, OSError) as error:
+        raise DescriptorError(f"source archive is invalid: {error}") from error
 
 
 @contextmanager
@@ -471,10 +500,6 @@ def _datastore(descriptor: DatastoreDescriptor) -> Datastore:
     if descriptor["kind"] == "s3":
         return S3Datastore(descriptor)
     raise AssertionError("unreachable datastore kind")
-
-
-def _sha256_ref_bytes(body: bytes) -> str:
-    return "sha256:" + hashlib.sha256(body).hexdigest()
 
 
 def _safe_archive_path(path: str) -> bool:

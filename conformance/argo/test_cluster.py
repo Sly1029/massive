@@ -6,17 +6,28 @@ MASSIVE_PYTHON configured. The image must contain the current Massive wheel.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
 import secrets
+import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+DATASTORE = {
+    "kind": "s3",
+    "bucket": "my-bucket",
+    "region": "us-east-1",
+    "prefix": "massive-conformance",
+    "endpoint": "http://minio:9000",
+    "forcePathStyle": True,
+}
 
 
 def kubectl(*args: str, document: dict | None = None) -> dict:
@@ -33,7 +44,11 @@ def kubectl(*args: str, document: dict | None = None) -> dict:
 
 
 def install_workflow(
-    source: str, secret_bindings: dict | None = None, *, selector: str = ""
+    source: str,
+    secret_bindings: dict | None = None,
+    *,
+    selector: str = "",
+    build_args: tuple[str, ...] = (),
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="massive-argo-") as directory:
         root = Path(directory)
@@ -61,6 +76,7 @@ def install_workflow(
                 "massive-storage-credentials",
                 "--secret-bindings",
                 str(bindings),
+                *build_args,
             ],
             cwd=ROOT,
             check=True,
@@ -73,6 +89,150 @@ def install_workflow(
             "-f",
             str(bundle / "workflow-template.json"),
         )
+
+
+def massive(*args: str, environment: dict[str, str] | None = None) -> str:
+    return subprocess.run(
+        ["go", "run", "./cmd/massive", *args],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        env=None if environment is None else {**os.environ, **environment},
+        text=True,
+        timeout=300,
+    ).stdout
+
+
+def install_large_source() -> dict:
+    """Build the >1 MiB source fixture for object-store-v0, publish its archive
+    through a port-forward to the cluster's MinIO, and return its local result."""
+    fixture = ROOT / "conformance/workflows/large-source"
+    with tempfile.TemporaryDirectory(prefix="massive-argo-large-") as directory:
+        root = Path(directory)
+        workflow = root / "workflow"
+        workflow.mkdir()
+        (workflow / "pyproject.toml").write_text(
+            (fixture / "pyproject.toml").read_text()
+        )
+        (workflow / "workflow.py").write_text(
+            (fixture / "workflow.py")
+            .read_text()
+            .replace(
+                'IMAGE = "example.invalid/runner@sha256:" + "0" * 64',
+                f"IMAGE = {os.environ['MASSIVE_TEST_ARGO_IMAGE']!r}",
+            )
+            .replace(
+                'PLATFORM = "linux/amd64"',
+                f"PLATFORM = {os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
+            )
+        )
+        subprocess.run(
+            [sys.executable, str(fixture / "generate.py"), str(workflow)],
+            check=True,
+            timeout=60,
+        )
+        local = json.loads(
+            massive(
+                "run",
+                str(workflow / "workflow.py"),
+                "--input",
+                "{}",
+                "--store",
+                str(root / "store"),
+                "--project",
+                "massive/large-source",
+                "--json",
+            )
+        )
+        build = [
+            "build",
+            str(workflow / "workflow.py"),
+            "--namespace",
+            "argo",
+            "--service-account",
+            "default",
+            "--artifact-store",
+            "massive-datastore",
+            "--artifact-credentials-secret",
+            "massive-storage-credentials",
+        ]
+        embedded = subprocess.run(
+            ["go", "run", "./cmd/massive", *build, "--output", str(root / "embedded")],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+        assert (
+            embedded.returncode != 0
+            and "--runtime-transport object-store-v0" in embedded.stderr
+        ), embedded.stderr
+        bundle = root / "bundle"
+        massive(
+            *build, "--output", str(bundle), "--runtime-transport", "object-store-v0"
+        )
+        configmap = json.loads((bundle / "runtime-configmap.json").read_text())
+        assert sorted(configmap["binaryData"]) == ["massive-plan.json"], configmap[
+            "binaryData"
+        ].keys()
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        forward = subprocess.Popen(
+            [
+                os.environ.get("KUBECTL", "kubectl"),
+                "-n",
+                "argo",
+                "port-forward",
+                "svc/minio",
+                f"{port}:9000",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            assert forward.stdout is not None
+            forward.stdout.readline()  # "Forwarding from 127.0.0.1:<port> -> 9000"
+            descriptor = root / "datastore.json"
+            descriptor.write_text(
+                json.dumps({**DATASTORE, "endpoint": f"http://127.0.0.1:{port}"})
+            )
+            credentials = kubectl("get", "secret", "my-minio-cred", "-o", "json")[
+                "data"
+            ]
+            published = json.loads(
+                massive(
+                    "publish",
+                    str(bundle),
+                    "--datastore-config",
+                    str(descriptor),
+                    "--json",
+                    environment={
+                        "AWS_ACCESS_KEY_ID": base64.b64decode(
+                            credentials["accesskey"]
+                        ).decode(),
+                        "AWS_SECRET_ACCESS_KEY": base64.b64decode(
+                            credentials["secretkey"]
+                        ).decode(),
+                    },
+                )
+            )
+            assert [archive["created"] for archive in published["sourceArchives"]] == [
+                True
+            ], published
+        finally:
+            forward.terminate()
+            forward.wait(timeout=30)
+        kubectl(
+            "apply",
+            "-f",
+            str(bundle / "runtime-configmap.json"),
+            "-f",
+            str(bundle / "workflow-template.json"),
+        )
+        return local["result"]
 
 
 @unittest.skipUnless(
@@ -90,18 +250,7 @@ class DecisionConformance(unittest.TestCase):
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {"name": "massive-datastore"},
-                "data": {
-                    "datastore.json": json.dumps(
-                        {
-                            "kind": "s3",
-                            "bucket": "my-bucket",
-                            "region": "us-east-1",
-                            "prefix": "massive-conformance",
-                            "endpoint": "http://minio:9000",
-                            "forcePathStyle": True,
-                        }
-                    )
-                },
+                "data": {"datastore.json": json.dumps(DATASTORE)},
             },
         )
         credentials = kubectl("get", "secret", "my-minio-cred", "-o", "json")["data"]
@@ -179,6 +328,17 @@ class DecisionConformance(unittest.TestCase):
             )
         )
         install_workflow(retry_source)
+        # Never published: a changed source identity whose archive is absent
+        # from the store must fail once (exit 64), not exhaust its retries.
+        install_workflow(
+            retry_source + "\n# unpublished object-store variant\n",
+            build_args=(
+                "--name",
+                "argo-unpublished",
+                "--runtime-transport",
+                "object-store-v0",
+            ),
+        )
         composition_source = (
             (ROOT / "packages/python/tests/fixtures/composed_workflow.py")
             .read_text()
@@ -192,6 +352,7 @@ class DecisionConformance(unittest.TestCase):
             )
         )
         install_workflow(composition_source, selector="#graph")
+        cls.large_source_result = install_large_source()
         cls.runs = {}
         for label, inputs in {
             "positive": {"score": 3},
@@ -208,6 +369,8 @@ class DecisionConformance(unittest.TestCase):
             "nonretryable": {"permanent": True},
             "composed-approved": {"value": 5},
             "composed-rejected": {"value": -1},
+            "large-source": {},
+            "unpublished": {"permanent": False},
         }.items():
             run = kubectl(
                 "create",
@@ -228,6 +391,8 @@ class DecisionConformance(unittest.TestCase):
                                 "nonretryable": "argo-retries",
                                 "composed-approved": "composed",
                                 "composed-rejected": "composed",
+                                "large-source": "large-source",
+                                "unpublished": "argo-unpublished",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -289,6 +454,26 @@ class DecisionConformance(unittest.TestCase):
                 json.loads(root["outputs"]["parameters"][0]["value"]),
                 {"value": expected},
             )
+
+    def test_object_store_source_matches_local_execution(self) -> None:
+        run = self.completed("large-source")
+        self.assertEqual(
+            run["status"]["phase"], "Succeeded", str(run["status"].get("message"))
+        )
+        root = run["status"]["nodes"][run["metadata"]["name"]]
+        result = json.loads(root["outputs"]["parameters"][0]["value"])
+        self.assertEqual(result, self.large_source_result)
+        self.assertGreater(result["files"], 2000)
+        self.assertGreater(result["bytes"], 1024 * 1024)
+        self.assertEqual(len(self.pods(run, "map-item-inventory")), 3)
+
+    def test_missing_published_source_is_not_retried(self) -> None:
+        run = self.completed("unpublished")
+        self.assertEqual(run["status"]["phase"], "Failed")
+        attempts = self.pods(run, "step-flaky")
+        self.assertEqual(len(attempts), 1, attempts)
+        self.assertEqual(attempts[0]["phase"], "Failed")
+        self.assertIn("exit code 64", attempts[0].get("message", ""), attempts[0])
 
     def test_empty_map_inside_selected_branch(self) -> None:
         self.successful("empty", 0)

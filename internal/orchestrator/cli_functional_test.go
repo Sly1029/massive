@@ -130,7 +130,7 @@ func TestCompilerCLIArgoBundleFunctional(t *testing.T) {
 	}
 	binding, deploymentJSON, err := deployment.New(parsedPlan.GetPlanHash(), deployment.Profile{
 		Name: "argo-test", ArtifactStoreBinding: "test-artifacts",
-		Target: deployment.Target{Kind: "argo", Namespace: "workflows", ServiceAccountName: "massive-runner", WorkflowTemplateName: "diamond-test"},
+		Target: deployment.Target{Kind: "argo", Namespace: "workflows", ServiceAccountName: "massive-runner", WorkflowTemplateName: "diamond-test", RuntimeTransport: "embedded-v0"},
 	}, materialized.GetManifestHash())
 	if err != nil {
 		t.Fatal(err)

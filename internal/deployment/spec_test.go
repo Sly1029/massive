@@ -2,6 +2,8 @@ package deployment
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +64,7 @@ func TestNewConstructsCanonicalValidatedDeployment(t *testing.T) {
 			Kind:                 "argo",
 			Namespace:            "workflows",
 			ServiceAccountName:   "massive-runner",
+			RuntimeTransport:     "embedded-v0",
 			WorkflowTemplateName: "example-workflow",
 		},
 	}, testPlanHash)
@@ -93,6 +96,7 @@ func TestDeploymentIdentityIsSeparateFromPlanIdentity(t *testing.T) {
 			"kind":                 "argo",
 			"namespace":            "staging",
 			"serviceAccountName":   "massive-runner",
+			"runtimeTransport":     "embedded-v0",
 			"workflowTemplateName": "example-workflow",
 		},
 	})
@@ -119,6 +123,57 @@ func TestDeploymentIdentityIsSeparateFromPlanIdentity(t *testing.T) {
 	}
 	if secondLocal.DeploymentHash != local.DeploymentHash {
 		t.Fatalf("deployment hash is not deterministic: first %s, second %s", local.DeploymentHash, secondLocal.DeploymentHash)
+	}
+}
+
+func TestRuntimeTransportIsARequiredDeploymentBinding(t *testing.T) {
+	profile := Profile{Name: "argo", ArtifactStoreBinding: "artifacts", Target: Target{
+		Kind: "argo", Namespace: "workflows", ServiceAccountName: "runner", RuntimeTransport: "embedded-v0",
+	}}
+	embedded, _, err := New(testPlanHash, profile, testPlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.Target.RuntimeTransport = "object-store-v0"
+	objectStore, _, err := New(testPlanHash, profile, testPlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if embedded.DeploymentHash == objectStore.DeploymentHash || embedded.PlanHash != objectStore.PlanHash {
+		t.Fatalf("transport must change only deployment identity: %s/%s, %s/%s", embedded.DeploymentHash, embedded.PlanHash, objectStore.DeploymentHash, objectStore.PlanHash)
+	}
+	for _, transport := range []string{"", "configmap"} {
+		profile.Target.RuntimeTransport = transport
+		_, _, err := New(testPlanHash, profile, testPlanHash)
+		var diagnostics *DiagnosticsError
+		if !errors.As(err, &diagnostics) || !strings.Contains(fmt.Sprint(diagnostics.Diagnostics), "runtimeTransport") {
+			t.Fatalf("transport %q error = %v, want a runtimeTransport diagnostic: %v", transport, err, diagnostics)
+		}
+	}
+}
+
+func TestTargetDiagnosticsNameOnlyTheFailingBranch(t *testing.T) {
+	for name, target := range map[string]map[string]any{
+		"missing kind":         {"namespace": "workflows"},
+		"missing argo binding": {"kind": "argo", "namespace": "workflows", "serviceAccountName": "runner"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse(deploymentJSON(t, map[string]any{"name": "argo", "artifactStoreBinding": "artifacts", "target": target}))
+			var diagnostics *DiagnosticsError
+			if !errors.As(err, &diagnostics) {
+				t.Fatalf("error = %v", err)
+			}
+			rendered := fmt.Sprint(diagnostics.Diagnostics)
+			missing := map[string]string{"missing kind": "'kind'", "missing argo binding": "'runtimeTransport'"}[name]
+			if !strings.Contains(rendered, missing) || strings.Contains(rendered, "additional properties") {
+				t.Fatalf("diagnostics = %s, want only the missing %s", rendered, missing)
+			}
+			for _, diagnostic := range diagnostics.Diagnostics {
+				if !strings.HasPrefix(diagnostic.Ref, "/properties/profile/") {
+					t.Fatalf("diagnostic ref %q is not a keyword location", diagnostic.Ref)
+				}
+			}
+		})
 	}
 }
 
@@ -164,6 +219,7 @@ func TestDeploymentProfilesReferenceTheSameCompiledPlan(t *testing.T) {
 			"kind":               "argo",
 			"namespace":          "staging",
 			"serviceAccountName": "massive-runner",
+			"runtimeTransport":   "object-store-v0",
 		},
 	}))
 	if err != nil {
@@ -317,7 +373,7 @@ func TestSecretBindingsValidateKubernetesNamesAndKeys(t *testing.T) {
 			t.Fatalf("invalid bindings accepted: %s", body)
 		}
 	}
-	profile := Profile{Name: "argo", ArtifactStoreBinding: "artifacts", Target: Target{Kind: "argo", Namespace: "default", ServiceAccountName: "runner", SecretBindings: bindings}}
+	profile := Profile{Name: "argo", ArtifactStoreBinding: "artifacts", Target: Target{Kind: "argo", Namespace: "default", ServiceAccountName: "runner", RuntimeTransport: "embedded-v0", SecretBindings: bindings}}
 	first, _, err := New(testPlanHash, profile, testPlanHash)
 	if err != nil {
 		t.Fatal(err)

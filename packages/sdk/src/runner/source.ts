@@ -10,6 +10,8 @@ import { SymbolResolutionError } from "./outcomes.ts";
 
 const SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar";
 const TAR_BLOCK_SIZE = 512;
+// The TypeScript runner buffers the whole archive, so it keeps a smaller cap
+// than the Go verifier and the streaming Python runner (16,384 files, 256 MiB).
 const MAX_SOURCE_FILES = 1_024;
 const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
 
@@ -162,7 +164,9 @@ async function extractSourceArchive(
     const size = tarSize(header);
     totalSize += size;
     if (names.size >= MAX_SOURCE_FILES || totalSize > MAX_SOURCE_BYTES) {
-      throw new Error("tar archive exceeds source package limits");
+      throw new Error(
+        "source archive exceeds the TypeScript runner's limit of 1,024 files and 50 MiB; run larger source packages with the Python runner or reduce the package",
+      );
     }
     if (size > bytes.length - offset) {
       throw new Error(`tar archive entry ${JSON.stringify(path)} is truncated`);

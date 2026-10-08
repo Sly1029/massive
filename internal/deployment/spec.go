@@ -45,10 +45,13 @@ type SecretKeyRef struct {
 }
 
 type Target struct {
-	Kind                      string                  `json:"kind"`
-	Namespace                 string                  `json:"namespace,omitempty"`
-	ServiceAccountName        string                  `json:"serviceAccountName,omitempty"`
-	WorkflowTemplateName      string                  `json:"workflowTemplateName,omitempty"`
+	Kind                 string `json:"kind"`
+	Namespace            string `json:"namespace,omitempty"`
+	ServiceAccountName   string `json:"serviceAccountName,omitempty"`
+	WorkflowTemplateName string `json:"workflowTemplateName,omitempty"`
+	// RuntimeTransport selects how pods receive verified source archives.
+	// It changes generated resources, so it is part of deployment identity.
+	RuntimeTransport          string                  `json:"runtimeTransport,omitempty"`
 	ArtifactCredentialsSecret string                  `json:"artifactCredentialsSecret,omitempty"`
 	SecretBindings            map[string]SecretKeyRef `json:"secretBindings,omitempty"`
 }
@@ -191,10 +194,12 @@ func validateSchema(data []byte, fragment string) error {
 	return nil
 }
 
+// schemaDiagnostics reports every failing keyword with its location. The
+// detailed output keeps causes reached through if/then references, such as a
+// missing Argo field, which the flattened basic output drops.
 func schemaDiagnostics(validation *jsonschema.ValidationError) []Diagnostic {
-	basic := validation.BasicOutput()
 	var diagnostics []Diagnostic
-	collectSchemaDiagnostics(basic, &diagnostics)
+	collectSchemaDiagnostics(validation.DetailedOutput(), &diagnostics)
 	if len(diagnostics) == 0 {
 		return []Diagnostic{{Path: "$", Ref: "deployment-spec.schema.json", Message: validation.Error()}}
 	}

@@ -17,8 +17,9 @@
       "kind": "argo",
       "namespace": "staging",
       "serviceAccountName": "massive-runner",
+      "runtimeTransport": "object-store-v0",
       "workflowTemplateName": "example-workflow"
     }
   },
-  "deploymentHash": "sha256:464c84f8e5e15aa7803f3d4bfc4071b2c74ab4d2ab9374c254517c776d362888"
+  "deploymentHash": "sha256:9872000e1453dfaaa55e531ffa30d6d48b5d6a6fb3e0f7eb4e42ba57cf94a578"
 }

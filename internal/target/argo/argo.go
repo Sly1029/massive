@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -24,9 +25,16 @@ import (
 )
 
 const (
-	Kind                      = "argo"
-	RuntimeTransport          = "embedded-v0"
-	workflowTemplateSchemaRef = "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.argoproj.workflow.v1alpha1.WorkflowTemplate"
+	Kind = "argo"
+	// TransportEmbedded mounts the plan and source archives from one immutable
+	// ConfigMap. TransportObjectStore mounts only the plan; pods resolve source
+	// archives from the shared datastore by package key and archive digest.
+	TransportEmbedded    = "embedded-v0"
+	TransportObjectStore = "object-store-v0"
+	// BundleManifestSchemaVersion is the only TargetBundleManifest version this
+	// compiler writes and publish accepts; 0 is an explicit value, not absence.
+	BundleManifestSchemaVersion = 0
+	workflowTemplateSchemaRef   = "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.argoproj.workflow.v1alpha1.WorkflowTemplate"
 )
 
 type File struct {
@@ -46,6 +54,8 @@ type RuntimeAssets struct {
 	MaterializationSpec []byte
 }
 
+// Kubernetes rejects ConfigMaps above 1 MiB; base64 binaryData expands bytes
+// by a third, so the decoded runtime payload must stay below 700 KiB.
 const maxEmbeddedRuntimeBytes = 700 * 1024
 
 var argoFieldNamePattern = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`)
@@ -79,7 +89,8 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 	if err := validateStaticGraph(p); err != nil {
 		return nil, err
 	}
-	if err := validateRuntimeAssets(p, planJSON, assets); err != nil {
+	transport := deploymentSpec.Profile.Target.RuntimeTransport
+	if err := validateRuntimeAssets(p, planJSON, transport, assets); err != nil {
 		return nil, err
 	}
 	manifest, err := materialization.Resolve(p, assets.MaterializationSpec, assets.SourceArchives)
@@ -89,6 +100,15 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 	if manifest.GetManifestHash() != deploymentSpec.MaterializationHash {
 		return nil, errors.New("argo target: materialization manifest does not match deployment binding")
 	}
+	sourceArgs := []string{"--bundle-dir", "/var/run/massive"}
+	if transport == TransportObjectStore {
+		// The archive digest was verified against the package identity above and
+		// is pinned in the template, so pods can verify fetched bytes by digest.
+		sourceArgs = sourceArgs[:0]
+		for _, archive := range manifest.GetSourceArchives() {
+			sourceArgs = append(sourceArgs, "--source-archive="+archive.GetPackageHash()+"="+archive.GetArchiveHash())
+		}
+	}
 	manifestJSON, err := materialization.MarshalCanonical(manifest)
 	if err != nil {
 		return nil, err
@@ -97,7 +117,7 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 	if err != nil {
 		return nil, err
 	}
-	template, runtimeName, err := workflowTemplate(p, deploymentSpec)
+	template, runtimeName, err := workflowTemplate(p, deploymentSpec, sourceArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -134,17 +154,29 @@ func Compile(planJSON []byte, deploymentSpec *deployment.Spec, assets RuntimeAss
 	return buildBundle(p, deploymentSpec, files)
 }
 
-func validateRuntimeAssets(p *planpb.WorkflowPlan, planJSON []byte, assets RuntimeAssets) error {
-	total := len(planJSON)
+// validateRuntimeAssets bounds the runtime ConfigMap. Both transports embed the
+// plan; only embedded-v0 also embeds source archives. Oversized content is an
+// error, never a reason to drop files.
+func validateRuntimeAssets(p *planpb.WorkflowPlan, planJSON []byte, transport string, assets RuntimeAssets) error {
+	archives := 0
 	for _, sourcePackage := range p.GetSourcePackages() {
 		archive := assets.SourceArchives[sourcePackage.GetPackageHash()]
 		if len(archive) == 0 {
 			return fmt.Errorf("argo target: verified source archive %s is required", sourcePackage.GetPackageHash())
 		}
-		total += len(archive)
+		archives += len(archive)
 	}
-	if total > maxEmbeddedRuntimeBytes {
-		return fmt.Errorf("argo target: embedded plan and source archives are %d bytes; 0.1 ConfigMap transport supports at most %d bytes", total, maxEmbeddedRuntimeBytes)
+	switch transport {
+	case TransportEmbedded:
+		if total := len(planJSON) + archives; total > maxEmbeddedRuntimeBytes {
+			return fmt.Errorf("argo target: the plan and source archives are %d bytes, but the embedded-v0 runtime ConfigMap holds at most %d bytes; rebuild with --runtime-transport %s and upload the archives with massive publish", total, maxEmbeddedRuntimeBytes, TransportObjectStore)
+		}
+	case TransportObjectStore:
+		if len(planJSON) > maxEmbeddedRuntimeBytes {
+			return fmt.Errorf("argo target: the plan is %d bytes, but the runtime ConfigMap holds at most %d bytes", len(planJSON), maxEmbeddedRuntimeBytes)
+		}
+	default:
+		return fmt.Errorf("argo target: unsupported runtime transport %q", transport)
 	}
 	return nil
 }
@@ -274,7 +306,7 @@ func validateStaticGraph(p *planpb.WorkflowPlan) error {
 	return nil
 }
 
-func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]any, string, error) {
+func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []string) (map[string]any, string, error) {
 	g := p.GetGraph()
 	name := d.Profile.Target.WorkflowTemplateName
 	if name == "" {
@@ -414,7 +446,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			continue
 		}
 		if node.GetKind() == "map" {
-			mapTemplates, err := argoMapTemplates(node, env, contract, runtimeName, name, &d.Profile.Target)
+			mapTemplates, err := argoMapTemplates(node, env, contract, runtimeName, name, &d.Profile.Target, sourceArgs)
 			if err != nil {
 				return nil, "", err
 			}
@@ -423,17 +455,17 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 		}
 		stepTemplate, err := runtimePodTemplate(
 			templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target,
-			append([]string{
+			slices.Concat([]string{
 				"runtime", "step",
 				"--plan", "/var/run/massive/massive-plan.json",
-				"--bundle-dir", "/var/run/massive",
+			}, sourceArgs, []string{
 				"--node=" + node.GetId(),
 				"--input={{inputs.parameters.input}}",
 				"--output", "/tmp/massive/result.json",
 				"--project", "argo/" + name,
 				"--run-id", "{{workflow.uid}}",
 				"--datastore-config", "/var/run/massive-datastore/datastore.json",
-			}, retryArgs(contract)...),
+			}, retryArgs(contract)),
 		)
 		if err != nil {
 			return nil, "", err
@@ -471,7 +503,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 			"name": name, "namespace": d.Profile.Target.Namespace,
 			"annotations": map[string]string{
 				"massive.dev/plan-hash": p.GetPlanHash(), "massive.dev/deployment-hash": d.DeploymentHash,
-				"massive.dev/execution-status": "executable-dag", "massive.dev/runtime-transport": RuntimeTransport,
+				"massive.dev/execution-status": "executable-dag", "massive.dev/runtime-transport": d.Profile.Target.RuntimeTransport,
 			},
 		},
 		"spec": map[string]any{
@@ -488,7 +520,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec) (map[string]an
 	}, runtimeName, nil
 }
 
-func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target) ([]any, error) {
+func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target, sourceArgs []string) ([]any, error) {
 	expandName := argoFieldName("map-expand-" + node.GetId())
 	itemName := argoFieldName("map-item-" + node.GetId())
 	collectName := argoFieldName("map-collect-" + node.GetId())
@@ -504,17 +536,17 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	}
 	itemTemplate, err := runtimePodTemplate(
 		itemName, node.GetId(), env, contract, runtimeName, storage,
-		append([]string{
+		slices.Concat([]string{
 			"runtime", "map", "item",
 			"--plan", "/var/run/massive/massive-plan.json",
-			"--bundle-dir", "/var/run/massive",
+		}, sourceArgs, []string{
 			"--node=" + node.GetId(),
 			"--item={{inputs.parameters.input}}",
 			"--output", "/tmp/massive/result.json",
 			"--project", "argo/" + workflowName,
 			"--run-id", "{{workflow.uid}}",
 			"--datastore-config", "/var/run/massive-datastore/datastore.json",
-		}, retryArgs(contract)...),
+		}, retryArgs(contract)),
 	)
 	if err != nil {
 		return nil, err
@@ -697,9 +729,11 @@ func argoFieldName(source string) string {
 
 func runtimeConfigMapJSON(p *planpb.WorkflowPlan, d *deployment.Spec, name string, planJSON []byte, assets RuntimeAssets) ([]byte, error) {
 	binaryData := map[string]string{"massive-plan.json": base64.StdEncoding.EncodeToString(planJSON)}
-	for _, sourcePackage := range p.GetSourcePackages() {
-		filename := "source-sha256-" + strings.TrimPrefix(sourcePackage.GetPackageHash(), "sha256:") + ".tar"
-		binaryData[filename] = base64.StdEncoding.EncodeToString(assets.SourceArchives[sourcePackage.GetPackageHash()])
+	if d.Profile.Target.RuntimeTransport == TransportEmbedded {
+		for _, sourcePackage := range p.GetSourcePackages() {
+			filename := "source-sha256-" + strings.TrimPrefix(sourcePackage.GetPackageHash(), "sha256:") + ".tar"
+			binaryData[filename] = base64.StdEncoding.EncodeToString(assets.SourceArchives[sourcePackage.GetPackageHash()])
+		}
 	}
 	value := map[string]any{
 		"apiVersion": "v1", "kind": "ConfigMap",
@@ -755,7 +789,7 @@ func buildBundle(p *planpb.WorkflowPlan, d *deployment.Spec, files []File) (*Bun
 		return nil, err
 	}
 	bundleHash := canonical.DigestBytes(identityJSON)
-	manifest := &planpb.TargetBundleManifest{SchemaVersion: u32(0), Target: str(Kind), PlanHash: str(p.GetPlanHash()), BundleHash: str(bundleHash), Files: entries, Validations: []*planpb.ValidationResult{{Name: str("argo-schema"), Passed: boolp(true)}, {Name: str("dag-integrity"), Passed: boolp(true)}, {Name: str("credential-free-binding"), Passed: boolp(true)}, {Name: str("secret-binding"), Passed: boolp(true)}}, Provenance: &planpb.BundleProvenance{CompilerName: str(p.GetProvenance().GetCompilerName()), CompilerVersion: str(p.GetProvenance().GetCompilerVersion())}, DeploymentHash: str(d.DeploymentHash)}
+	manifest := &planpb.TargetBundleManifest{SchemaVersion: u32(BundleManifestSchemaVersion), Target: str(Kind), PlanHash: str(p.GetPlanHash()), BundleHash: str(bundleHash), Files: entries, Validations: []*planpb.ValidationResult{{Name: str("argo-schema"), Passed: boolp(true)}, {Name: str("dag-integrity"), Passed: boolp(true)}, {Name: str("credential-free-binding"), Passed: boolp(true)}, {Name: str("secret-binding"), Passed: boolp(true)}}, Provenance: &planpb.BundleProvenance{CompilerName: str(p.GetProvenance().GetCompilerName()), CompilerVersion: str(p.GetProvenance().GetCompilerVersion())}, DeploymentHash: str(d.DeploymentHash), RuntimeTransport: str(d.Profile.Target.RuntimeTransport)}
 	raw, err := protojson.Marshal(manifest)
 	if err != nil {
 		return nil, err

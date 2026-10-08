@@ -77,7 +77,7 @@ Deno.test("resolver loads directory entrypoint through massive.config.ts", async
         "export default defineWorkflowPackage({",
         "  include: ['flows/workflow.ts', 'package.json'],",
         "  entrypoint: './flows/workflow.ts#chosen',",
-        "  deploymentProfiles: [deployment.local({ name: 'local', artifactStoreBinding: 'local-artifacts' }), deployment.argo({ name: 'argo', artifactStoreBinding: 'argo-artifacts', namespace: 'workflows', serviceAccountName: 'runner' })],",
+        "  deploymentProfiles: [deployment.local({ name: 'local', artifactStoreBinding: 'local-artifacts' }), deployment.argo({ name: 'argo', artifactStoreBinding: 'argo-artifacts', namespace: 'workflows', serviceAccountName: 'runner', runtimeTransport: 'embedded-v0' })],",
         "});",
         "",
       ].join("\n"),
@@ -108,6 +108,7 @@ Deno.test("resolver loads directory entrypoint through massive.config.ts", async
           kind: "argo",
           namespace: "workflows",
           serviceAccountName: "runner",
+          runtimeTransport: "embedded-v0",
         },
       },
     ]);

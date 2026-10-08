@@ -28,5 +28,13 @@ implicit mutable instance state and pickle codecs are not runtime contracts.
 Test real publication and hydration with the submission archive removed, and
 cover the installed wheel as well as editable SDK imports.
 
+The runner streams source archives to scratch and verifies the descriptor's
+archive digest before opening the tar; do not buffer whole archives or read
+entries from unverified bytes. Bound the download by the largest valid archive
+before hashing, since pods hold store write credentials. Source limits match
+the Go verifier and `conformance/fixtures/source-limits`. Missing, oversized,
+mismatched, and access-denied archives are descriptor failures (exit 64), never
+retried: without s3:ListBucket, S3 reports a missing key as AccessDenied.
+
 Keep the extracted source directory importable throughout invocation and output
 serialization; ordinary functions and validators may lazily import sibling modules.

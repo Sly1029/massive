@@ -40,6 +40,18 @@ JSON. Verified source packages are
 also exposed under `runtime-assets/` as deterministic, content-addressed tar
 files. Their hashes and media types are recorded in `bundle-manifest.json`, so
 the same pack can be inspected or uploaded without decoding the ConfigMap.
+The default `--runtime-transport embedded-v0` keeps the plan and source in that
+ConfigMap, which holds at most 700 KiB. Larger workflows, such as those with
+many prompt, rule, or data resources, build with
+`--runtime-transport object-store-v0` and upload their source archive to the
+shared datastore before the first run:
+
+```sh
+uv run massive publish .massive/argo --datastore-config datastore.json
+```
+
+Pods then verify the fetched archive against the digest pinned in the
+WorkflowTemplate. Source packages may hold up to 16,384 files and 256 MiB.
 Apply and submit it with the workflow input as one JSON parameter:
 
 ```sh
@@ -53,8 +65,8 @@ argo submit -n workflows --from workflowtemplate/double \
 Every container image selected with `container(...)` must contain Python 3.12+
 and the same `massive-workflows` release, so its default `massive` command can
 run the isolated step adapter and Python runner. Source files are verified at
-build time and mounted from the generated `ConfigMap`; they do not need to be
-baked into the runner image. If a container recipe supplies `command=`, that
+build time and delivered by the selected runtime transport; they do not need to
+be baked into the runner image. If a container recipe supplies `command=`, that
 command must launch the Massive CLI and accept the generated runtime arguments.
 
 Local and Argo execution support steps, exhaustive decisions/selects, and finite
@@ -83,7 +95,7 @@ shows the scoped steps rather than a separate child-run hierarchy.
 Argo requires immutable container environments and an explicit shared S3
 datastore binding. Blob/Tree file bodies are stored remotely and hydrated into
 private invocation directories. Ordinary JSON values still use Argo parameters;
-embedded plans and source archives are limited to 700 KiB. Declared application
+the `embedded-v0` runtime ConfigMap is limited to 700 KiB. Declared application
 secrets require deployment bindings; `network="none"` fails because tasks need
 remote storage. See the [Argo datastore setup](https://github.com/Sly1029/massive/blob/main/docs/spec/argo-backend.md#shared-invocation-datastore)
 for ConfigMap and credential bindings.
