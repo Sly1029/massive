@@ -511,6 +511,47 @@ for (
   });
 }
 
+for (
+  const [label, call, code] of [
+    ["Deno.exit(0)", "Deno.exit(0);", 0],
+    ["process.exit(67)", 'const { default: process } = await import("node:process");\n    process.exit(67);', 67],
+  ] as const
+) {
+  Deno.test(`runner reports a step calling ${label} as a step-execution failure`, async () => {
+    const archive = ustar([{
+      path: "runner-workflow.ts",
+      body: new TextEncoder().encode(
+        `export const double = {\n  run: async () => {\n    ${call}\n    return { value: 1 };\n  },\n};\n`,
+      ),
+    }]);
+    // Run the real runner process: deno test intercepts exits on its own.
+    await withRunnerFixture(
+      { input: { value: 21 }, stepExport: "double", sourceArchive: archive },
+      async ({ descriptorPath, store }) => {
+        const child = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "run",
+            "--config",
+            "deno.json",
+            "--allow-read",
+            "--allow-write",
+            "packages/sdk/src/runner/main.ts",
+            descriptorPath,
+          ],
+          cwd: fileURLToPath(new URL("../../../", import.meta.url)),
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        const stderr = new TextDecoder().decode(child.stderr);
+
+        assertEquals(child.code, RUNNER_EXIT_CODES.stepExecutionFailure, stderr);
+        assert(stderr.includes(`step called exit(${code})`), stderr);
+        await assertRejects(() => store.get(outputManifestKey()));
+      },
+    );
+  });
+}
+
 Deno.test("runner rejects verified unsafe, corrupted, and trailing source archives", async () => {
   const unsafe = ustar([{
     path: "../escape.ts",
