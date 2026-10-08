@@ -144,19 +144,49 @@ The regular test suite runs these properties without Kubernetes or a fuzz daemon
 Hypothesis's local example database is ignored by Git; turn a discovered failure
 into a named regression before changing the generator.
 
-`./scripts/fuzz.sh` runs three Go fuzz targets with committed seed fixtures:
+`./scripts/fuzz.sh` discovers and runs every Go fuzz target. A crashing target
+does not stop the campaign; the script reports every failure at the end. The
+graph targets share `internal/graphgen`, which decodes fuzz bytes into valid
+Graph IR: DAG fan-out and ordered merges, nested decisions and selects, maps
+(empty, single, large, under decisions, with `maxConcurrency` below, at, and
+above the item count), child graphs expanded into scoped node IDs, and
+retry/timeout contracts. Its reference interpreter predicts each node's
+activation, skip reason, values, attempts, and map items without sharing code
+with the orchestrator.
 
-- `FuzzWorkflowParsing`: arbitrary bytes through schema parsing, semantic
-  validation, compilation, and canonical plan verification.
-- `FuzzGraphShapes`: generated DAGs with an independent longest-path oracle,
-  input-order invariance, and deliberately introduced cycles.
-- `FuzzDecisionGraphs`: generated exhaustive decisions with variable width and
-  uneven branch depths, plus invalid cross-branch selects with recomputed hashes.
+- `FuzzGeneratedGraphExecution` (`internal/orchestrator`): runs generated graphs
+  through `Run` with an in-process executor behind `StepInvoker`. The executor
+  reads inputs from the datastore, validates them against plan schemas,
+  evaluates the generated symbol, and publishes through the artifact runtime.
+  It injects retryable, non-retryable, timeout, orphan-output, and
+  missing-output failures, and cancellation or infrastructure failure at a
+  chosen batch. The oracle compares the journal with the interpreter and checks
+  terminal statuses, skip reasons, attempt bounds and slots, dense map items,
+  preserved completed artifacts, producer ordering, and `runjournal.Parse`
+  round trips.
+- `FuzzGeneratedSpecMutations` (`internal/plan`): breaks one semantic rule of a
+  generated spec, recomputes its hash, and requires a semantic diagnostic.
+- `FuzzPlanHashMetamorphic` (`internal/plan`): node/edge declaration order,
+  aliased schema/contract/environment references, and node/symbol renaming
+  must not change the plan beyond the renamed identities.
+- `FuzzGeneratedPlanLowering` (`internal/target/argo`): lowers every generated
+  plan, including mixed-case, punctuated, and 128-character IDs, and checks
+  task names, dependencies, case conditions, merge inputs, map parallelism, and
+  retry strategies against the plan; injected name collisions must be rejected.
+- `FuzzWorkflowParsing`, `FuzzGraphShapes`, and `FuzzDecisionGraphs` cover raw
+  bytes, bare DAG scheduling, and wide decisions; the journal and invocation
+  targets cover their parsers.
 
-Set `FUZZ_TIME=5m` and `FUZZ_WORKERS=4` for a longer local campaign. CI runs bounded
-campaigns on pull requests and longer campaigns nightly. Failing Go inputs are
-written to `internal/plan/testdata/fuzz/<target>/` and uploaded by CI. Commit
-minimized reproducers; `go test ./internal/plan` replays them as normal tests.
+Set `FUZZ_TIME=5m` and `FUZZ_WORKERS=4` for a longer local campaign, or pass
+package paths to fuzz a subset. Pull requests that touch fuzzed code run one
+serial smoke job: every target for 15s with minimization capped at 5s. The
+nightly run, and a manual dispatch, fuzz each package in its own job for 120s
+per target. Those runs on main own the corpus cache: each job restores and
+saves only its package's key, and setup-go's build cache is disabled so it
+cannot capture the corpus too. Failing inputs are written to the package's
+`testdata/fuzz/<target>/` and uploaded by CI. Commit minimized reproducers with
+the fix; `go test ./...` replays them as normal tests. Committed scenario seeds
+keep rare fault combinations covered without a fuzzing run.
 
 File transport tests use real filesystem stores, independent Python processes,
 and MinIO. The wheel installation gate runs the artifact map example using only

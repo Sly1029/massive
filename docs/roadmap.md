@@ -29,9 +29,10 @@ Implemented:
 - Top-level typed functions register directly through `add()` and `map()`.
   `StepContext[Input]` exposes only implemented invocation capabilities.
 - Shrinking Python graph generators exercise nested decisions through the Go
-  compiler; continuous Go fuzzing covers raw parsing, DAG shapes, and exhaustive
-  decision/select semantics, partial map outcome identities, journal parsing,
-  and preservation of completed artifacts during terminalization.
+  compiler; continuous Go fuzzing executes generated graphs (nested decisions,
+  maps, merges, child-graph calls, retries, timeouts, and cancellation) against
+  a reference interpreter, rejects rehashed semantic mutations, checks plan
+  identity metamorphically, and lowers every generated plan to Argo.
 
 Next:
 
