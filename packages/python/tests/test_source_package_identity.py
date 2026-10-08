@@ -112,6 +112,31 @@ def test_trailing_recursive_wildcard_selects_nested_files_on_every_python(
     ]
 
 
+def test_source_include_wildcards_never_select_dot_paths_unless_named(tmp_path: Path) -> None:
+    for path in (
+        "workflow.py",
+        "src/module.py",
+        "src/.npmrc",
+        ".env",
+        ".env.local",
+        ".git/HEAD",
+        ".aws/credentials",
+        ".github/workflows/ci.yml",
+    ):
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text("fixture\n")
+
+    files, _ = source_package(
+        root=tmp_path, include=["**/*", ".github/**"], package_id="test"
+    ).manifest()
+
+    assert [file["path"] for file in files] == [
+        ".github/workflows/ci.yml",
+        "src/module.py",
+        "workflow.py",
+    ]
+
+
 def test_project_configuration_does_not_leak_between_workflow_directories(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[tool.massive.source]\ninclude = ["not-the-child.py"]\n'

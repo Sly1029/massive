@@ -479,8 +479,9 @@ include = ["workflow.py", "analysis/**/*.py", "analysis/prompts/*.txt", "rules/*
 ```
 
 Includes are directory-relative glob patterns and replace the default `["*.py"]`.
-`**` matches any depth, so `resources/**` selects every file below `resources`;
-wildcards also match dotfiles. Include the entrypoint and all local
+`**` matches any depth, so `resources/**` selects every file below `resources`.
+Wildcards never match a path segment beginning with `.`, so `.env`, `.git/`, and
+other dotfiles are left out unless a pattern names them, as in `.github/**`. Include the entrypoint and all local
 modules/resources it needs.
 Emission fails if the entrypoint imports a local module the includes do not
 select; modules imported lazily inside a step are not checked.
