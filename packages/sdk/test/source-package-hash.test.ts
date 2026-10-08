@@ -1,5 +1,7 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert";
+import { join } from "node:path";
 import {
+  hashSourcePackage,
   parseSourcePackageFiles,
   sourcePackageDigest,
 } from "../src/source-package.ts";
@@ -40,5 +42,39 @@ Deno.test("source package identity rejects noncanonical file manifests", () => {
     ]
   ) {
     assertThrows(() => parseSourcePackageFiles(files));
+  }
+});
+
+Deno.test("source include wildcards never select dot paths unless named", async () => {
+  const root = await Deno.makeTempDir({ prefix: "massive-source-hidden-" });
+  try {
+    for (
+      const path of [
+        "workflow.ts",
+        "src/module.ts",
+        "src/.npmrc",
+        ".env",
+        ".env.local",
+        ".git/HEAD",
+        ".aws/credentials",
+        ".github/workflows/ci.yml",
+      ]
+    ) {
+      await Deno.mkdir(join(root, path, ".."), { recursive: true });
+      await Deno.writeTextFile(join(root, path), "fixture\n");
+    }
+
+    const selected = await hashSourcePackage({
+      root,
+      include: ["**/*", ".github/**"],
+    });
+
+    assertEquals(selected.files.map((file) => file.path), [
+      ".github/workflows/ci.yml",
+      "src/module.ts",
+      "workflow.ts",
+    ]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });

@@ -101,7 +101,8 @@ export async function hashSourcePackage(
   const root = await realpath(resolve(source.root));
   const files = await fg([...source.include], {
     cwd: root,
-    dot: true,
+    // Wildcards skip dot paths (.env, .git, ...); a pattern must name them.
+    dot: false,
     followSymbolicLinks: false,
     objectMode: true,
     onlyFiles: false,

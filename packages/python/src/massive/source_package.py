@@ -63,8 +63,9 @@ class SourcePackage:
             if Path(pattern).is_absolute() or ".." in Path(pattern).parts:
                 raise ValueError("source include patterns must stay within the workflow directory")
             # glob.glob keeps a trailing "**" matching files on every supported Python,
-            # as fast-glob does; pathlib's meaning of it changed in Python 3.13.
-            for match in glob.glob(pattern, root_dir=root, recursive=True, include_hidden=True):
+            # as fast-glob does. Wildcards skip dot paths (.env, .git, ...), which are
+            # published only when a pattern names them.
+            for match in glob.glob(pattern, root_dir=root, recursive=True):
                 candidate = root / match
                 relative = candidate.relative_to(root)
                 if any((root / part).is_symlink() for part in (relative, *relative.parents)):
