@@ -14,6 +14,11 @@ source-indexed completed map items while terminalizing started and queued work.
 Use real processes and stores for cancellation tests, with filesystem or socket
 handshakes to prove author code started. Fuzz partial outcome identity/order and
 journal invariants without replacing the invoker with a mock API.
+`FuzzGeneratedGraphExecution` runs generated graphs with an in-process executor
+that implements the runner side of the descriptor contract against the real
+datastore and artifact runtime. Its oracle must not assume a node order: the
+run-wide worker budget may execute independent branches concurrently. When a
+rare fault combination matters, commit a named seed under `testdata/fuzz`.
 
 Never persist raw runner output or arbitrary context cancellation causes in the
 root journal diagnostic. Return details to the caller; shared artifacts contain

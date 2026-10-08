@@ -203,9 +203,15 @@ Routing includes:
 A decision has exactly one ordinary value-producing predecessor (`step`,
 `select`, or `map`), and its input schema must equal that producer's output
 schema. Its conditional edges cover every declared tag exactly once and target
-step or map nodes whose input schemas equal their case schemas. A select covers
-the same cases
-exactly once; each source belongs to the corresponding branch, has an ordinary
+step nodes whose input schemas equal their case schemas. The decision reads its
+selector from a JSON object and forwards that object to the selected case, so
+its input schema and every case schema must admit an object. A map cannot be a
+case target, because a map input is an array; a branch that maps over items
+starts with a step that produces them. The compiler rejects schemas whose
+top-level `type` excludes `object`. That check is early and permissive: schemas
+without a top-level `type`, including `$ref` and `allOf` forms, pass it, and
+routing still validates the value against the case schema at run time. A
+select covers the same cases exactly once; each source belongs to the corresponding branch, has an ordinary
 edge to the select, and has an output schema equal to the select output schema.
 All equality is exact schema-reference equality.
 
@@ -263,6 +269,15 @@ does not retry output verification failures or its own infrastructure errors.
 On Argo the retry expression excludes only exits 64, 65, and 67, so runtime
 failures outside the runner contract (datastore outages, pod crashes, output
 verification) are retried within the same attempt budget.
+
+Map items retry in rounds. Round `n` dispatches attempt `n` of every pending
+item as one batch bounded by `maxConcurrency`; the first round contains every
+item, and the delay before round `n` follows the formula above. After a round,
+succeeded items keep their outputs and never run again, and items whose attempt
+failed retryably with attempts left are pending for the next round. If any item
+in a round fails terminally (a non-retryable failure, its last attempt, or
+output verification), the map fails: items awaiting a retry are not retried, and
+their failed attempt is their last. Retrying them cannot make the map succeed.
 
 Contracts are merged from workflow defaults and step overrides. Effective contracts are deduped in the compiled plan by content hash.
 

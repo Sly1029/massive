@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -558,8 +559,10 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			continue
 		}
 		path := fmt.Sprintf("$.graph.nodes[%d]", index)
-		if _, exists := parsed.Schemas[node.InputSchema]; !exists {
+		if schema, exists := parsed.Schemas[node.InputSchema]; !exists {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.InputSchema, Message: "decision input schema reference does not exist"})
+		} else if !schemaAdmitsObject(schema) {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.InputSchema, Message: "decision input must be a JSON object carrying its selector"})
 		}
 		tags := make(map[string]bool, len(node.Cases))
 		caseSchemas := make(map[string]string, len(node.Cases))
@@ -571,8 +574,10 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			}
 			tags[decisionCase.Tag] = true
 			caseSchemas[decisionCase.Tag] = decisionCase.Schema
-			if _, exists := parsed.Schemas[decisionCase.Schema]; !exists {
+			if schema, exists := parsed.Schemas[decisionCase.Schema]; !exists {
 				diagnostics = append(diagnostics, Diagnostic{Path: casePath + ".schema", Ref: decisionCase.Schema, Message: "decision case schema reference does not exist"})
+			} else if !schemaAdmitsObject(schema) {
+				diagnostics = append(diagnostics, Diagnostic{Path: casePath + ".schema", Ref: decisionCase.Schema, Message: "decision case schema must admit the routed JSON object"})
 			}
 		}
 		decisionCases[node.ID] = tags
@@ -620,10 +625,12 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 			continue
 		}
 		target, targetExists := nodeByID[edge.To]
-		if targetExists && target.Kind != NodeKindStep && target.Kind != NodeKindMap {
-			diagnostics = append(diagnostics, Diagnostic{Path: path + ".to", Ref: edge.To, Message: "conditional edge target must be a step node or map node"})
+		// A case forwards the decision's object input. A map needs an array,
+		// so a branch that maps over items starts with a step producing them.
+		if targetExists && target.Kind != NodeKindStep {
+			diagnostics = append(diagnostics, Diagnostic{Path: path + ".to", Ref: edge.To, Message: "conditional edge target must be a step node"})
 		}
-		if targetExists && (target.Kind == NodeKindStep || target.Kind == NodeKindMap) && target.InputSchema != decisionCaseSchemas[edge.From][edge.Case] {
+		if targetExists && target.Kind == NodeKindStep && target.InputSchema != decisionCaseSchemas[edge.From][edge.Case] {
 			targetIndex := nodeIndexes[edge.To]
 			diagnostics = append(diagnostics, Diagnostic{Path: fmt.Sprintf("$.graph.nodes[%d].inputSchema", targetIndex), Ref: edge.To, Message: "conditional target input schema must equal decision case schema"})
 		}
@@ -737,6 +744,26 @@ func validateDecisionAndSelectSemantics(parsed *WorkflowSpec, nodeByID map[strin
 	return diagnostics
 }
 
+// schemaAdmitsObject rejects a schema whose top-level type excludes objects.
+// Decisions read their selector from an object, so such a route never runs.
+// This is an early, permissive rejection rather than schema analysis: a schema
+// without a top-level type, such as a $ref or allOf form, passes, and routing
+// still validates the value against the case schema at run time.
+func schemaAdmitsObject(schema json.RawMessage) bool {
+	var declared struct {
+		Type json.RawMessage `json:"type"`
+	}
+	if err := json.Unmarshal(schema, &declared); err != nil || declared.Type == nil {
+		return true
+	}
+	var single string
+	if json.Unmarshal(declared.Type, &single) == nil {
+		return single == "object"
+	}
+	var several []string
+	return json.Unmarshal(declared.Type, &several) == nil && slices.Contains(several, "object")
+}
+
 func outputSchemaOfValueProducer(node GraphNode) (string, bool) {
 	if node.Kind != NodeKindStep && node.Kind != NodeKindSelect && node.Kind != NodeKindMap {
 		return "", false
@@ -787,9 +814,6 @@ func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, i
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.ID, Message: "map requires exactly one predecessor"})
 		} else if source, exists := nodeByID[inbound[node.ID][0]]; !exists {
 			continue
-		} else if source.Kind == NodeKindDecision && conditionalEdgeCase(parsed.Graph.Edges, source.ID, node.ID) != "" {
-			// Decision validation proves the selected case schema exactly matches
-			// this map's inputSchema; maps may therefore live in a branch.
 		} else if sourceSchema, producesValue := graphValueOutputSchema(source, parsed.Workflow.InputSchema); !producesValue {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: source.ID, Message: "map predecessor must produce a value"})
 		} else if sourceSchema != node.InputSchema {
@@ -799,6 +823,9 @@ func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, i
 			target := nodeByID[targetID]
 			if target.Kind == NodeKindSelect {
 				continue // selectInputs validates each declared source contract.
+			}
+			if len(target.MergeInputs) > 0 {
+				continue // A merge receives the ordered array of all its inputs.
 			}
 			targetSchema, consumesValue := graphValueInputSchema(target, parsed.Workflow.OutputSchema)
 			if !consumesValue {
@@ -811,15 +838,6 @@ func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, i
 		}
 	}
 	return diagnostics
-}
-
-func conditionalEdgeCase(edges []GraphEdge, from, to string) string {
-	for _, edge := range edges {
-		if edge.From == from && edge.To == to {
-			return edge.Case
-		}
-	}
-	return ""
 }
 
 func graphValueOutputSchema(node GraphNode, workflowInputSchema string) (string, bool) {
