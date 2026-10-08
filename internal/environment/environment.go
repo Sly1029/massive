@@ -140,6 +140,14 @@ func (report *Report) Err() error {
 	return &PreflightError{ProjectRoot: report.ProjectRoot, Findings: report.Findings}
 }
 
+// ProjectError reports project metadata the probe cannot read. Like a finding,
+// it is a property of the project, so retrying cannot help.
+type ProjectError struct {
+	Message string
+}
+
+func (e *ProjectError) Error() string { return e.Message }
+
 type PreflightError struct {
 	ProjectRoot string
 	Findings    []Finding
@@ -235,7 +243,7 @@ func runProbe(ctx context.Context, python, root string) (*Probe, error) {
 		switch {
 		case errors.As(err, &exit) && exit.ExitCode() == probeProjectError:
 			// The probe reports unreadable project metadata as one line.
-			return nil, errors.New(strings.TrimSpace(stderr.String()))
+			return nil, &ProjectError{Message: strings.TrimSpace(stderr.String())}
 		case missingProbe.MatchString(detail):
 			return nil, fmt.Errorf("%s does not have massive-workflows installed; install it in the project environment with `uv sync --locked`, or launch through `uv run --locked massive`", python)
 		case detail == "":

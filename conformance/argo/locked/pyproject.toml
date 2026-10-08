@@ -1,0 +1,19 @@
+# A packaged workflow (`uv init --package`) with default dependency groups.
+# Pods run it from its source archive: the project itself and its groups are
+# never installed, only the locked runtime set. test-argo.sh installs that set
+# into the conformance image from this lock. Regenerate uv.lock with `uv lock`.
+[project]
+name = "argo-locked"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["tabulate>=0.9,<1"]
+
+[dependency-groups]
+dev = ["iniconfig"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

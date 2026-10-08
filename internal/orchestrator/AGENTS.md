@@ -46,5 +46,7 @@ Python tasks run as `python -I -m massive.runner`. Local runs pin the interprete
 that passed dependency preflight; do not resolve `MASSIVE_PYTHON` again per task.
 Isolated Python attempts extract the verified source archive and run the full
 dependency preflight with the executor's interpreter before invoking the runner.
-Any preflight failure is a `PreflightError` (CLI exit 68, never retried). A
+Only findings and `environment.ProjectError` become a `PreflightError` (CLI
+exit 68, never retried); return context cancellation and other infrastructure
+errors unchanged so a terminated pod is retried. A
 passing attempt writes `environment.json` beside its output manifest.

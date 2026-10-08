@@ -29,6 +29,10 @@ export MASSIVE_PYTHON="$repository/packages/python/.venv/bin/python"
 uv build --wheel --out-dir "$scratch/image" packages/python
 uv export --frozen --project packages/python --no-dev --no-emit-project \
   --format requirements-txt --output-file "$scratch/image/requirements.txt" > /dev/null
+# Like a user's image, also install the locked workflow's runtime set from its
+# own uv.lock: no groups, no project, and the SDK comes from the wheel.
+uv export --frozen --project conformance/argo/locked --no-default-groups --no-emit-project \
+  --no-emit-package massive-workflows --format requirements-txt >> "$scratch/image/requirements.txt"
 cp packages/python/Dockerfile "$scratch/image/Dockerfile"
 image="massive-conformance:run-$$"
 docker build -t "$image" "$scratch/image"

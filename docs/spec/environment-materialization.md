@@ -115,8 +115,13 @@ then reference its immutable digest using `container(...)`. `massive build` chec
 only what emission needs (scope `EMISSION_CHECKED`): interpreter safety, the SDK
 release, workspace locks, and `uv lock --check`. Every Python attempt in a pod
 runs the full preflight against the image's interpreter and the archived
-`pyproject.toml`/`uv.lock`. Findings exit 68, which Argo does not retry. A
-passing attempt records its realization beside its output manifest. Local
+`pyproject.toml`/`uv.lock`. Findings and unreadable project metadata exit 68,
+which Argo does not retry. Cancellation, eviction, and other infrastructure
+errors keep their retryable exit. A passing attempt records its realization
+beside its output manifest. The build host needs `uv` when a `uv.lock` exists;
+`massive build` fails rather than silently skip the lock check. Pods see only the
+source archive, so `[tool.uv.sources]` paths outside the workflow directory fail
+there (`UV_FAILED`). Local
 execution uses the active Python environment, **not** the declared container;
 each realization is checked and recorded, but the two are not proven
 equivalent to each other. A locked workflow's image needs `uv` and a writable

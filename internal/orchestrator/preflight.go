@@ -19,8 +19,9 @@ import (
 )
 
 // PreflightError reports that the executor's interpreter cannot run a node's
-// archived project. Another attempt in the same image cannot succeed, so
-// targets must not retry it.
+// archived project: findings, or project metadata the probe cannot read.
+// Another attempt in the same image cannot succeed, so targets must not retry
+// it. Cancellation and other infrastructure errors are never wrapped.
 type PreflightError struct {
 	NodeID string
 	Err    error
@@ -75,8 +76,16 @@ func isolatedPreflight(ctx context.Context, store datastore.Datastore, request e
 	}
 	request.ProjectRoot = root
 	report, err := environment.Check(ctx, request)
-	if err != nil {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		// A terminated or evicted pod must stay retryable.
+		return "", ctxErr
+	}
+	var project *environment.ProjectError
+	if errors.As(err, &project) {
 		return fail(err)
+	}
+	if err != nil {
+		return "", err
 	}
 	if err := report.Err(); err != nil {
 		var findings *environment.PreflightError

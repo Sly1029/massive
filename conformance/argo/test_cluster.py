@@ -50,6 +50,7 @@ def install_workflow(
     selector: str = "",
     build_args: tuple[str, ...] = (),
     pyproject: str | None = None,
+    lock: str | None = None,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="massive-argo-") as directory:
         root = Path(directory)
@@ -57,6 +58,8 @@ def install_workflow(
         entry.write_text(source)
         if pyproject is not None:
             (root / "pyproject.toml").write_text(pyproject)
+        if lock is not None:
+            (root / "uv.lock").write_text(lock)
         bundle = root / "bundle"
         bindings = root / "secret-bindings.json"
         bindings.write_text(json.dumps(secret_bindings or {}))
@@ -369,6 +372,21 @@ class DecisionConformance(unittest.TestCase):
                 f"PLATFORM = {os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
             )
         )
+        locked = Path(__file__).parent / "locked"
+        install_workflow(
+            (locked / "workflow.py")
+            .read_text()
+            .replace(
+                'IMAGE = "example.invalid/runner@sha256:" + "0" * 64',
+                f"IMAGE = {os.environ['MASSIVE_TEST_ARGO_IMAGE']!r}",
+            )
+            .replace(
+                'PLATFORM = "linux/amd64"',
+                f"PLATFORM = {os.environ['MASSIVE_TEST_ARGO_PLATFORM']!r}",
+            ),
+            pyproject=(locked / "pyproject.toml").read_text(),
+            lock=(locked / "uv.lock").read_text(),
+        )
         for name, dependency in {
             "argo-preflight": "pydantic>=2",
             "argo-preflight-missing": "absent-package-for-preflight>=1",
@@ -401,6 +419,7 @@ class DecisionConformance(unittest.TestCase):
             "large-source": {},
             "unpublished": {"permanent": False},
             "preflight": {"value": 21},
+            "locked": {"value": 21},
             "preflight-missing": {"value": 21},
         }.items():
             run = kubectl(
@@ -425,6 +444,7 @@ class DecisionConformance(unittest.TestCase):
                                 "large-source": "large-source",
                                 "unpublished": "argo-unpublished",
                                 "preflight": "argo-preflight",
+                                "locked": "argo-locked",
                                 "preflight-missing": "argo-preflight-missing",
                             }.get(label, "argo-decisions")
                         },
@@ -611,6 +631,15 @@ class DecisionConformance(unittest.TestCase):
 
     def test_pod_preflight_accepts_a_satisfied_project(self) -> None:
         self.successful("preflight", 42)
+
+    def test_pod_preflight_checks_a_packaged_locked_project(self) -> None:
+        # A [build-system] project with default groups: pods check the locked
+        # runtime set without installing the project or its groups.
+        run = self.completed("locked")
+        self.assertEqual(run["status"]["phase"], "Succeeded", str(run.get("status")))
+        root = run["status"]["nodes"][run["metadata"]["name"]]
+        self.assertEqual(json.loads(root["outputs"]["parameters"][0]["value"]), "value  42")
+        self.assertEqual([node["phase"] for node in self.pods(run, "step-render")], ["Succeeded"])
 
     def test_pod_preflight_failure_is_not_retried(self) -> None:
         # retry(3) would schedule three pods; exit 68 is non-retryable, and
