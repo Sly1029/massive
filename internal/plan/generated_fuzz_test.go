@@ -330,8 +330,9 @@ func FuzzGeneratedSpecMutations(f *testing.F) {
 	})
 }
 
-// FuzzPlanHashMetamorphic checks that plan identity depends on the graph,
-// not on how a frontend ordered or named things.
+// FuzzPlanHashMetamorphic checks that the plan body depends on the graph,
+// not on how a frontend ordered or named things. The spec hash covers the
+// spec bytes, so the comparison excludes it and the plan hash over it.
 func FuzzPlanHashMetamorphic(f *testing.F) {
 	f.Add([]byte{0, 3, 2, 1, 5, 2, 1, 1, 4, 1, 2}, []byte{3, 1, 4, 1, 5})
 	f.Add([]byte{1, 2, 5, 3, 0, 1, 2, 1, 6, 1, 3, 3, 1, 2, 2, 0, 1}, []byte{9, 2, 6})
@@ -622,4 +623,3 @@ func shuffleSlice[T any](values []T, shuffle []byte) {
 		values[index], values[other] = values[other], values[index]
 	}
 }
-

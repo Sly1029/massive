@@ -185,7 +185,7 @@ func compileGraph(workflowSpec *spec.WorkflowSpec, schedule Schedule, schemaHash
 	}
 
 	// Edge declaration order is not part of the graph. Ordering by endpoint
-	// keeps plan identity independent of how a frontend emitted the edges.
+	// keeps the plan body independent of how a frontend emitted the edges.
 	specEdges := slices.Clone(workflowSpec.Graph.Edges)
 	slices.SortFunc(specEdges, func(left, right spec.GraphEdge) int {
 		if order := compareUTF16(left.From, right.From); order != 0 {
