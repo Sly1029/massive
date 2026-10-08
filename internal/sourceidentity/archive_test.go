@@ -108,6 +108,7 @@ func TestSharedSourceLimitArchives(t *testing.T) {
 			PackageHash string `json:"packageHash"`
 			ArchiveHash string `json:"archiveHash"`
 			Go          string `json:"go"`
+			TypeScript  string `json:"typescript"`
 		} `json:"cases"`
 	}
 	if err := json.Unmarshal(data, &fixture); err != nil {
@@ -146,6 +147,19 @@ func TestSharedSourceLimitArchives(t *testing.T) {
 				}
 			default:
 				t.Fatalf("unknown expectation %q", vector.Go)
+			}
+			// Target compilation applies the TypeScript runner's smaller cap so
+			// an oversized TypeScript package fails the build, not every pod.
+			if vector.TypeScript != "reject-typescript-cap" {
+				t.Fatalf("unknown TypeScript expectation %q", vector.TypeScript)
+			}
+			if vector.Go == "accept" {
+				if err := VerifyLanguageArchive(archive, vector.PackageHash, "python"); err != nil {
+					t.Fatal(err)
+				}
+				if err := VerifyLanguageArchive(archive, vector.PackageHash, "typescript"); err == nil || !strings.Contains(err.Error(), "Python runner") {
+					t.Fatalf("TypeScript cap error = %v", err)
+				}
 			}
 		})
 	}

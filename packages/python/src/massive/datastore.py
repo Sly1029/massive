@@ -63,6 +63,11 @@ class DatastoreObjectTooLargeError(Exception):
     pass
 
 
+class DatastoreAccessDeniedError(Exception):
+    """The store refused a read. Without list permission, S3 reports a missing
+    key this way too, so callers cannot tell the two apart."""
+
+
 class Datastore(Protocol):
     def put(
         self, key: str, body: bytes, *, content_type: str, if_absent: bool = False
@@ -274,6 +279,8 @@ class S3Datastore:
                 "NotFound",
             }:
                 raise DatastoreNotFoundError(f"datastore object not found: {key}") from error
+            if _s3_status(error) == 403 or _s3_code(error) == "AccessDenied":
+                raise DatastoreAccessDeniedError(f"datastore read denied: {key}") from error
             raise
 
     def _key(self, key: str) -> str:

@@ -38,6 +38,7 @@ from .canonical import (
 from .context import InvocationContext, NonRetryableError, StepContext
 from .datastore import (
     Datastore,
+    DatastoreAccessDeniedError,
     DatastoreDescriptor,
     DatastoreNotFoundError,
     DatastoreObjectTooLargeError,
@@ -390,6 +391,12 @@ def _source_root(
                 raise DescriptorError(
                     f"source archive is missing at {archive['key']}; for an Argo "
                     "object-store-v0 bundle, upload it with massive publish"
+                ) from error
+            except DatastoreAccessDeniedError as error:
+                raise DescriptorError(
+                    f"source archive at {archive['key']} could not be read: either it was "
+                    "never published (upload it with massive publish) or this pod's "
+                    "storage credentials lack read permission for it"
                 ) from error
             except DatastoreObjectTooLargeError as error:
                 raise DescriptorError(

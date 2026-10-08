@@ -613,6 +613,40 @@ Deno.test("runner applies its documented cap to the shared source-limit archives
   }
 });
 
+Deno.test("runner accepts a package exactly at its own 1,024-file cap", async () => {
+  const workflow = await Deno.readFile(
+    new URL("./fixtures/runner-workflow.ts", import.meta.url),
+  );
+  const resources = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      path: `resources/${String(index).padStart(4, "0")}.md`,
+      body: new TextEncoder().encode(`resource ${index}\n`),
+    }));
+  const atCap = ustar([
+    { path: "runner-workflow.ts", body: workflow },
+    ...resources(1_023),
+  ]);
+  await withRunnerFixture(
+    { input: { value: 21 }, stepExport: "double", sourceArchive: atCap },
+    async ({ descriptor }) => {
+      const outcome = await executeStep(descriptor);
+      assertEquals(outcome.kind, "success");
+    },
+  );
+  const overCap = ustar([
+    { path: "runner-workflow.ts", body: workflow },
+    ...resources(1_024),
+  ]);
+  await withRunnerFixture(
+    { input: { value: 21 }, stepExport: "double", sourceArchive: overCap },
+    async ({ descriptor }) => {
+      const outcome = await executeStep(descriptor);
+      assert(outcome.kind === "descriptor-resolution-failure");
+      assert(outcome.error.message.includes("Python runner"));
+    },
+  );
+});
+
 async function withRunnerFixture(
   options: {
     readonly input: JsonValue;

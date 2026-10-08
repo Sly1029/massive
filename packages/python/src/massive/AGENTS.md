@@ -33,7 +33,8 @@ archive digest before opening the tar; do not buffer whole archives or read
 entries from unverified bytes. Bound the download by the largest valid archive
 before hashing, since pods hold store write credentials. Source limits match
 the Go verifier and `conformance/fixtures/source-limits`. Missing, oversized,
-and mismatched archives are descriptor failures (exit 64), never retried.
+mismatched, and access-denied archives are descriptor failures (exit 64), never
+retried: without s3:ListBucket, S3 reports a missing key as AccessDenied.
 
 Keep the extracted source directory importable throughout invocation and output
 serialization; ordinary functions and validators may lazily import sibling modules.

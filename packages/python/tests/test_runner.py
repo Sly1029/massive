@@ -578,6 +578,78 @@ def test_s3_download_stops_at_the_declared_size_bound(tmp_path: Path, s3_server:
         del os.environ["AWS_ACCESS_KEY_ID"], os.environ["AWS_SECRET_ACCESS_KEY"]
 
 
+def test_scoped_s3_credentials_report_a_missing_archive_as_a_descriptor_failure(
+    tmp_path: Path, s3_server: Any
+) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    bucket = f"massive-python-{uuid.uuid4().hex}"
+    root = boto3.client(
+        "s3",
+        endpoint_url=s3_server.endpoint,
+        region_name="us-east-1",
+        aws_access_key_id=s3_server.access_key,
+        aws_secret_access_key=s3_server.secret_key,
+    )
+    root.create_bucket(Bucket=bucket)
+    archive_key = descriptor["sourcePackage"]["sourceArchive"]["key"]
+    for path in store.rglob("*"):
+        key = str(path.relative_to(store))
+        if path.is_file() and ".massive-datastore-metadata" not in path.parts and key != archive_key:
+            root.put_object(Bucket=bucket, Key=key, Body=path.read_bytes())
+    descriptor["datastore"] = {
+        "kind": "s3",
+        "bucket": bucket,
+        "region": "us-east-1",
+        "endpoint": s3_server.endpoint,
+        "forcePathStyle": True,
+    }
+    descriptor_path.write_text(canonical_json(cast(JsonValue, descriptor)))
+    # AWS answers a GET for a missing key with 403 AccessDenied when credentials
+    # lack s3:ListBucket. MinIO answers 404 instead, so these scoped credentials
+    # deny reads under packages/ to produce the same AccessDenied response.
+    scoped = boto3.client(
+        "sts",
+        endpoint_url=s3_server.endpoint,
+        region_name="us-east-1",
+        aws_access_key_id=s3_server.access_key,
+        aws_secret_access_key=s3_server.secret_key,
+    ).assume_role(
+        RoleArn="arn:aws:iam::000000000000:role/massive-runner",
+        RoleSessionName="massive-runner",
+        Policy=json.dumps(
+            {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": ["s3:GetObject", "s3:PutObject"],
+                        "Resource": [f"arn:aws:s3:::{bucket}/*"],
+                    },
+                    {
+                        "Effect": "Deny",
+                        "Action": ["s3:GetObject"],
+                        "Resource": [f"arn:aws:s3:::{bucket}/packages/*"],
+                    },
+                ],
+            }
+        ),
+    )["Credentials"]
+
+    result = _run(
+        descriptor_path,
+        {
+            **os.environ,
+            "AWS_ACCESS_KEY_ID": scoped["AccessKeyId"],
+            "AWS_SECRET_ACCESS_KEY": scoped["SecretAccessKey"],
+            "AWS_SESSION_TOKEN": scoped["SessionToken"],
+        },
+    )
+
+    assert result.returncode == 64, result.stderr
+    assert "massive publish" in result.stderr
+    assert "lack read permission" in result.stderr
+
+
 def test_runner_executes_against_a_real_s3_descriptor(tmp_path: Path, s3_server: Any) -> None:
     endpoint = s3_server.endpoint
     access_key = s3_server.access_key

@@ -886,3 +886,48 @@ func TestArgoRejectsDuplicateSecretEnvironmentNames(t *testing.T) {
 		t.Fatalf("duplicate secret error = %v", err)
 	}
 }
+
+// massive build materializes through materialization.ForPlan, so a TypeScript
+// package above the TypeScript runner's cap fails the build rather than every pod.
+func TestBuildRejectsTypeScriptPackagesAboveTheirRunnerCap(t *testing.T) {
+	for _, language := range []string{"python", "typescript"} {
+		t.Run(language, func(t *testing.T) {
+			r := fixturePlan(t, "linear-chain")
+			var archive bytes.Buffer
+			writer := tar.NewWriter(&archive)
+			files := make([]sourceidentity.File, 0, sourceidentity.TypeScriptMaxFiles+1)
+			for index := range sourceidentity.TypeScriptMaxFiles + 1 {
+				name := fmt.Sprintf("resources/%04d.md", index)
+				body := []byte(name)
+				if err := writer.WriteHeader(&tar.Header{Name: name, Size: int64(len(body)), Mode: 0o644, Typeflag: tar.TypeReg, Format: tar.FormatUSTAR}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := writer.Write(body); err != nil {
+					t.Fatal(err)
+				}
+				files = append(files, sourceidentity.File{Path: name, Hash: canonical.DigestBytes(body)})
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			packageHash, err := sourceidentity.Digest(files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, symbol := range r.Plan.Symbols {
+				symbol.Language = pointer(language)
+			}
+			for _, source := range r.Plan.SourcePackages {
+				source.Language, source.PackageHash = pointer(language), pointer(packageHash)
+			}
+			rehashPlan(t, r.Plan)
+			_, err = materialization.ForPlan(r.Plan, map[string][]byte{packageHash: archive.Bytes()})
+			if language == "python" && err != nil {
+				t.Fatal(err)
+			}
+			if language == "typescript" && (err == nil || !strings.Contains(err.Error(), "TypeScript runner accepts at most 1024 files")) {
+				t.Fatalf("TypeScript build error = %v", err)
+			}
+		})
+	}
+}

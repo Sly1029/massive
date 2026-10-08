@@ -81,7 +81,11 @@ the `massive.dev/runtime-transport` annotation.
   the pinned digest, before reading any entry or importing code. A missing
   object, an object above the largest valid archive size, or a digest mismatch
   is a descriptor failure (exit 64), which Argo's retry expression never
-  retries; the missing-object diagnostic names `massive publish`. Control pods
+  retries; the missing-object diagnostic names `massive publish`. With
+  least-privilege credentials that lack `s3:ListBucket`, S3 reports a missing
+  key as 403 AccessDenied; the runner treats a denied archive read the same
+  way and names both causes: an unpublished archive or missing read
+  permission. Control pods
   execute no author code and receive no source.
 
 Selection is explicit rather than automatic by size. `object-store-v0` adds a
@@ -117,16 +121,19 @@ largest archive they accept is 16,384 × 1 KiB of headers and padding, plus
 an object above that size from its declared length (S3 `ContentLength` or file
 size) and stops copying once it passes the bound, so an object planted by any
 holder of store write credentials cannot fill pod disk. The TypeScript runner
-buffers archives in memory and keeps a 1,024-file, 50 MiB cap, rejecting larger
-packages with a diagnostic naming the Python runner.
+buffers archives in memory and keeps a 1,024-file, 50 MiB cap; `massive build`
+rejects a larger TypeScript package, and the runner rejects one with a
+diagnostic naming the Python runner.
 
 Build and publish hold each archive in memory. Pods do not: the Go runtime never
 reads the archive, and the Python runner streams the download and each
-extracted file, then deletes its archive copy before user code runs.
+extracted file, then deletes its archive copy before user code runs. Peak pod
+scratch is therefore the archive plus the extracted tree, up to about twice the
+package size, during extraction.
 
 **Size budget.** Every runner pod, including each map item, downloads and
-extracts the full archive before invoking user code; the scratch it needs is
-the extracted size. Packages of a few tens of MB suit fan-outs of about 1,000
+extracts the full archive before invoking user code; it needs up to twice the
+package size in scratch while extracting and the extracted size afterwards. Packages of a few tens of MB suit fan-outs of about 1,000
 items. Above that, account for transfer volume (item count × archive size) and
 per-pod ephemeral storage. A node-level cache keyed by archive digest is a
 planned follow-up, not current behavior.
