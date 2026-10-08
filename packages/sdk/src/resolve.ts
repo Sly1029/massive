@@ -12,6 +12,7 @@ import type { WorkflowPackageConfig } from "./config.ts";
 import type { DeploymentTarget } from "./deployment.ts";
 import { defineWorkflowPackage } from "./config.ts";
 import { MassiveError } from "./errors.ts";
+import { compareCodeUnits } from "./stable.ts";
 import type { EmitSourceSpec } from "./emit.ts";
 import { WorkflowBuilder } from "./workflow.ts";
 
@@ -20,7 +21,7 @@ export interface ResolveWorkflowEntrypointOptions {
 }
 
 export interface ResolvedWorkflowEntrypoint {
-  readonly workflow: WorkflowBuilder<unknown, unknown>;
+  readonly workflow: WorkflowBuilder<unknown, never>;
   readonly selectedExport: string;
   readonly packageRoot: string;
   readonly package: WorkflowPackageConfig;
@@ -166,7 +167,7 @@ async function selectWorkflowExport(
   filePath: string,
   requestedExport: string | undefined,
 ): Promise<{
-  readonly workflow: WorkflowBuilder<unknown, unknown>;
+  readonly workflow: WorkflowBuilder<unknown, never>;
   readonly exportName: string;
 }> {
   const module = await import(pathToFileURL(filePath).href);
@@ -188,7 +189,7 @@ function selectExportedWorkflow(
   filePath: string,
   requestedExport: string | undefined,
 ): {
-  readonly workflow: WorkflowBuilder<unknown, unknown>;
+  readonly workflow: WorkflowBuilder<unknown, never>;
   readonly exportName: string;
 } {
   if (requestedExport !== undefined) {
@@ -206,19 +207,18 @@ function selectExportedWorkflow(
   }
 
   const candidates = Object.entries(module)
-    .filter(([, value]) => value instanceof WorkflowBuilder)
-    .map(([name]) => name)
-    .sort();
+    .filter((entry): entry is [string, WorkflowBuilder<unknown, never>] =>
+      entry[1] instanceof WorkflowBuilder
+    )
+    .sort(([left], [right]) => compareCodeUnits(left, right));
   if (candidates.length === 1) {
-    return {
-      workflow: module[candidates[0]!] as WorkflowBuilder<unknown, unknown>,
-      exportName: candidates[0]!,
-    };
+    const [exportName, workflow] = candidates[0]!;
+    return { workflow, exportName };
   }
   if (candidates.length > 1) {
     throw new MassiveError(
       `Workflow entrypoint "${filePath}" is ambiguous; specify one of: ${
-        candidates.join(", ")
+        candidates.map(([name]) => name).join(", ")
       }`,
     );
   }

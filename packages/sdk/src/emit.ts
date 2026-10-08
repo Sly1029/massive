@@ -162,7 +162,7 @@ export async function emitWorkflowSpec<Input, Output>(
   options: EmitWorkflowSpecOptions,
 ): Promise<WorkflowSpec> {
   builder.freeze();
-  validateGraphShape(builder as WorkflowBuilder<unknown, unknown>);
+  validateGraphShape(builder);
 
   const sourceOptions = emitSourceSpec(options);
   const packageId = sourceOptions.packageId ?? "ts-main";
