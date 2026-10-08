@@ -39,11 +39,6 @@ export {
   type WorkflowSpecLanguage,
 } from "./emit.ts";
 export {
-  parseWorkflowSpec,
-  parseWorkflowSpecText,
-  WorkflowSpecError,
-} from "./workflow-spec.ts";
-export {
   type EndHandle,
   type MergeBuilder,
   type PathBuilder,
