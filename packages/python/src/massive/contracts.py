@@ -23,6 +23,16 @@ class Container:
     command: tuple[str, ...] | None = None
     working_directory: str | None = None
 
+    def __post_init__(self) -> None:
+        if not _IMAGE_DIGEST.fullmatch(self.image):
+            raise ValueError("container image must be an immutable image digest reference")
+        if not _PLATFORM.fullmatch(self.platform):
+            raise ValueError("container platform must be an os/architecture pair")
+        if self.command is not None and not all(self.command):
+            raise ValueError("container command values must be non-empty strings")
+        if self.working_directory is not None and not self.working_directory:
+            raise ValueError("container working directory must not be empty")
+
     def as_json(self) -> dict[str, JsonValue]:
         value: dict[str, JsonValue] = {
             "kind": "container",
@@ -79,6 +89,8 @@ class ExecutionContract:
     timeout: timedelta | None = None
 
     def __post_init__(self) -> None:
+        if self.network not in (None, "none", "any"):
+            raise ValueError("network egress must be 'none' or 'any'")
         if any(not name or not ref for name, ref in self.secrets.items()):
             raise ValueError("secret names and refs must be non-empty strings")
         if self.timeout is not None and not _whole_seconds(self.timeout, 1, 604800):
@@ -118,14 +130,6 @@ def container(
     command: tuple[str, ...] | None = None,
     working_directory: str | None = None,
 ) -> Container:
-    if not _IMAGE_DIGEST.fullmatch(image):
-        raise ValueError("container image must be an immutable image digest reference")
-    if not _PLATFORM.fullmatch(platform):
-        raise ValueError("container platform must be an os/architecture pair")
-    if command is not None and not all(command):
-        raise ValueError("container command values must be non-empty strings")
-    if working_directory is not None and not working_directory:
-        raise ValueError("container working directory must not be empty")
     return Container(
         image=image,
         platform=platform,
