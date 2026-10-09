@@ -21,6 +21,7 @@ import (
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/Sly1029/massive/internal/spec"
+	"google.golang.org/protobuf/proto"
 	"sigs.k8s.io/yaml"
 )
 
@@ -1103,6 +1104,35 @@ func TestPlacementDefaultsReachEveryPodAndOverridesOnlyAuthorPods(t *testing.T) 
 		override := &deployment.Placement{Nodes: map[string]deployment.PodPlacement{nodeID: {PriorityClassName: "urgent"}}}
 		if _, err := compileWith("exhaustive-decision", override); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("placement override %q does not name a step or map node", nodeID)) {
 			t.Fatalf("override for %q: %v", nodeID, err)
+		}
+	}
+}
+
+func TestRunDeadlineBoundsTheWholeWorkflowNotEachAttempt(t *testing.T) {
+	compiled := fixturePlan(t, "python-linear")
+	compiled.Plan.Contracts[0].TimeoutSeconds = proto.Uint32(30)
+	for deadline, want := range map[uint32]any{0: nil, 3600: float64(3600)} {
+		if deadline > 0 {
+			compiled.Plan.Graph.DeadlineSeconds = proto.Uint32(deadline)
+		}
+		data, _ := rehashPlan(t, compiled.Plan)
+		bundle, err := Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, compiled.Plan))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var template map[string]any
+		if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+			t.Fatal(err)
+		}
+		spec := template["spec"].(map[string]any)
+		if spec["activeDeadlineSeconds"] != want {
+			t.Fatalf("deadline %d lowered to %v", deadline, spec["activeDeadlineSeconds"])
+		}
+		// The per-attempt timeout stays in the runtime, never on a template.
+		for _, item := range spec["templates"].([]any) {
+			if deadline, ok := item.(map[string]any)["activeDeadlineSeconds"]; ok {
+				t.Fatalf("template %v has activeDeadlineSeconds %v", item.(map[string]any)["name"], deadline)
+			}
 		}
 	}
 }

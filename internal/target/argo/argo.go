@@ -526,6 +526,22 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		}
 		occupiedNames[templateName] = true
 	}
+	spec := map[string]any{
+		"entrypoint": "main", "serviceAccountName": d.Profile.Target.ServiceAccountName,
+		"automountServiceAccountToken": false,
+		"executor":                     map[string]any{"serviceAccountName": d.Profile.Target.ServiceAccountName},
+		"arguments":                    map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "null"}}},
+		"volumes": []any{
+			map[string]any{"name": "massive-runtime", "configMap": map[string]any{"name": runtimeName}},
+			map[string]any{"name": "massive-datastore", "configMap": map[string]any{"name": d.Profile.ArtifactStoreBinding, "items": []any{map[string]any{"key": "datastore.json", "path": "datastore.json"}}}},
+		},
+		"templates": templates,
+	}
+	// The run deadline bounds the whole workflow. Per-attempt timeouts stay in
+	// the runtime so a timed-out attempt remains retryable.
+	if deadline := g.GetDeadlineSeconds(); deadline > 0 {
+		spec["activeDeadlineSeconds"] = deadline
+	}
 	return map[string]any{
 		"apiVersion": "argoproj.io/v1alpha1", "kind": "WorkflowTemplate",
 		"metadata": map[string]any{
@@ -535,17 +551,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 				"massive.dev/execution-status": "executable-dag", "massive.dev/runtime-transport": d.Profile.Target.RuntimeTransport,
 			},
 		},
-		"spec": map[string]any{
-			"entrypoint": "main", "serviceAccountName": d.Profile.Target.ServiceAccountName,
-			"automountServiceAccountToken": false,
-			"executor":                     map[string]any{"serviceAccountName": d.Profile.Target.ServiceAccountName},
-			"arguments":                    map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "null"}}},
-			"volumes": []any{
-				map[string]any{"name": "massive-runtime", "configMap": map[string]any{"name": runtimeName}},
-				map[string]any{"name": "massive-datastore", "configMap": map[string]any{"name": d.Profile.ArtifactStoreBinding, "items": []any{map[string]any{"key": "datastore.json", "path": "datastore.json"}}}},
-			},
-			"templates": templates,
-		},
+		"spec": spec,
 	}, runtimeName, nil
 }
 

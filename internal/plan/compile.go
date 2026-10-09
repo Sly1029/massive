@@ -205,7 +205,7 @@ func compileGraph(workflowSpec *spec.WorkflowSpec, schedule Schedule, schemaHash
 		edges = append(edges, compiled)
 	}
 
-	return &planpb.GraphIR{
+	graph := &planpb.GraphIR{
 		IrVersion:    stringPtr(workflowSpec.Graph.IRVersion),
 		WorkflowName: stringPtr(workflowSpec.Workflow.Name),
 		InputSchema:  stringPtr(schemaHashes[workflowSpec.Workflow.InputSchema]),
@@ -215,6 +215,10 @@ func compileGraph(workflowSpec *spec.WorkflowSpec, schedule Schedule, schemaHash
 		Nodes:        nodes,
 		Edges:        edges,
 	}
+	if workflowSpec.Workflow.DeadlineSeconds != 0 {
+		graph.DeadlineSeconds = uint32Ptr(workflowSpec.Workflow.DeadlineSeconds)
+	}
+	return graph
 }
 
 func compileSchemas(workflowSpec *spec.WorkflowSpec) (map[string]string, []*planpb.SchemaEntry, error) {

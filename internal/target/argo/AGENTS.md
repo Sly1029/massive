@@ -43,7 +43,8 @@ error, and never preflight a missing body as an empty project.
 Retry strategies belong only on runner templates. Keep the non-retryable exit
 list aligned with the runner exit codes and the runtime's preflight exit (68), pass `{{retries}}` so the runtime
 derives the attempt, and enforce timeouts inside the runtime instead of with
-`activeDeadlineSeconds`.
+`activeDeadlineSeconds`. The plan's run deadline is the only
+`activeDeadlineSeconds`, on the workflow spec.
 
 For lowering or transport changes, exercise `../../../scripts/test-argo.sh`.
 Schema-valid YAML and isolated runtime tests do not prove live controller behavior.

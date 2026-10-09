@@ -262,6 +262,10 @@ They include:
 bounds each attempt, not the whole step. Omitting either field keeps the
 contract hash unchanged and means one attempt with no deadline.
 
+The WorkflowSpec's optional `workflow.deadlineSeconds` (1-604800) bounds the
+whole run and compiles to `graph.deadlineSeconds` in the plan. A run that
+reaches it fails on every target; called child graphs cannot carry one.
+
 Retryable failures are author exceptions (runner exit 66), timeouts, and runner
 crashes. Descriptor (64) and schema (65) failures are deterministic, and authors
 raise `NonRetryableError` (exit 67) to stop retries. The local orchestrator
