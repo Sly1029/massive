@@ -1,0 +1,1313 @@
+{
+  "cases": [
+    {
+      "accepted": true,
+      "itemOutputSchema": {
+        "type": "integer"
+      },
+      "name": "pydantic-integer",
+      "outputSchema": {
+        "$defs": {
+          "MapItemFailed": {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "$ref": "#/$defs/MapItemFailure"
+              },
+              "status": {
+                "const": "failed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "status"
+            ],
+            "title": "MapItemFailed",
+            "type": "object"
+          },
+          "MapItemFailure": {
+            "additionalProperties": false,
+            "properties": {
+              "attempts": {
+                "minimum": 1,
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "diagnostic": {
+                "maxLength": 1024,
+                "title": "Diagnostic",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "error",
+                  "killed",
+                  "non-retryable",
+                  "timeout"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "attempts",
+              "diagnostic",
+              "kind"
+            ],
+            "title": "MapItemFailure",
+            "type": "object"
+          },
+          "MapItemOutcome_int_": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/$defs/MapItemFailed",
+                "succeeded": "#/$defs/MapItemSucceeded_int_"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MapItemSucceeded_int_"
+              },
+              {
+                "$ref": "#/$defs/MapItemFailed"
+              }
+            ]
+          },
+          "MapItemSucceeded_int_": {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "succeeded",
+                "title": "Status",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "status",
+              "value"
+            ],
+            "title": "MapItemSucceeded[int]",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/MapItemOutcome_int_"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": true,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "pydantic-model",
+      "outputSchema": {
+        "$defs": {
+          "MapItemFailed": {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "$ref": "#/$defs/MapItemFailure"
+              },
+              "status": {
+                "const": "failed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "status"
+            ],
+            "title": "MapItemFailed",
+            "type": "object"
+          },
+          "MapItemFailure": {
+            "additionalProperties": false,
+            "properties": {
+              "attempts": {
+                "minimum": 1,
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "diagnostic": {
+                "maxLength": 1024,
+                "title": "Diagnostic",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "error",
+                  "killed",
+                  "non-retryable",
+                  "timeout"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "attempts",
+              "diagnostic",
+              "kind"
+            ],
+            "title": "MapItemFailure",
+            "type": "object"
+          },
+          "MapItemOutcome_Result_": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/$defs/MapItemFailed",
+                "succeeded": "#/$defs/MapItemSucceeded_Result_"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MapItemSucceeded_Result_"
+              },
+              {
+                "$ref": "#/$defs/MapItemFailed"
+              }
+            ]
+          },
+          "MapItemSucceeded_Result_": {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "succeeded",
+                "title": "Status",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/Result"
+              }
+            },
+            "required": [
+              "status",
+              "value"
+            ],
+            "title": "MapItemSucceeded[Result]",
+            "type": "object"
+          },
+          "Result": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Result",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/MapItemOutcome_Result_"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": true,
+      "itemOutputSchema": {
+        "$defs": {
+          "Node": {
+            "properties": {
+              "children": {
+                "items": {
+                  "$ref": "#/$defs/Node"
+                },
+                "title": "Children",
+                "type": "array"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "children"
+            ],
+            "title": "Node",
+            "type": "object"
+          }
+        },
+        "$ref": "#/$defs/Node"
+      },
+      "name": "pydantic-recursive-model",
+      "outputSchema": {
+        "$defs": {
+          "MapItemFailed": {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "$ref": "#/$defs/MapItemFailure"
+              },
+              "status": {
+                "const": "failed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "status"
+            ],
+            "title": "MapItemFailed",
+            "type": "object"
+          },
+          "MapItemFailure": {
+            "additionalProperties": false,
+            "properties": {
+              "attempts": {
+                "minimum": 1,
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "diagnostic": {
+                "maxLength": 1024,
+                "title": "Diagnostic",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "error",
+                  "killed",
+                  "non-retryable",
+                  "timeout"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "attempts",
+              "diagnostic",
+              "kind"
+            ],
+            "title": "MapItemFailure",
+            "type": "object"
+          },
+          "MapItemOutcome_Node_": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/$defs/MapItemFailed",
+                "succeeded": "#/$defs/MapItemSucceeded_Node_"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MapItemSucceeded_Node_"
+              },
+              {
+                "$ref": "#/$defs/MapItemFailed"
+              }
+            ]
+          },
+          "MapItemSucceeded_Node_": {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "succeeded",
+                "title": "Status",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/$defs/Node"
+              }
+            },
+            "required": [
+              "status",
+              "value"
+            ],
+            "title": "MapItemSucceeded[Node]",
+            "type": "object"
+          },
+          "Node": {
+            "properties": {
+              "children": {
+                "items": {
+                  "$ref": "#/$defs/Node"
+                },
+                "title": "Children",
+                "type": "array"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "children"
+            ],
+            "title": "Node",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/MapItemOutcome_Node_"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": true,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "inline-without-annotations",
+      "outputSchema": {
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "succeeded",
+                  "type": "string"
+                },
+                "value": {
+                  "properties": {
+                    "value": {
+                      "title": "Value",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "title": "Result",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "attempts": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "diagnostic": {
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "error",
+                        "killed",
+                        "non-retryable",
+                        "timeout"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "attempts",
+                    "diagnostic",
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "const": "failed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "failure",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "value-is-another-model",
+      "outputSchema": {
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "succeeded",
+                  "type": "string"
+                },
+                "value": {
+                  "$defs": {
+                    "Node": {
+                      "properties": {
+                        "children": {
+                          "items": {
+                            "$ref": "#/$defs/Node"
+                          },
+                          "title": "Children",
+                          "type": "array"
+                        },
+                        "name": {
+                          "title": "Name",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "children"
+                      ],
+                      "title": "Node",
+                      "type": "object"
+                    }
+                  },
+                  "$ref": "#/$defs/Node"
+                }
+              },
+              "required": [
+                "status",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "attempts": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "diagnostic": {
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "error",
+                        "killed",
+                        "non-retryable",
+                        "timeout"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "attempts",
+                    "diagnostic",
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "const": "failed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "failure",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "missing-failed-variant",
+      "outputSchema": {
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "succeeded",
+                  "type": "string"
+                },
+                "value": {
+                  "properties": {
+                    "value": {
+                      "title": "Value",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "title": "Result",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status",
+                "value"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "any-of-instead-of-one-of",
+      "outputSchema": {
+        "items": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "succeeded",
+                  "type": "string"
+                },
+                "value": {
+                  "properties": {
+                    "value": {
+                      "title": "Value",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "title": "Result",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "attempts": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "diagnostic": {
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "error",
+                        "killed",
+                        "non-retryable",
+                        "timeout"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "attempts",
+                    "diagnostic",
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "const": "failed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "failure",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "extra-failure-kind",
+      "outputSchema": {
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "succeeded",
+                  "type": "string"
+                },
+                "value": {
+                  "properties": {
+                    "value": {
+                      "title": "Value",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "title": "Result",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "attempts": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "diagnostic": {
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "error",
+                        "killed",
+                        "non-retryable",
+                        "timeout",
+                        "lost"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "attempts",
+                    "diagnostic",
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "const": "failed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "failure",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "wider-diagnostic-bound",
+      "outputSchema": {
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "succeeded",
+                  "type": "string"
+                },
+                "value": {
+                  "properties": {
+                    "value": {
+                      "title": "Value",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "title": "Result",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "attempts": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "diagnostic": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "error",
+                        "killed",
+                        "non-retryable",
+                        "timeout"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "attempts",
+                    "diagnostic",
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "const": "failed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "failure",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "open-failure-record",
+      "outputSchema": {
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "succeeded",
+                  "type": "string"
+                },
+                "value": {
+                  "properties": {
+                    "value": {
+                      "title": "Value",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "title": "Result",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "properties": {
+                    "attempts": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "diagnostic": {
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "error",
+                        "killed",
+                        "non-retryable",
+                        "timeout"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "attempts",
+                    "diagnostic",
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "const": "failed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "failure",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "renamed-status",
+      "outputSchema": {
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "ok",
+                  "type": "string"
+                },
+                "value": {
+                  "properties": {
+                    "value": {
+                      "title": "Value",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "title": "Result",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "attempts": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "diagnostic": {
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "error",
+                        "killed",
+                        "non-retryable",
+                        "timeout"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "attempts",
+                    "diagnostic",
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "const": "failed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "failure",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "optional-value",
+      "outputSchema": {
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "const": "succeeded",
+                  "type": "string"
+                },
+                "value": {
+                  "properties": {
+                    "value": {
+                      "title": "Value",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ],
+                  "title": "Result",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "attempts": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "diagnostic": {
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "error",
+                        "killed",
+                        "non-retryable",
+                        "timeout"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "attempts",
+                    "diagnostic",
+                    "kind"
+                  ],
+                  "type": "object"
+                },
+                "status": {
+                  "const": "failed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "failure",
+                "status"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "plain-item-list",
+      "outputSchema": {
+        "$defs": {
+          "Result": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Result",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Result"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "accepted": false,
+      "itemOutputSchema": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "Result",
+        "type": "object"
+      },
+      "name": "outcomes-not-in-a-list",
+      "outputSchema": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "succeeded",
+                "type": "string"
+              },
+              "value": {
+                "properties": {
+                  "value": {
+                    "title": "Value",
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "value"
+                ],
+                "title": "Result",
+                "type": "object"
+              }
+            },
+            "required": [
+              "status",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "additionalProperties": false,
+                "properties": {
+                  "attempts": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "diagnostic": {
+                    "maxLength": 1024,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "error",
+                      "killed",
+                      "non-retryable",
+                      "timeout"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "attempts",
+                  "diagnostic",
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "status": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    }
+  ]
+}

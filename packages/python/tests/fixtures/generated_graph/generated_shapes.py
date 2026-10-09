@@ -12,7 +12,15 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from massive import GraphBuilder, StepContext, container, execution
+from massive import (
+    GraphBuilder,
+    MapItemOutcome,
+    MapItemSucceeded,
+    NonRetryableError,
+    StepContext,
+    container,
+    execution,
+)
 
 DEFAULTS = execution(
     environment=container("example.invalid/python@sha256:" + "0" * 64, platform="linux/amd64")
@@ -105,6 +113,13 @@ async def mark_async(ctx: StepContext[Item]) -> Item:
     return ctx.inputs.model_copy(update={"mapped_by": ctx.invocation.step_id})
 
 
+def mark_even(ctx: StepContext[Item]) -> Item:
+    """Fail odd items for good, so a collecting map records them as failed outcomes."""
+    if ctx.inputs.index % 2:
+        raise NonRetryableError(f"item {ctx.inputs.index} is odd")
+    return ctx.inputs.model_copy(update={"mapped_by": ctx.invocation.step_id})
+
+
 def collect(ctx: StepContext[list[Item]]) -> Token:
     """Record item order; an empty map has no token to carry, so state restarts."""
     items = ctx.inputs
@@ -117,6 +132,28 @@ def collect(ctx: StepContext[list[Item]]) -> Token:
     if not items:
         return Token(trace=[entry], route=0, widths=[], payload=Payload())
     token = items[0].token
+    return token.model_copy(update={"trace": [*token.trace, entry]})
+
+
+def collect_outcomes(ctx: StepContext[list[MapItemOutcome[Item]]]) -> Token:
+    """Record item order and which positions failed; failed items carry no token."""
+    succeeded = [o.value for o in ctx.inputs if isinstance(o, MapItemSucceeded)]
+    failed = [
+        f"{index}:{o.failure.kind}"
+        for index, o in enumerate(ctx.inputs)
+        if not isinstance(o, MapItemSucceeded)
+    ]
+    entry = (
+        f"{ctx.invocation.step_id}<"
+        + ",".join(str(item.index) for item in succeeded)
+        + "|"
+        + ",".join(sorted({str(item.mapped_by) for item in succeeded}))
+        + "|"
+        + ",".join(failed)
+    )
+    if not succeeded:
+        return Token(trace=[entry], route=0, widths=[], payload=Payload())
+    token = succeeded[0].token
     return token.model_copy(update={"trace": [*token.trace, entry]})
 
 
@@ -195,6 +232,8 @@ class FanNode(BaseModel):
     collect: str
     concurrency: int = Field(ge=1)
     asynchronous: bool = False
+    # The map collects item failures; its mapper fails every odd item.
+    collect_failures: bool = False
 
 
 class Branch(BaseModel):
@@ -343,6 +382,15 @@ def _node(
         (Token, list[Item]),
         lambda g, s, p: _then(g, s, g.add(explode, id=p + explode_id)),
     )
+    if node.collect_failures:
+        outcomes = graph.map(
+            items,
+            mark_even,
+            id=prefix + node.map,
+            concurrency=node.concurrency,
+            item_failures="collect",
+        )
+        return _then(graph, outcomes, graph.add(collect_outcomes, id=prefix + node.collect))
     mapped = graph.map(
         items,
         mark_async if node.asynchronous else mark,

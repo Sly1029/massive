@@ -59,6 +59,9 @@ func FuzzGeneratedPlanLowering(f *testing.F) {
 			if collision != "" && strings.Contains(err.Error(), "collides") {
 				return
 			}
+			if collectsItemFailures(compiled.Plan) && strings.Contains(err.Error(), "collects item failures") {
+				return
+			}
 			t.Fatalf("valid plan was not lowered: %v", err)
 		}
 		if collision != "" {
@@ -334,4 +337,13 @@ func checkRetry(t *testing.T, p *planpb.WorkflowPlan, node *planpb.GraphNode, te
 	if retries != (attempts > 1) || (retries && strategy["limit"] != fmt.Sprint(attempts-1)) {
 		t.Fatalf("step %s retry strategy %v for %d attempts", node.GetId(), strategy, attempts)
 	}
+}
+
+func collectsItemFailures(p *planpb.WorkflowPlan) bool {
+	for _, node := range p.Graph.Nodes {
+		if node.GetItemFailures() != "" {
+			return true
+		}
+	}
+	return false
 }

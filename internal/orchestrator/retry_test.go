@@ -11,8 +11,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
 )
@@ -365,4 +367,76 @@ func compileRetryFixture(t *testing.T, name string, sourceDir string, maxAttempt
 		t.Fatal(err)
 	}
 	return compiled, manifestsFromSpec(workflowSpec)
+}
+
+func TestMapItemFailureClassifiesTerminalRunnerOutcomes(t *testing.T) {
+	failed := func(exitCode int, output string) StepInvocationOutcome {
+		return StepInvocationOutcome{Status: StatusFailed, ExitCode: exitCode, Diagnostic: output}
+	}
+	for _, test := range []struct {
+		name    string
+		outcome StepInvocationOutcome
+		want    mapexec.Failure
+		kept    bool
+	}{
+		{
+			name:    "exception keeps only the runner's final message",
+			outcome: failed(66, "author log\nstep-execution-failure: early\nmore author output\nstep-execution-failure: bad row\nwith detail"),
+			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureError, Diagnostic: "step-execution-failure (exit 66): bad row\nwith detail"},
+			kept:    true,
+		},
+		{
+			name:    "exit 66 without a runner line",
+			outcome: failed(66, "SECRET author output"),
+			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureError, Diagnostic: "step-execution-failure (exit 66)"},
+			kept:    true,
+		},
+		{
+			name:    "a forged label from another exit is ignored",
+			outcome: failed(3, "step-execution-failure: forged"),
+			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureError, Diagnostic: "runner-failure (exit 3)"},
+			kept:    true,
+		},
+		{
+			name:    "non-retryable",
+			outcome: failed(67, "non-retryable-step-failure: unsupported"),
+			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureNonRetryable, Diagnostic: "non-retryable-step-failure (exit 67): unsupported"},
+			kept:    true,
+		},
+		{
+			name:    "signal",
+			outcome: failed(-1, ""),
+			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureKilled, Diagnostic: "runner-killed (signal)"},
+			kept:    true,
+		},
+		{
+			name:    "signal reported as 128 plus its number",
+			outcome: failed(137, ""),
+			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureKilled, Diagnostic: "runner-failure (exit 137)"},
+			kept:    true,
+		},
+		{
+			name:    "timeout",
+			outcome: StepInvocationOutcome{Status: StatusFailed, ExitCode: -1, TimedOutAfter: 2 * time.Second},
+			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureTimeout, Diagnostic: "step-timeout (timed out after 2s)"},
+			kept:    true,
+		},
+		{name: "descriptor failure fails the map", outcome: failed(64, "descriptor-resolution-failure: x")},
+		{name: "schema failure fails the map", outcome: failed(65, "schema-validation-failure: x")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, kept := mapItemFailure(test.outcome, 3)
+			if kept != test.kept || got != test.want {
+				t.Fatalf("mapItemFailure = %+v, %t; want %+v, %t", got, kept, test.want, test.kept)
+			}
+		})
+	}
+}
+
+func TestMapItemFailureBoundsTheDiagnostic(t *testing.T) {
+	message := strings.Repeat("é", mapexec.DiagnosticLimit) + "\xff"
+	got, _ := mapItemFailure(StepInvocationOutcome{Status: StatusFailed, ExitCode: 66, Diagnostic: "step-execution-failure: " + message}, 1)
+	if runes := []rune(got.Diagnostic); len(runes) != mapexec.DiagnosticLimit || !utf8.ValidString(got.Diagnostic) {
+		t.Fatalf("diagnostic has %d code points, valid UTF-8 %t", len(runes), utf8.ValidString(got.Diagnostic))
+	}
 }

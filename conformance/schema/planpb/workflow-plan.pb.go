@@ -444,8 +444,12 @@ type GraphNode struct {
 	ItemInputSchema  *string `protobuf:"bytes,12,opt,name=item_input_schema,json=itemInputSchema,proto3,oneof" json:"item_input_schema,omitempty"`
 	ItemOutputSchema *string `protobuf:"bytes,13,opt,name=item_output_schema,json=itemOutputSchema,proto3,oneof" json:"item_output_schema,omitempty"`
 	MaxConcurrency   *uint32 `protobuf:"varint,14,opt,name=max_concurrency,json=maxConcurrency,proto3,oneof" json:"max_concurrency,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Absent: a terminal item failure fails the map. "collect": the map
+	// succeeds with one discriminated outcome per item, and output_schema is
+	// the list of item outcomes wrapping item_output_schema.
+	ItemFailures  *string `protobuf:"bytes,15,opt,name=item_failures,json=itemFailures,proto3,oneof" json:"item_failures,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GraphNode) Reset() {
@@ -574,6 +578,13 @@ func (x *GraphNode) GetMaxConcurrency() uint32 {
 		return *x.MaxConcurrency
 	}
 	return 0
+}
+
+func (x *GraphNode) GetItemFailures() string {
+	if x != nil && x.ItemFailures != nil {
+		return *x.ItemFailures
+	}
+	return ""
 }
 
 type GraphEdge struct {
@@ -1690,7 +1701,7 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\v_ir_versionB\x13\n" +
 	"\x11_deadline_secondsB\f\n" +
 	"\n" +
-	"_exit_hook\"\xff\x05\n" +
+	"_exit_hook\"\xbb\x06\n" +
 	"\tGraphNode\x12\x13\n" +
 	"\x02id\x18\x01 \x01(\tH\x00R\x02id\x88\x01\x01\x12\x17\n" +
 	"\x04kind\x18\x02 \x01(\tH\x01R\x04kind\x88\x01\x01\x12&\n" +
@@ -1708,7 +1719,8 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\x11item_input_schema\x18\f \x01(\tH\bR\x0fitemInputSchema\x88\x01\x01\x121\n" +
 	"\x12item_output_schema\x18\r \x01(\tH\tR\x10itemOutputSchema\x88\x01\x01\x12,\n" +
 	"\x0fmax_concurrency\x18\x0e \x01(\rH\n" +
-	"R\x0emaxConcurrency\x88\x01\x01B\x05\n" +
+	"R\x0emaxConcurrency\x88\x01\x01\x12(\n" +
+	"\ritem_failures\x18\x0f \x01(\tH\vR\fitemFailures\x88\x01\x01B\x05\n" +
 	"\x03_idB\a\n" +
 	"\x05_kindB\x0f\n" +
 	"\r_input_schemaB\x10\n" +
@@ -1719,7 +1731,8 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\r_decision_refB\x14\n" +
 	"\x12_item_input_schemaB\x15\n" +
 	"\x13_item_output_schemaB\x12\n" +
-	"\x10_max_concurrency\"k\n" +
+	"\x10_max_concurrencyB\x10\n" +
+	"\x0e_item_failures\"k\n" +
 	"\tGraphEdge\x12\x17\n" +
 	"\x04from\x18\x01 \x01(\tH\x00R\x04from\x88\x01\x01\x12\x13\n" +
 	"\x02to\x18\x02 \x01(\tH\x01R\x02to\x88\x01\x01\x12\x17\n" +

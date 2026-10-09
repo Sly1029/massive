@@ -275,6 +275,19 @@ var specMutations = []specMutation{
 		renameNode(w, node.ID, "nested/"+node.ID)
 		return true
 	}},
+	{"map item failure policy without its outcome schema", func(w *spec.WorkflowSpec, pick int) bool {
+		node, ok := pickNode(w, pick, spec.NodeKindMap)
+		if !ok {
+			return false
+		}
+		// The collected list must change shape with the policy.
+		if node.ItemFailures == "" {
+			node.ItemFailures = spec.MapItemFailuresCollect
+		} else {
+			node.ItemFailures = ""
+		}
+		return true
+	}},
 }
 
 // FuzzGeneratedSpecMutations starts from a valid generated workflow, breaks

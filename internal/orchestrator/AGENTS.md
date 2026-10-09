@@ -68,6 +68,7 @@ exit 68, never retried); return context cancellation and other infrastructure
 errors unchanged so a terminated pod is retried. A
 passing attempt writes `environment.json` beside its output manifest.
 
+<<<<<<< HEAD
 A failed exit-hook journal rewrite preserves the settled run result and error;
 report it separately in the run summary. After materialization cancellation,
 prepare the hook's verified source archive under its detached lifetime.
@@ -75,3 +76,13 @@ prepare the hook's verified source archive under its detached lifetime.
 Derive exit-hook failure attribution from terminal executable journal entries
 with dispatched attempts. A deadline during successful settlement or between
 tasks has no failed node; queued nodes and graph markers are not causes.
+=======
+A map with `itemFailures: "collect"` keeps a terminal item failure as that
+item's outcome only when `mapItemFailure` classifies it (exceptions,
+`NonRetryableError`, timeouts, signals, other nonzero exits). Contract exits
+64/65, verification, infrastructure, and cancellation still fail the map and
+stop sibling retries. Both targets must build identical records, so the Argo
+item runtime classifies through the same function. The record's message comes
+only from the runner's final label line for a matching exit code; never copy
+other runner output into it, and keep exception messages out of the journal.
+>>>>>>> e75da70 (Collect map item failures as typed outcomes on the local target)

@@ -453,6 +453,9 @@ func expectedDiagnostic(fault graphgen.Fault, timeoutSeconds uint32, item bool) 
 func (o *executionOracle) checkMap(step runjournal.Step, node *graphgen.Node, predicted *graphgen.Outcome) {
 	t := o.t
 	items := *step.Items
+	if collecting := step.ItemFailures == spec.MapItemFailuresCollect; collecting != node.CollectItemFailures {
+		t.Fatalf("map %s journals itemFailures %q, generated collecting=%t", step.NodeID, step.ItemFailures, node.CollectItemFailures)
+	}
 	if len(step.Attempts) > 1 {
 		t.Fatalf("map %s has %d collection attempts", step.NodeID, len(step.Attempts))
 	}
