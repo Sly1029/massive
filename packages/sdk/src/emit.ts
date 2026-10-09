@@ -113,6 +113,8 @@ export type WorkflowSpecNode =
     readonly symbolRef: string;
     readonly contractRef: string;
     readonly maxConcurrency: number;
+    /** Absent: a terminal item failure fails the map. The TypeScript builder authors no maps. */
+    readonly itemFailures?: "collect";
   };
 
 export interface WorkflowSpecEdge {

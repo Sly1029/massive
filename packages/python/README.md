@@ -459,6 +459,61 @@ item-output, and collected-output schemas, mapper symbol and contract, and
 `maxConcurrency`. The emitted map contract is the execution boundary; no local
 in-memory map behavior is part of the authoring API.
 
+### Collecting item failures
+
+By default, an item that still fails after its retries fails the whole map, and
+the outputs of its siblings are discarded. When items are expensive and
+independent, pass `item_failures="collect"`: the map then succeeds with one
+`MapItemOutcome[Result]` per item, in source order, and a downstream step
+decides what the failures mean.
+
+```python
+from massive import MapItemFailed, MapItemOutcome, MapItemSucceeded
+
+
+def scan(context: StepContext[Repository]) -> Findings: ...
+
+
+def summarize(context: StepContext[list[MapItemOutcome[Findings]]]) -> Report:
+    findings, failures = [], []
+    for outcome in context.inputs:
+        match outcome:
+            case MapItemSucceeded(value=value):
+                findings.append(value)
+            case MapItemFailed(failure=failure):
+                failures.append(f"{failure.kind} after {failure.attempts}: {failure.diagnostic}")
+    if len(failures) > len(context.inputs) // 2:
+        raise NonRetryableError(f"{len(failures)} scans failed")
+    return Report(findings=findings, failures=failures)
+
+
+outcomes = graph.map(
+    repositories, scan, id="scan", item_failures="collect",
+    retry=retry(3), timeout=timedelta(minutes=30),
+)
+graph.edge_from(outcomes).to(graph.add(summarize))
+```
+
+`MapItemOutcome[T]` is a Pydantic discriminated union on `status`:
+`MapItemSucceeded[T]` carries `value`, and `MapItemFailed` carries a
+`MapItemFailure` with `kind`, `attempts`, and a `diagnostic` of at most 1,024
+characters. The kinds are `error` (an exception or a nonzero exit), `timeout`,
+`non-retryable` (`NonRetryableError`), and `killed` (the process died from a
+signal, such as an out-of-memory kill or a segmentation fault in a native
+library). This is the only way to catch a crash, a timeout, or an out-of-memory
+kill: a `try`/`except` inside the mapper cannot. For exceptions, the
+diagnostic includes the exception message, so keep secrets out of messages;
+no other task output is copied into it.
+
+Only failures of the item's own code are collected, and only after its retries
+are exhausted. Schema violations, a broken environment, output verification,
+infrastructure errors, and cancellation still fail the map. The type checker
+and the Go compiler both require the consumer to accept
+`list[MapItemOutcome[Result]]`, and the run journal marks each failed item.
+The map has no failure threshold; raise `NonRetryableError` downstream, as
+above, to fail the run past one. The Argo target does not lower collecting maps
+yet and rejects them at build time.
+
 Finite maps execute through both `massive run` and the Argo target. Argo lowers
 each map to a bounded nested DAG: an indexed envelope crystallizes the input,
 `withParam` invokes the mapper under the declared concurrency limit, and a

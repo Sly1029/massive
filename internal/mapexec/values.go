@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Sly1029/massive/internal/canonical"
 )
@@ -72,4 +73,75 @@ func Collect(expectedCount int, results []Result) ([]byte, error) {
 	}
 
 	return canonical.Marshal(ordered)
+}
+
+// FailureKind classifies a terminal item failure that a map collected.
+type FailureKind string
+
+const (
+	// FailureError is an author exception or a runner that exited nonzero.
+	FailureError FailureKind = "error"
+	// FailureKilled is a runner ended by a signal, such as an out-of-memory kill.
+	FailureKilled FailureKind = "killed"
+	// FailureNonRetryable is the author's NonRetryableError.
+	FailureNonRetryable FailureKind = "non-retryable"
+	// FailureTimeout is an attempt stopped at the contract's per-attempt deadline.
+	FailureTimeout FailureKind = "timeout"
+)
+
+// DiagnosticLimit bounds a failure diagnostic in Unicode code points, the
+// unit of the outcome schema's maxLength.
+const DiagnosticLimit = 1024
+
+// Failure is the closed record of an item's terminal failure. It is a
+// workflow value, so it reaches downstream author code.
+type Failure struct {
+	Attempts   int         `json:"attempts"`
+	Diagnostic string      `json:"diagnostic"`
+	Kind       FailureKind `json:"kind"`
+}
+
+// NewFailure bounds the diagnostic to DiagnosticLimit code points of valid UTF-8.
+func NewFailure(kind FailureKind, attempts int, diagnostic string) Failure {
+	diagnostic = strings.ToValidUTF8(diagnostic, "\uFFFD")
+	if runes := []rune(diagnostic); len(runes) > DiagnosticLimit {
+		diagnostic = string(runes[:DiagnosticLimit])
+	}
+	return Failure{Attempts: attempts, Diagnostic: diagnostic, Kind: kind}
+}
+
+// Outcome is one item's result when its map collects item failures: a
+// canonical value, or a failure.
+type Outcome struct {
+	Index   int
+	Value   []byte
+	Failure *Failure
+}
+
+// CollectOutcomes builds the source-ordered list of item outcomes with the
+// same dense-index rules as Collect. Each entry is {"status":"succeeded",
+// "value":...} or {"failure":{...},"status":"failed"}.
+func CollectOutcomes(expectedCount int, outcomes []Outcome) ([]byte, error) {
+	results := make([]Result, len(outcomes))
+	for position, outcome := range outcomes {
+		var entry any
+		switch {
+		case outcome.Failure == nil:
+			canonicalValue, err := canonical.CanonicalizeJSON(outcome.Value)
+			if err != nil || !bytes.Equal(canonicalValue, outcome.Value) {
+				return nil, fmt.Errorf("map item %d output must be canonical JSON", outcome.Index)
+			}
+			entry = map[string]any{"status": "succeeded", "value": json.RawMessage(outcome.Value)}
+		case outcome.Value == nil:
+			entry = map[string]any{"failure": *outcome.Failure, "status": "failed"}
+		default:
+			return nil, fmt.Errorf("map item %d has both a value and a failure", outcome.Index)
+		}
+		body, err := canonical.Marshal(entry)
+		if err != nil {
+			return nil, err
+		}
+		results[position] = Result{Index: outcome.Index, Body: body}
+	}
+	return Collect(expectedCount, results)
 }

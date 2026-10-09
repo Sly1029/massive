@@ -23,6 +23,7 @@ func TestParseAcceptsValidFixtures(t *testing.T) {
 		{name: "python-fan-in", path: fixturePath("python-fan-in")},
 		{name: "exhaustive-decision", path: fixturePath("exhaustive-decision")},
 		{name: "finite-map", path: fixturePath("finite-map")},
+		{name: "python-map-outcomes", path: fixturePath("python-map-outcomes")},
 	}
 
 	for _, test := range tests {

@@ -537,6 +537,9 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 }
 
 func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target, sourceArgs []string) ([]any, error) {
+	if node.GetItemFailures() != "" {
+		return nil, fmt.Errorf("argo target: map %q collects item failures, which the Argo target does not lower yet; run it with the local target", node.GetId())
+	}
 	expandName := argoFieldName("map-expand-" + node.GetId())
 	itemName := argoFieldName("map-item-" + node.GetId())
 	collectName := argoFieldName("map-collect-" + node.GetId())

@@ -27,3 +27,7 @@ Hypothesis profiles live in `conftest.py`: `ci` (derandomized, run by
 `pnpm check`) and `nightly` (randomized, larger maps, cached example database in
 the fuzz workflow). Select one with `MASSIVE_HYPOTHESIS_PROFILE`; budget
 execution-heavy properties with `scaled()`.
+
+A `FanNode` with `collect_failures` maps with `item_failures="collect"` and a
+mapper that raises `NonRetryableError` for odd items; the model predicts each
+item's journal status and the failed positions its collector records.

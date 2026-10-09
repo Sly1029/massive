@@ -21,6 +21,7 @@ from .contracts import (
     retry,
 )
 from .files import ArtifactFiles, Blob, Tree
+from .outcomes import MapItemFailed, MapItemFailure, MapItemOutcome, MapItemSucceeded
 from .source_package import SourcePackage, source_package
 
 __all__ = [
@@ -36,6 +37,10 @@ __all__ = [
     "GraphBuilder",
     "InvocationContext",
     "JsonValue",
+    "MapItemFailed",
+    "MapItemFailure",
+    "MapItemOutcome",
+    "MapItemSucceeded",
     "NodeHandle",
     "NonRetryableError",
     "Retry",

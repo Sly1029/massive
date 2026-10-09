@@ -30,11 +30,14 @@ type Environment struct {
 }
 
 type Step struct {
-	NodeID     string      `json:"nodeId"`
-	Status     string      `json:"status"`
-	Attempts   []Attempt   `json:"attempts"`
-	Items      *[]MapItem  `json:"items,omitempty"`
-	SkipReason *SkipReason `json:"skipReason,omitempty"`
+	NodeID   string     `json:"nodeId"`
+	Status   string     `json:"status"`
+	Attempts []Attempt  `json:"attempts"`
+	Items    *[]MapItem `json:"items,omitempty"`
+	// ItemFailures is "collect" for a map that succeeds with failed items
+	// recorded as outcomes; such a map's failed items are terminal results.
+	ItemFailures string      `json:"itemFailures,omitempty"`
+	SkipReason   *SkipReason `json:"skipReason,omitempty"`
 }
 
 // MapItem keeps each source-indexed invocation observable even when a

@@ -219,17 +219,18 @@ def run_descriptor_path(path: Path) -> int:
         _execute(descriptor)
         return 0
     except DescriptorError as error:
-        print(f"descriptor-resolution-failure: {error}", file=sys.stderr)
-        return _DESCRIPTOR_EXIT
+        label, message, code = "descriptor-resolution-failure", str(error), _DESCRIPTOR_EXIT
     except SchemaError as error:
-        print(f"schema-validation-failure: {error}", file=sys.stderr)
-        return _SCHEMA_EXIT
+        label, message, code = "schema-validation-failure", str(error), _SCHEMA_EXIT
     except StepError as error:
-        print(f"step-execution-failure: {error}", file=sys.stderr)
-        return _STEP_EXIT
+        label, message, code = "step-execution-failure", str(error), _STEP_EXIT
     except NonRetryableStepError as error:
-        print(f"non-retryable-step-failure: {error}", file=sys.stderr)
-        return _NON_RETRYABLE_STEP_EXIT
+        label, message, code = "non-retryable-step-failure", str(error), _NON_RETRYABLE_STEP_EXIT
+    # The failure line is the runner's last output: a collecting map reads the
+    # message after it, so flush author output the step left buffered first.
+    sys.stdout.flush()
+    print(f"{label}: {message}", file=sys.stderr, flush=True)
+    return code
 
 
 @cache

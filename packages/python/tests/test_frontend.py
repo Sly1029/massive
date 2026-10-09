@@ -42,7 +42,7 @@ def test_emit_writes_only_the_spec_to_its_output_whatever_author_code_prints(tmp
         assert line in result.stdout
 
 
-@pytest.mark.parametrize("fixture", ["python-linear", "python-fan-in"])
+@pytest.mark.parametrize("fixture", ["python-linear", "python-fan-in", "python-map-outcomes"])
 def test_checked_python_workflow_matches_shared_conformance_fixture(fixture: str) -> None:
     repository = Path(__file__).resolve().parents[3]
     workflow = repository / f"conformance/workflows/{fixture}/workflow.py"

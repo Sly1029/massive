@@ -57,3 +57,12 @@ Only findings and `environment.ProjectError` become a `PreflightError` (CLI
 exit 68, never retried); return context cancellation and other infrastructure
 errors unchanged so a terminated pod is retried. A
 passing attempt writes `environment.json` beside its output manifest.
+
+A map with `itemFailures: "collect"` keeps a terminal item failure as that
+item's outcome only when `mapItemFailure` classifies it (exceptions,
+`NonRetryableError`, timeouts, signals, other nonzero exits). Contract exits
+64/65, verification, infrastructure, and cancellation still fail the map and
+stop sibling retries. Both targets must build identical records, so the Argo
+item runtime classifies through the same function. The record's message comes
+only from the runner's final label line for a matching exit code; never copy
+other runner output into it, and keep exception messages out of the journal.

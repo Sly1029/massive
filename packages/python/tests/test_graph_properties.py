@@ -191,6 +191,7 @@ def descriptions(draw: st.DrawFn, *, max_depth: int, max_block: int) -> Any:
                 collect=ident(room),
                 concurrency=draw(st.integers(1, 4)),
                 asynchronous=draw(st.booleans()),
+                collect_failures=draw(st.booleans()),
             )
         scope = via(room, depth)
         classifier = ident(MAX_ID - scoped(prefix_length, scope))
@@ -238,14 +239,15 @@ payloads = st.builds(
 class Expectation:
     """An independent model of a description's run on the local target."""
 
-    steps: dict[str, tuple[str, int]] = field(default_factory=dict)
+    # Each executable node's status and, for a map, its items' statuses.
+    steps: dict[str, tuple[str, tuple[str, ...]]] = field(default_factory=dict)
     decisions: dict[str, str | None] = field(default_factory=dict)
 
     def run(self, description: Any, token: dict[str, Any] | None) -> dict[str, Any] | None:
         return self._block(description.body, "", token)
 
     def _visit(self, node_id: str, token: dict[str, Any] | None) -> dict[str, Any] | None:
-        self.steps[node_id] = ("skipped" if token is None else "succeeded", 0)
+        self.steps[node_id] = ("skipped" if token is None else "succeeded", ())
         return None if token is None else {**token, "trace": [*token["trace"], node_id]}
 
     def _block(
@@ -267,7 +269,7 @@ class Expectation:
             split = self._visit(prefix + node.split, token)
             ends = [self._block(branch.body, prefix, split) for branch in node.branches]
             join_id = scope + node.join
-            self.steps[join_id] = ("skipped" if split is None else "succeeded", 0)
+            self.steps[join_id] = ("skipped" if split is None else "succeeded", ())
             if split is None:
                 return None
             first = ends[0]
@@ -288,13 +290,21 @@ class Expectation:
         exploded = self._visit(scope + node.explode, token)
         map_id, collect_id = prefix + node.map, prefix + node.collect
         if exploded is None:
-            self.steps[map_id] = ("skipped", 0)
-            self.steps[collect_id] = ("skipped", 0)
+            self.steps[map_id] = ("skipped", ())
+            self.steps[collect_id] = ("skipped", ())
             return None
         width, *rest = exploded["widths"] or [0]
-        self.steps[map_id] = ("succeeded", width)
+        # A collecting map's mapper fails every odd item, which never retries.
+        failed = range(1, width, 2) if node.collect_failures else range(0)
+        succeeded = [index for index in range(width) if index not in failed]
+        self.steps[map_id] = (
+            "succeeded",
+            tuple("failed" if index in failed else "succeeded" for index in range(width)),
+        )
         self._visit(collect_id, exploded)
-        entry = f"{collect_id}<{','.join(map(str, range(width)))}|{map_id if width else ''}"
+        entry = f"{collect_id}<{','.join(map(str, succeeded))}|{map_id if succeeded else ''}"
+        if node.collect_failures:
+            entry += "|" + ",".join(f"{index}:non-retryable" for index in failed)
         if width == 0:
             empty = shapes.Payload().model_dump(mode="json", by_alias=True)
             return {"trace": [entry], "route": 0, "widths": [], "payload": empty}
@@ -376,8 +386,7 @@ def _assert_matches_model(
     for step in journal["steps"]:
         items = step.get("items") or []
         assert [item["index"] for item in items] == list(range(len(items)))
-        assert {item["status"] for item in items} <= {"succeeded"}
-        observed[step["nodeId"]] = (step["status"], len(items))
+        observed[step["nodeId"]] = (step["status"], tuple(item["status"] for item in items))
     assert observed == expectation.steps
     assert {
         decision["nodeId"]: decision.get("selectedCase") for decision in journal["decisions"]
@@ -396,7 +405,14 @@ SMOKE_DESCRIPTION = shapes.GraphDescription(
                 entry="L",
                 via="lv",
                 body=(
-                    shapes.FanNode(explode="e", via="ev", map="m", collect="k", concurrency=2),
+                    shapes.FanNode(
+                        explode="e",
+                        via="ev",
+                        map="m",
+                        collect="k",
+                        concurrency=2,
+                        collect_failures=True,
+                    ),
                 ),
             ),
             right=shapes.Arm(entry="R"),
