@@ -39,6 +39,7 @@ export {
   type WorkflowSpecLanguage,
 } from "./emit.ts";
 export {
+  type CallNode,
   type EndHandle,
   type MergeBuilder,
   type PathBuilder,
@@ -46,6 +47,7 @@ export {
   type StepNode,
   type StepRun,
   type StepSpec,
+  type TransformSpec,
   workflow,
   type WorkflowBuilder,
   type WorkflowConfig,

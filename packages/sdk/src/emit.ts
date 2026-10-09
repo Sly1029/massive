@@ -12,9 +12,9 @@ import {
   type SecretRef,
   validateExecutionPolicy,
 } from "./contract.ts";
+import { type FlatGraph, type FlatStep, flattenWorkflow } from "./compose.ts";
 import type { WorkflowPackageConfig } from "./config.ts";
 import { GraphValidationError } from "./errors.ts";
-import { validateGraphShape } from "./graph-validate.ts";
 import { lowerPortableSchema } from "./schema.ts";
 import { hashSourcePackage, type SourceSpec } from "./source-package.ts";
 import {
@@ -28,12 +28,7 @@ import {
   sha256RefText,
   stableStringify,
 } from "./stable.ts";
-import {
-  END_NODE,
-  START_NODE,
-  type StepNode,
-  type WorkflowBuilder,
-} from "./workflow.ts";
+import { END_NODE, START_NODE, type WorkflowBuilder } from "./workflow.ts";
 
 export interface EmitSourceSpec extends SourceSpec {
   readonly packageId?: string;
@@ -161,8 +156,7 @@ export async function emitWorkflowSpec<Input, Output>(
   builder: WorkflowBuilder<Input, Output>,
   options: EmitWorkflowSpecOptions,
 ): Promise<WorkflowSpec> {
-  builder.freeze();
-  validateGraphShape(builder);
+  const graph = flattenWorkflow(builder);
 
   const sourceOptions = emitSourceSpec(options);
   const packageId = sourceOptions.packageId ?? "ts-main";
@@ -182,7 +176,7 @@ export async function emitWorkflowSpec<Input, Output>(
     `${builder.name}.output`,
   );
   const stepSchemas = new Map<string, { input: string; output: string }>();
-  for (const step of sortedSteps(builder)) {
+  for (const step of sortedSteps(graph)) {
     stepSchemas.set(step.id, {
       input: registerSchema(
         schemas,
@@ -199,18 +193,25 @@ export async function emitWorkflowSpec<Input, Output>(
 
   const environments = new Map<string, WorkflowSpecEnvironment>();
   const contracts = new Map<string, WorkflowSpecExecutionContract>();
-  const workflowDefault = mergeContractSpecs(
-    mergeContractSpecs(
-      DEFAULT_CONTRACT.spec,
-      options.package?.environment === undefined
-        ? {}
-        : { env: options.package.environment },
-    ),
-    contractSpecOf(builder.defaults),
+  const packageDefault = mergeContractSpecs(
+    DEFAULT_CONTRACT.spec,
+    options.package?.environment === undefined
+      ? {}
+      : { env: options.package.environment },
   );
-  registerContract(environments, contracts, workflowDefault);
+  registerContract(
+    environments,
+    contracts,
+    mergeContractSpecs(packageDefault, contractSpecOf(builder.defaults)),
+  );
   const stepContractRefs = new Map<string, string>();
-  for (const step of sortedSteps(builder)) {
+  for (const step of sortedSteps(graph)) {
+    // Each step keeps the defaults of the workflow that declared it, as a
+    // called child's steps do in the Python SDK.
+    const workflowDefault = mergeContractSpecs(
+      packageDefault,
+      contractSpecOf(step.defaults),
+    );
     stepContractRefs.set(
       step.id,
       registerContract(
@@ -222,13 +223,12 @@ export async function emitWorkflowSpec<Input, Output>(
   }
 
   const symbols = new Map<string, WorkflowSpecSymbol>();
-  for (const step of sortedSteps(builder)) {
-    const symbolId = symbolRef(packageId, module, step.id);
-    symbols.set(symbolId, {
+  for (const step of sortedSteps(graph)) {
+    symbols.set(symbolRef(packageId, module, step.exportName), {
       packageId,
       language: "typescript",
       module,
-      export: step.id,
+      export: step.exportName,
     });
   }
 
@@ -247,13 +247,13 @@ export async function emitWorkflowSpec<Input, Output>(
       start: START_NODE,
       end: END_NODE,
       nodes: lowerNodes(
-        builder,
+        graph,
         stepSchemas,
         stepContractRefs,
         packageId,
         module,
       ),
-      edges: lowerEdges(builder),
+      edges: lowerEdges(graph),
     },
     schemas: sortedRecord(schemas),
     symbols: sortedRecord(symbols),
@@ -390,14 +390,14 @@ function lowerEnvironment(
   };
 }
 
-function sortedSteps(builder: WorkflowBuilder<unknown, never>): StepNode[] {
-  return [...builder.stepNodes.values()].sort((left, right) =>
+function sortedSteps(graph: FlatGraph): FlatStep[] {
+  return [...graph.steps.values()].sort((left, right) =>
     compareCodeUnits(left.id, right.id)
   );
 }
 
 function lowerNodes(
-  builder: WorkflowBuilder<unknown, never>,
+  graph: FlatGraph,
   stepSchemas: ReadonlyMap<
     string,
     { readonly input: string; readonly output: string }
@@ -406,7 +406,7 @@ function lowerNodes(
   packageId: string,
   module: string,
 ): WorkflowSpec["graph"]["nodes"] {
-  const steps = sortedSteps(builder).map((step) => {
+  const steps = sortedSteps(graph).map((step) => {
     const schemas = stepSchemas.get(step.id);
     if (schemas === undefined) {
       throw new GraphValidationError(
@@ -425,7 +425,7 @@ function lowerNodes(
       kind: "step" as const,
       inputSchema: schemas.input,
       outputSchema: schemas.output,
-      symbolRef: symbolRef(packageId, module, step.id),
+      symbolRef: symbolRef(packageId, module, step.exportName),
       contractRef,
       ...(step.mergeInputs === undefined
         ? {}
@@ -439,13 +439,11 @@ function lowerNodes(
   }];
 }
 
-function lowerEdges(
-  builder: WorkflowBuilder<unknown, never>,
-): WorkflowSpec["graph"]["edges"] {
-  const edges: WorkflowSpecEdge[] = [];
-  builder.graph.forEachDirectedEdge((_edge, _attributes, source, target) => {
-    edges.push({ from: source, to: target });
-  });
+function lowerEdges(graph: FlatGraph): WorkflowSpec["graph"]["edges"] {
+  const edges: WorkflowSpecEdge[] = graph.edges.map(([from, to]) => ({
+    from,
+    to,
+  }));
   return edges.sort((left, right) =>
     compareCodeUnits(`${left.from}\0${left.to}`, `${right.from}\0${right.to}`)
   );

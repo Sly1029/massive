@@ -13,9 +13,9 @@ unambiguous; collision properties construct those cases deliberately. `JoinNode`
 generates static fan-in (merge tuples or gathered lists, optionally consumed by a
 call); its join step records each input's last trace entry in merge order, so
 the model checks ordering as well as activity. The TypeScript builder has no
-decisions, maps, or calls, so cross-language IR parity would cover only linear
-chains and diamonds with differing schema references; it is intentionally not
-generated here.
+decisions or maps, so cross-language parity is a fixed vector rather than a
+generated property: `conformance/fixtures/composition` pins the graph projection
+both SDKs emit for equivalent composed workflows.
 
 `tests/typecheck/` is checked by pyright and ty, not executed. Known-bad wiring
 in `rejected_wiring.py` carries one ignore per checker, and both unused-ignore

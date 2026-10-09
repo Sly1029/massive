@@ -8,6 +8,7 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
+import { flattenWorkflow } from "./compose.ts";
 import type { WorkflowPackageConfig } from "./config.ts";
 import type { DeploymentTarget } from "./deployment.ts";
 import { defineWorkflowPackage } from "./config.ts";
@@ -173,12 +174,13 @@ async function selectWorkflowExport(
 }> {
   const module = await import(pathToFileURL(filePath).href);
   const selected = selectExportedWorkflow(module, filePath, requestedExport);
-  // The runner resolves each step as the entrypoint export named by its id.
-  for (const step of selected.workflow.stepNodes.values()) {
-    const exported = module[step.id] as unknown;
+  // The runner resolves each step, including steps of called workflows, as the
+  // entrypoint export named by the step's export (its id unless overridden).
+  for (const step of flattenWorkflow(selected.workflow).steps.values()) {
+    const exported = module[step.exportName] as unknown;
     if (exported !== step.run && (exported as { run?: unknown } | undefined)?.run !== step.run) {
       throw new MassiveError(
-        `step "${step.id}" must use the run function exported as "${step.id}" from ${filePath}`,
+        `step "${step.id}" must use the run function exported as "${step.exportName}" from ${filePath}`,
       );
     }
   }

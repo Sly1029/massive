@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    { "id": "__start", "kind": "start" },
+    { "id": "join--again--normalize", "kind": "step", "export": "normalize" },
+    { "id": "join--total", "kind": "step", "export": "total", "mergeInputs": ["upstream--normalize", "side"] },
+    { "id": "label", "kind": "step", "export": "label" },
+    { "id": "prepare", "kind": "step", "export": "prepare" },
+    { "id": "side", "kind": "step", "export": "side" },
+    { "id": "upstream--normalize", "kind": "step", "export": "normalize" },
+    { "id": "__end", "kind": "end" }
+  ],
+  "edges": [
+    { "from": "__start", "to": "prepare" },
+    { "from": "join--again--normalize", "to": "label" },
+    { "from": "join--total", "to": "join--again--normalize" },
+    { "from": "label", "to": "__end" },
+    { "from": "prepare", "to": "side" },
+    { "from": "prepare", "to": "upstream--normalize" },
+    { "from": "side", "to": "join--total" },
+    { "from": "upstream--normalize", "to": "join--total" }
+  ]
+}

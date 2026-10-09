@@ -16,7 +16,8 @@ portable semantics they share.
 
 The current TypeScript builder emits static graphs using Graph IR 0.3. It can
 parse shared 0.3 specs and its runner executes scoped map-item descriptors,
-but decision and finite-map authoring are currently Python-only surfaces.
+and composes workflows with `call()` like the Python SDK, but decision and
+finite-map authoring are currently Python-only surfaces.
 
 This document describes the intended author-facing model, including features
 beyond the first portable compiler wedge. `WorkflowSpec` transport schema v0
@@ -77,9 +78,11 @@ const stringifyStep = g.step("stringify", {
 g.start().to(doubleStep).to(stringifyStep).to(g.end());
 ```
 
-A step's `run` must be the entrypoint module's export named by the step id. The
-runner resolves steps by that export in a fresh process, so emission rejects
-inline closures and steps whose id names a different export.
+A step's `run` must be the entrypoint module's export named by the step's
+`export`, which defaults to its id. The runner resolves steps by that export in
+a fresh process, so emission rejects inline closures and steps whose export
+names a different function. Setting `export` gives one function several node
+ids, as Python's `add(function, id=...)` does.
 
 Each step return value is persisted as a step output artifact. It is not automatically promoted to a named channel.
 
@@ -235,7 +238,21 @@ The portable compiler checks only that `mergeInputs` matches the inbound edges,
 so the SDK checks the consumer's input type when the edge is created and the
 runtime validates the assembled array against the consumer's input schema.
 
-TypeScript `call()` and `.transform()` parity is future work.
+The TypeScript builder composes the same way. `g.call(id, child)` returns a
+`StepHandle<ChildInput, ChildOutput>`, so the existing contravariant edge
+typing rejects a mismatched child. Emission expands calls with the Python
+rules and ids: calls expand in code-unit order of their ids into
+`<call>--<child node>` steps that keep their own export and their workflow's
+defaults, the child needs one start successor and one end predecessor, and a
+merge into a call moves to the child's entry step. The equivalent workflows in
+`conformance/workflows/ts-composed` and `python-composed` emit the same graph
+projection (`conformance/fixtures/composition`). `path.transform(id, { output,
+run })` adds a named step whose input schema is the producer's output schema,
+so `run` is checked against the value on the path.
+
+TypeScript's `merge([...])` delivers a homogeneous array, like Python's
+`gather` of one output type; positional tuple merges and discriminated gathers
+of different types are Python-only.
 
 ## Execution Contracts In Authoring
 
