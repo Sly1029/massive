@@ -1192,24 +1192,33 @@ func TestExitHookRunsFromAnExitHandlerThatCannotFailTheWorkflow(t *testing.T) {
 		}
 	}
 
+	// Argo v3.7 substitutes {{workflow.failures}} as a JSON string literal.
+	quoted := func(failures string) string {
+		encoded, _ := json.Marshal(failures)
+		return string(encoded)
+	}
 	for _, test := range []struct {
 		status, failures string
 		want             string
 		node             *string
 	}{
-		{"Succeeded", "null", "succeeded", nil},
-		{"Failed", "null", "failed", nil},
-		{"Error", `[{"templateName":"workflow-entry","finishedAt":"2026-01-01T00:00:01Z"}]`, "failed", nil},
-		// The hook's own failure is not the run's failed node.
-		{"Failed", `[{"templateName":"exit-notify","finishedAt":"2026-01-01T00:00:01Z"},{"templateName":"` + argoFieldName("step-add_one") + `","finishedAt":"2026-01-01T00:00:02Z"}]`, "failed", pointer("add_one")},
+		{"Succeeded", quoted("null"), "succeeded", nil},
+		{"Failed", quoted("null"), "failed", nil},
+		{"Error", quoted(`[{"templateName":"workflow-entry","finishedAt":"2026-01-01T00:00:01Z"}]`), "failed", nil},
+		// Argo lists the failed main DAG too, and the hook's own failure is
+		// not the run's failed node; the earliest plan pod is.
+		{"Failed", quoted(`[{"templateName":"main","finishedAt":"2026-01-01T00:00:03Z"},{"templateName":"exit-notify","finishedAt":"2026-01-01T00:00:01Z"},{"templateName":"` + argoFieldName("step-add_one") + `","finishedAt":"2026-01-01T00:00:02Z"}]`), "failed", pointer("add_one")},
 	} {
 		status, node, err := ExitStatus(compiled.Plan, test.status, test.failures)
 		if err != nil || status != test.want || !reflect.DeepEqual(node, test.node) {
 			t.Fatalf("ExitStatus(%s, %s) = %s %v %v", test.status, test.failures, status, node, err)
 		}
 	}
+	if _, _, err := ExitStatus(compiled.Plan, "Failed", "[]"); err == nil {
+		t.Fatal("unquoted failures accepted")
+	}
 	for _, status := range []string{"Running", ""} {
-		if _, _, err := ExitStatus(compiled.Plan, status, "null"); err == nil {
+		if _, _, err := ExitStatus(compiled.Plan, status, `"null"`); err == nil {
 			t.Fatalf("status %q accepted", status)
 		}
 	}

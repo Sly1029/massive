@@ -934,12 +934,13 @@ class DecisionConformance(unittest.TestCase):
             messages,
         )
 
-    def outcomes(self, run: dict) -> list[dict]:
-        """Run outcomes the exit hook printed."""
+    def outcomes(self, run: dict, hook: str) -> list[dict]:
+        """Run outcomes the runtime logged as it invoked the exit hook."""
+        prefix = f"exit hook {hook} outcome "
         return [
-            json.loads(line.removeprefix("MASSIVE-OUTCOME "))
+            json.loads(line.removeprefix(prefix))
             for line in self.main_log(run).splitlines()
-            if line.startswith("MASSIVE-OUTCOME ")
+            if line.startswith(prefix)
         ]
 
     def test_exit_hook_runs_after_the_run_deadline(self) -> None:
@@ -947,7 +948,7 @@ class DecisionConformance(unittest.TestCase):
         self.assertEqual(run["status"]["phase"], "Failed")
         hooks = self.pods(run, "exit-report")
         self.assertEqual([node["phase"] for node in hooks], ["Succeeded"], hooks)
-        (outcome,) = self.outcomes(run)
+        (outcome,) = self.outcomes(run, "report")
         self.assertEqual(
             (outcome["run_id"], outcome["status"], outcome["failed_node"]),
             (run["metadata"]["uid"], "failed", "stall"),
@@ -958,9 +959,12 @@ class DecisionConformance(unittest.TestCase):
         run = self.completed("exit-hook")
         hooks = self.pods(run, "exit-notify")
         self.assertEqual([node["phase"] for node in hooks], ["Failed"], hooks)
-        (outcome,) = self.outcomes(run)
+        (outcome,) = self.outcomes(run, "notify")
         self.assertEqual(
             (outcome["status"], outcome["failed_node"]), ("succeeded", None)
+        )
+        self.assertIn(
+            "notification service unavailable for succeeded run", self.main_log(run)
         )
 
     def pods(self, run: dict, template: str) -> list[dict]:

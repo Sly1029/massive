@@ -175,6 +175,8 @@ func (command *RuntimeExitHookCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// The outcome holds no secrets; logging it shows operators what the hook saw.
+	fmt.Printf("exit hook %s outcome %s\n", command.Node, input)
 	_, descriptor, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
 	if err != nil {
 		return err
