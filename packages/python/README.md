@@ -282,6 +282,23 @@ succeed. A step calling `sys.exit()` is an ordinary, retried step failure. `ctx.
 current attempt, while `ctx.invocation.idempotency_key` stays the same across
 attempts so a retry can recognize side effects an earlier attempt committed.
 
+### Run deadline
+
+A per-attempt timeout bounds one step; a run deadline bounds the whole run,
+including retries, waits, and every map item:
+
+```python
+graph = GraphBuilder(..., defaults=defaults, deadline=timedelta(hours=6))
+```
+
+The deadline is part of the plan, so it applies on both targets and changes
+the plan hash. Locally it starts when execution begins: when it expires,
+running steps and map items are stopped as on cancellation and the run fails
+with the journal diagnostic `run exceeded its 21600-second deadline at node
+<id>`. On Argo it becomes the workflow's `activeDeadlineSeconds`, measured from
+the workflow's start, and Argo fails the workflow. A graph passed to `call()`
+cannot have its own deadline; set it on the calling graph.
+
 ## Exhaustive decisions
 
 Use a Pydantic discriminated union when a step chooses one of a finite set of

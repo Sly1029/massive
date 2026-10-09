@@ -610,7 +610,16 @@ publishes to its own attempt slot and keeps the same idempotency key.
 
 `timeoutSeconds` is enforced inside the runtime process rather than through
 `activeDeadlineSeconds`, so a timed-out attempt exits with 124 and stays
-retryable. Argo retries map items independently; the local orchestrator stops
+retryable.
+
+A plan's run deadline (`graph.deadlineSeconds`, from the WorkflowSpec's
+`workflow.deadlineSeconds`) is the only `activeDeadlineSeconds` Massive emits,
+on the WorkflowTemplate spec. Argo measures it from the workflow's start, stops
+running pods, and fails the workflow. It is plan data rather than deployment
+data because it changes what a run means (an unfinished run fails), so it must
+behave the same on the local target, where the orchestrator cancels execution
+through its ordinary cancellation path and records a failed journal naming the
+deadline. The live Argo gate stops a 600-second step with a 30-second deadline. Argo retries map items independently; the local orchestrator stops
 scheduling retries once any item fails terminally.
 
 

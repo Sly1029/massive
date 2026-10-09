@@ -32,7 +32,13 @@
       "properties": {
         "name": { "$ref": "#/$defs/id" },
         "inputSchema": { "$ref": "#/$defs/hashRef" },
-        "outputSchema": { "$ref": "#/$defs/hashRef" }
+        "outputSchema": { "$ref": "#/$defs/hashRef" },
+        "deadlineSeconds": {
+          "description": "Wall-clock limit for the whole run. Absent means no run deadline.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800
+        }
       }
     },
     "graph": { "$ref": "#/$defs/graph" },

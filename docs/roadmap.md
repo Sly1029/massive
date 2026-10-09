@@ -69,7 +69,8 @@ for what works today.
   SIGKILL still leaves the journal unterminated.
 - Per-task timeout, bounded retry with backoff, a non-retryable author signal,
   and per-attempt journal accounting are part of `ExecutionContract` and run on
-  both the local and Argo targets.
+  both the local and Argo targets. A whole-run deadline is part of the plan:
+  Argo's `activeDeadlineSeconds` and a cancelled, failed local run.
 - Persist bounded task logs and structured lifecycle events. Inspection is available
   in the shipped Go CLI; the Deno CLI has been removed.
 - Treat external side effects separately from immutable artifact publication:
@@ -100,8 +101,7 @@ Remaining work:
   (one Argo parameter of collected item envelopes).
 - A narrower credential binding for control pods; today one storage binding
   serves every pod.
-- A whole-run deadline and an exit hook that runs on success, failure, or
-  cancellation.
+- An exit hook that runs on success, failure, or cancellation.
 
 Reject unsupported requirements instead of silently weakening them. Schema
 validation and isolated runner tests do not replace a live cluster execution gate.

@@ -90,6 +90,16 @@ func (e *InvalidRunInputError) Error() string {
 	return fmt.Sprintf("invalid %s %q: %s", e.Field, e.Value, e.Message)
 }
 
+// RunDeadlineError is the cancellation cause when a plan's run deadline
+// expires. The run fails, as it does on Argo, rather than being cancelled.
+type RunDeadlineError struct {
+	Seconds uint32
+}
+
+func (e *RunDeadlineError) Error() string {
+	return fmt.Sprintf("run exceeded its %d-second deadline", e.Seconds)
+}
+
 type RunError struct {
 	Cause      error
 	StepID     string
