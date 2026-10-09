@@ -20,6 +20,8 @@ generated here.
 `tests/typecheck/` is checked by pyright and ty, not executed. Known-bad wiring
 in `rejected_wiring.py` carries one ignore per checker, and both unused-ignore
 rules are errors, so a line that stops failing breaks `pnpm check:fast`.
+Wiring that type-checks but fails at build stays in `authoring.py`, paired with
+a `test_fan_in.py` test that pins the build-time rejection.
 
 Hypothesis profiles live in `conftest.py`: `ci` (derandomized, run by
 `pnpm check`) and `nightly` (randomized, larger maps, cached example database in

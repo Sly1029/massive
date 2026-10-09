@@ -452,6 +452,18 @@ def test_transform_rejects_a_lambda_when_the_graph_is_built() -> None:
         path.transform(lambda context: Result(value=context.inputs.value))
 
 
+def test_transform_rejects_a_nested_function_when_the_graph_is_built() -> None:
+    def nested(context: StepContext[Request]) -> Result:
+        return Result(value=context.inputs.value)
+
+    graph = GraphBuilder(
+        name="nested-transform", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    path = graph.edge_from(graph.start)
+    with pytest.raises(TypeError, match="`def` at module level instead of a lambda, nested"):
+        path.transform(nested)
+
+
 def test_decision_source_must_produce_a_value() -> None:
     graph = GraphBuilder(
         name="start-route", input_type=Request, output_type=Result, defaults=_defaults()

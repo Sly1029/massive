@@ -217,6 +217,16 @@ list when the edge is created, and `emit()` rejects a step with several inbound
 edges that are not one fan-in. The graph start has exactly one successor, so
 fan out from a first step rather than from `graph.start`.
 
+Two fan-ins pass Pyright and ty but are rejected when the graph is built:
+
+- `graph.gather(base_step, sub_step)` with a model and its subclass. Handle
+  outputs are covariant, so a checker types the path as `list[Base]`, but the
+  sources produce two different models and the consumer must decode them
+  through a discriminated union.
+- `graph.merge(a, b).to_end(graph.end)` when the workflow output is the merged
+  tuple. The graph end accepts exactly one edge, so join the values in a step
+  that returns the workflow output.
+
 ## Reusable functions and execution settings
 
 Keep task functions in ordinary importable modules. A composition module registers

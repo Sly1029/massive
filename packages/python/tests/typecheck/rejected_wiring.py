@@ -138,3 +138,17 @@ graph.gather(lefts, rights).to(graph.add(only_lefts))  # pyright: ignore[reportA
 
 # And a gather of one model is not a list of a wider union.
 graph.gather(lefts, graph.add(left, id="more-lefts")).to(graph.add(sides))  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]
+
+
+def left_pair(context: StepContext[tuple[Left, Left]]) -> Answer:
+    return Answer(answer="")
+
+
+# A merge's arity is its consumer's tuple length.
+graph.merge(lefts, rights, graph.add(left, id="third-left")).to(graph.add(left_pair))  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]
+
+# A merge joins at least two sources; a single value is an ordinary edge.
+graph.merge(lefts)  # pyright: ignore[reportCallIssue] # ty: ignore[no-matching-overload]
+
+# merge is typed per position for at most eight sources.
+graph.merge(lefts, rights, lefts, rights, lefts, rights, lefts, rights, lefts)  # pyright: ignore[reportCallIssue] # ty: ignore[no-matching-overload]

@@ -593,8 +593,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         for source in sources:
             if source.graph_token is not self._graph_token:
                 raise ValueError("fan-in source belongs to a different graph")
-            # Case handles carry their decision's id, so they are not producers.
-            if source.node_id not in producers or isinstance(source, CaseHandle):
+            if source.node_id not in producers:
                 raise TypeError(
                     f"fan-in source {source.node_id!r} must be a step, map, select, or call"
                 )

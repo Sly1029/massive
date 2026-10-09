@@ -85,6 +85,34 @@ def any_sides(context: StepContext[list[AnySide]]) -> Value:
     return Value(value=context.inputs[0].value)
 
 
+class Base(BaseModel):
+    value: int
+
+
+class Sub(Base):
+    extra: int
+
+
+def left_value(context: StepContext[Left]) -> Value:
+    return Value(value=context.inputs.value)
+
+
+def right_value(context: StepContext[Right]) -> Value:
+    return Value(value=context.inputs.value)
+
+
+def to_base(context: StepContext[Value]) -> Base:
+    return Base(value=context.inputs.value)
+
+
+def to_sub(context: StepContext[Value]) -> Sub:
+    return Sub(value=context.inputs.value, extra=0)
+
+
+def bases(context: StepContext[list[Base]]) -> Value:
+    return Value(value=context.inputs[0].value)
+
+
 def items(context: StepContext[Value]) -> list[Value]:
     return [context.inputs]
 
@@ -305,3 +333,82 @@ def test_call_still_requires_an_incoming_edge() -> None:
     built.edge_from(called).to(built.add(identity, id="after"))
     with pytest.raises(ValueError, match="call 'child' must have an incoming edge"):
         emit(built)
+
+
+@pytest.mark.parametrize(
+    ("source_id", "join_id"),
+    # Calls expand in id order, so cover the consumer expanding before its source too.
+    [("a-source", "z-join"), ("z-source", "a-join")],
+)
+def test_a_call_consumes_a_merge_from_another_call_in_either_expansion_order(
+    source_id: str, join_id: str
+) -> None:
+    def build(*, inline: bool) -> GraphBuilder[Any, Value]:
+        built = graph()
+        split = built.add(identity, id="split")
+        sibling = built.add(identity, id="sibling")
+        built.edge_from(built.start).to(split).to(sibling)
+        if inline:
+            source = built.add(identity, id=f"{source_id}--identity")
+            join = built.add(pair, id=f"{join_id}--pair")
+        else:
+            source = built.call(
+                _child("source", Value, lambda g: g.edge_from(g.start).transform(identity)),
+                id=source_id,
+            )
+            join = built.call(
+                _child("join", tuple[Value, Value], lambda g: g.edge_from(g.start).transform(pair)),
+                id=join_id,
+            )
+        built.edge_from(split).to(source)
+        built.merge(source, sibling).to(join).to_end(built.end)
+        return built
+
+    composed = emit(build(inline=False))
+
+    assert composed == emit(build(inline=True))
+    assert nodes(composed)[f"{join_id}--pair"]["mergeInputs"] == [
+        f"{source_id}--identity",
+        "sibling",
+    ]
+
+
+def test_a_fan_in_cannot_join_different_cases_of_one_decision() -> None:
+    built = graph()
+    classified = built.add(classify)
+    built.edge_from(built.start).to(classified)
+    route = built.decision(classified, on="kind", id="route")
+    left = built.add(left_value)
+    right = built.add(right_value)
+    built.edge_from(route.case(Left)).to(left)
+    built.edge_from(route.case(Right)).to(right)
+    built.merge(left, right).transform(pair).to_end(built.end)
+
+    with pytest.raises(ValueError, match="'pair' requires incompatible cases of decision 'route'"):
+        emit(built)
+
+
+# The two cases below type-check but are rejected when the graph is built.
+
+
+def test_a_fan_in_into_a_tuple_workflow_output_is_rejected_when_built() -> None:
+    built = GraphBuilder(
+        name="tuple-output", input_type=Value, output_type=tuple[Value, Value], defaults=DEFAULTS
+    )
+    left, right = diamond(cast(Any, built))
+    path = built.merge(left, right)
+    with pytest.raises(TypeError, match="fan-in must target a step or call, not the graph end"):
+        path.to_end(built.end)
+
+
+def test_a_gather_of_a_model_and_its_subclass_is_rejected_when_built() -> None:
+    """Covariant outputs type the gather as list[Base]; the runtime sees two models."""
+    built = graph()
+    split = built.add(identity, id="split")
+    base = built.add(to_base)
+    sub = built.add(to_sub)
+    built.edge_from(built.start).to(split).to(base)
+    built.edge_from(split).to(sub)
+    path = built.gather(base, sub)
+    with pytest.raises(TypeError, match="must be a Pydantic discriminated union"):
+        path.to(built.add(bases))
