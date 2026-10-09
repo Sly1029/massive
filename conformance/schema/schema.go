@@ -48,3 +48,9 @@ var RunManifestSchemaJSON []byte
 //
 //go:embed environment-probe.schema.json
 var EnvironmentProbeSchemaJSON []byte
+
+// ValueReferenceSchemaJSON is the reference that replaces a large canonical
+// JSON value in a target scheduler parameter.
+//
+//go:embed value-reference.schema.json
+var ValueReferenceSchemaJSON []byte

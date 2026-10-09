@@ -94,7 +94,7 @@ PY
   --plan "$test_root/runtime-mount/massive-plan.json" \
   --bundle-dir "$test_root/runtime-mount" \
   --node add_one \
-  --input '{"value": 41}' \
+  --workflow-input '{"value": 41}' \
   --output "$test_root/remote-result.json" \
   --project argo/python-linear \
   --run-id isolated-wheel \

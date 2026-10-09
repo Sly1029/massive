@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -155,6 +156,44 @@ func (d *LocalDatastore) Get(ctx context.Context, key Key) (Object, error) {
 		Info: ObjectInfo{Key: key, Size: int64(len(body)), ContentType: contentType},
 		Body: body,
 	}, nil
+}
+
+func (d *LocalDatastore) Open(ctx context.Context, key Key) (io.ReadCloser, ObjectInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, ObjectInfo{}, fmt.Errorf("open %s: %w", key, err)
+	}
+	root, err := os.OpenRoot(d.root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ObjectInfo{}, fmt.Errorf("open %s: %w", key, ErrNotFound)
+		}
+		return nil, ObjectInfo{}, fmt.Errorf("open datastore root: %w", err)
+	}
+	defer root.Close()
+	target, err := d.pathForKey(key)
+	if err != nil {
+		return nil, ObjectInfo{}, err
+	}
+	file, err := root.Open(target)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ObjectInfo{}, fmt.Errorf("open %s: %w", key, ErrNotFound)
+		}
+		return nil, ObjectInfo{}, fmt.Errorf("open object %s: %w", key, err)
+	}
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = fmt.Errorf("object %s is not a regular file", key)
+	}
+	var contentType string
+	if err == nil {
+		contentType, err = d.readContentType(root, key)
+	}
+	if err != nil {
+		_ = file.Close()
+		return nil, ObjectInfo{}, err
+	}
+	return file, ObjectInfo{Key: key, Size: info.Size(), ContentType: contentType}, nil
 }
 
 func (d *LocalDatastore) Exists(ctx context.Context, key Key) (bool, error) {

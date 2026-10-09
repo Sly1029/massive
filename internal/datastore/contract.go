@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"sort"
 	"testing"
 )
@@ -32,6 +33,29 @@ func RunDatastoreContract(t *testing.T, factory func(t *testing.T) Datastore) {
 		}
 		if object.Info.ContentType != "text/plain" {
 			t.Fatalf("content type = %q, want text/plain", object.Info.ContentType)
+		}
+	})
+
+	t.Run("open reports size before the body", func(t *testing.T) {
+		store := factory(t)
+		key := MustKey("objects/open.json")
+		if _, err := store.Put(context.Background(), key, []byte(`{"open":true}`), PutOptions{ContentType: "application/json"}); err != nil {
+			t.Fatalf("put: %v", err)
+		}
+		reader, info, err := store.Open(context.Background(), key)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer reader.Close()
+		if info.Key != key || info.Size != 13 || info.ContentType != "application/json" {
+			t.Fatalf("open info = %#v", info)
+		}
+		body, err := io.ReadAll(reader)
+		if err != nil || string(body) != `{"open":true}` {
+			t.Fatalf("open body = %q, %v", body, err)
+		}
+		if _, _, err := store.Open(context.Background(), MustKey("objects/missing.json")); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("open missing error = %v, want ErrNotFound", err)
 		}
 	})
 

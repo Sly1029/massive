@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -103,6 +104,9 @@ type Object struct {
 type Datastore interface {
 	Put(ctx context.Context, key Key, body []byte, options PutOptions) (ObjectInfo, error)
 	Get(ctx context.Context, key Key) (Object, error)
+	// Open returns the object's declared size and content type before any body
+	// byte is read, so callers can bound a read by an expected size.
+	Open(ctx context.Context, key Key) (io.ReadCloser, ObjectInfo, error)
 	Exists(ctx context.Context, key Key) (bool, error)
 	List(ctx context.Context, prefix Key) ([]ObjectInfo, error)
 }

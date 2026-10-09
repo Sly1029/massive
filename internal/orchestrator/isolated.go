@@ -119,7 +119,7 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	if !ValidSafePathSegment(config.RunID) {
 		return nil, &InvalidRunInputError{Field: "run id", Value: config.RunID, Message: "must be a safe path segment"}
 	}
-	store, err := openInvocationDatastore(ctx, config.Datastore)
+	store, err := OpenDatastore(ctx, config.Datastore)
 	if err != nil {
 		return nil, fmt.Errorf("open isolated datastore: %w", err)
 	}
@@ -241,7 +241,7 @@ type PublishedSourceArchive struct {
 // keys for object-store-v0 pods. Publication is idempotent; an object with
 // different bytes at the key is a conflict and is never overwritten.
 func PublishSourceArchives(ctx context.Context, descriptor DatastoreDescriptor, archives map[string][]byte) ([]PublishedSourceArchive, error) {
-	store, err := openInvocationDatastore(ctx, descriptor)
+	store, err := OpenDatastore(ctx, descriptor)
 	if err != nil {
 		return nil, fmt.Errorf("open publication datastore: %w", err)
 	}

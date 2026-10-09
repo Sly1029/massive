@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://massive.dev/conformance/schema/value-reference.schema.json",
+  "title": "Massive JSON value reference",
+  "description": "Stands in for a canonical JSON value in a target scheduler parameter. The value's canonical JSON bytes are stored at blobs/sha256/<hex of hash> with content type application/json; hash and size cover exactly those bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hash", "size"],
+  "properties": {
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "size": { "type": "integer", "minimum": 1, "maximum": 268435456 }
+  }
+}

@@ -57,7 +57,9 @@ func ParseDatastoreDescriptor(data []byte) (DatastoreDescriptor, error) {
 	return remote, nil
 }
 
-func openInvocationDatastore(ctx context.Context, descriptor DatastoreDescriptor) (datastore.Datastore, error) {
+// OpenDatastore opens the store named by a parsed credential-free descriptor;
+// S3 credentials come from the process environment or workload identity.
+func OpenDatastore(ctx context.Context, descriptor DatastoreDescriptor) (datastore.Datastore, error) {
 	switch value := descriptor.(type) {
 	case LocalDatastoreDescriptor:
 		return datastore.NewLocalDatastore(datastore.LocalConfig{Root: value.Path})

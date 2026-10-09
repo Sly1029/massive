@@ -333,7 +333,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 	}
 	sort.Slice(executableNodes, func(i, j int) bool { return executableNodes[i].GetId() < executableNodes[j].GetId() })
 	taskNames := make(map[string]string, len(executableNodes))
-	occupiedNames := map[string]bool{}
+	occupiedNames := map[string]bool{entryTaskName: true}
 	for _, node := range executableNodes {
 		name := argoFieldName(node.GetId())
 		if occupiedNames[name] {
@@ -381,15 +381,33 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		for index, dependency := range deps {
 			argoDependencies[index] = taskNames[dependency]
 		}
-		var inputExpression string
+		var inputParameters []taskParameter
 		var err error
 		if node.GetKind() == "select" {
-			inputExpression, err = argoSelectExpression(node, executableNodes, taskNames)
+			var expression string
+			expression, err = argoSelectExpression(node, executableNodes, taskNames)
+			inputParameters = []taskParameter{{Name: "input", Value: expression, Flag: "--input"}}
 		} else {
-			inputExpression, err = argoInputExpression(node, inbound[node.GetId()], g.GetStartNode(), taskNames)
+			inputParameters, err = argoInputParameters(node, inbound[node.GetId()], g.GetStartNode(), taskNames)
 		}
 		if err != nil {
 			return nil, "", err
+		}
+		// A submitted workflow input is normalized once by an entry task before
+		// a decision or map consumes it, so those control tasks only read.
+		if (node.GetKind() == "decision" || node.GetKind() == "map") && inputParameters[0].Flag == "--workflow-input" {
+			inputParameters = []taskParameter{{Name: "input", Value: "{{tasks." + entryTaskName + ".outputs.parameters.result}}", Flag: "--input"}}
+			argoDependencies = append(argoDependencies, entryTaskName)
+			tasks = append(tasks, map[string]any{
+				"name": entryTaskName, "template": entryTaskName,
+				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{workflow.parameters.input}}"}}},
+			})
+			entryTemplate, err := runtimePodTemplate(entryTaskName, node.GetId(), env, &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef}, runtimeName, &d.Profile.Target, []string{"input"},
+				[]string{"runtime", "entry", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath})
+			if err != nil {
+				return nil, "", err
+			}
+			templates = append(templates, entryTemplate)
 		}
 		templateName := argoFieldName("step-" + node.GetId())
 		if node.GetKind() == "map" {
@@ -397,7 +415,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		}
 		task := map[string]any{
 			"name": taskNames[node.GetId()], "template": templateName,
-			"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": inputExpression}}},
+			"arguments": map[string]any{"parameters": argumentParameters(inputParameters)},
 		}
 		if len(argoDependencies) > 0 {
 			readiness := make([]string, 0, len(argoDependencies)+1)
@@ -433,8 +451,8 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		}
 		tasks = append(tasks, task)
 		if control {
-			controlTemplate, err := runtimePodTemplate(templateName, node.GetId(), env, contract, runtimeName, nil,
-				[]string{"runtime", "control", "--plan", "/var/run/massive/massive-plan.json", "--node=" + node.GetId(), "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"})
+			controlTemplate, err := runtimePodTemplate(templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target, []string{"input"},
+				[]string{"runtime", "control", "--plan", "/var/run/massive/massive-plan.json", "--node=" + node.GetId(), "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath})
 			if err != nil {
 				return nil, "", err
 			}
@@ -454,17 +472,15 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 			continue
 		}
 		stepTemplate, err := runtimePodTemplate(
-			templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target,
+			templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target, parameterNames(inputParameters),
 			slices.Concat([]string{
 				"runtime", "step",
 				"--plan", "/var/run/massive/massive-plan.json",
-			}, sourceArgs, []string{
-				"--node=" + node.GetId(),
-				"--input={{inputs.parameters.input}}",
+			}, sourceArgs, []string{"--node=" + node.GetId()}, stepInputArgs(inputParameters), []string{
 				"--output", "/tmp/massive/result.json",
 				"--project", "argo/" + name,
 				"--run-id", "{{workflow.uid}}",
-				"--datastore-config", "/var/run/massive-datastore/datastore.json",
+				"--datastore-config", datastoreConfigPath,
 			}, retryArgs(contract)),
 		)
 		if err != nil {
@@ -528,14 +544,14 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	controlContract := &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef}
 
 	expandTemplate, err := runtimePodTemplate(
-		expandName, node.GetId(), env, controlContract, runtimeName, nil,
-		[]string{"runtime", "map", "expand", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
+		expandName, node.GetId(), env, controlContract, runtimeName, storage, []string{"input"},
+		[]string{"runtime", "map", "expand", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath},
 	)
 	if err != nil {
 		return nil, err
 	}
 	itemTemplate, err := runtimePodTemplate(
-		itemName, node.GetId(), env, contract, runtimeName, storage,
+		itemName, node.GetId(), env, contract, runtimeName, storage, []string{"input"},
 		slices.Concat([]string{
 			"runtime", "map", "item",
 			"--plan", "/var/run/massive/massive-plan.json",
@@ -545,7 +561,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 			"--output", "/tmp/massive/result.json",
 			"--project", "argo/" + workflowName,
 			"--run-id", "{{workflow.uid}}",
-			"--datastore-config", "/var/run/massive-datastore/datastore.json",
+			"--datastore-config", datastoreConfigPath,
 		}, retryArgs(contract)),
 	)
 	if err != nil {
@@ -553,8 +569,8 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	}
 	applyRetryStrategy(itemTemplate, contract)
 	collectTemplate, err := runtimePodTemplate(
-		collectName, node.GetId(), env, controlContract, runtimeName, nil,
-		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json"},
+		collectName, node.GetId(), env, controlContract, runtimeName, storage, []string{"input"},
+		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath},
 	)
 	if err != nil {
 		return nil, err
@@ -588,7 +604,15 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 
 var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName string, storage *deployment.Target, args []string) (map[string]any, error) {
+// entryTaskName names the task that normalizes a workflow input for a control
+// task; node-derived names must not collide with it.
+const entryTaskName = "workflow-entry"
+
+// datastoreConfigPath is where every runtime pod mounts the shared datastore
+// descriptor. Control pods use it only to resolve and publish value references.
+const datastoreConfigPath = "/var/run/massive-datastore/datastore.json"
+
+func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName string, storage *deployment.Target, inputNames []string, args []string) (map[string]any, error) {
 	if env.GetContainer().GetImage() == "" {
 		return nil, fmt.Errorf("argo target: executable node %q requires an immutable container requirement", nodeID)
 	}
@@ -652,9 +676,13 @@ func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement,
 		}
 		container["resources"] = map[string]any{"requests": quantities, "limits": quantities}
 	}
+	inputs := make([]any, len(inputNames))
+	for index, input := range inputNames {
+		inputs[index] = map[string]any{"name": input}
+	}
 	template := map[string]any{
 		"name":   name,
-		"inputs": map[string]any{"parameters": []any{map[string]any{"name": "input"}}},
+		"inputs": map[string]any{"parameters": inputs},
 		"outputs": map[string]any{"parameters": []any{map[string]any{
 			"name": "result", "valueFrom": map[string]any{"path": "/tmp/massive/result.json"},
 		}}},
@@ -680,21 +708,57 @@ func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement,
 	return template, nil
 }
 
-func argoInputExpression(step *planpb.GraphNode, inbound []string, startNode string, taskNames map[string]string) (string, error) {
+// taskParameter binds one task argument to the runtime flag that receives it.
+type taskParameter struct {
+	Name, Value, Flag string
+}
+
+// argoInputParameters binds a node's task arguments. A merge step receives one
+// parameter per source in mergeInputs order rather than a concatenated JSON
+// array, because a source may be a value reference, which is not JSON text.
+// A workflow input is inline JSON that the runtime normalizes on entry.
+func argoInputParameters(step *planpb.GraphNode, inbound []string, startNode string, taskNames map[string]string) ([]taskParameter, error) {
 	if len(step.GetMergeInputs()) > 0 {
-		parts := make([]string, 0, len(step.GetMergeInputs()))
-		for _, source := range step.GetMergeInputs() {
-			parts = append(parts, "{{tasks."+taskNames[source]+".outputs.parameters.result}}")
+		parameters := make([]taskParameter, 0, len(step.GetMergeInputs()))
+		for index, source := range step.GetMergeInputs() {
+			parameters = append(parameters, taskParameter{
+				Name: fmt.Sprintf("input-%d", index), Value: "{{tasks." + taskNames[source] + ".outputs.parameters.result}}", Flag: "--merge-input",
+			})
 		}
-		return "[" + strings.Join(parts, ",") + "]", nil
+		return parameters, nil
 	}
 	if len(inbound) != 1 {
-		return "", fmt.Errorf("argo target: step %q requires exactly one input source", step.GetId())
+		return nil, fmt.Errorf("argo target: step %q requires exactly one input source", step.GetId())
 	}
 	if inbound[0] == startNode {
-		return "{{workflow.parameters.input}}", nil
+		return []taskParameter{{Name: "input", Value: "{{workflow.parameters.input}}", Flag: "--workflow-input"}}, nil
 	}
-	return "{{tasks." + taskNames[inbound[0]] + ".outputs.parameters.result}}", nil
+	return []taskParameter{{Name: "input", Value: "{{tasks." + taskNames[inbound[0]] + ".outputs.parameters.result}}", Flag: "--input"}}, nil
+}
+
+func argumentParameters(parameters []taskParameter) []any {
+	arguments := make([]any, len(parameters))
+	for index, parameter := range parameters {
+		arguments[index] = map[string]any{"name": parameter.Name, "value": parameter.Value}
+	}
+	return arguments
+}
+
+func parameterNames(parameters []taskParameter) []string {
+	names := make([]string, len(parameters))
+	for index, parameter := range parameters {
+		names[index] = parameter.Name
+	}
+	return names
+}
+
+// stepInputArgs passes each bound task parameter to its runtime flag in order.
+func stepInputArgs(parameters []taskParameter) []string {
+	args := make([]string, len(parameters))
+	for index, parameter := range parameters {
+		args[index] = parameter.Flag + "={{inputs.parameters." + parameter.Name + "}}"
+	}
+	return args
 }
 
 // argoFieldName projects the broader proto node-id space onto names accepted

@@ -12,6 +12,16 @@ in other languages should target RFC 8785 conformance rather than
 reverse-engineering ECMAScript behavior; the rules spelled out below are the
 JCS behaviors most often gotten wrong, and the golden vector exercises them.
 
+## Value references
+
+A JSON value carried by reference in a target scheduler parameter is identified
+by `sha256:<hex>` of its canonical JSON bytes, exactly the digest artifact
+manifests record for the same value, plus its byte `size`. The body lives at
+`blobs/sha256/<hex>` with content type `application/json`. Carrying a value by
+reference never changes its hash. See
+[value parameters](../../docs/spec/argo-backend.md#value-parameters) and
+`conformance/fixtures/value-parameters/vectors.json`.
+
 ## Canonical Field Tree
 
 Hash inputs are JSON-compatible field trees: `null`, booleans, finite JSON

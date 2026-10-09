@@ -1,0 +1,1134 @@
+{
+  "description": "Argo value-parameter vectors. Between tasks a value has exactly one spelling: canonical JSON when its canonical body is at most inlineLimit bytes, otherwise '@' followed by the canonical JSON reference to blobs/sha256/<hex>. Workflow inputs are inline JSON only and are canonicalized at the entry. Map item results use itemInlineLimit and an indexed envelope with value or ref. Hashes are SHA-256 over canonical JSON bytes, computed independently of the Go implementation.",
+  "inlineLimit": 4096,
+  "itemInlineLimit": 100,
+  "maxValueBytes": 268435456,
+  "cases": [
+    {
+      "name": "small object is inline",
+      "kind": "standalone",
+      "value": {
+        "z": [
+          1,
+          2,
+          {
+            "b": true,
+            "a": null
+          }
+        ],
+        "a": "x"
+      },
+      "parameter": "{\"a\":\"x\",\"z\":[1,2,{\"a\":null,\"b\":true}]}"
+    },
+    {
+      "name": "string whose canonical body is exactly the inline limit",
+      "kind": "standalone",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "parameter": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""
+    },
+    {
+      "name": "string one byte above the inline limit is referenced",
+      "kind": "standalone",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "parameter": "@{\"hash\":\"sha256:32a5413b832014b6d6619032d9a8fef17ffca11d3247090050ea89faf459c9ef\",\"size\":4097}"
+    },
+    {
+      "name": "records above the inline limit are referenced",
+      "kind": "standalone",
+      "value": [
+        {
+          "id": 0,
+          "path": "rules/0000.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 1,
+          "path": "rules/0001.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 2,
+          "path": "rules/0002.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 3,
+          "path": "rules/0003.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 4,
+          "path": "rules/0004.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 5,
+          "path": "rules/0005.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 6,
+          "path": "rules/0006.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 7,
+          "path": "rules/0007.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 8,
+          "path": "rules/0008.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 9,
+          "path": "rules/0009.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 10,
+          "path": "rules/0010.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 11,
+          "path": "rules/0011.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 12,
+          "path": "rules/0012.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 13,
+          "path": "rules/0013.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 14,
+          "path": "rules/0014.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 15,
+          "path": "rules/0015.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 16,
+          "path": "rules/0016.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 17,
+          "path": "rules/0017.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 18,
+          "path": "rules/0018.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 19,
+          "path": "rules/0019.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 20,
+          "path": "rules/0020.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 21,
+          "path": "rules/0021.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 22,
+          "path": "rules/0022.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 23,
+          "path": "rules/0023.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 24,
+          "path": "rules/0024.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 25,
+          "path": "rules/0025.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 26,
+          "path": "rules/0026.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 27,
+          "path": "rules/0027.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 28,
+          "path": "rules/0028.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 29,
+          "path": "rules/0029.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 30,
+          "path": "rules/0030.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 31,
+          "path": "rules/0031.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 32,
+          "path": "rules/0032.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 33,
+          "path": "rules/0033.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 34,
+          "path": "rules/0034.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 35,
+          "path": "rules/0035.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 36,
+          "path": "rules/0036.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 37,
+          "path": "rules/0037.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 38,
+          "path": "rules/0038.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 39,
+          "path": "rules/0039.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 40,
+          "path": "rules/0040.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 41,
+          "path": "rules/0041.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 42,
+          "path": "rules/0042.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 43,
+          "path": "rules/0043.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 44,
+          "path": "rules/0044.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 45,
+          "path": "rules/0045.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 46,
+          "path": "rules/0046.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 47,
+          "path": "rules/0047.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 48,
+          "path": "rules/0048.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 49,
+          "path": "rules/0049.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 50,
+          "path": "rules/0050.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 51,
+          "path": "rules/0051.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 52,
+          "path": "rules/0052.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 53,
+          "path": "rules/0053.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 54,
+          "path": "rules/0054.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 55,
+          "path": "rules/0055.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 56,
+          "path": "rules/0056.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 57,
+          "path": "rules/0057.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 58,
+          "path": "rules/0058.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 59,
+          "path": "rules/0059.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 60,
+          "path": "rules/0060.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 61,
+          "path": "rules/0061.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 62,
+          "path": "rules/0062.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 63,
+          "path": "rules/0063.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 64,
+          "path": "rules/0064.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 65,
+          "path": "rules/0065.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 66,
+          "path": "rules/0066.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 67,
+          "path": "rules/0067.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 68,
+          "path": "rules/0068.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 69,
+          "path": "rules/0069.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 70,
+          "path": "rules/0070.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 71,
+          "path": "rules/0071.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 72,
+          "path": "rules/0072.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 73,
+          "path": "rules/0073.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 74,
+          "path": "rules/0074.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 75,
+          "path": "rules/0075.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 76,
+          "path": "rules/0076.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 77,
+          "path": "rules/0077.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 78,
+          "path": "rules/0078.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 79,
+          "path": "rules/0079.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 80,
+          "path": "rules/0080.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 81,
+          "path": "rules/0081.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 82,
+          "path": "rules/0082.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 83,
+          "path": "rules/0083.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 84,
+          "path": "rules/0084.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 85,
+          "path": "rules/0085.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 86,
+          "path": "rules/0086.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 87,
+          "path": "rules/0087.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 88,
+          "path": "rules/0088.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 89,
+          "path": "rules/0089.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 90,
+          "path": "rules/0090.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 91,
+          "path": "rules/0091.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 92,
+          "path": "rules/0092.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 93,
+          "path": "rules/0093.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 94,
+          "path": "rules/0094.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 95,
+          "path": "rules/0095.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 96,
+          "path": "rules/0096.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 97,
+          "path": "rules/0097.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 98,
+          "path": "rules/0098.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 99,
+          "path": "rules/0099.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 100,
+          "path": "rules/0100.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 101,
+          "path": "rules/0101.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 102,
+          "path": "rules/0102.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 103,
+          "path": "rules/0103.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 104,
+          "path": "rules/0104.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 105,
+          "path": "rules/0105.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 106,
+          "path": "rules/0106.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 107,
+          "path": "rules/0107.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 108,
+          "path": "rules/0108.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 109,
+          "path": "rules/0109.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 110,
+          "path": "rules/0110.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 111,
+          "path": "rules/0111.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 112,
+          "path": "rules/0112.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 113,
+          "path": "rules/0113.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 114,
+          "path": "rules/0114.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 115,
+          "path": "rules/0115.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 116,
+          "path": "rules/0116.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 117,
+          "path": "rules/0117.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 118,
+          "path": "rules/0118.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 119,
+          "path": "rules/0119.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 120,
+          "path": "rules/0120.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 121,
+          "path": "rules/0121.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 122,
+          "path": "rules/0122.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 123,
+          "path": "rules/0123.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 124,
+          "path": "rules/0124.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 125,
+          "path": "rules/0125.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 126,
+          "path": "rules/0126.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 127,
+          "path": "rules/0127.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 128,
+          "path": "rules/0128.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 129,
+          "path": "rules/0129.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 130,
+          "path": "rules/0130.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 131,
+          "path": "rules/0131.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 132,
+          "path": "rules/0132.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 133,
+          "path": "rules/0133.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 134,
+          "path": "rules/0134.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 135,
+          "path": "rules/0135.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 136,
+          "path": "rules/0136.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 137,
+          "path": "rules/0137.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 138,
+          "path": "rules/0138.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 139,
+          "path": "rules/0139.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 140,
+          "path": "rules/0140.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 141,
+          "path": "rules/0141.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 142,
+          "path": "rules/0142.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 143,
+          "path": "rules/0143.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 144,
+          "path": "rules/0144.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 145,
+          "path": "rules/0145.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 146,
+          "path": "rules/0146.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 147,
+          "path": "rules/0147.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 148,
+          "path": "rules/0148.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 149,
+          "path": "rules/0149.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 150,
+          "path": "rules/0150.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 151,
+          "path": "rules/0151.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 152,
+          "path": "rules/0152.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 153,
+          "path": "rules/0153.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 154,
+          "path": "rules/0154.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 155,
+          "path": "rules/0155.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 156,
+          "path": "rules/0156.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 157,
+          "path": "rules/0157.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 158,
+          "path": "rules/0158.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 159,
+          "path": "rules/0159.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 160,
+          "path": "rules/0160.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 161,
+          "path": "rules/0161.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 162,
+          "path": "rules/0162.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 163,
+          "path": "rules/0163.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 164,
+          "path": "rules/0164.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 165,
+          "path": "rules/0165.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 166,
+          "path": "rules/0166.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 167,
+          "path": "rules/0167.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 168,
+          "path": "rules/0168.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 169,
+          "path": "rules/0169.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 170,
+          "path": "rules/0170.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 171,
+          "path": "rules/0171.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 172,
+          "path": "rules/0172.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 173,
+          "path": "rules/0173.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 174,
+          "path": "rules/0174.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 175,
+          "path": "rules/0175.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 176,
+          "path": "rules/0176.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 177,
+          "path": "rules/0177.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 178,
+          "path": "rules/0178.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 179,
+          "path": "rules/0179.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 180,
+          "path": "rules/0180.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 181,
+          "path": "rules/0181.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 182,
+          "path": "rules/0182.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 183,
+          "path": "rules/0183.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 184,
+          "path": "rules/0184.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 185,
+          "path": "rules/0185.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 186,
+          "path": "rules/0186.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 187,
+          "path": "rules/0187.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 188,
+          "path": "rules/0188.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 189,
+          "path": "rules/0189.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 190,
+          "path": "rules/0190.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 191,
+          "path": "rules/0191.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 192,
+          "path": "rules/0192.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 193,
+          "path": "rules/0193.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 194,
+          "path": "rules/0194.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 195,
+          "path": "rules/0195.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 196,
+          "path": "rules/0196.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 197,
+          "path": "rules/0197.yaml",
+          "severity": "high"
+        },
+        {
+          "id": 198,
+          "path": "rules/0198.yaml",
+          "severity": "low"
+        },
+        {
+          "id": 199,
+          "path": "rules/0199.yaml",
+          "severity": "high"
+        }
+      ],
+      "parameter": "@{\"hash\":\"sha256:daad801d2b360be4243e235225a79f23d2dfe120be838382b6f8fab2b24d7381\",\"size\":10591}"
+    },
+    {
+      "name": "a workflow input is normalized to canonical JSON",
+      "kind": "workflow-entry",
+      "input": "{ \"z\": [1, 2], \"a\": \"x\" }",
+      "value": {
+        "z": [
+          1,
+          2
+        ],
+        "a": "x"
+      }
+    },
+    {
+      "name": "a large workflow input is accepted inline",
+      "kind": "workflow-entry",
+      "input": "{\"data\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}",
+      "value": {
+        "data": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "name": "item result at the item inline limit stays inline",
+      "kind": "item-result",
+      "index": 0,
+      "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "envelope": "{\"index\":0,\"value\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+    },
+    {
+      "name": "item result above the item inline limit is referenced",
+      "kind": "item-result",
+      "index": 7,
+      "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "envelope": "{\"index\":7,\"ref\":{\"hash\":\"sha256:1332b7368ff9e00f0a32fcbbe911d7e4114ab386d8ba7b319ac363cc3c94d90d\",\"size\":101}}"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "leading whitespace",
+      "context": "standalone",
+      "parameter": " {\"a\":1}"
+    },
+    {
+      "name": "reordered keys",
+      "context": "standalone",
+      "parameter": "{\"b\":1,\"a\":2}"
+    },
+    {
+      "name": "duplicate keys",
+      "context": "standalone",
+      "parameter": "{\"a\":1,\"a\":1}"
+    },
+    {
+      "name": "inline value above the inline limit",
+      "context": "standalone",
+      "parameter": "\"ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\""
+    },
+    {
+      "name": "reference to a body small enough to be inline",
+      "context": "standalone",
+      "parameter": "@{\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"size\":4096}"
+    },
+    {
+      "name": "non-canonical reference",
+      "context": "standalone",
+      "parameter": "@{\"size\":5000,\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"}"
+    },
+    {
+      "name": "reference with short hash",
+      "context": "standalone",
+      "parameter": "@{\"hash\":\"sha256:abc\",\"size\":5000}"
+    },
+    {
+      "name": "reference with an unknown field",
+      "context": "standalone",
+      "parameter": "@{\"extra\":1,\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"size\":5000}"
+    },
+    {
+      "name": "reference above the value size limit",
+      "context": "standalone",
+      "parameter": "@{\"hash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"size\":268435457}"
+    },
+    {
+      "name": "text that is neither JSON nor a reference",
+      "context": "standalone",
+      "parameter": "not json"
+    },
+    {
+      "name": "reference as a workflow input",
+      "context": "workflow-entry",
+      "parameter": "@{\"hash\":\"sha256:28088a7623c7ba63d8c7b5f8c7cd830a968d4e866b431dedda5533e6383b2d3d\",\"size\":5002}"
+    }
+  ]
+}

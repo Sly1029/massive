@@ -29,3 +29,7 @@ Invocation descriptors are current-only v3/json-v3. Channel fields are absent,
 including empty arrays; validate and reject them before user code runs. The
 materialization container selection is a plain field: preserve its proto-JSON
 projection and identity when changing generated implementation types.
+
+Value-parameter vectors in `fixtures/value-parameters` carry hashes computed
+outside the Go implementation. Recompute them independently when changing the
+inline limits or encoding; never copy the implementation's output into them.

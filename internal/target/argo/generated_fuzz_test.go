@@ -24,6 +24,8 @@ func FuzzGeneratedPlanLowering(f *testing.F) {
 	f.Add([]byte{0, 3, 2, 1, 5, 2, 1, 1, 4, 1, 2}, false)
 	f.Add([]byte{1, 2, 5, 3, 0, 1, 2, 1, 6, 1, 3, 3, 1, 2, 2, 0, 1}, false)
 	f.Add([]byte{2, 1, 6, 30, 0, 3, 4, 2, 2, 1, 1, 5, 0, 1, 1, 3, 2, 0}, true)
+	// A fan-in step: each merge source is its own task parameter.
+	f.Add([]byte{1, 0, 7, 5, 2, 2, 1, 7, 5, 0, 0, 1, 5, 4, 5, 2}, false)
 	f.Fuzz(func(t *testing.T, data []byte, collide bool) {
 		if len(data) > 512 {
 			t.Skip()
@@ -114,7 +116,8 @@ func collideTaskNames(p *planpb.WorkflowPlan) {
 // generatedNameCollision returns a task or template name that two plan
 // nodes would share after projection onto Kubernetes names.
 func generatedNameCollision(p *planpb.WorkflowPlan) string {
-	tasks, templates := map[string]bool{}, map[string]bool{"main": true}
+	// The workflow-entry task and template name is reserved for lowering.
+	tasks, templates := map[string]bool{entryTaskName: true}, map[string]bool{"main": true, entryTaskName: true}
 	for _, node := range p.Graph.Nodes {
 		names := []string{}
 		switch node.GetKind() {
@@ -167,6 +170,7 @@ func checkLoweredDAG(t *testing.T, p *planpb.WorkflowPlan, templates []any) {
 		templateByName[template["name"].(string)] = template
 	}
 	executable := 0
+	entered := false
 	for _, node := range graph.GetNodes() {
 		if node.GetKind() == "start" || node.GetKind() == "end" {
 			continue
@@ -177,6 +181,10 @@ func checkLoweredDAG(t *testing.T, p *planpb.WorkflowPlan, templates []any) {
 		if task == nil {
 			t.Fatalf("node %q has no task %q", node.GetId(), name)
 		}
+		// A decision or map fed by the workflow input reads it through the
+		// workflow-entry task, which normalizes it once; a step normalizes its own.
+		fromStart := inbound[node.GetId()][0].GetFrom() == graph.GetStartNode()
+		throughEntry := fromStart && (node.GetKind() == "decision" || node.GetKind() == "map")
 		sources := []string{}
 		var caseEdge *planpb.GraphEdge
 		for _, edge := range inbound[node.GetId()] {
@@ -186,6 +194,10 @@ func checkLoweredDAG(t *testing.T, p *planpb.WorkflowPlan, templates []any) {
 			if edge.GetCase() != "" {
 				caseEdge = edge
 			}
+		}
+		if throughEntry {
+			entered = true
+			sources = append(sources, entryTaskName)
 		}
 		checkDepends(t, node, task, sources)
 
@@ -202,23 +214,40 @@ func checkLoweredDAG(t *testing.T, p *planpb.WorkflowPlan, templates []any) {
 			}
 		}
 
-		input := task["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"].(string)
+		parameters := task["arguments"].(map[string]any)["parameters"].([]any)
+		input := parameters[0].(map[string]any)["value"].(string)
+		var stepArgs []any
+		if node.GetKind() == "step" {
+			stepArgs = templateByName[argoFieldName("step-"+node.GetId())]["container"].(map[string]any)["args"].([]any)
+		}
 		switch {
 		case node.GetKind() == "select":
 			if !strings.HasPrefix(input, "{{=") {
 				t.Fatalf("select %s input %q is not lazy", name, input)
 			}
 		case len(node.GetMergeInputs()) > 0:
-			parts := make([]string, 0, len(node.GetMergeInputs()))
-			for _, source := range node.GetMergeInputs() {
-				parts = append(parts, "{{tasks."+argoFieldName(source)+".outputs.parameters.result}}")
+			// One parameter per source: a value reference is not JSON text, so
+			// sources are never concatenated into an array expression.
+			if len(parameters) != len(node.GetMergeInputs()) {
+				t.Fatalf("merge %s has %d parameters for %d sources", name, len(parameters), len(node.GetMergeInputs()))
 			}
-			if want := "[" + strings.Join(parts, ",") + "]"; input != want {
-				t.Fatalf("merge %s input = %q, want %q", name, input, want)
+			for index, source := range node.GetMergeInputs() {
+				parameter := fmt.Sprintf("input-%d", index)
+				want := map[string]any{"name": parameter, "value": "{{tasks." + argoFieldName(source) + ".outputs.parameters.result}}"}
+				if got := parameters[index].(map[string]any); got["name"] != want["name"] || got["value"] != want["value"] {
+					t.Fatalf("merge %s parameter %d = %v, want %v", name, index, got, want)
+				}
+				if !containsArgs(stepArgs, "--merge-input={{inputs.parameters."+parameter+"}}") {
+					t.Fatalf("merge %s args %v lack source %d", name, stepArgs, index)
+				}
 			}
-		case inbound[node.GetId()][0].GetFrom() == graph.GetStartNode():
-			if input != "{{workflow.parameters.input}}" {
-				t.Fatalf("entry %s input = %q", name, input)
+		case throughEntry:
+			if input != "{{tasks."+entryTaskName+".outputs.parameters.result}}" {
+				t.Fatalf("%s input %q does not come from %s", name, input, entryTaskName)
+			}
+		case fromStart:
+			if input != "{{workflow.parameters.input}}" || (stepArgs != nil && !containsArgs(stepArgs, "--workflow-input={{inputs.parameters.input}}")) {
+				t.Fatalf("first task %s input = %q, args %v", name, input, stepArgs)
 			}
 		default:
 			if want := "{{tasks." + argoFieldName(inbound[node.GetId()][0].GetFrom()) + ".outputs.parameters.result}}"; input != want {
@@ -235,6 +264,15 @@ func checkLoweredDAG(t *testing.T, p *planpb.WorkflowPlan, templates []any) {
 		if node.GetKind() == "step" {
 			checkRetry(t, p, node, templateByName[argoFieldName("step-"+node.GetId())])
 		}
+	}
+	if entered {
+		executable++
+		entry := tasks[entryTaskName]
+		if entry == nil || entry["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"] != "{{workflow.parameters.input}}" {
+			t.Fatalf("%s task = %v", entryTaskName, entry)
+		}
+	} else if tasks[entryTaskName] != nil {
+		t.Fatalf("%s task without a control consumer", entryTaskName)
 	}
 	if len(tasks) != executable {
 		t.Fatalf("DAG has %d tasks for %d executable nodes", len(tasks), executable)
