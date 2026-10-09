@@ -74,7 +74,8 @@ for what works today.
   an item's exception, timeout, `NonRetryableError`, or death by signal (an
   out-of-memory kill or a native crash) becomes a typed outcome instead of
   failing the map, so siblings' results survive and a downstream step decides.
-  The local executor journals each failed item; Argo lowering is next.
+  The local executor journals each failed item; Argo builds the same outcomes,
+  including for a real out-of-memory kill of the item pod.
 - Persist bounded task logs and structured lifecycle events. Inspection is available
   in the shipped Go CLI; the Deno CLI has been removed.
 - Treat external side effects separately from immutable artifact publication:
@@ -92,7 +93,8 @@ work. This is not a general metadata database or cross-run result cache.
 ## 4. Complete Argo for the supported graph model
 
 DAGs, exhaustive decisions/selects, and finite single-step maps lower to Argo.
-Live conformance covers nested inactive branches, empty maps, failed items, and
+Live conformance covers nested inactive branches, empty maps, failed items,
+maps that collect item failures (including an out-of-memory kill), and
 deployment-bound native Secret references. Cloud workload identity remains a
 separate infrastructure gate.
 Source packages beyond the embedded limit use `object-store-v0`.

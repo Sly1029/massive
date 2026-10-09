@@ -32,6 +32,10 @@ ENTRY_RECORDS = [
 ]
 # Submitters may not point pods at bodies in the shared store.
 REFERENCE_INPUT = '@{"hash":"sha256:' + "0" * 64 + '","size":5000}'
+MAP_OUTCOME_TASKS = [
+    {"name": name, "behavior": name}
+    for name in ("ok", "flaky", "raise", "refuse", "segfault", "hang", "oom")
+]
 DATASTORE = {
     "kind": "s3",
     "bucket": "my-bucket",
@@ -461,6 +465,14 @@ class DecisionConformance(unittest.TestCase):
                 else (),
                 publish=published,
             )
+        map_outcomes = fixture_source(Path(__file__).parent / "map_outcomes.py")
+        install_workflow(map_outcomes, selector="#graph")
+        # Locally nothing limits memory, so the local run omits the OOM item.
+        cls.local_outcomes = run_locally(
+            map_outcomes,
+            [task for task in MAP_OUTCOME_TASKS if task["behavior"] != "oom"],
+            selector="#graph",
+        )
         large_values = fixture_source(Path(__file__).parent / "large_values.py")
         install_workflow(large_values, selector="#graph")
         install_workflow(large_values, selector="#entry_graph")
@@ -500,6 +512,7 @@ class DecisionConformance(unittest.TestCase):
             "small-values": {"count": 10},
             "entry-values": ENTRY_RECORDS,
             "reference-input": REFERENCE_INPUT,
+            "map-outcomes": MAP_OUTCOME_TASKS,
         }.items():
             run = kubectl(
                 "create",
@@ -530,6 +543,7 @@ class DecisionConformance(unittest.TestCase):
                                 "small-values": "large-values",
                                 "entry-values": "large-values-entry",
                                 "reference-input": "large-values",
+                                "map-outcomes": "argo-map-outcomes",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -842,6 +856,48 @@ class DecisionConformance(unittest.TestCase):
         pods = self.pods(run, "step-double")
         self.assertEqual([node["phase"] for node in pods], ["Failed"])
         self.assertIn("exit code 68", pods[0].get("message", ""))
+
+    def test_collected_item_failures_match_local_and_survive_an_oom_kill(self) -> None:
+        run = self.completed("map-outcomes")
+        self.assertEqual(
+            run["status"]["phase"],
+            "Succeeded",
+            str(
+                [
+                    (node["displayName"], node["phase"], node.get("message"))
+                    for node in run["status"].get("nodes", {}).values()
+                ]
+            ),
+        )
+        root = run["status"]["nodes"][run["metadata"]["name"]]
+        outcomes = json.loads(root["outputs"]["parameters"][0]["value"])
+        oom = [task["behavior"] for task in MAP_OUTCOME_TASKS].index("oom")
+        killed = outcomes.pop(oom)
+        # Every item but the OOM kill equals the local run byte for byte.
+        self.assertEqual(outcomes, self.local_outcomes)
+        self.assertEqual(
+            [outcome["status"] for outcome in outcomes],
+            ["succeeded", "succeeded", "failed", "failed", "failed", "failed"],
+        )
+        # Under cgroup v2 group kill the item pod dies with its runtime and
+        # reports nothing; otherwise the runtime sees its runner killed.
+        self.assertEqual(killed["status"], "failed")
+        self.assertEqual(killed["failure"]["kind"], "killed")
+        self.assertEqual(killed["failure"]["attempts"], 2)
+        self.assertIn(
+            killed["failure"]["diagnostic"],
+            {
+                (
+                    "item pod ended without reporting an outcome "
+                    "(an out-of-memory kill, eviction, or node loss)"
+                ),
+                "runner-killed (signal)",
+            },
+        )
+        # Failed item pods did not fail the DAG.
+        pods = self.pods(run, "map-item-scan")
+        self.assertTrue(pods)
+        self.assertIn("Failed", {node["phase"] for node in pods})
 
     def test_selected_item_failure_cannot_produce_success(self) -> None:
         run = self.completed("failure")

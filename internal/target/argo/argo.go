@@ -19,6 +19,8 @@ import (
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/materialization"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/spec"
+	"github.com/Sly1029/massive/internal/valueparam"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"google.golang.org/protobuf/encoding/protojson"
 	"sigs.k8s.io/yaml"
@@ -537,9 +539,6 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 }
 
 func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target, sourceArgs []string) ([]any, error) {
-	if node.GetItemFailures() != "" {
-		return nil, fmt.Errorf("argo target: map %q collects item failures, which the Argo target does not lower yet; run it with the local target", node.GetId())
-	}
 	expandName := argoFieldName("map-expand-" + node.GetId())
 	itemName := argoFieldName("map-item-" + node.GetId())
 	collectName := argoFieldName("map-collect-" + node.GetId())
@@ -571,10 +570,38 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 		return nil, err
 	}
 	applyRetryStrategy(itemTemplate, contract)
-	collectTemplate, err := runtimePodTemplate(
-		collectName, node.GetId(), env, controlContract, runtimeName, storage, []string{"input"},
-		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath},
-	)
+	collectArgs := []string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath}
+	invokeName := itemName
+	var outcomeTemplate map[string]any
+	if node.GetItemFailures() == spec.MapItemFailuresCollect {
+		// Each item runs in its own DAG that continues past the item pod's
+		// failure, so the item still reports exactly one outcome: the runtime's
+		// envelope, or the lost marker when the pod ended without writing one.
+		// Argo aggregates only successful loop children, so the loop runs over
+		// these DAGs rather than over the pods.
+		invokeName = argoFieldName("map-outcome-" + node.GetId())
+		outcomeTemplate = map[string]any{
+			"name":   invokeName,
+			"inputs": map[string]any{"parameters": []any{map[string]any{"name": "input"}}},
+			"outputs": map[string]any{"parameters": []any{map[string]any{
+				"name": "result", "valueFrom": map[string]any{
+					"parameter": "{{tasks.attempt.outputs.parameters.result}}",
+					"default":   valueparam.LostItemEnvelope,
+				},
+			}}},
+			"dag": map[string]any{"tasks": []any{map[string]any{
+				"name": "attempt", "template": itemName,
+				"continueOn": map[string]any{"failed": true, "error": true},
+				"arguments":  map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{inputs.parameters.input}}"}}},
+			}}},
+		}
+		collectArgs = []string{
+			"runtime", "map", "collect-outcomes", "--input={{inputs.parameters.input}}",
+			fmt.Sprintf("--max-attempts=%d", max(contract.GetRetry().GetMaxAttempts(), 1)),
+			"--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath,
+		}
+	}
+	collectTemplate, err := runtimePodTemplate(collectName, node.GetId(), env, controlContract, runtimeName, storage, []string{"input"}, collectArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -592,7 +619,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{inputs.parameters.input}}"}}},
 			},
 			map[string]any{
-				"name": "invoke", "template": itemName, "dependencies": []any{"expand"},
+				"name": "invoke", "template": invokeName, "dependencies": []any{"expand"},
 				"withParam": "{{tasks.expand.outputs.parameters.result}}",
 				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{item}}"}}},
 			},
@@ -601,6 +628,9 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{tasks.invoke.outputs.parameters.result}}"}}},
 			},
 		}},
+	}
+	if outcomeTemplate != nil {
+		return []any{mapTemplate, expandTemplate, outcomeTemplate, itemTemplate, collectTemplate}, nil
 	}
 	return []any{mapTemplate, expandTemplate, itemTemplate, collectTemplate}, nil
 }

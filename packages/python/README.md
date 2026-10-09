@@ -464,8 +464,10 @@ infrastructure errors, and cancellation still fail the map. The type checker
 and the Go compiler both require the consumer to accept
 `list[MapItemOutcome[Result]]`, and the run journal marks each failed item.
 The map has no failure threshold; raise `NonRetryableError` downstream, as
-above, to fail the run past one. The Argo target does not lower collecting maps
-yet and rejects them at build time.
+above, to fail the run past one. Both targets build identical outcomes. On
+Argo an item pod that dies without reporting, as a container does when the
+kernel kills it for exceeding its memory limit, becomes a `killed` outcome
+after its last attempt.
 
 Finite maps execute through both `massive run` and the Argo target. Argo lowers
 each map to a bounded nested DAG: an indexed envelope crystallizes the input,
