@@ -6,8 +6,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from enum import Enum
+from functools import reduce
 from pathlib import Path
-from types import ModuleType
+from types import GenericAlias, ModuleType
 from typing import (
     Annotated,
     Any,
@@ -15,6 +16,8 @@ from typing import (
     Never,
     TypeVar,
     cast,
+    get_args,
+    get_origin,
     overload,
 )
 
@@ -49,6 +52,14 @@ WorkflowInputT = TypeVar("WorkflowInputT")
 WorkflowOutputT = TypeVar("WorkflowOutputT")
 CaseT = TypeVar("CaseT", bound=BaseModel)
 SelectT = TypeVar("SelectT")
+Merge1T = TypeVar("Merge1T")
+Merge2T = TypeVar("Merge2T")
+Merge3T = TypeVar("Merge3T")
+Merge4T = TypeVar("Merge4T")
+Merge5T = TypeVar("Merge5T")
+Merge6T = TypeVar("Merge6T")
+Merge7T = TypeVar("Merge7T")
+Merge8T = TypeVar("Merge8T")
 
 _START = "__start"
 _END = "__end"
@@ -164,6 +175,37 @@ class _EndHandle(Generic[WorkflowOutputT]):
     graph_token: object = field(repr=False, compare=False)
 
 
+@dataclass(frozen=True, slots=True)
+class _PathValue:
+    """What a path delivers: one source's output, or a fan-in of several sources.
+
+    A fan-in consumer receives the sources' values as one ordered JSON array, so
+    it must accept exactly ``annotation``. A gather of different outputs is
+    instead decoded through a discriminated union of exactly ``gathered_models``.
+    """
+
+    sources: tuple[NodeHandle[Any, Any], ...]
+    annotation: Any
+    gathered_models: frozenset[type[BaseModel]] = frozenset()
+
+    def require_input(self, target_id: str, input_type: Any) -> None:
+        origin = ", ".join(repr(source.node_id) for source in self.sources)
+        if not self.gathered_models:
+            if self.annotation != input_type:
+                raise TypeError(f"edge from {origin} has incompatible input type")
+            return
+        if get_origin(input_type) is not list:
+            raise TypeError(f"fan-in from {origin} into {target_id!r} must be consumed as a list")
+        (item_type,) = get_args(input_type)
+        _, cases = _tagged_union_cases(
+            item_type, f"the gather consumer {target_id!r} item type for different models"
+        )
+        if frozenset(cases.values()) != self.gathered_models:
+            raise TypeError(
+                f"fan-in from {origin} into {target_id!r} must decode exactly the gathered models"
+            )
+
+
 class EdgePath(Generic[ValueT]):
     """A ``ValueT`` flowing out of a node, wired onward with ``to``/``to_end``.
 
@@ -171,18 +213,18 @@ class EdgePath(Generic[ValueT]):
     precise mismatch at the offending edge.
     """
 
-    def __init__(self, graph: GraphBuilder[Any, Any], source: NodeHandle[Any, ValueT]) -> None:
+    def __init__(self, graph: GraphBuilder[Any, Any], value: _PathValue) -> None:
         self._graph = graph
-        self._source = source
+        self._value = value
 
     def to(self, target: NodeHandle[ValueT, OutputT]) -> EdgePath[OutputT]:
         if isinstance(target, _EndHandle):  # Untyped workflows written for the old overload.
             raise TypeError("close a path with .to_end(graph.end) instead of .to(graph.end)")
-        self._graph._connect(self._source, target)  # pyright: ignore[reportPrivateUsage]
-        return EdgePath(self._graph, target)
+        self._graph._connect(self._value, target)  # pyright: ignore[reportPrivateUsage]
+        return EdgePath(self._graph, _PathValue((target,), target.output_type))
 
     def to_end(self, end: _EndHandle[ValueT]) -> None:
-        self._graph._connect(self._source, end)  # pyright: ignore[reportPrivateUsage]
+        self._graph._connect(self._value, end)  # pyright: ignore[reportPrivateUsage]
 
     # Awaitable-first overloads let every checker solve an async step's output
     # to the awaited value; ``OutputT | Awaitable[OutputT]`` is ambiguous to ty.
@@ -262,6 +304,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self._selects: dict[str, _SelectDefinition] = {}
         self._maps: dict[str, _MapDefinition] = {}
         self._calls: dict[str, GraphBuilder[Any, Any]] = {}
+        self._merges: dict[str, tuple[str, ...]] = {}
         self._emitted = False
         self._emitting = False
         self._cached_spec: WorkflowSpec | None = None
@@ -416,20 +459,166 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
     def edge_from(self, source: NodeHandle[Any, OutputT]) -> EdgePath[OutputT]:
         if source.graph_token is not self._graph_token:
             raise ValueError("edge source belongs to a different graph")
-        return EdgePath(self, source)
+        return EdgePath(self, _PathValue((source,), source.output_type))
 
-    def _connect(
-        self, source: NodeHandle[Any, Any], target: NodeHandle[Any, Any] | _EndHandle[Any]
-    ) -> None:
+    @overload
+    def merge(
+        self, first: NodeHandle[Any, Merge1T], second: NodeHandle[Any, Merge2T], /
+    ) -> EdgePath[tuple[Merge1T, Merge2T]]: ...
+
+    @overload
+    def merge(
+        self,
+        first: NodeHandle[Any, Merge1T],
+        second: NodeHandle[Any, Merge2T],
+        third: NodeHandle[Any, Merge3T],
+        /,
+    ) -> EdgePath[tuple[Merge1T, Merge2T, Merge3T]]: ...
+
+    @overload
+    def merge(
+        self,
+        first: NodeHandle[Any, Merge1T],
+        second: NodeHandle[Any, Merge2T],
+        third: NodeHandle[Any, Merge3T],
+        fourth: NodeHandle[Any, Merge4T],
+        /,
+    ) -> EdgePath[tuple[Merge1T, Merge2T, Merge3T, Merge4T]]: ...
+
+    @overload
+    def merge(
+        self,
+        first: NodeHandle[Any, Merge1T],
+        second: NodeHandle[Any, Merge2T],
+        third: NodeHandle[Any, Merge3T],
+        fourth: NodeHandle[Any, Merge4T],
+        fifth: NodeHandle[Any, Merge5T],
+        /,
+    ) -> EdgePath[tuple[Merge1T, Merge2T, Merge3T, Merge4T, Merge5T]]: ...
+
+    @overload
+    def merge(
+        self,
+        first: NodeHandle[Any, Merge1T],
+        second: NodeHandle[Any, Merge2T],
+        third: NodeHandle[Any, Merge3T],
+        fourth: NodeHandle[Any, Merge4T],
+        fifth: NodeHandle[Any, Merge5T],
+        sixth: NodeHandle[Any, Merge6T],
+        /,
+    ) -> EdgePath[tuple[Merge1T, Merge2T, Merge3T, Merge4T, Merge5T, Merge6T]]: ...
+
+    @overload
+    def merge(
+        self,
+        first: NodeHandle[Any, Merge1T],
+        second: NodeHandle[Any, Merge2T],
+        third: NodeHandle[Any, Merge3T],
+        fourth: NodeHandle[Any, Merge4T],
+        fifth: NodeHandle[Any, Merge5T],
+        sixth: NodeHandle[Any, Merge6T],
+        seventh: NodeHandle[Any, Merge7T],
+        /,
+    ) -> EdgePath[tuple[Merge1T, Merge2T, Merge3T, Merge4T, Merge5T, Merge6T, Merge7T]]: ...
+
+    @overload
+    def merge(
+        self,
+        first: NodeHandle[Any, Merge1T],
+        second: NodeHandle[Any, Merge2T],
+        third: NodeHandle[Any, Merge3T],
+        fourth: NodeHandle[Any, Merge4T],
+        fifth: NodeHandle[Any, Merge5T],
+        sixth: NodeHandle[Any, Merge6T],
+        seventh: NodeHandle[Any, Merge7T],
+        eighth: NodeHandle[Any, Merge8T],
+        /,
+    ) -> EdgePath[
+        tuple[Merge1T, Merge2T, Merge3T, Merge4T, Merge5T, Merge6T, Merge7T, Merge8T]
+    ]: ...
+
+    def merge(
+        self,
+        first: NodeHandle[Any, Any],
+        second: NodeHandle[Any, Any],
+        /,
+        *rest: NodeHandle[Any, Any],
+    ) -> EdgePath[Any]:
+        """Join sources into one positional tuple, in argument order, for a step or call."""
+        sources = (first, second, *rest)
+        annotation = GenericAlias(tuple, tuple(source.output_type for source in sources))
+        return EdgePath(self, self._fan_in(sources, annotation))
+
+    def gather(
+        self,
+        first: NodeHandle[Any, ValueT],
+        second: NodeHandle[Any, ValueT],
+        /,
+        *rest: NodeHandle[Any, ValueT],
+    ) -> EdgePath[list[ValueT]]:
+        """Join sources into one list, in argument order, for a step or call.
+
+        Sources with different outputs must each produce a Pydantic model, and
+        the consumer must decode them through a discriminated union.
+        """
+        sources = (first, second, *rest)
+        outputs: list[Any] = []
+        for source in sources:
+            if source.output_type not in outputs:
+                outputs.append(source.output_type)
+        if len(outputs) == 1:
+            return EdgePath(self, self._fan_in(sources, GenericAlias(list, (outputs[0],))))
+        models = frozenset(
+            output
+            for output in outputs
+            if isinstance(output, type) and issubclass(output, BaseModel)
+        )
+        if len(models) != len(outputs):
+            raise TypeError(
+                "gathering different outputs requires each source to produce a Pydantic model "
+                "with a Literal discriminator tag"
+            )
+        annotation = GenericAlias(list, (reduce(lambda union, model: union | model, outputs),))
+        return EdgePath(self, self._fan_in(sources, annotation, models))
+
+    def _fan_in(
+        self,
+        sources: tuple[NodeHandle[Any, Any], ...],
+        annotation: Any,
+        gathered_models: frozenset[type[BaseModel]] = frozenset(),
+    ) -> _PathValue:
+        if self._emitted:
+            raise RuntimeError("graph has already been emitted")
+        producers = {*self._nodes, *self._maps, *self._selects, *self._calls}
+        for source in sources:
+            if source.graph_token is not self._graph_token:
+                raise ValueError("fan-in source belongs to a different graph")
+            # Case handles carry their decision's id, so they are not producers.
+            if source.node_id not in producers or isinstance(source, CaseHandle):
+                raise TypeError(
+                    f"fan-in source {source.node_id!r} must be a step, map, select, or call"
+                )
+        if len({source.node_id for source in sources}) != len(sources):
+            raise ValueError("fan-in sources must be distinct")
+        return _PathValue(sources, annotation, gathered_models)
+
+    def _connect(self, value: _PathValue, target: NodeHandle[Any, Any] | _EndHandle[Any]) -> None:
         if target.graph_token is not self._graph_token:
             raise ValueError("edge target belongs to a different graph")
         target_id = target.node_id if isinstance(target, NodeHandle) else _END
         if target_id != _END and target_id not in self._nodes and target_id not in self._calls:
             raise TypeError(f"edge target {target_id!r} is not a step or call")
-        if source.output_type != target.input_type:
-            raise TypeError(f"edge from {source.node_id!r} has incompatible input type")
-        case = source.tag if isinstance(source, CaseHandle) else None
-        self._add_edge(source.node_id, target_id, case)
+        fan_in = len(value.sources) > 1
+        if fan_in and target_id == _END:
+            raise TypeError("a fan-in must target a step or call, not the graph end")
+        if fan_in and target_id in self._merges:
+            raise ValueError(f"{target_id!r} already receives a fan-in")
+        value.require_input(target_id, target.input_type)
+        for source in value.sources:
+            case = source.tag if isinstance(source, CaseHandle) else None
+            self._add_edge(source.node_id, target_id, case)
+        if fan_in:
+            self._merges[target_id] = tuple(source.node_id for source in value.sources)
 
     def decision(
         self, source: NodeHandle[Any, OutputT], *, on: str, id: str
@@ -443,7 +632,9 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         identity = _DecisionIdentity(id=id)
         if identity.id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved decision id {identity.id!r}")
-        cases = _decision_cases(source.output_type, on)
+        discriminator, cases = _tagged_union_cases(source.output_type, "decision input")
+        if discriminator != on:
+            raise TypeError(f"decision selector {on!r} does not match the Pydantic discriminator")
         definition = _DecisionDefinition(
             id=identity.id,
             source=source,
@@ -708,15 +899,25 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
             if not any(edge_source == map_id for edge_source, _ in self._edges):
                 raise ValueError(f"map {map_id!r} must have an outgoing edge")
 
+        inbound: dict[str, set[str]] = {}
+        for edge_source, edge_target in self._edges:
+            inbound.setdefault(edge_target, set()).add(edge_source)
+        for edge_source, edge_target, _ in self._conditional_edges:
+            inbound.setdefault(edge_target, set()).add(edge_source)
+        for node_id in (*self._nodes, *self._calls):
+            kind = "call" if node_id in self._calls else "step"
+            sources = inbound.get(node_id, set())
+            merged = self._merges.get(node_id)
+            if merged is not None and sources != set(merged):
+                raise ValueError(f"{kind} {node_id!r} receives edges outside its fan-in")
+            if merged is None and len(sources) > 1:
+                raise ValueError(
+                    f"{kind} {node_id!r} has {len(sources)} incoming edges; join them with "
+                    "graph.merge(...) or graph.gather(...)"
+                )
         for call_id in self._calls:
-            incoming = [edge for edge in self._edges if edge[1] == call_id]
-            incoming.extend(
-                (source, target)
-                for source, target, _ in self._conditional_edges
-                if target == call_id
-            )
-            if len(incoming) != 1:
-                raise ValueError(f"call {call_id!r} must have exactly one incoming edge")
+            if call_id not in inbound:
+                raise ValueError(f"call {call_id!r} must have an incoming edge")
             if not any(source == call_id for source, _ in self._edges):
                 raise ValueError(f"call {call_id!r} must have an outgoing edge")
 
@@ -788,8 +989,12 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                 "module": module,
                 "export": step.function.__name__,
             }
+            merge_inputs: dict[str, JsonValue] = (
+                {"mergeInputs": list(self._merges[node_id])} if node_id in self._merges else {}
+            )
             nodes.append(
                 {
+                    **merge_inputs,
                     "id": node_id,
                     "kind": "step",
                     "inputSchema": schema_ref(
@@ -843,7 +1048,10 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                 }
             )
         for call_id in sorted(self._calls, key=_canonical_sort_key):
-            nodes.append({"id": call_id, "kind": "call"})
+            call_node: dict[str, JsonValue] = {"id": call_id, "kind": "call"}
+            if call_id in self._merges:
+                call_node["mergeInputs"] = list(self._merges[call_id])
+            nodes.append(call_node)
         for decision_id, decision in sorted(
             self._decisions.items(), key=lambda item: _canonical_sort_key(item[0])
         ):
@@ -940,6 +1148,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                     "start successor and one end predecessor that are child nodes"
                 )
             first, last = entries[0], exits[0]
+            call_node = next(node for node in nodes if node["id"] == call_id)
             scoped: dict[str, str] = {}
             for node in child_nodes:
                 child_id = cast(str, node["id"])
@@ -973,6 +1182,14 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                         {**item, "source": scoped[cast(str, item["source"])]}
                         for item in cast(list[dict[str, JsonValue]], expanded["selectInputs"])
                     ]
+                if node["id"] == first and "mergeInputs" in call_node:
+                    # The call's fan-in becomes its child's entry step's fan-in.
+                    if expanded["kind"] != "step":
+                        raise ValueError(
+                            f"call {call_id!r} receives a fan-in, so child {child.name!r} "
+                            "must start with a step"
+                        )
+                    expanded["mergeInputs"] = call_node["mergeInputs"]
                 nodes.append(expanded)
             expanded_edges: list[dict[str, JsonValue]] = []
             for edge in edges:
@@ -1166,8 +1383,13 @@ def _schema_list(value: object) -> list[object] | None:
     return cast(list[object], value)
 
 
-def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]]:
-    """Read a Pydantic tagged-union's declared cases from its core schema."""
+def _tagged_union_cases(annotation: Any, role: str) -> tuple[object, dict[str, type[BaseModel]]]:
+    """Read a Pydantic tagged union's discriminator and one model per string tag.
+
+    Decisions route on these tags, and a gather of different models decodes
+    through them: an undiscriminated union would let Pydantic's smart-union
+    matching choose a different model than the producer returned.
+    """
     core_schema = cast(dict[str, object], TypeAdapter(annotation).core_schema)
     definitions: dict[str, type[BaseModel]] = {}
     if core_schema.get("type") == "definitions":
@@ -1190,11 +1412,7 @@ def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]
             core_schema = cast(dict[str, object], raw_root_schema)
 
     if core_schema.get("type") != "tagged-union":
-        raise TypeError(
-            "decision input must be a Pydantic discriminated union with string Literal tags"
-        )
-    if core_schema.get("discriminator") != selector:
-        raise TypeError(f"decision selector {selector!r} does not match the Pydantic discriminator")
+        raise TypeError(f"{role} must be a Pydantic discriminated union with string Literal tags")
     raw_choices = core_schema.get("choices")
     if not isinstance(raw_choices, dict) or not raw_choices:
         raise TypeError("Pydantic discriminated union must declare one or more cases")
@@ -1204,9 +1422,9 @@ def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]
     tags_by_model: dict[type[BaseModel], list[str]] = {}
     for raw_tag, raw_choice in choices.items():
         if not isinstance(raw_tag, str):
-            raise TypeError("decision tags must be string Literal values")
+            raise TypeError(f"{role} tags must be string Literal values")
         if not isinstance(raw_choice, dict):
-            raise TypeError("decision cases must be direct Pydantic model alternatives")
+            raise TypeError(f"{role} cases must be direct Pydantic model alternatives")
         choice = cast(dict[str, object], raw_choice)
         choice_type = choice.get("type")
         if choice_type == "model":
@@ -1215,9 +1433,9 @@ def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]
             reference = choice.get("schema_ref")
             model = definitions.get(reference) if isinstance(reference, str) else None
         else:
-            raise TypeError("decision cases must be direct Pydantic model alternatives")
+            raise TypeError(f"{role} cases must be direct Pydantic model alternatives")
         if not isinstance(model, type) or not issubclass(model, BaseModel):
-            raise TypeError("decision cases must be Pydantic models")
+            raise TypeError(f"{role} cases must be Pydantic models")
         cases[raw_tag] = model
         tags_by_model.setdefault(model, []).append(raw_tag)
 
@@ -1226,10 +1444,10 @@ def _decision_cases(annotation: Any, selector: str) -> dict[str, type[BaseModel]
             ordered_tags = sorted(tags, key=_canonical_sort_key)
             rendered_tags = ", ".join(repr(tag) for tag in ordered_tags)
             raise TypeError(
-                f"decision case {model.__name__} declares multiple discriminator tags "
+                f"{role} case {model.__name__} declares multiple discriminator tags "
                 f"{rendered_tags}; split it into one Pydantic model per tag"
             )
-    return cases
+    return core_schema.get("discriminator"), cases
 
 
 def _canonical_sort_key(value: str) -> bytes:

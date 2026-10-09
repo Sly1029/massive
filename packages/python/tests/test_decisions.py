@@ -255,7 +255,7 @@ def test_decision_rejects_a_model_with_multiple_discriminator_tags() -> None:
     with pytest.raises(
         TypeError,
         match=(
-            "decision case MultiTagged declares multiple discriminator tags "
+            "decision input case MultiTagged declares multiple discriminator tags "
             "'approved', 'manual-review'; split it into one Pydantic model per tag"
         ),
     ):

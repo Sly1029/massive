@@ -9,10 +9,17 @@ fails at emission. When adding a graph feature, extend the description, the
 builder, and the model together rather than asserting only that it compiles.
 
 Generated IDs exclude `--` and the `-select` suffix so scoped IDs stay
-unambiguous; collision properties construct those cases deliberately. Python has
-no merge API and the TypeScript builder has no decisions, maps, or calls, so
-cross-language IR parity would cover only linear chains with differing schema
-references; it is intentionally not generated here.
+unambiguous; collision properties construct those cases deliberately. `JoinNode`
+generates static fan-in (merge tuples or gathered lists, optionally consumed by a
+call); its join step records each input's last trace entry in merge order, so
+the model checks ordering as well as activity. The TypeScript builder has no
+decisions, maps, or calls, so cross-language IR parity would cover only linear
+chains and diamonds with differing schema references; it is intentionally not
+generated here.
+
+`tests/typecheck/` is checked by pyright and ty, not executed. Known-bad wiring
+in `rejected_wiring.py` carries one ignore per checker, and both unused-ignore
+rules are errors, so a line that stops failing breaks `pnpm check:fast`.
 
 Hypothesis profiles live in `conftest.py`: `ci` (derandomized, run by
 `pnpm check`) and `nightly` (randomized, larger maps, cached example database in

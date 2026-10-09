@@ -74,6 +74,46 @@ def test_python_workflow_runs_through_go_orchestrator(tmp_path: Path) -> None:
     assert published_manifest["body"] == output["body"]
 
 
+def test_python_fan_in_delivers_ordered_and_discriminated_values(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[3]
+    workflow = repository / "conformance/workflows/python-fan-in"
+    store = tmp_path / "store"
+    result = subprocess.run(
+        [
+            "go",
+            "run",
+            "./cmd/massive-orchestrator",
+            "run",
+            "--spec",
+            str(repository / "conformance/fixtures/specs/python-fan-in/workflow-spec.json"),
+            "--source-root",
+            str(workflow),
+            "--store",
+            str(store),
+            "--project",
+            "example/python-fan-in",
+            "--run-id",
+            "python-fan-in",
+            "--input",
+            '{"value":3}',
+            "--json",
+        ],
+        cwd=repository,
+        env={**os.environ, "MASSIVE_PYTHON": sys.executable},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    run = json.loads(result.stdout)
+    assert run["status"] == "succeeded"
+    # The merge is positional, and the gather decodes each value as the model it was.
+    assert json.loads((store / run["resultKey"]).read_text()) == {
+        "parts": ["Doubled=6", "Squared=9", "|", "Doubled=6", "Squared=9"]
+    }
+
+
 def _load_fixture(path: Path) -> ModuleType:
     specification = importlib.util.spec_from_file_location("python_e2e_workflow", path)
     assert specification is not None

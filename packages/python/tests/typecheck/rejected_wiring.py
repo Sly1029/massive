@@ -7,7 +7,9 @@ the build if a line stops being an error, so the suite proves the rejection.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
 
 from massive import GraphBuilder, StepContext, container, execution
 
@@ -92,3 +94,47 @@ graph.edge_from(summary).transform(to_document).to(answer)  # pyright: ignore[re
 
 # A transform must accept the value on its path.
 graph.edge_from(graph.start).transform(to_prompt)  # pyright: ignore[reportCallIssue, reportArgumentType] # ty: ignore[no-matching-overload]
+
+
+class Left(BaseModel):
+    side: Literal["left"]
+
+
+class Right(BaseModel):
+    side: Literal["right"]
+
+
+Side = Annotated[Left | Right, Field(discriminator="side")]
+
+
+def left(context: StepContext[Document]) -> Left:
+    return Left(side="left")
+
+
+def right(context: StepContext[Document]) -> Right:
+    return Right(side="right")
+
+
+def right_then_left(context: StepContext[tuple[Right, Left]]) -> Answer:
+    return Answer(answer="")
+
+
+def only_lefts(context: StepContext[list[Left]]) -> Answer:
+    return Answer(answer="")
+
+
+def sides(context: StepContext[list[Side]]) -> Answer:
+    return Answer(answer="")
+
+
+lefts = graph.add(left)
+rights = graph.add(right)
+
+# A merge is positional, so the consumer's tuple must list sources in order.
+graph.merge(lefts, rights).to(graph.add(right_then_left))  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]
+
+# A gather of different models is a list of their union, not of one of them.
+graph.gather(lefts, rights).to(graph.add(only_lefts))  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]
+
+# And a gather of one model is not a list of a wider union.
+graph.gather(lefts, graph.add(left, id="more-lefts")).to(graph.add(sides))  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]

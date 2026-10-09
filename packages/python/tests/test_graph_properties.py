@@ -160,7 +160,7 @@ def descriptions(draw: st.DrawFn, *, max_depth: int, max_block: int) -> Any:
 
     def node(prefix_length: int, depth: int) -> Any:
         room = MAX_ID - prefix_length
-        kinds = ["step", "fan"] + (["call", "decide"] if depth > 0 else [])
+        kinds = ["step", "fan"] + (["call", "decide", "join"] if depth > 0 else [])
         kind = draw(st.sampled_from(kinds))
         if kind == "step":
             return shapes.StepNode(id=ident(room), asynchronous=draw(st.booleans()))
@@ -169,6 +169,18 @@ def descriptions(draw: st.DrawFn, *, max_depth: int, max_block: int) -> Any:
             longest = max(len(call_id) for call_id in ids)
             return shapes.CallNode(
                 ids=ids, body=block(prefix_length + longest + 2, depth - 1, 1)
+            )
+        if kind == "join":
+            scope = via(room, depth)
+            return shapes.JoinNode(
+                split=ident(room),
+                branches=tuple(
+                    shapes.Branch(body=block(prefix_length, depth - 1, 1))
+                    for _ in range(draw(st.integers(2, 3)))
+                ),
+                gather=draw(st.booleans()),
+                join=ident(MAX_ID - scoped(prefix_length, scope)),
+                via=scope,
             )
         if kind == "fan":
             scope = via(room, depth)
@@ -251,6 +263,16 @@ class Expectation:
                 token = self._block(node.body, f"{prefix}{call_id}--", token)
             return token
         scope = prefix if node.via is None else f"{prefix}{node.via}--"
+        if isinstance(node, shapes.JoinNode):
+            split = self._visit(prefix + node.split, token)
+            ends = [self._block(branch.body, prefix, split) for branch in node.branches]
+            join_id = scope + node.join
+            self.steps[join_id] = ("skipped" if split is None else "succeeded", 0)
+            if split is None:
+                return None
+            first = ends[0]
+            entry = f"{join_id}<" + "|".join(end["trace"][-1] for end in ends)
+            return {**first, "trace": [*first["trace"], entry]}
         if isinstance(node, shapes.DecideNode):
             routed = self._visit(scope + node.classifier, token)
             tag = None if token is None else ("right" if token["route"] & 1 else "left")
@@ -380,6 +402,33 @@ SMOKE_DESCRIPTION = shapes.GraphDescription(
             right=shapes.Arm(entry="R"),
         ),
         shapes.FanNode(explode="e2", map="m2", collect="k2", concurrency=3, asynchronous=True),
+        shapes.JoinNode(
+            split="j",
+            branches=(
+                shapes.Branch(body=(shapes.StepNode(id="ja"),)),
+                shapes.Branch(
+                    body=(
+                        shapes.CallNode(
+                            ids=("jc",),
+                            body=(
+                                shapes.JoinNode(
+                                    split="ij",
+                                    branches=(
+                                        shapes.Branch(body=(shapes.StepNode(id="ia"),)),
+                                        shapes.Branch(body=(shapes.StepNode(id="ib"),)),
+                                        shapes.Branch(body=(shapes.StepNode(id="ic"),)),
+                                    ),
+                                    gather=True,
+                                    join="ik",
+                                ),
+                            ),
+                        ),
+                    )
+                ),
+            ),
+            join="jk",
+            via="jv",
+        ),
     )
 )
 

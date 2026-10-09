@@ -88,7 +88,9 @@ parent.edge_from(parent.start).to(called).to_end(parent.end)
 
 A child graph may be called more than once, including in a decision branch.
 Each called graph must have one edge leaving its start and one edge entering
-its end, both connected to nodes inside the child.
+its end, both connected to nodes inside the child; that end node may itself be
+a fan-in step. A call can be a fan-in source, and it can consume a fan-in when
+its child starts with a step, which then receives the merged value.
 The Python frontend expands each call into scoped step IDs such as
 `normalize-input--normalize` before emitting Graph IR 0.3. Child steps keep
 their own execution contracts, attempts, and artifacts; there is no retry of
@@ -180,6 +182,40 @@ pipeline.edge_from(pipeline.start).to(pipeline.call(summaries, id="summarize")).
 Like every step, a transform must be a top-level named function so workers can
 import it by module and name; lambdas and nested functions are rejected when
 the graph is built.
+
+## Static fan-in
+
+A step or call with several inbound edges receives their values together.
+`graph.merge(a, b, ...)` delivers a positional tuple in argument order, typed
+per position for up to eight sources; `graph.gather(a, b, ...)` delivers a
+list:
+
+```python
+def review(context: StepContext[tuple[Summary, Score]]) -> Report: ...
+
+
+def collect(context: StepContext[list[Finding]]) -> Report: ...
+
+
+graph.merge(summary, score).to(graph.add(review))
+graph.gather(lint, tests, audit).transform(collect)
+```
+
+Gathering different models types the list as their union. Pydantic's
+undiscriminated union decoding can pick a different model than the producer
+returned, so the consumer must decode a discriminated union of exactly those
+models, as for decisions:
+
+```python
+Finding = Annotated[LintFinding | TestFinding, Field(discriminator="kind")]
+```
+
+Fan-in sources must be distinct steps, maps, selects, or calls in the same
+graph; a fan-in targets one step or call, never the graph end. The builder
+rejects a consumer whose input is not exactly the merged tuple or gathered
+list when the edge is created, and `emit()` rejects a step with several inbound
+edges that are not one fan-in. The graph start has exactly one successor, so
+fan out from a first step rather than from `graph.start`.
 
 ## Reusable functions and execution settings
 
