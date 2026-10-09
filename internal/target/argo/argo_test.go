@@ -1111,10 +1111,11 @@ func TestPlacementDefaultsReachEveryPodAndOverridesOnlyAuthorPods(t *testing.T) 
 func TestRunDeadlineBoundsTheWholeWorkflowNotEachAttempt(t *testing.T) {
 	compiled := fixturePlan(t, "python-linear")
 	compiled.Plan.Contracts[0].TimeoutSeconds = proto.Uint32(30)
-	for deadline, want := range map[uint32]any{0: nil, 3600: float64(3600)} {
-		if deadline > 0 {
-			compiled.Plan.Graph.DeadlineSeconds = proto.Uint32(deadline)
-		}
+	for _, test := range []struct {
+		deadline *uint32
+		want     any
+	}{{nil, nil}, {proto.Uint32(3600), float64(3600)}} {
+		compiled.Plan.Graph.DeadlineSeconds = test.deadline
 		data, _ := rehashPlan(t, compiled.Plan)
 		bundle, err := Compile(data, deploymentForPlan(t, data), runtimeAssetsForPlan(t, compiled.Plan))
 		if err != nil {
@@ -1125,8 +1126,8 @@ func TestRunDeadlineBoundsTheWholeWorkflowNotEachAttempt(t *testing.T) {
 			t.Fatal(err)
 		}
 		spec := template["spec"].(map[string]any)
-		if spec["activeDeadlineSeconds"] != want {
-			t.Fatalf("deadline %d lowered to %v", deadline, spec["activeDeadlineSeconds"])
+		if spec["activeDeadlineSeconds"] != test.want {
+			t.Fatalf("deadline %v lowered to %v", test.want, spec["activeDeadlineSeconds"])
 		}
 		// The per-attempt timeout stays in the runtime, never on a template.
 		for _, item := range spec["templates"].([]any) {
