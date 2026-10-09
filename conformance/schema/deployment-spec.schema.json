@@ -71,7 +71,7 @@
         "kind": { "const": "local" }
       }
     },
-    "kubernetesSecretName": {
+    "dnsSubdomain": {
       "type": "string",
       "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
       "maxLength": 253
@@ -81,7 +81,7 @@
       "additionalProperties": false,
       "required": ["name", "key"],
       "properties": {
-        "name": { "$ref": "#/$defs/kubernetesSecretName" },
+        "name": { "$ref": "#/$defs/dnsSubdomain" },
         "key": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$", "maxLength": 253, "not": { "pattern": "^(\\.$|\\.\\.)" } }
       }
     },
@@ -101,8 +101,114 @@
         "serviceAccountName": { "$ref": "#/$defs/id" },
         "workflowTemplateName": { "$ref": "#/$defs/id" },
         "secretBindings": { "$ref": "#/$defs/secretBindings" },
-        "artifactCredentialsSecret": { "$ref": "#/$defs/kubernetesSecretName" }
+        "artifactCredentialsSecret": { "$ref": "#/$defs/dnsSubdomain" },
+        "placement": { "$ref": "#/$defs/placement" }
       }
+    },
+    "placement": {
+      "description": "Pod placement and metadata. defaults apply to every pod; a nodes entry overrides them for the pods that run that step or map node's author code.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "defaults": { "$ref": "#/$defs/podPlacement" },
+        "nodes": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "minLength": 1, "maxLength": 128 },
+          "additionalProperties": { "$ref": "#/$defs/podPlacement" }
+        }
+      }
+    },
+    "podPlacement": {
+      "description": "Kubernetes values are checked against the pinned Argo schema with unknown fields rejected. Label and annotation keys under massive.dev and argoproj.io belong to the generated workflow.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "nodeSelector": {
+          "description": "kubernetes.io/os and kubernetes.io/arch come from the plan's container platform.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/labelKey" },
+          "properties": { "kubernetes.io/os": false, "kubernetes.io/arch": false },
+          "additionalProperties": { "$ref": "#/$defs/labelValue" }
+        },
+        "affinity": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.Affinity" },
+        "tolerations": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/toleration" } },
+        "runtimeClassName": { "$ref": "#/$defs/dnsSubdomain" },
+        "priorityClassName": { "$ref": "#/$defs/dnsSubdomain" },
+        "labels": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/labelKey" },
+          "patternProperties": { "^([^/]*\\.)?(massive\\.dev|argoproj\\.io)/": false },
+          "additionalProperties": { "$ref": "#/$defs/labelValue" }
+        },
+        "annotations": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/labelKey" },
+          "patternProperties": { "^([^/]*\\.)?(massive\\.dev|argoproj\\.io)/": false },
+          "additionalProperties": { "type": "string" }
+        },
+        "podSpecPatch": { "$ref": "#/$defs/podSpecPatch" }
+      }
+    },
+    "labelKey": {
+      "type": "string",
+      "maxLength": 317,
+      "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$"
+    },
+    "labelValue": { "type": "string", "maxLength": 63, "pattern": "^([A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?)?$" },
+    "toleration": {
+      "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.Toleration",
+      "properties": {
+        "operator": { "enum": ["Exists", "Equal"] },
+        "effect": { "enum": ["NoSchedule", "PreferNoSchedule", "NoExecute"] }
+      },
+      "if": { "required": ["operator"], "properties": { "operator": { "const": "Exists" } } },
+      "then": { "properties": { "value": { "maxLength": 0 } } }
+    },
+    "podSpecPatch": {
+      "description": "A strategic merge patch over the generated pod spec. Typed placement fields, identity, volumes, and the main container's image, command, environment, CPU, and memory are not patchable.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "containers": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "$ref": "#/$defs/mainContainerPatch" } },
+        "securityContext": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.PodSecurityContext" },
+        "dnsPolicy": { "enum": ["ClusterFirst", "ClusterFirstWithHostNet", "Default", "None"] },
+        "dnsConfig": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.PodDNSConfig" },
+        "hostAliases": { "type": "array", "minItems": 1, "items": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.HostAlias" } },
+        "imagePullSecrets": { "type": "array", "minItems": 1, "items": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.LocalObjectReference" } },
+        "schedulerName": { "$ref": "#/$defs/dnsSubdomain" },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "mainContainerPatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "minProperties": 2,
+      "properties": {
+        "name": { "const": "main" },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": { "requests": { "$ref": "#/$defs/extendedResources" }, "limits": { "$ref": "#/$defs/extendedResources" } }
+        },
+        "securityContext": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.SecurityContext" }
+      }
+    },
+    "extendedResources": {
+      "description": "Extended resources such as GPUs. CPU and memory are execution requirements in the plan.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/labelKey" },
+      "properties": { "cpu": false, "memory": false },
+      "additionalProperties": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.apimachinery.pkg.api.resource.Quantity" }
     }
   }
 }

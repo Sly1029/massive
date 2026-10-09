@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 )
 
 type Spec struct {
@@ -54,6 +56,29 @@ type Target struct {
 	RuntimeTransport          string                  `json:"runtimeTransport,omitempty"`
 	ArtifactCredentialsSecret string                  `json:"artifactCredentialsSecret,omitempty"`
 	SecretBindings            map[string]SecretKeyRef `json:"secretBindings,omitempty"`
+	// Placement chooses where pods run and how they are labeled. It never
+	// changes what a pod executes, so it stays out of plan identity.
+	Placement *Placement `json:"placement,omitempty"`
+}
+
+// Placement holds pod settings for every pod (Defaults) and overrides for the
+// pods that run one step or map node's author code (Nodes, keyed by node id).
+type Placement struct {
+	Defaults *PodPlacement           `json:"defaults,omitempty"`
+	Nodes    map[string]PodPlacement `json:"nodes,omitempty"`
+}
+
+// PodPlacement keeps Kubernetes objects as schema-validated JSON: the target
+// emits them verbatim, so Massive never re-models the Kubernetes API.
+type PodPlacement struct {
+	NodeSelector      map[string]string `json:"nodeSelector,omitempty"`
+	Affinity          json.RawMessage   `json:"affinity,omitempty"`
+	Tolerations       []json.RawMessage `json:"tolerations,omitempty"`
+	RuntimeClassName  string            `json:"runtimeClassName,omitempty"`
+	PriorityClassName string            `json:"priorityClassName,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Annotations       map[string]string `json:"annotations,omitempty"`
+	PodSpecPatch      json.RawMessage   `json:"podSpecPatch,omitempty"`
 }
 
 type Diagnostic struct {
@@ -159,6 +184,21 @@ func ParseSecretBindings(data []byte) (map[string]SecretKeyRef, error) {
 	return bindings, nil
 }
 
+// ParsePlacement validates the CLI's placement input against the same schema
+// as a deployment spec, so an unknown or invalid Kubernetes field is an error.
+func ParsePlacement(data []byte) (*Placement, error) {
+	if err := validateSchema(data, "#/$defs/placement"); err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var placement Placement
+	if err := decoder.Decode(&placement); err != nil {
+		return nil, err
+	}
+	return &placement, nil
+}
+
 func RecomputedHash(data []byte) (string, error) {
 	hash, err := canonical.DigestJSONWithRootMemberExcluded(data, "deploymentHash")
 	if err != nil {
@@ -167,24 +207,22 @@ func RecomputedHash(data []byte) (string, error) {
 	return hash, nil
 }
 
+var schemas sync.Map
+
 func validateSchema(data []byte, fragment string) error {
 	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("decode deployment spec for schema validation: %w", err)
 	}
-	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemacontract.DeploymentSpecSchemaJSON))
-	if err != nil {
-		return fmt.Errorf("decode embedded deployment spec schema: %w", err)
+	compiled, ok := schemas.Load(fragment)
+	if !ok {
+		schema, err := compileSchema(fragment)
+		if err != nil {
+			return err
+		}
+		compiled, _ = schemas.LoadOrStore(fragment, schema)
 	}
-	compiler := jsonschema.NewCompiler()
-	if err := compiler.AddResource("deployment-spec.schema.json", document); err != nil {
-		return fmt.Errorf("register deployment spec schema: %w", err)
-	}
-	schema, err := compiler.Compile("deployment-spec.schema.json" + fragment)
-	if err != nil {
-		return fmt.Errorf("compile deployment spec schema: %w", err)
-	}
-	if err := schema.Validate(instance); err != nil {
+	if err := compiled.(*jsonschema.Schema).Validate(instance); err != nil {
 		var validation *jsonschema.ValidationError
 		if errors.As(err, &validation) {
 			return &DiagnosticsError{Diagnostics: schemaDiagnostics(validation)}
@@ -192,6 +230,67 @@ func validateSchema(data []byte, fragment string) error {
 		return fmt.Errorf("validate deployment spec schema: %w", err)
 	}
 	return nil
+}
+
+func compileSchema(fragment string) (*jsonschema.Schema, error) {
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemacontract.DeploymentSpecSchemaJSON))
+	if err != nil {
+		return nil, fmt.Errorf("decode embedded deployment spec schema: %w", err)
+	}
+	argo, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemacontract.ArgoWorkflowsCRDSchemaJSON))
+	if err != nil {
+		return nil, fmt.Errorf("decode embedded Argo schema: %w", err)
+	}
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("deployment-spec.schema.json", document); err != nil {
+		return nil, fmt.Errorf("register deployment spec schema: %w", err)
+	}
+	// Placement refers to Kubernetes definitions in the pinned Argo schema. Like
+	// the API server's strict field validation, an unknown field is an error
+	// rather than a value the controller would silently drop.
+	rejectUnknownFields(argo)
+	if err := compiler.AddResource(schemacontract.ArgoWorkflowsSchemaID, argo); err != nil {
+		return nil, fmt.Errorf("register Argo schema: %w", err)
+	}
+	schema, err := compiler.Compile("deployment-spec.schema.json" + fragment)
+	if err != nil {
+		return nil, fmt.Errorf("compile deployment spec schema: %w", err)
+	}
+	return schema, nil
+}
+
+// rejectUnknownFields closes every object schema that lists its properties and
+// does not already constrain additional ones.
+func rejectUnknownFields(schema any) {
+	object, ok := schema.(map[string]any)
+	if !ok {
+		return
+	}
+	if properties, ok := object["properties"].(map[string]any); ok {
+		if _, open := object["additionalProperties"]; !open {
+			object["additionalProperties"] = false
+		}
+		for _, property := range properties {
+			rejectUnknownFields(property)
+		}
+	}
+	for _, keyword := range []string{"definitions", "$defs"} {
+		if definitions, ok := object[keyword].(map[string]any); ok {
+			for _, definition := range definitions {
+				rejectUnknownFields(definition)
+			}
+		}
+	}
+	for _, keyword := range []string{"items", "additionalProperties"} {
+		rejectUnknownFields(object[keyword])
+	}
+	for _, keyword := range []string{"allOf", "anyOf", "oneOf"} {
+		if branches, ok := object[keyword].([]any); ok {
+			for _, branch := range branches {
+				rejectUnknownFields(branch)
+			}
+		}
+	}
 }
 
 // schemaDiagnostics reports every failing keyword with its location. The
@@ -215,7 +314,12 @@ func collectSchemaDiagnostics(unit *jsonschema.OutputUnit, diagnostics *[]Diagno
 		if path == "" {
 			path = "$"
 		}
-		*diagnostics = append(*diagnostics, Diagnostic{Path: path, Ref: unit.KeywordLocation, Message: unit.Error.String()})
+		message := unit.Error.String()
+		// The schema reserves fields, such as plan-owned CPU, with false schemas.
+		if _, reserved := unit.Error.Kind.(*kind.FalseSchema); reserved {
+			message = "field is reserved or not supported here"
+		}
+		*diagnostics = append(*diagnostics, Diagnostic{Path: path, Ref: unit.KeywordLocation, Message: message})
 	}
 	for index := range unit.Errors {
 		collectSchemaDiagnostics(&unit.Errors[index], diagnostics)

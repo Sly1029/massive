@@ -696,6 +696,31 @@ The contract is logical requirements in the workflow and concrete
 bindings in deployment configuration. See the [binding design](https://github.com/Sly1029/massive/blob/main/docs/spec/runtime-environment.md)
 for the distinction between declarations, bindings, and enforcement.
 
+### Pod placement
+
+Where Argo pods run is deployment configuration, not part of the workflow.
+`massive build --placement placement.json` takes defaults for every pod and
+overrides keyed by step or map id, for example a GPU node pool and a sandboxed
+runtime class for one map's item pods:
+
+```json
+{
+  "defaults": {"labels": {"cost-center": "research"}},
+  "nodes": {
+    "scan": {
+      "nodeSelector": {"pool": "gpu"},
+      "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
+      "runtimeClassName": "gvisor"
+    }
+  }
+}
+```
+
+Changing placement changes the deployment hash, never the plan hash. Build
+rejects misspelled or unsupported Kubernetes fields. See
+[Argo pod placement](https://github.com/Sly1029/massive/blob/main/docs/spec/argo-backend.md#pod-placement)
+for every field, merge rules, and the restricted `podSpecPatch`.
+
 ## Files and directory snapshots
 
 Use `Blob` for an opaque file and `Tree` for a directory. They compose inside

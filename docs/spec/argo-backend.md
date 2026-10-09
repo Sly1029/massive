@@ -243,18 +243,12 @@ System mediation runs after user patches. Users can customize generated YAML fre
 
 ### Pod Placement Seam
 
-Portable execution contracts should not contain raw Kubernetes `PodSpec`
-fields. They should carry an opaque placement class such as `sandboxed`,
-`sandboxed-netraw`, or `large-ephemeral-disk`. The Argo deployment profile
-resolves each class to target-owned pod settings such as runtime class,
-affinity, tolerations, priority, and ephemeral-storage requests. A future
-backend can resolve the same class differently or reject it precisely.
-
-This is the intended replacement for workflow-local copies of affinity and
-toleration trees. Raw named patches remain the escape hatch for genuinely
-one-off Kubernetes behavior, but they are applied after placement resolution
-and validated against the pinned Argo/Kubernetes schema. Massive-owned volume,
-identity, output, and runtime fields remain reserved.
+Portable execution contracts do not contain raw Kubernetes `PodSpec` fields.
+[Pod placement](#pod-placement) is deployment configuration keyed by node id,
+so it never enters plan identity. An opaque placement class carried by the
+contract (such as `sandboxed` or `large-ephemeral-disk`) would let several
+nodes share one setting, but it puts a deployment vocabulary into the plan
+hash; add one only when node-keyed overrides prove too repetitive.
 
 ## V0 Executable Wedge
 
@@ -619,6 +613,78 @@ publishes to its own attempt slot and keeps the same idempotency key.
 retryable. Argo retries map items independently; the local orchestrator stops
 scheduling retries once any item fails terminally.
 
+
+## Pod placement
+
+Deployments choose where pods run with `massive build ... --placement
+placement.json`. The file becomes `target.placement` in `DeploymentSpec`, so
+changing it changes the deployment hash and leaves the plan hash unchanged:
+
+```json
+{
+  "defaults": {
+    "labels": {"cost-center": "research"},
+    "annotations": {"example.com/owner": "data-platform"},
+    "tolerations": [{"key": "spot", "operator": "Exists", "effect": "NoSchedule"}],
+    "priorityClassName": "batch"
+  },
+  "nodes": {
+    "scan": {
+      "nodeSelector": {"pool": "gpu"},
+      "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
+      "runtimeClassName": "gvisor",
+      "podSpecPatch": {"containers": [{"name": "main", "resources": {"limits": {"nvidia.com/gpu": "1"}}}]}
+    }
+  }
+}
+```
+
+Each entry may set `nodeSelector`, `affinity`, `tolerations`,
+`runtimeClassName`, `priorityClassName`, `labels`, `annotations`, and
+`podSpecPatch`. `defaults` applies to every pod. A `nodes` entry, keyed by the
+plan's step or map node id (a called child's steps use their scoped
+`call--step` ids), overrides the defaults for the pods that run that node's
+author code: the step pod, or every item pod of a map. `nodeSelector`,
+`labels`, and `annotations` merge by key with the override winning; any other
+field set by the override replaces the default. An override naming a missing
+node, a decision, or a select fails the build.
+
+Control pods (decision, select, map expansion and collection, and the
+`workflow-entry` task) receive only the defaults. They run Massive's own code,
+never author code, so accelerator pools and sandboxed runtimes would only
+waste capacity on them; they still need the defaults because a cluster whose
+nodes are all tainted, or a cost report keyed by label, must see every pod. Put
+pool-specific settings in node overrides, not defaults, if control pods should
+not land there.
+
+Kubernetes values are validated at build time against the definitions in the
+pinned Argo schema (`io.k8s.api.core.v1.Affinity`, `Toleration`, and so on)
+with unknown fields rejected, like the API server's strict field validation, so
+a misspelled field is a diagnostic rather than a value the controller drops.
+The deployment schema adds what the OpenAPI types omit: toleration operators
+and effects, label key and value syntax, and DNS names. Placement cannot
+override the plan's platform keys (`kubernetes.io/os`, `kubernetes.io/arch`),
+and label or annotation keys under `massive.dev/` or `argoproj.io/` are
+reserved.
+
+Each pod template receives its resolved settings directly rather than through
+Argo's workflow-level defaults, so Argo's own merge rules never apply. Argo
+templates have no `runtimeClassName` field; it is lowered into the template's
+`podSpecPatch` together with the deployment's patch.
+
+`podSpecPatch` is the escape hatch: a strategic merge patch over the generated
+pod spec, limited to `securityContext`, `dnsPolicy`, `dnsConfig`,
+`hostAliases`, `imagePullSecrets`, `schedulerName`,
+`terminationGracePeriodSeconds`, and one `containers` entry named `main` that
+may set `securityContext` and extended `resources` such as GPUs. Identity,
+volumes, the main container's image, command, and environment, plan-owned CPU
+and memory, and every field with a typed setting are not patchable; patch
+directives such as `$patch` are unknown fields.
+
+The live Argo gate runs a map whose item pods carry a node selector, a
+RuntimeClass, and a patch, and checks that every pod the controller created
+carries the default labels, annotations, tolerations, and an admitted
+PriorityClass, while only the item pods carry the override.
 
 ## Application secret bindings
 

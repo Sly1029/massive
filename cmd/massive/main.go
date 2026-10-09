@@ -47,6 +47,7 @@ type RunCommand struct {
 type BuildCommand struct {
 	SecretBindings            string `name:"secret-bindings" help:"JSON file mapping logical secret refs to Kubernetes Secret name/key bindings." type:"existingfile"`
 	ArtifactCredentialsSecret string `name:"artifact-credentials-secret" help:"Optional Secret containing standard AWS credential keys; omit for workload identity."`
+	Placement                 string `help:"JSON file of pod placement: defaults for every pod and overrides by step or map node id." type:"existingfile"`
 	Entry                     string `arg:"" name:"entry" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
 	Target                    string `help:"Deployment target." enum:"argo" default:"argo"`
 	Output                    string `short:"o" help:"Bundle output directory." required:"" type:"path"`
@@ -304,6 +305,17 @@ func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
 			return fmt.Errorf("invalid secret bindings: %w", err)
 		}
 	}
+	var placement *deployment.Placement
+	if command.Placement != "" {
+		data, err := os.ReadFile(command.Placement)
+		if err != nil {
+			return fmt.Errorf("read placement: %w", err)
+		}
+		placement, err = deployment.ParsePlacement(data)
+		if err != nil {
+			return fmt.Errorf("invalid placement: %w", err)
+		}
+	}
 	// The container realizes requirements; its pods run the full preflight.
 	frontend, err := controlplane.Emit(ctx, command.Entry, environment.Emission)
 	if err != nil {
@@ -318,6 +330,7 @@ func (command *BuildCommand) Run(ctx context.Context, stdout io.Writer) error {
 		ArtifactStoreBinding: command.ArtifactStore, Namespace: command.Namespace,
 		ArtifactCredentialsSecret: command.ArtifactCredentialsSecret,
 		SecretBindings:            secretBindings,
+		Placement:                 placement,
 		ServiceAccountName:        command.ServiceAccount, WorkflowTemplateName: command.Name,
 		RuntimeTransport: command.RuntimeTransport,
 	})
