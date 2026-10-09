@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from massive import GraphBuilder, StepContext, container, execution
+from massive import GraphBuilder, RunOutcome, StepContext, container, execution
 
 DEFAULTS = execution(
     environment=container(
@@ -152,3 +152,18 @@ graph.merge(lefts)  # pyright: ignore[reportCallIssue] # ty: ignore[no-matching-
 
 # merge is typed per position for at most eight sources.
 graph.merge(lefts, rights, lefts, rights, lefts, rights, lefts, rights, lefts)  # pyright: ignore[reportCallIssue] # ty: ignore[no-matching-overload]
+
+
+def hook_for_summaries(context: StepContext[Summary]) -> None:
+    del context
+
+
+def hook_with_result(context: StepContext[RunOutcome]) -> Answer:
+    return Answer(answer=context.inputs.status)
+
+
+# An exit hook receives the run outcome, not a workflow value.
+graph.on_exit(hook_for_summaries)  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]
+
+# An exit hook's return value has nowhere to go.
+graph.on_exit(hook_with_result)  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]

@@ -266,6 +266,13 @@ The WorkflowSpec's optional `workflow.deadlineSeconds` (1-604800) bounds the
 whole run and compiles to `graph.deadlineSeconds` in the plan. A run that
 reaches it fails on every target; called child graphs cannot carry one.
 
+The optional `graph.exitHook` is a node of kind `exit-hook` outside the DAG:
+no edges reach it, and its id differs from every node id. It references a
+symbol and contract like a step, takes the run-outcome schema
+(`conformance/schema/run-outcome.schema.json`), returns `null`, and runs once,
+so its contract cannot retry. Both targets run it after the run settles and
+never let its failure change the run's status.
+
 Retryable failures are author exceptions (runner exit 66), timeouts, and runner
 crashes. Descriptor (64) and schema (65) failures are deterministic, and authors
 raise `NonRetryableError` (exit 67) to stop retries. The local orchestrator

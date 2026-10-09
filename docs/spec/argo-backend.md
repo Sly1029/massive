@@ -695,6 +695,32 @@ RuntimeClass, and a patch, and checks that every pod the controller created
 carries the default labels, annotations, tolerations, and an admitted
 PriorityClass, while only the item pods carry the override.
 
+## Exit hooks
+
+A plan's `graph.exitHook` (from `GraphBuilder.on_exit`) is a step-like node
+outside the DAG. Its input is the shared run outcome
+(`conformance/schema/run-outcome.schema.json`, generated from the Python SDK's
+`RunOutcome`), its output is `null`, and its contract must not retry; the
+compiler rejects any other shape.
+
+The WorkflowTemplate sets `onExit: exit-handler`. That DAG runs one task, the
+hook's pod template `exit-<id>`, with `continueOn: {failed: true, error:
+true}`: Argo otherwise turns a failed exit handler into the workflow's own
+failure, and the hook must never change the run's status. The pod runs
+`massive runtime exit-hook` with `{{workflow.status}}`,
+`{{workflow.failures}}`, `{{workflow.creationTimestamp}}`, and
+`{{workflow.uid}}`. The runtime maps `Succeeded` to `succeeded` and `Failed`
+or `Error` to `failed`, and names the plan node of the earliest failed pod as
+`failed_node`, recomputing each pod template's name from the plan. It then
+invokes the hook through the same isolated path as a step, with its own
+secrets, resources, placement override, and timeout, and no retry strategy.
+
+Argo cannot distinguish an operator's `argo stop` from a failure, so the
+outcome is `failed`; `argo terminate` does not run exit handlers. The live
+gate runs a hook after a 30-second run deadline and checks the outcome it
+received, and runs a failing hook on a succeeded workflow that stays
+Succeeded.
+
 ## Application secret bindings
 
 A task declares portable environment names and logical refs, for example

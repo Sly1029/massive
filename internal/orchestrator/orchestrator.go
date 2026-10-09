@@ -73,6 +73,7 @@ type sourcePackageArtifact struct {
 }
 
 func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *RunResult, runErr error) {
+	startedAt := time.Now()
 	if config.Plan == nil {
 		return nil, fmt.Errorf("run config requires a workflow plan")
 	}
@@ -165,7 +166,32 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		Steps:       summariesFromManifest(manifest),
 	}
 
+	invoker := config.StepInvoker
+	if invoker == nil {
+		invoker = ProcessStepInvoker{
+			CommandTemplate: config.RunnerCommand,
+			WorkingDir:      config.RunnerWorkingDir,
+		}
+	}
+
 	activeNodeID := ""
+	// Registered before terminalization so it runs after the outcome is durable.
+	if hook := config.Plan.GetGraph().GetExitHook(); hook != nil {
+		defer func() {
+			outcome := RunOutcome{RunID: runID, Status: manifest.Status, StartedAt: OutcomeTime(startedAt), FinishedAt: OutcomeTime(time.Now())}
+			if manifest.Status == StatusFailed && activeNodeID != "" {
+				outcome.FailedNode = &activeNodeID
+			}
+			record := runExitHook(ctx, store, config, invoker, index, projectKey, runID, hook, outcome)
+			manifest.ExitHook = &record
+			result.ExitHook = &StepSummary{NodeID: record.NodeID, Status: record.Status, Diagnostic: record.Attempts[0].Diagnostic}
+			publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer stop()
+			if err := writeRunManifest(publication, store, manifestKey, manifest); err != nil && runErr == nil {
+				runErr = fmt.Errorf("record exit hook: %w", err)
+			}
+		}()
+	}
 	defer func() {
 		if runErr == nil {
 			return
@@ -208,14 +234,6 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		}
 		returned, runErr = result, failure
 	}()
-
-	invoker := config.StepInvoker
-	if invoker == nil {
-		invoker = ProcessStepInvoker{
-			CommandTemplate: config.RunnerCommand,
-			WorkingDir:      config.RunnerWorkingDir,
-		}
-	}
 
 	resolution := newExecutionResolver(index, config.Plan.GetGraph(), workflowInput)
 	for _, nodeID := range index.nodeOrder {
@@ -1208,6 +1226,13 @@ func buildExecutionIndex(workflowPlan *planpb.WorkflowPlan) (executionIndex, err
 	for _, node := range graph.GetNodes() {
 		index.nodesByID[node.GetId()] = node
 		index.inboundByTarget[node.GetId()] = nil
+	}
+	// The exit hook is addressable like a step but stays outside the DAG.
+	if hook := graph.GetExitHook(); hook != nil {
+		if index.nodesByID[hook.GetId()] != nil {
+			return executionIndex{}, fmt.Errorf("exit hook id %q is also a graph node id", hook.GetId())
+		}
+		index.nodesByID[hook.GetId()] = hook
 	}
 	for _, edge := range graph.GetEdges() {
 		if index.nodesByID[edge.GetFrom()] == nil {

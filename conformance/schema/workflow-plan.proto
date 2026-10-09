@@ -64,6 +64,9 @@ message GraphIR {
   // Wall-clock limit for the whole run, from submission to its last task.
   // Absent means no run deadline.
   optional uint32 deadline_seconds = 9;
+  // Kind "exit-hook": runs once after the run settles, outside the DAG, with
+  // the run-outcome input schema. Its own failure never changes run status.
+  optional GraphNode exit_hook = 10;
 }
 
 message GraphNode {

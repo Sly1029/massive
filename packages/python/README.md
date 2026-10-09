@@ -299,6 +299,36 @@ with the journal diagnostic `run exceeded its 21600-second deadline at node
 the workflow's start, and Argo fails the workflow. A graph passed to `call()`
 cannot have its own deadline; set it on the calling graph.
 
+### Exit hooks
+
+An exit hook runs once after every run settles, whether it succeeded, failed,
+ran out of time, or was cancelled. Use it for notification and cleanup:
+
+```python
+from massive import RunOutcome
+
+def notify(ctx: StepContext[RunOutcome]) -> None:
+    if ctx.inputs.status != "succeeded":
+        alert(f"run {ctx.inputs.run_id} {ctx.inputs.status} at {ctx.inputs.failed_node}")
+
+graph.on_exit(notify, timeout=timedelta(minutes=5))
+```
+
+`RunOutcome` carries `run_id`, `status` (`succeeded`, `failed`, or
+`cancelled`), `failed_node` (the node whose failure ended a failed run, when
+known), `started_at`, and `finished_at`. The hook is an ordinary top-level
+function with its own contract, secrets, and timeout, and it must return
+`None`. It runs once: a retry policy in its contract is ignored, so make it
+idempotent or retry inside it. Its failure is recorded but never changes the
+run's status or the CLI's exit code.
+
+Locally the hook runs after the terminal journal is written, even after a
+deadline or Ctrl-C, and the journal's `exitHook` entry records its attempt;
+only the hook's own timeout bounds it. On Argo it runs from the workflow's
+`onExit` handler. Argo reports a stopped workflow (`argo stop`) as `failed`,
+and `argo terminate` skips exit handlers entirely. A graph passed to `call()`
+cannot have an exit hook.
+
 ## Exhaustive decisions
 
 Use a Pydantic discriminated union when a step chooses one of a finite set of

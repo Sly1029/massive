@@ -95,13 +95,14 @@ Source packages beyond the embedded limit use `object-store-v0`.
 Deployments place pods with schema-validated node selectors, affinity,
 tolerations, runtime and priority classes, labels, annotations, and a
 restricted pod spec patch: defaults for every pod and overrides by node id,
-outside plan identity.
+outside plan identity. An exit hook (`on_exit`) runs after every run settles
+on both targets, from Argo's `onExit` handler or after the local terminal
+journal, and never changes the run's status.
 Remaining work:
 - representative application images, and map fan-outs wider than 341 items
   (one Argo parameter of collected item envelopes).
 - A narrower credential binding for control pods; today one storage binding
   serves every pod.
-- An exit hook that runs on success, failure, or cancellation.
 
 Reject unsupported requirements instead of silently weakening them. Schema
 validation and isolated runner tests do not replace a live cluster execution gate.

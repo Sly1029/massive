@@ -20,6 +20,7 @@ from massive import (
     MAX_MAP_CONCURRENCY,
     GraphBuilder,
     JsonValue,
+    RunOutcome,
     StepContext,
     container,
     execution,
@@ -396,6 +397,94 @@ def test_workflow_call_rejects_a_child_with_its_own_run_deadline() -> None:
     )
     with pytest.raises(ValueError, match="called graph 'child' has a run deadline"):
         parent.call(child, id="child")
+
+
+def notify(context: StepContext[RunOutcome]) -> None:
+    del context
+
+
+def wrong_outcome_type(context: StepContext[Request]) -> None:
+    del context
+
+
+def returns_value(context: StepContext[RunOutcome]) -> int:
+    return len(context.inputs.run_id)
+
+
+def test_committed_run_outcome_schema_is_generated_from_the_model() -> None:
+    # Regenerate with:
+    # python -I -c "import json, massive;
+    #   print(json.dumps(massive.RunOutcome.model_json_schema(), indent=2))"
+    path = Path(__file__).resolve().parents[3] / "conformance/schema/run-outcome.schema.json"
+    assert RunOutcome.model_json_schema(mode="validation") == json.loads(path.read_text())
+
+
+def test_exit_hook_emits_outside_the_dag_and_never_retries() -> None:
+    graph = GraphBuilder(
+        name="hooked",
+        input_type=Request,
+        output_type=Result,
+        defaults=replace(_defaults(), retry=retry(3)),
+    )
+    graph.edge_from(graph.start).to(graph.add(identity)).to_end(graph.end)
+    graph.on_exit(notify, timeout=timedelta(minutes=5))
+
+    spec = _emit(graph).value
+
+    _validate_workflow_spec(spec)
+    hook = spec["graph"]["exitHook"]
+    assert hook["id"] == "notify" and hook["kind"] == "exit-hook"
+    assert all(node["id"] != "notify" for node in spec["graph"]["nodes"])
+    assert spec["schemas"][hook["inputSchema"]] == RunOutcome.model_json_schema()
+    assert spec["schemas"][hook["outputSchema"]] == {"type": "null"}
+    assert spec["symbols"][hook["symbolRef"]]["export"] == "notify"
+    contract = spec["contracts"][hook["contractRef"]]
+    assert "retry" not in contract and contract["timeoutSeconds"] == 300
+
+
+def test_exit_hook_registration_rejects_invalid_hooks() -> None:
+    graph = GraphBuilder(
+        name="hooked", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    graph.edge_from(graph.start).to(graph.add(identity)).to_end(graph.end)
+    for function in (wrong_outcome_type, returns_value):
+        with pytest.raises(TypeError, match="accept StepContext\\[RunOutcome\\] and return None"):
+            graph.on_exit(function)
+    with pytest.raises(ValueError, match="exit hook id 'identity' is already a node id"):
+        graph.on_exit(notify, id="identity")
+    graph.on_exit(notify)
+    with pytest.raises(ValueError, match="already has an exit hook"):
+        graph.on_exit(notify, id="again")
+
+
+def test_exit_hook_belongs_to_the_whole_run_not_a_called_graph() -> None:
+    child = GraphBuilder(
+        name="child", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    child.edge_from(child.start).to(child.add(passthrough_request, id="identity")).to_end(child.end)
+    parent = GraphBuilder(
+        name="parent", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    called = parent.call(child, id="first")
+    parent.edge_from(parent.start).to(called).to_end(parent.end)
+    # Registered after the call: emission still refuses to drop it.
+    child.on_exit(notify)
+    with pytest.raises(ValueError, match="called graph 'child' has an exit hook"):
+        _emit(parent)
+    with pytest.raises(ValueError, match="called graph 'child' has an exit hook"):
+        parent.call(child, id="second")
+
+    scoped = GraphBuilder(
+        name="scoped", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    plain = GraphBuilder(
+        name="plain", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    plain.edge_from(plain.start).to(plain.add(passthrough_request, id="identity")).to_end(plain.end)
+    scoped.edge_from(scoped.start).to(scoped.call(plain, id="first")).to_end(scoped.end)
+    scoped.on_exit(notify, id="first--identity")
+    with pytest.raises(ValueError, match="exit hook id 'first--identity' is already a node id"):
+        _emit(scoped)
 
 
 def _validate_workflow_spec(spec: dict[str, Any]) -> None:

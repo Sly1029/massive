@@ -41,6 +41,10 @@ only while attempts remain. Cancellation, infrastructure errors, and output
 verification failures end the step. Apply `timeoutSeconds` per attempt as an
 invoker deadline that yields a retryable failure, not a run cancellation. The
 backoff wait must observe the run context.
+The exit hook runs from a deferred call registered before terminalization, so
+it sees the durable outcome. It uses a context without the run's cancellation
+(only its contract timeout bounds it), runs one attempt, and records its
+result in the journal without returning an error or changing the run status.
 The plan's run deadline is a context deadline whose cause is
 `RunDeadlineError`: it stops work like a cancellation but fails the run, and
 its message is the one context cause safe to persist in the journal.

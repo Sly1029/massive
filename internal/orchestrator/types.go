@@ -68,6 +68,9 @@ type RunResult struct {
 	ManifestKey string
 	ResultKey   string
 	Steps       []StepSummary
+	// ExitHook is set when the plan has an exit hook; its status never
+	// changes the run's.
+	ExitHook *StepSummary
 }
 
 type StepSummary struct {
