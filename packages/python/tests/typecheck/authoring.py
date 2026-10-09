@@ -316,3 +316,44 @@ gathered.to(tally_node)
 reviews.merge(weigh_node, tally_node).transform(to_combined).to(
     reviews.call(answers, id="answers")
 ).to_end(reviews.end)
+
+
+# Two fan-ins type-check but are rejected when the graph is built, so they stay
+# valid here; tests/test_fan_in.py pins their build-time rejection.
+class Base(BaseModel):
+    value: int
+
+
+class Sub(Base):
+    extra: int
+
+
+def to_base(context: StepContext[Document]) -> Base:
+    return Base(value=len(context.inputs.text))
+
+
+def to_sub(context: StepContext[Document]) -> Sub:
+    return Sub(value=len(context.inputs.text), extra=0)
+
+
+def bases(context: StepContext[list[Base]]) -> Answer:
+    return Answer(answer=str(len(context.inputs)))
+
+
+def first_document(context: StepContext[Document]) -> Document:
+    return context.inputs
+
+
+unchecked: GraphBuilder[Document, tuple[Document, Document]] = GraphBuilder(
+    name="build-time-fan-in",
+    input_type=Document,
+    output_type=tuple[Document, Document],
+    defaults=graph.defaults,
+)
+# Covariant outputs solve a model and its subclass to list[Base]; the build
+# sees two different models and requires a discriminated consumer.
+unchecked.gather(unchecked.add(to_base), unchecked.add(to_sub)).to(unchecked.add(bases))
+# A tuple workflow output matches a merge's type, but the graph end takes one edge.
+unchecked.merge(
+    unchecked.add(first_document, id="first"), unchecked.add(first_document, id="second")
+).to_end(unchecked.end)
