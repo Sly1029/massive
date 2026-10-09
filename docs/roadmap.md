@@ -70,6 +70,11 @@ for what works today.
 - Per-task timeout, bounded retry with backoff, a non-retryable author signal,
   and per-attempt journal accounting are part of `ExecutionContract` and run on
   both the local and Argo targets.
+- A map may collect item failures (`item_failures="collect"`): after retries,
+  an item's exception, timeout, `NonRetryableError`, or death by signal (an
+  out-of-memory kill or a native crash) becomes a typed outcome instead of
+  failing the map, so siblings' results survive and a downstream step decides.
+  The local executor journals each failed item; Argo lowering is next.
 - Persist bounded task logs and structured lifecycle events. Inspection is available
   in the shipped Go CLI; the Deno CLI has been removed.
 - Treat external side effects separately from immutable artifact publication:

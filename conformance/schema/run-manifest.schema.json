@@ -307,6 +307,10 @@
                     "items": {
                       "$ref": "#/$defs/mapItem"
                     }
+                  },
+                  "itemFailures": {
+                    "type": "string",
+                    "const": "collect"
                   }
                 },
                 "required": [
@@ -340,6 +344,10 @@
                     "items": {
                       "$ref": "#/$defs/mapItem"
                     }
+                  },
+                  "itemFailures": {
+                    "type": "string",
+                    "const": "collect"
                   }
                 },
                 "required": [
@@ -373,6 +381,10 @@
                     "items": {
                       "$ref": "#/$defs/mapItem"
                     }
+                  },
+                  "itemFailures": {
+                    "type": "string",
+                    "const": "collect"
                   }
                 },
                 "required": [
@@ -406,6 +418,10 @@
                     "items": {
                       "$ref": "#/$defs/mapItem"
                     }
+                  },
+                  "itemFailures": {
+                    "type": "string",
+                    "const": "collect"
                   }
                 },
                 "required": [
@@ -442,6 +458,10 @@
                   },
                   "skipReason": {
                     "$ref": "#/$defs/skipReason"
+                  },
+                  "itemFailures": {
+                    "type": "string",
+                    "const": "collect"
                   }
                 },
                 "required": [
@@ -476,6 +496,10 @@
                     "items": {
                       "$ref": "#/$defs/mapItem"
                     }
+                  },
+                  "itemFailures": {
+                    "type": "string",
+                    "const": "collect"
                   }
                 },
                 "required": [
@@ -509,6 +533,10 @@
                     "items": {
                       "$ref": "#/$defs/mapItem"
                     }
+                  },
+                  "itemFailures": {
+                    "type": "string",
+                    "const": "collect"
                   }
                 },
                 "required": [

@@ -87,6 +87,35 @@ type ItemOutcome struct {
 	Value    []byte
 	Attempts []Fault
 	Status   Status
+	// Failure is the record a collecting map keeps for a failed item.
+	Failure *ItemFailure
+}
+
+// ItemFailure is the failure record of a collected item outcome.
+type ItemFailure struct {
+	Attempts   int    `json:"attempts"`
+	Diagnostic string `json:"diagnostic"`
+	Kind       string `json:"kind"`
+}
+
+// collectedFailure states which terminal faults a collecting map keeps, and
+// their records. Schema failures and missing outputs violate the contract,
+// so they still fail the map.
+func collectedFailure(fault Fault, attempt int, timeoutSeconds uint32) *ItemFailure {
+	failure := &ItemFailure{Attempts: attempt}
+	switch fault {
+	case FailRetryable, OrphanFailure:
+		failure.Kind, failure.Diagnostic = "error", "step-execution-failure (exit 66)"
+	case Crash:
+		failure.Kind, failure.Diagnostic = "killed", "runner-failure (exit 137)"
+	case FailNonRetryable:
+		failure.Kind, failure.Diagnostic = "non-retryable", "non-retryable-step-failure (exit 67)"
+	case Timeout:
+		failure.Kind, failure.Diagnostic = "timeout", fmt.Sprintf("step-timeout (timed out after %ds)", timeoutSeconds)
+	default:
+		return nil
+	}
+	return failure
 }
 
 type Prediction struct {
@@ -238,7 +267,9 @@ func (in *interpreter) attempts(node *Node, item int) ([]Fault, Status) {
 }
 
 // mapOutcome dispatches items in rounds. A terminal item failure fails the
-// map, so siblings awaiting a retry in that round are not retried.
+// map, so siblings awaiting a retry in that round are not retried. A map that
+// collects item failures instead keeps each collectable failure as that
+// item's outcome and lets its siblings finish.
 func (in *interpreter) mapOutcome(node *Node, input []byte) (*Outcome, error) {
 	var items []json.RawMessage
 	if err := json.Unmarshal(input, &items); err != nil {
@@ -269,6 +300,11 @@ func (in *interpreter) mapOutcome(node *Node, input []byte) (*Outcome, error) {
 				retry = append(retry, index)
 			default:
 				item.Status = Failed
+				if node.CollectItemFailures {
+					if item.Failure = collectedFailure(fault, attempt, node.TimeoutSeconds); item.Failure != nil {
+						continue
+					}
+				}
 				terminal = true
 			}
 		}
@@ -280,12 +316,18 @@ func (in *interpreter) mapOutcome(node *Node, input []byte) (*Outcome, error) {
 		}
 		pending = retry
 	}
-	values := make([]json.RawMessage, len(items))
+	values := make([]any, len(items))
 	for index, item := range outcome.Items {
-		if item.Status == Failed {
+		switch {
+		case item.Status == Failed && item.Failure == nil:
 			outcome.Status = Failed
+		case !node.CollectItemFailures:
+			values[index] = json.RawMessage(item.Value)
+		case item.Failure != nil:
+			values[index] = map[string]any{"status": "failed", "failure": item.Failure}
+		default:
+			values[index] = map[string]any{"status": "succeeded", "value": json.RawMessage(item.Value)}
 		}
-		values[index] = item.Value
 	}
 	if outcome.Status == Succeeded {
 		var err error

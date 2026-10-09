@@ -14,7 +14,7 @@ func ValidateControlFlow(p *planpb.WorkflowPlan) error {
 	g := p.GetGraph()
 	graph := spec.Graph{IRVersion: g.GetIrVersion(), Start: g.GetStartNode(), End: g.GetEndNode()}
 	for _, n := range g.GetNodes() {
-		node := spec.GraphNode{ID: n.GetId(), Kind: n.GetKind(), InputSchema: n.GetInputSchema(), OutputSchema: n.GetOutputSchema(), Selector: n.GetSelector(), DecisionRef: n.GetDecisionRef(), SymbolRef: n.GetSymbolRef(), ContractRef: n.GetContractRef(), MergeInputs: n.GetMergeInputs(), ItemInputSchema: n.GetItemInputSchema(), ItemOutputSchema: n.GetItemOutputSchema(), MaxConcurrency: n.GetMaxConcurrency()}
+		node := spec.GraphNode{ID: n.GetId(), Kind: n.GetKind(), InputSchema: n.GetInputSchema(), OutputSchema: n.GetOutputSchema(), Selector: n.GetSelector(), DecisionRef: n.GetDecisionRef(), SymbolRef: n.GetSymbolRef(), ContractRef: n.GetContractRef(), MergeInputs: n.GetMergeInputs(), ItemInputSchema: n.GetItemInputSchema(), ItemOutputSchema: n.GetItemOutputSchema(), MaxConcurrency: n.GetMaxConcurrency(), ItemFailures: n.GetItemFailures()}
 		for _, c := range n.GetCases() {
 			node.Cases = append(node.Cases, spec.DecisionCase{Tag: c.GetTag(), Schema: c.GetSchema()})
 		}

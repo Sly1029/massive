@@ -59,6 +59,55 @@ func TestJournalReaderValidatesTerminalMapState(t *testing.T) {
 	}
 }
 
+func TestJournalAcceptsFailedItemsOnlyInMapsThatCollectThem(t *testing.T) {
+	input := DataArtifact{Key: "inputs/map", Hash: "sha256:input", ContentType: "application/json", Schema: "sha256:schema"}
+	output := PublishedArtifact{
+		Manifest: ArtifactRef{Key: "steps/map/1/output-manifest.json", Hash: "sha256:manifest", ContentType: "application/vnd.massive.data-artifact-manifest+json"},
+		Body:     ArtifactRef{Key: "blobs/sha256/body", Hash: "sha256:body", ContentType: "application/json"},
+	}
+	items := []MapItem{
+		{Index: 0, Status: "succeeded", Attempts: []Attempt{{Attempt: 1, Status: "succeeded", Input: input, Output: &output}}},
+		{Index: 1, Status: "failed", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "runner-killed (signal)"}}},
+	}
+	manifest := Manifest{Kind: "RunManifest", SchemaVersion: 5, Encoding: "json-v5", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{}, Steps: []Step{{
+		NodeID: "map", Status: "succeeded", ItemFailures: "collect", Items: &items,
+		Attempts: []Attempt{{Attempt: 1, Status: "succeeded", Input: input, Output: &output}},
+	}}}
+	body, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(body)
+	if err != nil {
+		t.Fatalf("collecting map with a failed item rejected: %v", err)
+	}
+	if parsed.Steps[0].ItemFailures != "collect" {
+		t.Fatalf("itemFailures did not round trip: %+v", parsed.Steps[0])
+	}
+	for name, change := range map[string]func(*Manifest){
+		"failed item in a failing map": func(m *Manifest) { m.Steps[0].ItemFailures = "" },
+		"unknown policy":               func(m *Manifest) { m.Steps[0].ItemFailures = "ignore" },
+		"not-started item in a succeeded map": func(m *Manifest) {
+			(*m.Steps[0].Items)[1] = MapItem{Index: 1, Status: "not-started", Attempts: []Attempt{}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var changed Manifest
+			if err := json.Unmarshal(body, &changed); err != nil {
+				t.Fatal(err)
+			}
+			change(&changed)
+			encoded, err := json.Marshal(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Parse(encoded); err == nil {
+				t.Fatal("invalid journal accepted")
+			}
+		})
+	}
+}
+
 func TestTerminalJournalRejectsUnfinishedWork(t *testing.T) {
 	for _, status := range []string{"failed", "cancelled"} {
 		for _, unfinished := range []string{"pending", "running"} {

@@ -13,6 +13,7 @@ from typing import (
     Annotated,
     Any,
     Generic,
+    Literal,
     Never,
     TypeVar,
     cast,
@@ -38,6 +39,7 @@ from .context import InputT, StepContext
 from .contracts import ExecutionContract, Retry
 from .hashing import SOURCE_PACKAGE_HASHING, WORKFLOW_SPEC_HASHING
 from .identity import SAFE_PATH_SEGMENT, SafePathSegment
+from .outcomes import MapItemOutcome
 from .source_package import SourcePackage
 
 OutputT = TypeVar("OutputT")
@@ -102,6 +104,7 @@ class _MapIdentity(BaseModel):
 
     id: SafePathSegment
     concurrency: Annotated[StrictInt, Field(ge=1, le=MAX_MAP_CONCURRENCY)]
+    item_failures: Literal["fail", "collect"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +152,7 @@ class _MapDefinition:
     mapper: _Step[Any, Any]
     handle: NodeHandle[Any, Any]
     concurrency: int
+    item_failures: Literal["fail", "collect"]
 
 
 class DecisionHandle(Generic[OutputT]):
@@ -388,6 +392,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         *,
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
+        item_failures: Literal["fail"] = "fail",
         contract: ExecutionContract | None = None,
         retry: Retry | None = None,
         timeout: timedelta | None = None,
@@ -401,10 +406,39 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         *,
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
+        item_failures: Literal["fail"] = "fail",
         contract: ExecutionContract | None = None,
         retry: Retry | None = None,
         timeout: timedelta | None = None,
     ) -> NodeHandle[Never, list[ResultT]]: ...
+
+    @overload
+    def map(
+        self,
+        source: NodeHandle[Any, list[ItemT]],
+        mapper: Callable[[StepContext[ItemT]], Awaitable[ResultT]],
+        *,
+        id: str,
+        concurrency: int = DEFAULT_MAP_CONCURRENCY,
+        item_failures: Literal["collect"],
+        contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
+    ) -> NodeHandle[Never, list[MapItemOutcome[ResultT]]]: ...
+
+    @overload
+    def map(
+        self,
+        source: NodeHandle[Any, list[ItemT]],
+        mapper: Callable[[StepContext[ItemT]], ResultT],
+        *,
+        id: str,
+        concurrency: int = DEFAULT_MAP_CONCURRENCY,
+        item_failures: Literal["collect"],
+        contract: ExecutionContract | None = None,
+        retry: Retry | None = None,
+        timeout: timedelta | None = None,
+    ) -> NodeHandle[Never, list[MapItemOutcome[ResultT]]]: ...
 
     def map(
         self,
@@ -413,6 +447,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         *,
         id: str,
         concurrency: int = DEFAULT_MAP_CONCURRENCY,
+        item_failures: Literal["fail", "collect"] = "fail",
         contract: ExecutionContract | None = None,
         retry: Retry | None = None,
         timeout: timedelta | None = None,
@@ -434,11 +469,16 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         identity = _MapIdentity(
             id=id,
             concurrency=_MAP_CONCURRENCY.validate_python(concurrency),
+            item_failures=item_failures,
         )
         map_id = identity.id
         if map_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved map id {map_id!r}")
-        output_type = list[step.output_type]
+        output_type = (
+            list[MapItemOutcome[step.output_type]]
+            if identity.item_failures == "collect"
+            else list[step.output_type]
+        )
         handle = NodeHandle[Never, Any](
             graph_token=self._graph_token,
             node_id=map_id,
@@ -451,6 +491,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
             mapper=step,
             handle=handle,
             concurrency=identity.concurrency,
+            item_failures=identity.item_failures,
         )
         self._handles[map_id] = handle
         self._add_edge(source_id, map_id)
@@ -1044,6 +1085,10 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                     "symbolRef": symbol_ref,
                     "contractRef": contract_ref(definition.mapper.contract or self.defaults),
                     "maxConcurrency": definition.concurrency,
+                    # The IR omits the default: a terminal item failure fails the map.
+                    **(
+                        {"itemFailures": "collect"} if definition.item_failures == "collect" else {}
+                    ),
                 }
             )
         for call_id in sorted(self._calls, key=_canonical_sort_key):

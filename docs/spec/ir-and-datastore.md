@@ -228,6 +228,61 @@ local runtime invokes one scoped child per already-crystallized source item and
 publishes one deterministic, source-ordered list at the map node's static
 output slot. Empty input publishes `[]`. Argo lowers finite maps to bounded fan-out and ordered collection.
 
+### Item failure policy
+
+A map node may set `itemFailures: "collect"`. Without it, a terminal item
+failure fails the map. With it, the map succeeds with one **item outcome** per
+source item, in source order, and its `outputSchema` must be an array whose
+items are the outcome schema wrapping `itemOutputSchema`:
+
+```json
+{"oneOf": [
+  {"type": "object", "additionalProperties": false, "required": ["status", "value"],
+   "properties": {"status": {"const": "succeeded", "type": "string"}, "value": <itemOutputSchema>}},
+  {"type": "object", "additionalProperties": false, "required": ["failure", "status"],
+   "properties": {"status": {"const": "failed", "type": "string"},
+     "failure": {"type": "object", "additionalProperties": false,
+       "required": ["attempts", "diagnostic", "kind"],
+       "properties": {
+         "attempts": {"minimum": 1, "type": "integer"},
+         "diagnostic": {"maxLength": 1024, "type": "string"},
+         "kind": {"enum": ["error", "killed", "non-retryable", "timeout"], "type": "string"}}}}}
+]}
+```
+
+The compiler compares the declared schema with this one after resolving local
+`$ref`s and ignoring `title`, `description`, `discriminator`, `examples`,
+`$comment`, and `$defs` placement, so Pydantic's emission of
+`list[MapItemOutcome[T]]` matches while any validating difference is rejected
+(`conformance/fixtures/map-outcomes`). Downstream edges then compare the
+outcome list by exact schema reference like any other value. The only spelling
+of the default is the field's absence.
+
+An item fails only after its retries are exhausted, and the policy collects
+failures of the item's own code:
+
+| kind | cause | diagnostic |
+| --- | --- | --- |
+| `error` | an exception (runner exit 66) or another nonzero exit | the runner summary, then `: <exception message>` for exit 66 |
+| `non-retryable` | `NonRetryableError` (exit 67) | `non-retryable-step-failure (exit 67): <message>` |
+| `timeout` | the attempt exceeded `timeoutSeconds` | `step-timeout (timed out after <duration>)` |
+| `killed` | the runner died from a signal: an out-of-memory kill, a segmentation fault, `SIGKILL` | `runner-killed (signal)`, or `runner-failure (exit 128+n)` when a runtime reports the signal as an exit status |
+
+`attempts` counts the item's attempts, including the last. The message is the
+text after the runner's final `<label>: ` line, which the runner flushes after
+any author output, and only when the exit code matches the label; other task
+output never enters the record. The diagnostic is truncated to 1,024 Unicode
+code points of valid UTF-8. Descriptor (64) and schema (65) failures,
+dependency preflight (68), output verification, infrastructure errors, and
+cancellation still fail the map: they describe the plan, the environment, or
+the run rather than one item, and they stop sibling retries as before.
+
+There is deliberately no bound on the number of failed items. A bound could not
+stop sibling work early on Argo, where items retry independently, so it would
+save nothing there and behave differently locally; the downstream step already
+receives every outcome and can raise `NonRetryableError` with a domain-specific
+threshold and diagnostic.
+
 Python graph calls are an authoring-time composition operation. The frontend
 expands each acyclic call into the current Graph IR before writing a
 `WorkflowSpec`. A child node receives a scoped ID formed from its call ID and
@@ -279,6 +334,9 @@ failed retryably with attempts left are pending for the next round. If any item
 in a round fails terminally (a non-retryable failure, its last attempt, or
 output verification), the map fails: items awaiting a retry are not retried, and
 their failed attempt is their last. Retrying them cannot make the map succeed.
+A map that collects item failures instead records a collectable terminal
+failure as that item's outcome and keeps retrying its siblings; only a failure
+the policy does not collect stops the map.
 
 Contracts are merged from workflow defaults and step overrides. Effective contracts are deduped in the compiled plan by content hash.
 
@@ -341,7 +399,10 @@ projects/<project-key>/runs/<run-id>/result.json
 The run manifest is independently versioned as `schemaVersion: 5`,
 `encoding: "json-v5"`. It records the checked dependency environment (or `null`),
 durable decision selections, inactive
-branches, and source-indexed finite-map items. Failed and cancelled runs have
+branches, and source-indexed finite-map items. A map that collects item
+failures records `itemFailures: "collect"` on its step; only such a successful
+map may contain `failed` items, whose attempts carry durable runner summaries
+without exception messages. Failed and cancelled runs have
 a root diagnostic and terminal steps; completed artifacts survive cancellation,
 while undispatched work has no attempts. Attempts are dense and 1-based; every
 attempt before the last failed, and the last attempt carries the entry status.

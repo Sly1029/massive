@@ -23,6 +23,7 @@ import (
 	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/sourceidentity"
+	"github.com/Sly1029/massive/internal/spec"
 	"github.com/google/uuid"
 )
 
@@ -926,7 +927,10 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		)
 	}
 	policy := policyForContract(resolution.index.contractsByRef[node.GetContractRef()])
+	collectFailures := node.GetItemFailures() == spec.MapItemFailuresCollect
 	results := make([]mapexec.Result, 0, len(items))
+	// failures holds the terminal item failures a collecting map keeps as outcomes.
+	failures := make(map[int]mapexec.Failure)
 	firstRunnerFailure := ""
 	pending := make([]int, len(items))
 	for index := range pending {
@@ -992,6 +996,11 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 					retryDiagnostics[itemIndex] = diagnostic
 					continue
 				}
+				if failure, collected := mapItemFailure(outcome, attempt); collectFailures && collected {
+					failures[itemIndex] = failure
+					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, diagnostic)
+					continue
+				}
 				terminalFailure = true
 				if firstRunnerFailure == "" {
 					firstRunnerFailure = runnerDiagnostic(outcome) + attemptSuffix(attempt, policy)
@@ -1031,13 +1040,25 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		pending = retry
 	}
 
-	if mapHasFailedItem(*manifest, node.GetId()) {
+	if mapHasFailedItem(*manifest, node.GetId(), failures) {
 		if firstRunnerFailure == "" {
 			firstRunnerFailure = "one or more map items failed"
 		}
 		return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "one or more map items failed", errors.New(firstRunnerFailure))
 	}
-	collected, err := mapexec.Collect(len(items), results)
+	var collected []byte
+	if collectFailures {
+		outcomes := make([]mapexec.Outcome, 0, len(items))
+		for _, result := range results {
+			outcomes = append(outcomes, mapexec.Outcome{Index: result.Index, Value: result.Body})
+		}
+		for itemIndex, failure := range failures {
+			outcomes = append(outcomes, mapexec.Outcome{Index: itemIndex, Failure: &failure})
+		}
+		collected, err = mapexec.CollectOutcomes(len(items), outcomes)
+	} else {
+		collected, err = mapexec.Collect(len(items), results)
+	}
 	if err != nil {
 		return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map collection failed", err)
 	}
@@ -1268,6 +1289,7 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 		if nodesByID[stepID].GetKind() == "map" {
 			items := []runjournal.MapItem{}
 			step.Items = &items
+			step.ItemFailures = nodesByID[stepID].GetItemFailures()
 		}
 		steps = append(steps, step)
 	}
@@ -1363,13 +1385,14 @@ func lastAttempt(attempts []runjournal.Attempt) *runjournal.Attempt {
 	return &attempts[len(attempts)-1]
 }
 
-func mapHasFailedItem(manifest runjournal.Manifest, nodeID string) bool {
+// mapHasFailedItem reports an unsuccessful item other than the collected failures.
+func mapHasFailedItem(manifest runjournal.Manifest, nodeID string, collected map[int]mapexec.Failure) bool {
 	for _, step := range manifest.Steps {
 		if step.NodeID != nodeID || step.Items == nil {
 			continue
 		}
 		for _, item := range *step.Items {
-			if item.Status != StatusSucceeded {
+			if _, isCollected := collected[item.Index]; item.Status != StatusSucceeded && !isCollected {
 				return true
 			}
 		}
@@ -1527,6 +1550,11 @@ func durableRunnerDiagnostic(outcome StepInvocationOutcome) string {
 func runnerFailureSummary(outcome StepInvocationOutcome, fallback string) string {
 	if outcome.TimedOutAfter > 0 {
 		return fmt.Sprintf("step-timeout (timed out after %s)", outcome.TimedOutAfter)
+	}
+	// Go reports -1 for a process that a signal ended, such as an
+	// out-of-memory kill or a segmentation fault.
+	if outcome.ExitCode < 0 {
+		return "runner-killed (signal)"
 	}
 	label := fallback
 	switch outcome.ExitCode {

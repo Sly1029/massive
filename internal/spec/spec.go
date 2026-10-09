@@ -28,6 +28,9 @@ const (
 	NodeKindSelect   = "select"
 	NodeKindMap      = "map"
 	NodeKindEnd      = "end"
+
+	// MapItemFailuresCollect makes a map succeed with one outcome per item.
+	MapItemFailuresCollect = "collect"
 )
 
 type WorkflowSpec struct {
@@ -81,6 +84,9 @@ type GraphNode struct {
 	ItemInputSchema  string         `json:"itemInputSchema,omitempty"`
 	ItemOutputSchema string         `json:"itemOutputSchema,omitempty"`
 	MaxConcurrency   uint32         `json:"maxConcurrency,omitempty"`
+	// ItemFailures is empty, so a terminal item failure fails the map, or
+	// MapItemFailuresCollect.
+	ItemFailures string `json:"itemFailures,omitempty"`
 }
 
 type GraphEdge struct {
@@ -805,11 +811,7 @@ func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, i
 		if inputSchemaExists && itemInputSchemaExists && !arraySchemaItemsExactlyMatch(parsed.Schemas[node.InputSchema], parsed.Schemas[node.ItemInputSchema]) {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.InputSchema, Message: "map inputSchema must be an array whose items exactly equal itemInputSchema"})
 		}
-		_, outputSchemaExists := parsed.Schemas[node.OutputSchema]
-		_, itemOutputSchemaExists := parsed.Schemas[node.ItemOutputSchema]
-		if outputSchemaExists && itemOutputSchemaExists && !arraySchemaItemsExactlyMatch(parsed.Schemas[node.OutputSchema], parsed.Schemas[node.ItemOutputSchema]) {
-			diagnostics = append(diagnostics, Diagnostic{Path: path + ".outputSchema", Ref: node.OutputSchema, Message: "map outputSchema must be an array whose items exactly equal itemOutputSchema"})
-		}
+		diagnostics = append(diagnostics, validateMapOutputSchema(node, parsed.Schemas, path)...)
 		if len(inbound[node.ID]) != 1 {
 			diagnostics = append(diagnostics, Diagnostic{Path: path + ".inputSchema", Ref: node.ID, Message: "map requires exactly one predecessor"})
 		} else if source, exists := nodeByID[inbound[node.ID][0]]; !exists {
@@ -838,6 +840,28 @@ func validateMapSemantics(parsed *WorkflowSpec, nodeByID map[string]GraphNode, i
 		}
 	}
 	return diagnostics
+}
+
+// validateMapOutputSchema relates a map's collected output to its item
+// output: the list of item values, or of item outcomes when the map collects
+// item failures.
+func validateMapOutputSchema(node GraphNode, schemas map[string]json.RawMessage, path string) []Diagnostic {
+	outputSchema, outputSchemaExists := schemas[node.OutputSchema]
+	itemOutputSchema, itemOutputSchemaExists := schemas[node.ItemOutputSchema]
+	if !outputSchemaExists || !itemOutputSchemaExists {
+		return nil
+	}
+	switch node.ItemFailures {
+	case MapItemFailuresCollect:
+		if !MapOutcomeListSchemaMatches(outputSchema, itemOutputSchema) {
+			return []Diagnostic{{Path: path + ".outputSchema", Ref: node.OutputSchema, Message: "a map that collects item failures must output an array of item outcomes wrapping itemOutputSchema"}}
+		}
+	case "":
+		if !arraySchemaItemsExactlyMatch(outputSchema, itemOutputSchema) {
+			return []Diagnostic{{Path: path + ".outputSchema", Ref: node.OutputSchema, Message: "map outputSchema must be an array whose items exactly equal itemOutputSchema"}}
+		}
+	}
+	return nil
 }
 
 func graphValueOutputSchema(node GraphNode, workflowInputSchema string) (string, bool) {
@@ -1542,6 +1566,11 @@ func ValidateControlFlow(graph Graph, schemas map[string]json.RawMessage) error 
 		nodes[node.ID], indexes[node.ID] = node, index
 	}
 	diagnostics := validateDecisionAndSelectSemantics(&WorkflowSpec{Graph: graph, Schemas: schemas}, nodes, indexes)
+	for index, node := range graph.Nodes {
+		if node.Kind == NodeKindMap {
+			diagnostics = append(diagnostics, validateMapOutputSchema(node, schemas, fmt.Sprintf("$.graph.nodes[%d]", index))...)
+		}
+	}
 	if len(diagnostics) > 0 {
 		return &DiagnosticsError{Diagnostics: diagnostics}
 	}

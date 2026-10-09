@@ -261,7 +261,12 @@ type scope struct {
 }
 
 type builder struct {
-	style          idStyle
+	style idStyle
+	// collect selects the map regions that collect item failures. Every
+	// instance of a region shares its policy, as call sites share a child
+	// graph's definition.
+	collect        map[*mapRegion]bool
+	mapRegions     []*mapRegion
 	environmentRef string
 	schemas        map[string]json.RawMessage
 	symbols        map[string]spec.Symbol
@@ -367,6 +372,9 @@ func (b *builder) emitRegion(r region, source value, in entry, sc *scope) value 
 		)
 		return value{id: selectID, typ: r.typ}
 	case *mapRegion:
+		if !slices.Contains(b.mapRegions, r) {
+			b.mapRegions = append(b.mapRegions, r)
+		}
 		input := source
 		if source.typ != listValue || in != (entry{}) {
 			input = b.emitStep(r.expand, []value{source}, in, sc, false)
@@ -374,19 +382,31 @@ func (b *builder) emitRegion(r region, source value, in entry, sc *scope) value 
 		mapID := sc.id(b, r.local)
 		symbol := b.symbol(sc, r.local, Behavior{Kind: Transform})
 		contractRef, contract := b.contract(r.contract)
-		b.addNode(
-			spec.GraphNode{
-				ID: mapID, Kind: spec.NodeKindMap, InputSchema: b.schema(listSchemaJSON),
-				ItemInputSchema: b.schema(objectSchemaJSON), ItemOutputSchema: b.schema(objectSchemaJSON),
-				OutputSchema: b.schema(listSchemaJSON), SymbolRef: symbol, ContractRef: contractRef, MaxConcurrency: r.maxConcurrency,
-			},
-			&Node{
-				ID: mapID, Kind: spec.NodeKindMap, Symbol: symbol, Sources: []string{input.id}, Context: sc.context,
-				MaxAttempts: maxAttempts(contract), TimeoutSeconds: contract.TimeoutSeconds, MaxConcurrency: r.maxConcurrency,
-			},
-		)
+		graphNode := spec.GraphNode{
+			ID: mapID, Kind: spec.NodeKindMap, InputSchema: b.schema(listSchemaJSON),
+			ItemInputSchema: b.schema(objectSchemaJSON), ItemOutputSchema: b.schema(objectSchemaJSON),
+			OutputSchema: b.schema(listSchemaJSON), SymbolRef: symbol, ContractRef: contractRef, MaxConcurrency: r.maxConcurrency,
+		}
+		collect := b.collect[r]
+		if collect {
+			graphNode.ItemFailures = spec.MapItemFailuresCollect
+			graphNode.OutputSchema = b.schema(outcomeListSchemaJSON)
+		}
+		b.addNode(graphNode, &Node{
+			ID: mapID, Kind: spec.NodeKindMap, Symbol: symbol, Sources: []string{input.id}, Context: sc.context,
+			MaxAttempts: maxAttempts(contract), TimeoutSeconds: contract.TimeoutSeconds, MaxConcurrency: r.maxConcurrency,
+			CollectItemFailures: collect,
+		})
 		b.edges = append(b.edges, spec.GraphEdge{From: input.id, To: mapID})
-		return value{id: mapID, typ: listValue}
+		if !collect {
+			return value{id: mapID, typ: listValue}
+		}
+		// A step reads the outcomes, as the author's downstream step decides
+		// what to do with failed items. It reuses the map's ID index, so the
+		// IDs of later nodes do not depend on the policy.
+		reader := &stepRegion{local: r.local + "o", behavior: Behavior{Kind: Expand, Items: 2}}
+		readerID := b.style.nodeID(sc.prefix, reader.local, b.emitted)
+		return b.emitStepAs(readerID, reader, []value{{id: mapID}}, entry{inputSchema: b.schema(outcomeListSchemaJSON)}, sc, false)
 	case *callRegion:
 		current := source
 		for index, local := range r.locals {
@@ -405,7 +425,10 @@ func (b *builder) emitRegion(r region, source value, in entry, sc *scope) value 
 // emitStep emits an ordinary step, or a merge step that declares its inputs
 // even when there is only one.
 func (b *builder) emitStep(r *stepRegion, inputs []value, in entry, sc *scope, merge bool) value {
-	id := sc.id(b, r.local)
+	return b.emitStepAs(sc.id(b, r.local), r, inputs, in, sc, merge)
+}
+
+func (b *builder) emitStepAs(id string, r *stepRegion, inputs []value, in entry, sc *scope, merge bool) value {
 	sources := make([]string, 0, len(inputs))
 	for _, input := range inputs {
 		sources = append(sources, input.id)

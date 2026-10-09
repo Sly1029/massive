@@ -83,6 +83,10 @@ message GraphNode {
   optional string item_input_schema = 12;
   optional string item_output_schema = 13;
   optional uint32 max_concurrency = 14;
+  // Absent: a terminal item failure fails the map. "collect": the map
+  // succeeds with one discriminated outcome per item, and output_schema is
+  // the list of item outcomes wrapping item_output_schema.
+  optional string item_failures = 15;
 }
 
 message GraphEdge {

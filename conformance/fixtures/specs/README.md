@@ -25,3 +25,11 @@ ordered merge, a gather of discriminated models into an expanded call, and a
 merge whose source is a call's exit. It is generated from
 `conformance/workflows/python-fan-in`, checked by the Python frontend and Go
 parser tests, and executed locally by `packages/python/tests/test_local_e2e.py`.
+
+`python-map-outcomes` is an exact Python emission fixture for a map that
+collects item failures: its output is `list[MapItemOutcome[Scanned]]`, merged
+with the requests into a reporting step. It is generated from
+`conformance/workflows/python-map-outcomes`, checked by the Python frontend and
+Go parser tests, and executed locally with a real exception,
+`NonRetryableError`, segmentation fault, `SIGKILL`, and timeout by
+`packages/python/tests/test_map_outcomes.py`.

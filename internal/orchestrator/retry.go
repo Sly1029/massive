@@ -3,9 +3,11 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/mapexec"
 )
 
 // Runner exit codes shared by every language adapter.
@@ -66,6 +68,46 @@ func retryableOutcome(outcome StepInvocationOutcome) bool {
 		return false
 	}
 	return true
+}
+
+// mapItemFailure classifies a terminal runner failure that a collecting map
+// keeps as an item outcome. Descriptor and schema failures violate the plan's
+// contract rather than describe one item, so they still fail the map, as do
+// cancellation, infrastructure, and output verification failures, which have
+// no runner outcome to classify.
+func mapItemFailure(outcome StepInvocationOutcome, attempt int) (mapexec.Failure, bool) {
+	summary := runnerFailureSummary(outcome, "runner-failure")
+	switch {
+	case outcome.TimedOutAfter > 0:
+		return mapexec.NewFailure(mapexec.FailureTimeout, attempt, summary), true
+	case outcome.ExitCode == runnerExitDescriptorResolution || outcome.ExitCode == runnerExitSchemaValidation:
+		return mapexec.Failure{}, false
+	case outcome.ExitCode == runnerExitNonRetryable:
+		return mapexec.NewFailure(mapexec.FailureNonRetryable, attempt, withRunnerMessage(summary, outcome.Diagnostic, "non-retryable-step-failure")), true
+	case outcome.ExitCode == runnerExitStepExecution:
+		return mapexec.NewFailure(mapexec.FailureError, attempt, withRunnerMessage(summary, outcome.Diagnostic, "step-execution-failure")), true
+	// Go reports -1 for a process ended by a signal; container runtimes and
+	// shells report 128 plus the signal number.
+	case outcome.ExitCode < 0 || outcome.ExitCode > 128:
+		return mapexec.NewFailure(mapexec.FailureKilled, attempt, summary), true
+	default:
+		return mapexec.NewFailure(mapexec.FailureError, attempt, summary), true
+	}
+}
+
+// withRunnerMessage appends the message from the runner's own final
+// "<label>: <message>" line, which follows any author output. Earlier output
+// is never included, so author logs do not enter the outcome.
+func withRunnerMessage(summary, output, label string) string {
+	start := strings.LastIndex("\n"+output, "\n"+label+": ")
+	if start < 0 {
+		return summary
+	}
+	message := strings.TrimSpace(output[start+len(label)+2:])
+	if message == "" {
+		return summary
+	}
+	return summary + ": " + message
 }
 
 func waitBeforeRetry(ctx context.Context, delay time.Duration) error {

@@ -152,3 +152,16 @@ graph.merge(lefts)  # pyright: ignore[reportCallIssue] # ty: ignore[no-matching-
 
 # merge is typed per position for at most eight sources.
 graph.merge(lefts, rights, lefts, rights, lefts, rights, lefts, rights, lefts)  # pyright: ignore[reportCallIssue] # ty: ignore[no-matching-overload]
+
+
+def to_documents(context: StepContext[Document]) -> list[Document]:
+    return [context.inputs]
+
+
+def summarize_all(context: StepContext[list[Summary]]) -> Answer:
+    return Answer(answer="")
+
+
+# A map that collects item failures produces outcomes, not bare values.
+collected = graph.map(graph.add(to_documents), summarize, id="collected", item_failures="collect")
+graph.edge_from(collected).to(graph.add(summarize_all))  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]

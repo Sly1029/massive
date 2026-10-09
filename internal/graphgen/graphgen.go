@@ -114,6 +114,8 @@ type Node struct {
 	MaxAttempts    int
 	TimeoutSeconds uint32
 	MaxConcurrency uint32
+	// CollectItemFailures makes a map succeed with one outcome per item.
+	CollectItemFailures bool
 }
 
 // Workflow is a generated spec plus everything needed to execute and predict it.
@@ -154,6 +156,16 @@ func caseSchemaJSON(tag string) string {
 
 const listSchemaJSON = `{"type":"array","items":` + objectSchemaJSON + `}`
 
+// outcomeListSchemaJSON is the output of a map that collects item failures,
+// spelled as Pydantic emits it: definitions behind references, with titles
+// and a discriminator that validation ignores.
+const outcomeListSchemaJSON = `{"$defs":{` +
+	`"Failed":{"additionalProperties":false,"properties":{"failure":{"$ref":"#/$defs/Failure"},"status":{"const":"failed","title":"Status","type":"string"}},"required":["failure","status"],"title":"Failed","type":"object"},` +
+	`"Failure":{"additionalProperties":false,"properties":{"attempts":{"minimum":1,"type":"integer"},"diagnostic":{"maxLength":1024,"type":"string"},"kind":{"enum":["error","killed","non-retryable","timeout"],"type":"string"}},"required":["attempts","diagnostic","kind"],"title":"Failure","type":"object"},` +
+	`"Item":` + objectSchemaJSON + `,` +
+	`"Succeeded":{"additionalProperties":false,"properties":{"status":{"const":"succeeded","type":"string"},"value":{"$ref":"#/$defs/Item"}},"required":["status","value"],"type":"object"}},` +
+	`"items":{"discriminator":{"propertyName":"status"},"oneOf":[{"$ref":"#/$defs/Succeeded"},{"$ref":"#/$defs/Failed"}]},"type":"array"}`
+
 // A merge step receives exactly one value per declared input, in order.
 func mergeSchemaJSON(arity int) string {
 	return fmt.Sprintf(`{"type":"array","minItems":%d,"maxItems":%d}`, arity, arity)
@@ -168,17 +180,49 @@ const (
 
 // Generate decodes fuzz bytes into a valid workflow, a fault script, and an
 // optional interrupt. Every byte sequence produces a workflow.
+//
+// Map item-failure policies are read last, after the fault script, so seeds
+// written before the policy existed keep their meaning. The workflow is then
+// emitted again with those policies; node IDs do not depend on them.
 func Generate(data []byte) (*Workflow, error) {
 	c := &choices{data: data}
 	style := idStyle(c.intn(int(idStyleCount)))
 	main := parseTemplate(c, "main", 0, &parseState{})
-	environment := spec.Environment{Kind: "container", Image: pinnedImage, Platform: "linux/amd64"}
-	environmentRef, err := digestValue(environment)
+	b, workflow, err := emitWorkflow(main, style, nil)
 	if err != nil {
 		return nil, err
 	}
+	workflow.Input, err = canonical.Marshal(map[string]string{"kind": "input", "value": fmt.Sprintf("%02x", c.byte())})
+	if err != nil {
+		return nil, err
+	}
+	scriptFaults(c, workflow)
+	collect := map[*mapRegion]bool{}
+	for _, region := range b.mapRegions {
+		if c.chance(1, 2) {
+			collect[region] = true
+		}
+	}
+	if len(collect) == 0 {
+		return workflow, nil
+	}
+	_, collecting, err := emitWorkflow(main, style, collect)
+	if err != nil {
+		return nil, err
+	}
+	collecting.Input, collecting.Faults, collecting.Interrupt = workflow.Input, workflow.Faults, workflow.Interrupt
+	return collecting, nil
+}
+
+func emitWorkflow(main *template, style idStyle, collect map[*mapRegion]bool) (*builder, *Workflow, error) {
+	environment := spec.Environment{Kind: "container", Image: pinnedImage, Platform: "linux/amd64"}
+	environmentRef, err := digestValue(environment)
+	if err != nil {
+		return nil, nil, err
+	}
 	b := &builder{
 		style:          style,
+		collect:        collect,
 		environmentRef: environmentRef,
 		schemas:        map[string]json.RawMessage{},
 		symbols:        map[string]spec.Symbol{},
@@ -196,7 +240,7 @@ func Generate(data []byte) (*Workflow, error) {
 	sourceHash := canonical.DigestBytes(source)
 	packageHash, err := sourceidentity.Digest([]sourceidentity.File{{Path: sourcePath, Hash: sourceHash}})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	workflowSpec := &spec.WorkflowSpec{
 		Kind: "WorkflowSpec", SchemaVersion: 0, Encoding: "json-v0",
@@ -217,18 +261,12 @@ func Generate(data []byte) (*Workflow, error) {
 	}
 	body, err := HashSpec(workflowSpec)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	workflow := &Workflow{
+	return b, &Workflow{
 		Spec: workflowSpec, JSON: body, SourcePath: sourcePath, Source: source,
 		Behaviors: b.behaviors, Nodes: b.nodes, NodeOrder: b.order, Faults: map[Invocation]Fault{},
-	}
-	workflow.Input, err = canonical.Marshal(map[string]string{"kind": "input", "value": fmt.Sprintf("%02x", c.byte())})
-	if err != nil {
-		return nil, err
-	}
-	scriptFaults(c, workflow)
-	return workflow, nil
+	}, nil
 }
 
 // HashSpec embeds the recomputed spec hash and returns the spec bytes.
