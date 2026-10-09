@@ -18,8 +18,7 @@ def double(ctx: StepContext[int]) -> int:
 
 
 def notify(ctx: StepContext[RunOutcome]) -> None:
-    print("MASSIVE-OUTCOME " + ctx.inputs.model_dump_json(), flush=True)
-    raise RuntimeError("notification service unavailable")
+    raise RuntimeError(f"notification service unavailable for {ctx.inputs.status} run")
 
 
 graph.edge_from(graph.start).to(graph.add(double)).to_end(graph.end)

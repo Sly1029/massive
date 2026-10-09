@@ -709,11 +709,16 @@ true}`: Argo otherwise turns a failed exit handler into the workflow's own
 failure, and the hook must never change the run's status. The pod runs
 `massive runtime exit-hook` with `{{workflow.status}}`,
 `{{workflow.failures}}`, `{{workflow.creationTimestamp}}`, and
-`{{workflow.uid}}`. The runtime maps `Succeeded` to `succeeded` and `Failed`
-or `Error` to `failed`, and names the plan node of the earliest failed pod as
-`failed_node`, recomputing each pod template's name from the plan. It then
+`{{workflow.uid}}`. Argo v3.7 substitutes `{{workflow.failures}}` as a JSON
+string holding the failed nodes (or `null`), and the runtime decodes exactly
+that form. It maps `Succeeded` to `succeeded` and `Failed` or `Error` to
+`failed`, and names the plan node of the earliest failed pod as
+`failed_node`, recomputing each pod template's name from the plan. It logs
+`exit hook <id> outcome <json>` (the outcome holds no secrets) and then
 invokes the hook through the same isolated path as a step, with its own
 secrets, resources, placement override, and timeout, and no retry strategy.
+Argo exempts exit-handler pods from the workflow's `activeDeadlineSeconds`, so
+a hook still runs after the run deadline.
 
 Argo cannot distinguish an operator's `argo stop` from a failure, so the
 outcome is `failed`; `argo terminate` does not run exit handlers. The live

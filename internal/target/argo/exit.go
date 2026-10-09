@@ -19,12 +19,17 @@ func ExitStatus(p *planpb.WorkflowPlan, status, failures string) (string, *strin
 	default:
 		return "", nil, fmt.Errorf("argo exit handler: unexpected workflow status %q", status)
 	}
-	// Argo encodes no failures as null.
+	// Argo substitutes the failures as a JSON string holding a JSON array, or
+	// holding null when no node failed.
+	var text string
 	var failed []struct {
 		TemplateName string `json:"templateName"`
 		FinishedAt   string `json:"finishedAt"`
 	}
-	if err := json.Unmarshal([]byte(failures), &failed); err != nil {
+	if err := json.Unmarshal([]byte(failures), &text); err != nil {
+		return "", nil, fmt.Errorf("argo exit handler: workflow failures are not a JSON string: %w", err)
+	}
+	if err := json.Unmarshal([]byte(text), &failed); err != nil {
 		return "", nil, fmt.Errorf("argo exit handler: decode workflow failures: %w", err)
 	}
 	nodes := templateNodes(p)

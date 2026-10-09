@@ -23,7 +23,7 @@ def stall(ctx: StepContext[int]) -> int:
 
 
 def report(ctx: StepContext[RunOutcome]) -> None:
-    print("MASSIVE-OUTCOME " + ctx.inputs.model_dump_json(), flush=True)
+    assert ctx.inputs.status == "failed"
 
 
 graph.edge_from(graph.start).to(graph.add(stall)).to_end(graph.end)

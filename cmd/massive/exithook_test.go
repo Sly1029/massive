@@ -235,7 +235,7 @@ graph.on_exit(record)
 	outcomeFile := filepath.Join(root, "outcome.json")
 	command := exec.Command(binary, "runtime", "exit-hook", "--plan", filepath.Join(mount, "massive-plan.json"),
 		"--bundle-dir", mount, "--node=record", "--status=Failed",
-		`--failures=[{"displayName":"check","templateName":"step-check","phase":"Failed","finishedAt":"2026-01-01T00:00:09Z"}]`,
+		`--failures="[{\"displayName\":\"check\",\"templateName\":\"step-check\",\"phase\":\"Failed\",\"finishedAt\":\"2026-01-01T00:00:09Z\"}]"`,
 		"--started-at=2026-01-01T00:00:00Z", "--output", filepath.Join(root, "result.json"),
 		"--project", "argo/checked", "--run-id", "argo-run", "--datastore-config", descriptor)
 	command.Env = append(environment, "OUTCOME_FILE="+outcomeFile)
