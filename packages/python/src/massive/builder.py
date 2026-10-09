@@ -1454,7 +1454,9 @@ def _canonical_sort_key(value: str) -> bytes:
 
 
 def _symbol_module(function: Callable[..., Any], root: Path) -> str:
-    source_file = inspect.getsourcefile(function)
+    # A functools.wraps decorator keeps the step's name and module, but its code
+    # lives where the decorator is defined; locate the step by what it wraps.
+    source_file = inspect.getsourcefile(inspect.unwrap(function))
     if source_file is None:
         raise TypeError("workflow step source file cannot be resolved")
     relative = Path(source_file).resolve().relative_to(root.resolve())
@@ -1464,8 +1466,13 @@ def _symbol_module(function: Callable[..., Any], root: Path) -> str:
     if not module or any(not part.isidentifier() for part in module.split(".")):
         raise TypeError("workflow step module is not a stable Python module name")
     loaded = sys.modules.get(function.__module__)
-    if not isinstance(loaded, ModuleType) or getattr(loaded, function.__name__, None) is None:
-        raise TypeError("workflow step must remain exported from its module")
+    # The runner imports the module attribute, so it must be this exact function:
+    # wrapping a step after import would register a hook the runner never runs.
+    if not isinstance(loaded, ModuleType) or getattr(loaded, function.__name__, None) is not function:
+        raise TypeError(
+            "workflow step must be exported from its module under its own name; "
+            "apply step decorators where the function is defined"
+        )
     return module
 
 

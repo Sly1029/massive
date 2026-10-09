@@ -8,6 +8,7 @@ import sys
 from hashlib import sha256
 from pathlib import Path
 from types import ModuleType
+from typing import Any, cast
 
 from massive import source_package
 
@@ -111,6 +112,59 @@ def test_python_fan_in_delivers_ordered_and_discriminated_values(tmp_path: Path)
     # The merge is positional, and the gather decodes each value as the model it was.
     assert json.loads((store / run["resultKey"]).read_text()) == {
         "parts": ["Doubled=6", "Squared=9", "|", "Doubled=6", "Squared=9"]
+    }
+
+
+def test_step_hook_decorator_from_a_shared_module_runs_in_the_task(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[3]
+    fixtures = Path(__file__).parent / "fixtures/step_hooks"
+    sys.path.insert(0, str(fixtures))
+    try:
+        module = _load_fixture(fixtures / "workflow.py")
+    finally:
+        sys.path.remove(str(fixtures))
+    specification = module.graph.emit(
+        source=source_package(
+            root=fixtures, include=["workflow.py", "redaction.py"], package_id="python-step-hooks"
+        )
+    )
+    # The step is addressed by its own module, not the decorator's.
+    (symbol,) = cast(dict[str, Any], specification.value["symbols"]).values()
+    assert (symbol["module"], symbol["export"]) == ("workflow", "report")
+    spec_path = tmp_path / "workflow-spec.json"
+    spec_path.write_text(specification.to_json() + "\n")
+    result = subprocess.run(
+        [
+            "go",
+            "run",
+            "./cmd/massive-orchestrator",
+            "run",
+            "--spec",
+            str(spec_path),
+            "--source-root",
+            str(fixtures),
+            "--store",
+            str(tmp_path / "store"),
+            "--project",
+            "example/python-step-hooks",
+            "--run-id",
+            "python-step-hooks",
+            "--input",
+            '{"name":"vault"}',
+            "--json",
+        ],
+        cwd=repository,
+        env={**os.environ, "MASSIVE_PYTHON": sys.executable},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    run = json.loads(result.stdout)
+    # The runner imported the decorated export, so the hook ran in the task process.
+    assert json.loads((tmp_path / "store" / run["resultKey"]).read_text()) == {
+        "text": "vault holds the [redacted]"
     }
 
 

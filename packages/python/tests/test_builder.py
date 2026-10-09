@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import UUID
@@ -462,6 +462,21 @@ def test_transform_rejects_a_nested_function_when_the_graph_is_built() -> None:
     path = graph.edge_from(graph.start)
     with pytest.raises(TypeError, match="`def` at module level instead of a lambda, nested"):
         path.transform(nested)
+
+
+def test_a_step_wrapped_after_import_is_rejected_when_emitted() -> None:
+    # The runner imports `identity` from this module, which is not the wrapper,
+    # so the hook would silently never run.
+    @wraps(identity)
+    def hooked(context: StepContext[Request]) -> Result:
+        return identity(context)
+
+    graph = GraphBuilder(
+        name="late-hook", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    graph.edge_from(graph.start).to(graph.add(hooked)).to_end(graph.end)
+    with pytest.raises(TypeError, match="apply step decorators where the function is defined"):
+        _emit(graph)
 
 
 def test_decision_source_must_produce_a_value() -> None:

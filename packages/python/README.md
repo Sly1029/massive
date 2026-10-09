@@ -282,6 +282,53 @@ succeed. A step calling `sys.exit()` is an ordinary, retried step failure. `ctx.
 current attempt, while `ctx.invocation.idempotency_key` stays the same across
 attempts so a retry can recognize side effects an earlier attempt committed.
 
+### Step hooks
+
+Pre- and post-step behavior such as tracing, cost budgets, or output redaction
+is an ordinary decorator. Apply it with `functools.wraps` where the step is
+defined, and type it so checkers keep the step's input and output:
+
+```python
+# redaction.py
+from collections.abc import Callable
+from functools import wraps
+
+from pydantic import BaseModel
+from massive import StepContext
+
+
+def redacted[InputT, OutputT: BaseModel](
+    step: Callable[[StepContext[InputT]], OutputT],
+) -> Callable[[StepContext[InputT]], OutputT]:
+    @wraps(step)
+    def hooked(context: StepContext[InputT]) -> OutputT:
+        output = step(context)
+        return output.model_copy(
+            update={
+                name: value.replace("secret", "[redacted]")
+                for name, value in output
+                if isinstance(value, str)
+            }
+        )
+
+    return hooked
+
+
+# tasks.py
+@redacted
+def report(context: StepContext[Request]) -> Report: ...
+```
+
+The runner imports the step's module attribute, which is the decorated function,
+so the hook runs in the task process on both targets. Keep the hook's module in
+the source package. `emit()` rejects a step wrapped after import, such as
+`graph.add(redacted(report))`, because the runner would import the undecorated
+function. Wrap `async def` steps with an `async def` hook.
+
+A hook runs once per attempt, so retries rerun it. A post-step hook does not run
+when an attempt is killed by its timeout or the OS; record anything that must
+survive those outside the attempt.
+
 ## Exhaustive decisions
 
 Use a Pydantic discriminated union when a step chooses one of a finite set of
