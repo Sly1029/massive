@@ -55,6 +55,32 @@ def test_checked_python_workflow_matches_shared_conformance_fixture(fixture: str
     assert result.spec == expected.rstrip("\n")
 
 
+def test_python_composed_workflow_emits_the_cross_sdk_composition_vector() -> None:
+    """Ids, kinds, exports, merge inputs, and edges match the TypeScript twin's."""
+    repository = Path(__file__).resolve().parents[3]
+    result = _emit(repository / "conformance/workflows/python-composed/workflow.py", "graph")
+    assert result.returncode == 0, result.stderr
+    spec = json.loads(result.spec)
+
+    nodes = [
+        {
+            "id": node["id"],
+            "kind": node["kind"],
+            **(
+                {"export": spec["symbols"][node["symbolRef"]]["export"]}
+                if "symbolRef" in node
+                else {}
+            ),
+            **({"mergeInputs": node["mergeInputs"]} if "mergeInputs" in node else {}),
+        }
+        for node in spec["graph"]["nodes"]
+    ]
+    vector = json.loads(
+        (repository / "conformance/fixtures/composition/composed-graph.json").read_text()
+    )
+    assert {"nodes": nodes, "edges": spec["graph"]["edges"]} == vector
+
+
 def test_emit_selects_the_requested_named_graph(tmp_path: Path) -> None:
     workflow = tmp_path / "workflow.py"
     workflow.write_text(_workflow_source("first") + "\n" + _workflow_source("second"))

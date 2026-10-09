@@ -119,3 +119,36 @@ const widen = g.step("widen", {
 
 // @ts-expect-error string | number output does not satisfy the string workflow output
 g.from(widen).to(g.end());
+
+// A call is a node typed by its child workflow's input and output.
+const child = workflow({ name: "child", input: z.int(), output: z.string() });
+child.start()
+  .to(child.step("child-label", { input: z.int(), output: z.string(), run: ({ input }) => String(input) }))
+  .to(child.end());
+const called = g.call("called", child);
+g.start().to(called).to(g.end());
+g.merge([numberToString, called]).to(mergeStrings);
+
+// @ts-expect-error the child consumes an int, not a string
+g.from(numberToString).to(called);
+
+// @ts-expect-error the child produces a string, not the int this step consumes
+g.from(called).to(numberToNumber);
+
+// A transform is a named step whose input is the value on its path.
+g.start().transform("to-text", { output: z.string(), run: ({ input }) => String(input) }).to(g.end());
+g.from(called).transform("shout", { output: z.string(), run: ({ input }) => input.toUpperCase() });
+
+g.from(numberToString).transform("wants-number", {
+  output: z.string(),
+  // @ts-expect-error a transform's run must accept the string on its path
+  run: ({ input }: { readonly input: number }) => String(input),
+});
+
+g.start()
+  .transform("to-text-again", { output: z.string(), run: ({ input }) => String(input) })
+  // @ts-expect-error a transform's string output does not satisfy an int input
+  .to(numberToNumber);
+
+// @ts-expect-error a transform's output must match its output schema
+g.start().transform("wrong-output", { output: z.string(), run: ({ input }) => input });

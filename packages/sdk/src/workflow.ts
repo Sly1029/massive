@@ -6,6 +6,8 @@ import type { AnySchema } from "./schema.ts";
 
 export const START_NODE = "__start";
 export const END_NODE = "__end";
+// Graph IR node ids (conformance/schema/workflow-spec.schema.json).
+export const NODE_ID_PATTERN = /^[A-Za-z0-9_.@:#-]{1,128}$/;
 
 export type StepRun<Input, Output> = (context: {
   readonly input: Input;
@@ -23,7 +25,15 @@ export interface StepSpec<InputSchema extends AnySchema, OutputSchema extends An
   readonly output: OutputSchema;
   readonly run: StepRun<z.infer<InputSchema>, z.infer<OutputSchema>>;
   readonly contract?: ContractSpec | ExecutionContract;
+  // The entrypoint export holding `run`; defaults to the step id. Set it to give
+  // one exported function several node ids.
+  readonly export?: string;
 }
+
+// A transform's input schema is the schema of the value on its path.
+export type TransformSpec<Input, OutputSchema extends AnySchema> =
+  & Omit<StepSpec<AnySchema, OutputSchema>, "input" | "run">
+  & { readonly run: StepRun<Input, z.infer<OutputSchema>> };
 
 export interface WorkflowConfig<InputSchema extends AnySchema, OutputSchema extends AnySchema> {
   readonly name: string;
@@ -35,11 +45,21 @@ export interface WorkflowConfig<InputSchema extends AnySchema, OutputSchema exte
 export interface StepNode {
   readonly id: string;
   readonly kind: "step";
+  readonly exportName: string;
   readonly input: AnySchema;
   readonly output: AnySchema;
-  readonly run: StepRun<unknown, unknown>;
+  // Only resolved by export and compared by identity, so any step run fits.
+  readonly run: StepRun<never, unknown>;
   readonly symbolRef: string;
   readonly contract?: ContractSpec | ExecutionContract;
+  mergeInputs?: string[];
+}
+
+// A child workflow expanded into scoped steps when the parent is emitted.
+export interface CallNode {
+  readonly id: string;
+  readonly kind: "call";
+  readonly child: WorkflowBuilder<unknown, never>;
   mergeInputs?: string[];
 }
 
@@ -75,6 +95,21 @@ export class PathBuilder<Current> {
 
     return new PathBuilder<Next>(this.builder, next.nodeId);
   }
+
+  // Sugar for an ordinary named step that consumes this path's value: the step's
+  // input schema is the producer's output schema, and `run` must still be the
+  // entrypoint export named by `spec.export ?? id`.
+  transform<OutputSchema extends AnySchema>(
+    id: string,
+    spec: TransformSpec<Current, OutputSchema>
+  ): PathBuilder<z.infer<OutputSchema>> {
+    this.builder.addStep(id, {
+      ...spec,
+      input: this.builder.valueSchema(this.currentNodeId),
+    });
+    this.builder.addEdge(this.currentNodeId, id);
+    return new PathBuilder<z.infer<OutputSchema>>(this.builder, id);
+  }
 }
 
 export class MergeBuilder<Current> {
@@ -92,7 +127,8 @@ export class MergeBuilder<Current> {
 export class WorkflowBuilder<Input, Output> {
   readonly graph = new DirectedGraph();
   readonly stepNodes = new Map<string, StepNode>();
-  readonly runtimeRegistry = new Map<string, StepRun<unknown, unknown>>();
+  readonly callNodes = new Map<string, CallNode>();
+  readonly runtimeRegistry = new Map<string, StepRun<never, unknown>>();
 
   constructor(
     readonly name: string,
@@ -108,6 +144,14 @@ export class WorkflowBuilder<Input, Output> {
     id: string,
     spec: StepSpec<InputSchema, OutputSchema>
   ): StepHandle<z.infer<InputSchema>, z.infer<OutputSchema>> {
+    this.addStep(id, spec);
+    return new StepHandle<z.infer<InputSchema>, z.infer<OutputSchema>>(id);
+  }
+
+  addStep(
+    id: string,
+    spec: Omit<StepSpec<AnySchema, AnySchema>, "run"> & { readonly run: StepRun<never, unknown> }
+  ): void {
     if (id === START_NODE || id === END_NODE || this.graph.hasNode(id)) {
       throw new GraphValidationError(`Duplicate or reserved step id "${id}"`);
     }
@@ -116,9 +160,10 @@ export class WorkflowBuilder<Input, Output> {
     const node: StepNode = {
       id,
       kind: "step",
+      exportName: spec.export ?? id,
       input: spec.input,
       output: spec.output,
-      run: spec.run as StepRun<unknown, unknown>,
+      run: spec.run,
       symbolRef,
       ...(spec.contract === undefined ? {} : { contract: spec.contract }),
     };
@@ -126,8 +171,36 @@ export class WorkflowBuilder<Input, Output> {
     this.stepNodes.set(id, node);
     this.runtimeRegistry.set(symbolRef, node.run);
     this.graph.addNode(id, { kind: "step" });
+  }
 
-    return new StepHandle<z.infer<InputSchema>, z.infer<OutputSchema>>(id);
+  // Reuse a child workflow as one node. Emission expands it into the child's
+  // steps under "<id>--<child step id>", so the IR has no call nodes.
+  call<ChildInput, ChildOutput>(
+    id: string,
+    child: WorkflowBuilder<ChildInput, ChildOutput>
+  ): StepHandle<ChildInput, ChildOutput> {
+    if (id === START_NODE || id === END_NODE || this.graph.hasNode(id)) {
+      throw new GraphValidationError(`Duplicate or reserved call id "${id}"`);
+    }
+    if (!NODE_ID_PATTERN.test(id)) {
+      throw new GraphValidationError(
+        `Call id "${id}" must be 1-128 characters of A-Z, a-z, 0-9, and _.@:#-`
+      );
+    }
+
+    this.callNodes.set(id, { id, kind: "call", child });
+    this.graph.addNode(id, { kind: "call" });
+    return new StepHandle<ChildInput, ChildOutput>(id);
+  }
+
+  // The runtime schema of the value a node produces.
+  valueSchema(nodeId: string): AnySchema {
+    if (nodeId === START_NODE) return this.input;
+    const step = this.stepNodes.get(nodeId);
+    if (step !== undefined) return step.output;
+    const call = this.callNodes.get(nodeId);
+    if (call !== undefined) return call.child.output;
+    throw new GraphValidationError(`Node "${nodeId}" does not produce a value`);
   }
 
   start(): PathBuilder<Input> {
@@ -163,12 +236,12 @@ export class WorkflowBuilder<Input, Output> {
   }
 
   addMergeEdges(from: readonly string[], to: string): void {
-    const target = this.stepNodes.get(to);
+    const target = this.stepNodes.get(to) ?? this.callNodes.get(to);
     if (target === undefined) {
-      throw new GraphValidationError(`Merge target "${to}" must be a step`);
+      throw new GraphValidationError(`Merge target "${to}" must be a step or call`);
     }
     if (target.mergeInputs !== undefined) {
-      throw new GraphValidationError(`Step "${to}" already has merge inputs`);
+      throw new GraphValidationError(`Node "${to}" already has merge inputs`);
     }
 
     target.mergeInputs = [...from];
