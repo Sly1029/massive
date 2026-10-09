@@ -18,6 +18,11 @@ running that step or map node's author code, never control pods. Resolve
 placement per template instead of using Argo's workflow-level pod defaults, and
 keep the plan's platform node selector keys owned by the plan.
 
+The exit hook runs from `onExit` through a DAG task with `continueOn`, so its
+failure cannot become the workflow's status. `ExitStatus` recomputes pod
+template names to find the failed node; keep `templateNodes` aligned with the
+names `workflowTemplate` generates.
+
 Inactive branches must not read nonexistent outputs. Select waits for inactive
 or terminal alternatives, requires a successful chosen source, and resolves
 only that source. Map item order follows source indices, including empty maps.

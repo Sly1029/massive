@@ -28,6 +28,7 @@ const (
 	NodeKindSelect   = "select"
 	NodeKindMap      = "map"
 	NodeKindEnd      = "end"
+	NodeKindExitHook = "exit-hook"
 )
 
 type WorkflowSpec struct {
@@ -66,6 +67,8 @@ type Graph struct {
 	End       string      `json:"end"`
 	Nodes     []GraphNode `json:"nodes"`
 	Edges     []GraphEdge `json:"edges"`
+	// ExitHook runs after the run settles; it is not part of the DAG.
+	ExitHook *GraphNode `json:"exitHook,omitempty"`
 }
 
 type GraphNode struct {
@@ -500,6 +503,7 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		}
 	}
 
+	diagnostics = append(diagnostics, validateExitHook(parsed, nodeByID)...)
 	diagnostics = append(diagnostics, validateMapSemantics(parsed, nodeByID, inbound, outbound)...)
 	diagnostics = append(diagnostics, validateDecisionAndSelectSemantics(parsed, nodeByID, nodeIndexes)...)
 
@@ -548,6 +552,47 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		}
 	}
 
+	return diagnostics
+}
+
+// validateExitHook checks the hook's references and its fixed contract: it
+// receives the shared run outcome, returns null, and runs once.
+func validateExitHook(parsed *WorkflowSpec, nodeByID map[string]GraphNode) []Diagnostic {
+	hook := parsed.Graph.ExitHook
+	if hook == nil {
+		return nil
+	}
+	var diagnostics []Diagnostic
+	if _, exists := nodeByID[hook.ID]; exists {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook.id", Ref: hook.ID, Message: "exit hook id must differ from every graph node id"})
+	}
+	for _, fixed := range []struct {
+		field, reference string
+		schema           []byte
+	}{
+		{"inputSchema", hook.InputSchema, schemacontract.RunOutcomeSchemaJSON},
+		{"outputSchema", hook.OutputSchema, []byte(`{"type":"null"}`)},
+	} {
+		schema, exists := parsed.Schemas[fixed.reference]
+		if !exists {
+			diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook." + fixed.field, Ref: fixed.reference, Message: "schema reference does not exist"})
+			continue
+		}
+		actual, actualErr := canonical.CanonicalizeJSON(schema)
+		expected, expectedErr := canonical.CanonicalizeJSON(fixed.schema)
+		if actualErr != nil || expectedErr != nil || !bytes.Equal(actual, expected) {
+			diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook." + fixed.field, Ref: fixed.reference, Message: "exit hooks take the run-outcome schema (conformance/schema/run-outcome.schema.json) and return null"})
+		}
+	}
+	if _, exists := parsed.Symbols[hook.SymbolRef]; !exists {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook.symbolRef", Ref: hook.SymbolRef, Message: "symbol reference does not exist"})
+	}
+	contract, exists := parsed.Contracts[hook.ContractRef]
+	if !exists {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook.contractRef", Ref: hook.ContractRef, Message: "contract reference does not exist"})
+	} else if contract.Retry != nil && contract.Retry.MaxAttempts > 1 {
+		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook.contractRef", Ref: hook.ContractRef, Message: "exit hooks run once; their contract must not retry"})
+	}
 	return diagnostics
 }
 

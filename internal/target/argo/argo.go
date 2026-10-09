@@ -335,6 +335,9 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		}
 		authorNodes[n.GetId()] = n.GetKind() == "step" || n.GetKind() == "map"
 	}
+	if hook := g.GetExitHook(); hook != nil {
+		authorNodes[hook.GetId()] = true
+	}
 	placement := d.Profile.Target.Placement
 	if placement != nil {
 		for _, nodeID := range slices.Sorted(maps.Keys(placement.Nodes)) {
@@ -517,6 +520,40 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 			"name": "result", "valueFrom": map[string]any{"parameter": resultExpression},
 		}}},
 	}
+	if hook := g.GetExitHook(); hook != nil {
+		contract := contracts[hook.GetContractRef()]
+		if contract == nil {
+			return nil, "", fmt.Errorf("argo target: exit hook %q references unknown contract", hook.GetId())
+		}
+		hookTemplate, err := runtimePodTemplate(
+			argoFieldName("exit-"+hook.GetId()), hook.GetId(), envs[contract.GetEnvironmentRef()], contract, runtimeName, &d.Profile.Target, podPlacement(placement, hook.GetId()), nil,
+			slices.Concat([]string{
+				"runtime", "exit-hook",
+				"--plan", "/var/run/massive/massive-plan.json",
+			}, sourceArgs, []string{
+				"--node=" + hook.GetId(),
+				"--status={{workflow.status}}",
+				"--failures={{workflow.failures}}",
+				"--started-at={{workflow.creationTimestamp}}",
+				"--output", "/tmp/massive/result.json",
+				"--project", "argo/" + name,
+				"--run-id", "{{workflow.uid}}",
+				"--datastore-config", datastoreConfigPath,
+			}),
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		// continueOn keeps a failed hook from failing the exit handler, which
+		// Argo would otherwise turn into the workflow's own status.
+		templates = append(templates, map[string]any{
+			"name": exitHandlerName,
+			"dag": map[string]any{"tasks": []any{map[string]any{
+				"name": argoFieldName(hook.GetId()), "template": hookTemplate["name"],
+				"continueOn": map[string]any{"failed": true, "error": true},
+			}}},
+		}, hookTemplate)
+	}
 	templates = append([]any{main}, templates...)
 	occupiedNames = map[string]bool{}
 	for _, item := range templates {
@@ -541,6 +578,9 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 	// the runtime so a timed-out attempt remains retryable.
 	if deadline := g.GetDeadlineSeconds(); deadline > 0 {
 		spec["activeDeadlineSeconds"] = deadline
+	}
+	if g.GetExitHook() != nil {
+		spec["onExit"] = exitHandlerName
 	}
 	return map[string]any{
 		"apiVersion": "argoproj.io/v1alpha1", "kind": "WorkflowTemplate",
@@ -626,6 +666,9 @@ var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 // entryTaskName names the task that normalizes a workflow input for a control
 // task; node-derived names must not collide with it.
 const entryTaskName = "workflow-entry"
+
+// exitHandlerName is the onExit DAG that runs the plan's exit hook.
+const exitHandlerName = "exit-handler"
 
 // datastoreConfigPath is where every runtime pod mounts the shared datastore
 // descriptor. Control pods use it only to resolve and publish value references.

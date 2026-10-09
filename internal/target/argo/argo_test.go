@@ -1137,3 +1137,98 @@ func TestRunDeadlineBoundsTheWholeWorkflowNotEachAttempt(t *testing.T) {
 		}
 	}
 }
+
+func TestExitHookRunsFromAnExitHandlerThatCannotFailTheWorkflow(t *testing.T) {
+	compiled := fixturePlan(t, "python-linear")
+	var step *planpb.GraphNode
+	for _, node := range compiled.Plan.Graph.Nodes {
+		if node.GetKind() == "step" {
+			step = node
+		}
+	}
+	compiled.Plan.Graph.ExitHook = &planpb.GraphNode{
+		Id: pointer("notify"), Kind: pointer("exit-hook"),
+		InputSchema: step.InputSchema, OutputSchema: step.OutputSchema,
+		SymbolRef: step.SymbolRef, ContractRef: step.ContractRef,
+	}
+	data, _ := rehashPlan(t, compiled.Plan)
+	binding := deploymentForPlan(t, data)
+	// The hook runs author code, so it accepts a placement override.
+	binding.Profile.Target.Placement = &deployment.Placement{Nodes: map[string]deployment.PodPlacement{"notify": {PriorityClassName: "notifications"}}}
+	binding, _, err := deployment.New(binding.PlanHash, binding.Profile, binding.MaterializationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := Compile(data, binding, runtimeAssetsForPlan(t, compiled.Plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var template map[string]any
+	if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+		t.Fatal(err)
+	}
+	spec := template["spec"].(map[string]any)
+	if spec["onExit"] != "exit-handler" {
+		t.Fatalf("onExit = %v", spec["onExit"])
+	}
+	templates := spec["templates"].([]any)
+	handler := templateByName(t, templates, "exit-handler")
+	task := handler["dag"].(map[string]any)["tasks"].([]any)[0].(map[string]any)
+	if task["template"] != "exit-notify" || !reflect.DeepEqual(task["continueOn"], map[string]any{"failed": true, "error": true}) {
+		t.Fatalf("exit handler task = %v", task)
+	}
+	hook := templateByName(t, templates, "exit-notify")
+	args := hook["container"].(map[string]any)["args"].([]any)
+	if !containsArgs(args, "runtime", "exit-hook") || !containsArgs(args, "--node=notify", "--status={{workflow.status}}", "--failures={{workflow.failures}}", "--started-at={{workflow.creationTimestamp}}") {
+		t.Fatalf("exit hook args = %v", args)
+	}
+	if hook["retryStrategy"] != nil || hook["priorityClassName"] != "notifications" {
+		t.Fatalf("exit hook template = %v", hook)
+	}
+	// The DAG itself never runs the hook.
+	for _, task := range templateByName(t, templates, "main")["dag"].(map[string]any)["tasks"].([]any) {
+		if task.(map[string]any)["template"] == "exit-notify" {
+			t.Fatal("exit hook is part of the main DAG")
+		}
+	}
+
+	for _, test := range []struct {
+		status, failures string
+		want             string
+		node             *string
+	}{
+		{"Succeeded", "null", "succeeded", nil},
+		{"Failed", "null", "failed", nil},
+		{"Error", `[{"templateName":"workflow-entry","finishedAt":"2026-01-01T00:00:01Z"}]`, "failed", nil},
+		// The hook's own failure is not the run's failed node.
+		{"Failed", `[{"templateName":"exit-notify","finishedAt":"2026-01-01T00:00:01Z"},{"templateName":"` + argoFieldName("step-add_one") + `","finishedAt":"2026-01-01T00:00:02Z"}]`, "failed", pointer("add_one")},
+	} {
+		status, node, err := ExitStatus(compiled.Plan, test.status, test.failures)
+		if err != nil || status != test.want || !reflect.DeepEqual(node, test.node) {
+			t.Fatalf("ExitStatus(%s, %s) = %s %v %v", test.status, test.failures, status, node, err)
+		}
+	}
+	for _, status := range []string{"Running", ""} {
+		if _, _, err := ExitStatus(compiled.Plan, status, "null"); err == nil {
+			t.Fatalf("status %q accepted", status)
+		}
+	}
+}
+
+// ExitStatus names failed nodes by recomputing pod template names; every pod
+// template the compiler generates must map back to its plan node.
+func TestEveryNodePodTemplateMapsBackToItsNode(t *testing.T) {
+	for _, name := range []string{"exhaustive-decision", "finite-map", "python-fan-in"} {
+		compiled := fixturePlan(t, name)
+		nodes := templateNodes(compiled.Plan)
+		for _, item := range compiledTemplates(t, compiled.Plan) {
+			template := item.(map[string]any)
+			if template["container"] == nil || template["name"] == entryTaskName {
+				continue
+			}
+			if _, ok := nodes[template["name"].(string)]; !ok {
+				t.Fatalf("%s: pod template %v names no plan node", name, template["name"])
+			}
+		}
+	}
+}

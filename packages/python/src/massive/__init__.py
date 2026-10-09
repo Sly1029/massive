@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         retry,
     )
     from .files import ArtifactFiles, Blob, Tree
+    from .outcome import RunOutcome
 
 __all__ = [
     "DEFAULT_MAP_CONCURRENCY",
@@ -46,6 +47,7 @@ __all__ = [
     "NodeHandle",
     "NonRetryableError",
     "Retry",
+    "RunOutcome",
     "SourcePackage",
     "StepContext",
     "Tree",
@@ -82,6 +84,7 @@ _EXPORT_MODULES = {
     "ArtifactFiles": "files",
     "Blob": "files",
     "Tree": "files",
+    "RunOutcome": "outcome",
 }
 
 
