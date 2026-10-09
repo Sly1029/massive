@@ -5,8 +5,10 @@ package argo
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -34,7 +36,7 @@ const (
 	// BundleManifestSchemaVersion is the only TargetBundleManifest version this
 	// compiler writes and publish accepts; 0 is an explicit value, not absence.
 	BundleManifestSchemaVersion = 0
-	workflowTemplateSchemaRef   = "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.argoproj.workflow.v1alpha1.WorkflowTemplate"
+	workflowTemplateSchemaRef   = schemacontract.ArgoWorkflowsSchemaID + "#/definitions/io.argoproj.workflow.v1alpha1.WorkflowTemplate"
 )
 
 type File struct {
@@ -326,11 +328,22 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		envs[e.GetEnvRef()] = e
 	}
 	executableNodes := make([]*planpb.GraphNode, 0)
+	authorNodes := map[string]bool{}
 	for _, n := range g.GetNodes() {
 		if n.GetKind() != "start" && n.GetKind() != "end" {
 			executableNodes = append(executableNodes, n)
 		}
+		authorNodes[n.GetId()] = n.GetKind() == "step" || n.GetKind() == "map"
 	}
+	placement := d.Profile.Target.Placement
+	if placement != nil {
+		for _, nodeID := range slices.Sorted(maps.Keys(placement.Nodes)) {
+			if author, known := authorNodes[nodeID]; !known || !author {
+				return nil, "", fmt.Errorf("argo target: placement override %q does not name a step or map node; overrides apply only to pods that run author code", nodeID)
+			}
+		}
+	}
+	controlPlacement := podPlacement(placement, "")
 	sort.Slice(executableNodes, func(i, j int) bool { return executableNodes[i].GetId() < executableNodes[j].GetId() })
 	taskNames := make(map[string]string, len(executableNodes))
 	occupiedNames := map[string]bool{entryTaskName: true}
@@ -402,7 +415,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 				"name": entryTaskName, "template": entryTaskName,
 				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{workflow.parameters.input}}"}}},
 			})
-			entryTemplate, err := runtimePodTemplate(entryTaskName, node.GetId(), env, &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef}, runtimeName, &d.Profile.Target, []string{"input"},
+			entryTemplate, err := runtimePodTemplate(entryTaskName, node.GetId(), env, &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef}, runtimeName, &d.Profile.Target, controlPlacement, []string{"input"},
 				[]string{"runtime", "entry", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath})
 			if err != nil {
 				return nil, "", err
@@ -451,7 +464,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		}
 		tasks = append(tasks, task)
 		if control {
-			controlTemplate, err := runtimePodTemplate(templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target, []string{"input"},
+			controlTemplate, err := runtimePodTemplate(templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target, controlPlacement, []string{"input"},
 				[]string{"runtime", "control", "--plan", "/var/run/massive/massive-plan.json", "--node=" + node.GetId(), "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath})
 			if err != nil {
 				return nil, "", err
@@ -464,7 +477,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 			continue
 		}
 		if node.GetKind() == "map" {
-			mapTemplates, err := argoMapTemplates(node, env, contract, runtimeName, name, &d.Profile.Target, sourceArgs)
+			mapTemplates, err := argoMapTemplates(node, env, contract, runtimeName, name, &d.Profile.Target, controlPlacement, podPlacement(placement, node.GetId()), sourceArgs)
 			if err != nil {
 				return nil, "", err
 			}
@@ -472,7 +485,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 			continue
 		}
 		stepTemplate, err := runtimePodTemplate(
-			templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target, parameterNames(inputParameters),
+			templateName, node.GetId(), env, contract, runtimeName, &d.Profile.Target, podPlacement(placement, node.GetId()), parameterNames(inputParameters),
 			slices.Concat([]string{
 				"runtime", "step",
 				"--plan", "/var/run/massive/massive-plan.json",
@@ -536,7 +549,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 	}, runtimeName, nil
 }
 
-func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target, sourceArgs []string) ([]any, error) {
+func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target, controlPlacement, itemPlacement deployment.PodPlacement, sourceArgs []string) ([]any, error) {
 	expandName := argoFieldName("map-expand-" + node.GetId())
 	itemName := argoFieldName("map-item-" + node.GetId())
 	collectName := argoFieldName("map-collect-" + node.GetId())
@@ -544,14 +557,14 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	controlContract := &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef}
 
 	expandTemplate, err := runtimePodTemplate(
-		expandName, node.GetId(), env, controlContract, runtimeName, storage, []string{"input"},
+		expandName, node.GetId(), env, controlContract, runtimeName, storage, controlPlacement, []string{"input"},
 		[]string{"runtime", "map", "expand", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath},
 	)
 	if err != nil {
 		return nil, err
 	}
 	itemTemplate, err := runtimePodTemplate(
-		itemName, node.GetId(), env, contract, runtimeName, storage, []string{"input"},
+		itemName, node.GetId(), env, contract, runtimeName, storage, itemPlacement, []string{"input"},
 		slices.Concat([]string{
 			"runtime", "map", "item",
 			"--plan", "/var/run/massive/massive-plan.json",
@@ -569,7 +582,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	}
 	applyRetryStrategy(itemTemplate, contract)
 	collectTemplate, err := runtimePodTemplate(
-		collectName, node.GetId(), env, controlContract, runtimeName, storage, []string{"input"},
+		collectName, node.GetId(), env, controlContract, runtimeName, storage, controlPlacement, []string{"input"},
 		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath},
 	)
 	if err != nil {
@@ -612,7 +625,52 @@ const entryTaskName = "workflow-entry"
 // descriptor. Control pods use it only to resolve and publish value references.
 const datastoreConfigPath = "/var/run/massive-datastore/datastore.json"
 
-func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName string, storage *deployment.Target, inputNames []string, args []string) (map[string]any, error) {
+// podPlacement resolves the deployment's pod settings for one pod. Every pod
+// receives the defaults; the override for authorNodeID applies only to the pods
+// that run that node's author code. Map-valued settings merge by key, and any
+// other overridden setting replaces the default.
+func podPlacement(placement *deployment.Placement, authorNodeID string) deployment.PodPlacement {
+	var resolved deployment.PodPlacement
+	if placement == nil {
+		return resolved
+	}
+	if placement.Defaults != nil {
+		resolved = *placement.Defaults
+	}
+	override, ok := placement.Nodes[authorNodeID]
+	if !ok {
+		return resolved
+	}
+	merged := func(base, override map[string]string) map[string]string {
+		result := maps.Clone(base)
+		if result == nil {
+			result = map[string]string{}
+		}
+		maps.Copy(result, override)
+		return result
+	}
+	resolved.NodeSelector = merged(resolved.NodeSelector, override.NodeSelector)
+	resolved.Labels = merged(resolved.Labels, override.Labels)
+	resolved.Annotations = merged(resolved.Annotations, override.Annotations)
+	if override.Affinity != nil {
+		resolved.Affinity = override.Affinity
+	}
+	if override.Tolerations != nil {
+		resolved.Tolerations = override.Tolerations
+	}
+	if override.RuntimeClassName != "" {
+		resolved.RuntimeClassName = override.RuntimeClassName
+	}
+	if override.PriorityClassName != "" {
+		resolved.PriorityClassName = override.PriorityClassName
+	}
+	if override.PodSpecPatch != nil {
+		resolved.PodSpecPatch = override.PodSpecPatch
+	}
+	return resolved
+}
+
+func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName string, storage *deployment.Target, placement deployment.PodPlacement, inputNames []string, args []string) (map[string]any, error) {
 	if env.GetContainer().GetImage() == "" {
 		return nil, fmt.Errorf("argo target: executable node %q requires an immutable container requirement", nodeID)
 	}
@@ -701,9 +759,49 @@ func runtimePodTemplate(name, nodeID string, env *planpb.EnvironmentRequirement,
 	if len(platform) != 2 {
 		return nil, fmt.Errorf("argo target: executable node %q has invalid container platform %q", nodeID, runtime.GetPlatform())
 	}
-	template["nodeSelector"] = map[string]string{
+	// The deployment schema reserves the platform keys for the plan.
+	nodeSelector := map[string]string{
 		"kubernetes.io/os":   platform[0],
 		"kubernetes.io/arch": platform[1],
+	}
+	maps.Copy(nodeSelector, placement.NodeSelector)
+	template["nodeSelector"] = nodeSelector
+	if placement.Affinity != nil {
+		template["affinity"] = placement.Affinity
+	}
+	if placement.Tolerations != nil {
+		template["tolerations"] = placement.Tolerations
+	}
+	if placement.PriorityClassName != "" {
+		template["priorityClassName"] = placement.PriorityClassName
+	}
+	metadata := map[string]any{}
+	if len(placement.Labels) != 0 {
+		metadata["labels"] = placement.Labels
+	}
+	if len(placement.Annotations) != 0 {
+		metadata["annotations"] = placement.Annotations
+	}
+	if len(metadata) != 0 {
+		template["metadata"] = metadata
+	}
+	// Argo templates have no runtimeClassName field, so it joins the
+	// schema-validated patch, which cannot set it itself.
+	patch := map[string]json.RawMessage{}
+	if placement.PodSpecPatch != nil {
+		if err := json.Unmarshal(placement.PodSpecPatch, &patch); err != nil {
+			return nil, fmt.Errorf("argo target: decode pod spec patch: %w", err)
+		}
+	}
+	if placement.RuntimeClassName != "" {
+		patch["runtimeClassName"], _ = json.Marshal(placement.RuntimeClassName)
+	}
+	if len(patch) != 0 {
+		encoded, err := canonical.Marshal(patch)
+		if err != nil {
+			return nil, err
+		}
+		template["podSpecPatch"] = string(encoded)
 	}
 	return template, nil
 }
@@ -819,7 +917,7 @@ func validateArgoSchema(data []byte) error {
 			return
 		}
 		c := jsonschema.NewCompiler()
-		if e = c.AddResource("https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json", doc); e != nil {
+		if e = c.AddResource(schemacontract.ArgoWorkflowsSchemaID, doc); e != nil {
 			argoSchemaErr = e
 			return
 		}

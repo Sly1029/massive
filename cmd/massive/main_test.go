@@ -312,3 +312,20 @@ func TestBuildRejectsMalformedSecretBindingsBeforeImportingCode(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildRejectsInvalidPlacementBeforeImportingCode(t *testing.T) {
+	for body, want := range map[string]string{
+		`not-json`: "invalid placement",
+		`{"defaults":{"affinity":{"nodeAffinity":{"requiredDuringScheduling":{}}}}}`: "requiredDuringScheduling",
+	} {
+		path := filepath.Join(t.TempDir(), "placement.json")
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		err := (&BuildCommand{Entry: "must-not-be-imported.py", Placement: path}).Run(context.Background(), &output)
+		if err == nil || !strings.Contains(err.Error(), "invalid placement") || !strings.Contains(err.Error(), want) || output.Len() != 0 {
+			t.Fatalf("placement diagnostic=%v stdout=%q", err, output.String())
+		}
+	}
+}

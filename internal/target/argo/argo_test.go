@@ -990,3 +990,119 @@ func TestWorkflowInputsEnterThroughOneNormalizingTask(t *testing.T) {
 		t.Fatalf("entry args = %v", entryArgs)
 	}
 }
+
+func TestPlacementDefaultsReachEveryPodAndOverridesOnlyAuthorPods(t *testing.T) {
+	placement, err := deployment.ParsePlacement([]byte(`{
+		"defaults": {
+			"labels": {"team": "research"},
+			"nodeSelector": {"pool": "general"},
+			"tolerations": [{"key": "spot", "operator": "Exists", "effect": "NoSchedule"}],
+			"priorityClassName": "batch"
+		},
+		"nodes": {
+			"classify": {
+				"labels": {"accelerator": "gpu"},
+				"nodeSelector": {"pool": "gpu"},
+				"runtimeClassName": "gvisor",
+				"podSpecPatch": {"containers": [{"name": "main", "resources": {"limits": {"nvidia.com/gpu": "1"}}}]}
+			}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compileWith := func(name string, placement *deployment.Placement) (map[string]map[string]any, error) {
+		compiled := fixturePlan(t, name)
+		binding := deploymentForPlan(t, compiled.CanonicalJSON)
+		binding.Profile.Target.Placement = placement
+		binding, _, err := deployment.New(binding.PlanHash, binding.Profile, binding.MaterializationHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := Compile(compiled.CanonicalJSON, binding, runtimeAssetsForPlan(t, compiled.Plan))
+		if err != nil {
+			return nil, err
+		}
+		var template map[string]any
+		if err := json.Unmarshal(fileByPath(t, bundle, "workflow-template.json").Bytes, &template); err != nil {
+			t.Fatal(err)
+		}
+		templates := map[string]map[string]any{}
+		for _, item := range template["spec"].(map[string]any)["templates"].([]any) {
+			if item.(map[string]any)["container"] != nil {
+				templates[item.(map[string]any)["name"].(string)] = item.(map[string]any)
+			}
+		}
+		return templates, nil
+	}
+	defaults := map[string]any{
+		"metadata":          map[string]any{"labels": map[string]any{"team": "research"}},
+		"nodeSelector":      map[string]any{"kubernetes.io/os": "linux", "kubernetes.io/arch": "amd64", "pool": "general"},
+		"tolerations":       []any{map[string]any{"key": "spot", "operator": "Exists", "effect": "NoSchedule"}},
+		"priorityClassName": "batch",
+	}
+	placed := func(template map[string]any) map[string]any {
+		fields := map[string]any{}
+		for _, field := range []string{"metadata", "nodeSelector", "tolerations", "affinity", "priorityClassName", "podSpecPatch"} {
+			if value, ok := template[field]; ok {
+				fields[field] = value
+			}
+		}
+		return fields
+	}
+
+	decision, err := compileWith("exhaustive-decision", placement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	classify := placed(decision["step-classify"])
+	want := map[string]any{
+		"metadata":          map[string]any{"labels": map[string]any{"team": "research", "accelerator": "gpu"}},
+		"nodeSelector":      map[string]any{"kubernetes.io/os": "linux", "kubernetes.io/arch": "amd64", "pool": "gpu"},
+		"tolerations":       defaults["tolerations"],
+		"priorityClassName": "batch",
+		"podSpecPatch":      `{"containers":[{"name":"main","resources":{"limits":{"nvidia.com/gpu":"1"}}}],"runtimeClassName":"gvisor"}`,
+	}
+	if !reflect.DeepEqual(classify, want) {
+		t.Fatalf("overridden step placement = %#v", classify)
+	}
+	// Decision and select pods run no author code: they keep the defaults.
+	for _, name := range []string{"step-accept", "step-route", "step-choose"} {
+		if got := placed(decision[name]); !reflect.DeepEqual(got, defaults) {
+			t.Fatalf("%s placement = %#v", name, got)
+		}
+	}
+
+	// Plan node ids are checked: each fixture rejects the other's override.
+	if _, err := compileWith("finite-map", placement); err == nil || !strings.Contains(err.Error(), `placement override "classify"`) {
+		t.Fatalf("override for an absent node: %v", err)
+	}
+	placement.Nodes = map[string]deployment.PodPlacement{"map-items": {Tolerations: []json.RawMessage{json.RawMessage(`{"key":"sandbox","operator":"Equal","value":"gvisor","effect":"NoSchedule"}`)}}}
+	mapped, err := compileWith("finite-map", placement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := placed(mapped["map-item-map-items"])
+	if !reflect.DeepEqual(item["tolerations"], []any{map[string]any{"key": "sandbox", "operator": "Equal", "value": "gvisor", "effect": "NoSchedule"}}) || item["metadata"] == nil {
+		t.Fatalf("map item placement = %#v", item)
+	}
+	for _, name := range []string{"map-expand-map-items", "map-collect-map-items"} {
+		if got := placed(mapped[name]); !reflect.DeepEqual(got, defaults) {
+			t.Fatalf("%s placement = %#v", name, got)
+		}
+	}
+
+	unplaced, err := compileWith("exhaustive-decision", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := placed(unplaced["step-classify"]); !reflect.DeepEqual(got, map[string]any{"nodeSelector": map[string]any{"kubernetes.io/os": "linux", "kubernetes.io/arch": "amd64"}}) {
+		t.Fatalf("placement without a binding = %#v", got)
+	}
+	for _, nodeID := range []string{"route", "choose"} {
+		override := &deployment.Placement{Nodes: map[string]deployment.PodPlacement{nodeID: {PriorityClassName: "urgent"}}}
+		if _, err := compileWith("exhaustive-decision", override); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("placement override %q does not name a step or map node", nodeID)) {
+			t.Fatalf("override for %q: %v", nodeID, err)
+		}
+	}
+}

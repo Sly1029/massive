@@ -91,11 +91,17 @@ Live conformance covers nested inactive branches, empty maps, failed items, and
 deployment-bound native Secret references. Cloud workload identity remains a
 separate infrastructure gate.
 Source packages beyond the embedded limit use `object-store-v0`.
+Deployments place pods with schema-validated node selectors, affinity,
+tolerations, runtime and priority classes, labels, annotations, and a
+restricted pod spec patch: defaults for every pod and overrides by node id,
+outside plan identity.
 Remaining work:
 - representative application images, and map fan-outs wider than 341 items
   (one Argo parameter of collected item envelopes).
 - A narrower credential binding for control pods; today one storage binding
   serves every pod.
+- A whole-run deadline and an exit hook that runs on success, failure, or
+  cancellation.
 
 Reject unsupported requirements instead of silently weakening them. Schema
 validation and isolated runner tests do not replace a live cluster execution gate.

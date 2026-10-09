@@ -13,6 +13,11 @@ logical application-secret ref through DeploymentSpec and reject unbound refs
 before emitting a bundle. Reserve storage/runtime environment names even when
 no explicit storage credential Secret is configured.
 
+Placement defaults reach every pod; a node override reaches only the pods
+running that step or map node's author code, never control pods. Resolve
+placement per template instead of using Argo's workflow-level pod defaults, and
+keep the plan's platform node selector keys owned by the plan.
+
 Inactive branches must not read nonexistent outputs. Select waits for inactive
 or terminal alternatives, requires a successful chosen source, and resolves
 only that source. Map item order follows source indices, including empty maps.

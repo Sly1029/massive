@@ -387,3 +387,83 @@ func TestSecretBindingsValidateKubernetesNamesAndKeys(t *testing.T) {
 		t.Fatal("secret binding did not stay in deployment identity")
 	}
 }
+
+func TestPlacementValidatesKubernetesFieldsStrictly(t *testing.T) {
+	valid := []byte(`{
+		"defaults": {
+			"labels": {"cost-center": "research", "example.com/team": "data"},
+			"annotations": {"cluster-autoscaler.kubernetes.io/safe-to-evict": "false"},
+			"tolerations": [{"key": "spot", "operator": "Exists", "effect": "NoSchedule"}],
+			"priorityClassName": "batch"
+		},
+		"nodes": {
+			"scan": {
+				"nodeSelector": {"pool": "gpu"},
+				"affinity": {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [{"matchExpressions": [{"key": "gpu", "operator": "In", "values": ["a100"]}]}]}}},
+				"tolerations": [{"key": "nvidia.com/gpu", "operator": "Equal", "value": "present", "effect": "NoSchedule", "tolerationSeconds": 30}],
+				"runtimeClassName": "gvisor",
+				"podSpecPatch": {"containers": [{"name": "main", "resources": {"limits": {"nvidia.com/gpu": "1"}}}], "securityContext": {"runAsNonRoot": true}}
+			}
+		}
+	}`)
+	placement, err := ParsePlacement(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if placement.Nodes["scan"].RuntimeClassName != "gvisor" || len(placement.Defaults.Tolerations) != 1 {
+		t.Fatalf("placement = %#v", placement)
+	}
+	profile := Profile{Name: "argo", ArtifactStoreBinding: "artifacts", Target: Target{Kind: "argo", Namespace: "default", ServiceAccountName: "runner", RuntimeTransport: "embedded-v0"}}
+	unplaced, _, err := New(testPlanHash, profile, testPlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.Target.Placement = placement
+	placed, body, err := New(testPlanHash, profile, testPlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if placed.PlanHash != unplaced.PlanHash || placed.DeploymentHash == unplaced.DeploymentHash {
+		t.Fatal("placement did not stay in deployment identity")
+	}
+	if !strings.Contains(string(body), `"tolerationSeconds":30`) {
+		t.Fatalf("Kubernetes values were not preserved verbatim: %s", body)
+	}
+
+	for name, test := range map[string]struct{ body, diagnostic string }{
+		"empty":                     {`{}`, "minProperties"},
+		"empty defaults":            {`{"defaults": {}}`, "minProperties"},
+		"unknown placement field":   {`{"defaults": {"schedulerName": "custom"}}`, "schedulerName"},
+		"misspelled affinity field": {`{"defaults": {"affinity": {"nodeAffinity": {"requiredDuringScheduling": {}}}}}`, "requiredDuringScheduling"},
+		"misspelled toleration":     {`{"defaults": {"tolerations": [{"key": "spot", "operator": "Exists", "tolerationSecond": 5}]}}`, "tolerationSecond"},
+		"toleration operator":       {`{"defaults": {"tolerations": [{"key": "spot", "operator": "Matches"}]}}`, "operator"},
+		"exists with value":         {`{"defaults": {"tolerations": [{"key": "spot", "operator": "Exists", "value": "true"}]}}`, "tolerations/0"},
+		"platform selector":         {`{"defaults": {"nodeSelector": {"kubernetes.io/arch": "arm64"}}}`, "nodeSelector"},
+		"reserved label":            {`{"defaults": {"labels": {"workflows.argoproj.io/workflow": "x"}}}`, "labels"},
+		"reserved annotation":       {`{"nodes": {"scan": {"annotations": {"massive.dev/plan-hash": "x"}}}}`, "annotations"},
+		"label value":               {`{"defaults": {"labels": {"team": "not a label value"}}}`, "labels/team"},
+		"runtime class":             {`{"defaults": {"runtimeClassName": "gVisor"}}`, "runtimeClassName"},
+		"patched volumes":           {`{"defaults": {"podSpecPatch": {"volumes": [{"name": "massive-runtime", "emptyDir": {}}]}}}`, "volumes"},
+		"patched runtime class":     {`{"defaults": {"podSpecPatch": {"runtimeClassName": "gvisor"}}}`, "runtimeClassName"},
+		"patched sidecar":           {`{"defaults": {"podSpecPatch": {"containers": [{"name": "wait", "securityContext": {}}]}}}`, "containers/0/name"},
+		"patched image":             {`{"defaults": {"podSpecPatch": {"containers": [{"name": "main", "image": "other"}]}}}`, "image"},
+		"patched plan cpu":          {`{"defaults": {"podSpecPatch": {"containers": [{"name": "main", "resources": {"limits": {"cpu": "8"}}}]}}}`, "limits"},
+		"patch directive":           {`{"defaults": {"podSpecPatch": {"$patch": "replace", "securityContext": {}}}}`, "$patch"},
+		"misspelled security field": {`{"defaults": {"podSpecPatch": {"securityContext": {"runAsNonroot": true}}}}`, "runAsNonroot"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParsePlacement([]byte(test.body))
+			var diagnostics *DiagnosticsError
+			if !errors.As(err, &diagnostics) {
+				t.Fatalf("invalid placement accepted or undiagnosed: %v", err)
+			}
+			found := false
+			for _, diagnostic := range diagnostics.Diagnostics {
+				found = found || strings.Contains(diagnostic.String(), test.diagnostic)
+			}
+			if !found {
+				t.Fatalf("diagnostics do not name %q: %v", test.diagnostic, diagnostics.Diagnostics)
+			}
+		})
+	}
+}

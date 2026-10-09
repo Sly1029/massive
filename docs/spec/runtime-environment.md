@@ -50,7 +50,10 @@ not an authorization policy: possession of a name does not grant access.
   Kubernetes Secret keys; see [Argo secret bindings](argo-backend.md#application-secret-bindings).
 - Local execution does not enforce a container, Kubernetes resources, or network policy.
 - Argo supports immutable container images, CPU/memory requirements, and explicit
-  shared-storage egress validation; it does not implement the proposed mediation/placement model.
+  shared-storage egress validation; it does not implement the proposed mediation model.
+- Pod placement (node selectors, affinity, tolerations, runtime and priority classes,
+  labels, annotations, and a restricted pod spec patch) is deployment configuration;
+  see [Argo pod placement](argo-backend.md#pod-placement). Local execution ignores it.
 
 Document these limitations. Do not describe a declaration as enforced merely because
 it appears in the plan.
