@@ -99,6 +99,7 @@ def test_python_fan_in_delivers_ordered_and_discriminated_values(tmp_path: Path)
             "--json",
         ],
         cwd=repository,
+        env={**os.environ, "MASSIVE_PYTHON": sys.executable},
         check=False,
         capture_output=True,
         text=True,
