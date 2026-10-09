@@ -8,6 +8,9 @@ in `_step.py`, shared by emission and runner loading. `StepContext[Input]` has n
 dependency generic: live application clients are constructed within tasks.
 Keep authoring graph composition separate from worker imports. The runner loads
 the function by its archived module/export without importing an SDK wrapper type.
+Step hooks are `functools.wraps` decorators applied at definition: emission
+locates the module through `inspect.unwrap` and requires the module attribute to
+be the registered function itself, so the runner imports exactly what was added.
 `NodeHandle[Input, Output]` is invariant in input (edges need equal schemas)
 and covariant in output; only steps and calls accept edges, and value-only
 handles (start, map, select, case) are `NodeHandle[Never, Output]`. Keep
