@@ -12,6 +12,7 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/environment"
+	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 )
@@ -81,6 +82,10 @@ type InvocationFailure struct {
 	ExitCode      int
 	TimedOutAfter time.Duration
 	Diagnostic    string
+	// ItemFailure is the outcome a map that collects item failures keeps for
+	// this map item once the failure is terminal; nil when such a map would
+	// still fail, or for a static step.
+	ItemFailure *mapexec.Failure
 }
 
 func (failure *InvocationFailure) Error() string {
@@ -213,11 +218,15 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	}
 	if len(outcomes) != 1 || outcomes[0].Status != StatusSucceeded {
 		if len(outcomes) == 1 {
-			return nil, &InvocationFailure{
+			failure := &InvocationFailure{
 				NodeID: node.GetId(), Attempt: attempt, MaxAttempts: policy.maxAttempts,
 				ExitCode: outcomes[0].ExitCode, TimedOutAfter: outcomes[0].TimedOutAfter,
 				Diagnostic: runnerDiagnostic(outcomes[0]) + attemptSuffix(attempt, policy),
 			}
+			if itemFailure, collected := mapItemFailure(outcomes[0], attempt); mapItemIndex != nil && collected {
+				failure.ItemFailure = &itemFailure
+			}
+			return nil, failure
 		}
 		return nil, fmt.Errorf("isolated step %s produced no outcome", node.GetId())
 	}

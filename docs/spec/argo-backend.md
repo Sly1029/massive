@@ -294,6 +294,39 @@ Argo `withParam`, and collects indexed outputs in source order. Template
 empty list through Argo's loop-output aggregation without invoking user code;
 the collector publishes canonical `[]`.
 
+**Maps that collect item failures.** Argo aggregates loop outputs only from
+successful children, so such a map loops over a per-item DAG (`map-outcome-*`)
+instead of the item pod. Its one task runs the item pod template, retry
+strategy included, with `continueOn: {failed: true, error: true}`, and the DAG's
+`result` output is the pod's `result` parameter with the `valueFrom.default`
+`{"lost":true}`. Every item therefore reports exactly one envelope in source
+order, the DAG succeeds whatever the pod did, and template `parallelism` still
+bounds the running item DAGs. The item runtime, which knows the attempt and the
+contract, reports:
+
+- a mapper result (`value`/`ref`) as before;
+- on a terminal failure the policy collects (classified exactly as locally),
+  a failure record (`{"failure":{...},"index":i}`, or `failureRef` above
+  100 bytes) and exit 0, so the pod succeeds;
+- on a retryable failure with attempts left, its usual exit code and no
+  envelope, so Argo retries;
+- on any other error (exits 64, 65, 68, datastore failures), the marker
+  `{"fatal":true,"index":i}` and its usual exit code.
+
+`runtime map collect-outcomes --max-attempts=<n>` builds the outcome list. It
+fails the map on a fatal marker, and turns `{"lost":true}` into a `killed`
+failure with `n` attempts and the diagnostic "item pod ended without reporting
+an outcome (an out-of-memory kill, eviction, or node loss)". A lost item used
+every attempt: Argo retries a killed or evicted pod until the limit, and every
+other way to stop retrying writes an envelope. This is how a real out-of-memory
+kill is caught: Kubernetes on cgroup v2 kills the whole container, runtime
+included, so only the controller-side default can report it. Where the kernel
+kills only the runner, the runtime reports `runner-killed (signal)` as the
+local target does. Errors that happen before an item pod has loaded the plan,
+such as a malformed loop item, are also reported as lost; they are transport
+bugs rather than item failures. Failure envelopes fit the collector's
+128-byte-per-item budget, so the 341-item limit is unchanged.
+
 The compiler does not emit a one-off `Workflow`. Apply the source ConfigMap, datastore ConfigMap, and WorkflowTemplate, then submit it with
 `argo submit --from workflowtemplate/<name> -p 'input=<json>'`.
 
@@ -453,7 +486,9 @@ executor token and workflow-task-result permissions.
 
 `./scripts/test-argo.sh` builds the current wheel and a non-root runner image,
 creates a disposable kind cluster, installs Argo **v3.7.16**, and runs nested
-branches, arbitrary string tags, empty maps, and selected-item failures. It also
+branches, arbitrary string tags, empty maps, selected-item failures, and a map
+that collects an exception, a `NonRetryableError`, a segmentation fault, a
+timeout, and a real out-of-memory kill and must equal a local run. It also
 builds a generated source package of more than 2,000 files and 2 MiB with
 `object-store-v0`, publishes it through a port-forward to the cluster's MinIO,
 and requires the Argo result to equal a local run of the same workflow. It
@@ -538,7 +573,7 @@ credentials. The minimum S3 permissions each template needs are:
 | step, map item (author code) | run inputs, schemas, source archives, Blob/Tree bodies, `blobs/sha256/*` | run inputs and output manifests, `blobs/sha256/*`, file artifacts |
 | decision, select | `blobs/sha256/*` (referenced inputs) | none |
 | map expand | `blobs/sha256/*` (referenced list) | none |
-| map collect | `blobs/sha256/*` (referenced results) | `blobs/sha256/*` (collected list) |
+| map collect | `blobs/sha256/*` (referenced results and failure records) | `blobs/sha256/*` (collected list) |
 | `workflow-entry` (only before a decision or map) | none | `blobs/sha256/*` (normalized input) |
 
 Control tasks never receive application secrets, resources, or an author
@@ -617,7 +652,8 @@ publishes to its own attempt slot and keeps the same idempotency key.
 `timeoutSeconds` is enforced inside the runtime process rather than through
 `activeDeadlineSeconds`, so a timed-out attempt exits with 124 and stays
 retryable. Argo retries map items independently; the local orchestrator stops
-scheduling retries once any item fails terminally.
+scheduling retries once any item fails terminally, unless the map collects
+item failures and the failure is one it collects.
 
 
 ## Application secret bindings

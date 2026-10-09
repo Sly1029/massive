@@ -52,3 +52,11 @@ with `--workflow-input`, and a decision or map reads them through the
 forward received references and slice referenced lists in item pods. Only map
 collection and the entry task publish values. Bound reads by the reference's
 declared size, and keep maps within the collector's parameter budget.
+
+A map that collects item failures loops over per-item DAGs that continue past
+the item pod and default their result to `{"lost":true}`: Argo aggregates only
+successful loop children, and an OOM-killed container cannot report for itself.
+Keep every non-retried exit path of the item runtime writing an envelope (an
+outcome or the fatal marker), so "lost" can only mean the pod died after its
+last attempt. Only the item runtime classifies failures, through the local
+orchestrator's function, so both targets build identical outcomes.
