@@ -28,6 +28,10 @@ and edges scoped together; the emitted Graph IR has no `call` nodes. Reject
 recursive composition, scoped ID collisions, and over-long scoped IDs before
 producing a spec. Expansion must stay spec-transparent: a composed graph emits
 the same canonical spec as its hand-inlined twin using `<call>--<child>` IDs.
+`on_exit` registers one hook outside the DAG. `RunOutcome` has no docstring
+because Pydantic copies it into the shared run-outcome schema; regenerate
+`conformance/schema/run-outcome.schema.json` when the model changes. A graph
+with a deadline or exit hook cannot be called: both belong to a whole run.
 The Go compiler owns environment identity; `Container` describes requirements.
 The dependency preflight probe is the separate top-level `massive_environment`
 package. It must not import `massive` or workflow modules.

@@ -139,7 +139,22 @@
         "edges": {
           "type": "array",
           "items": { "$ref": "#/$defs/edge" }
-        }
+        },
+        "exitHook": { "$ref": "#/$defs/exitHookNode" }
+      }
+    },
+    "exitHookNode": {
+      "description": "A function run once after the run settles, outside the DAG. Its input is the run-outcome schema and its output is null.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "inputSchema", "outputSchema", "symbolRef", "contractRef"],
+      "properties": {
+        "id": { "$ref": "#/$defs/safePathSegment" },
+        "kind": { "const": "exit-hook" },
+        "inputSchema": { "$ref": "#/$defs/hashRef" },
+        "outputSchema": { "$ref": "#/$defs/hashRef" },
+        "symbolRef": { "$ref": "#/$defs/id" },
+        "contractRef": { "$ref": "#/$defs/hashRef" }
       }
     },
     "node": {

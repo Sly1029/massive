@@ -53,6 +53,12 @@ var RunManifestSchemaJSON []byte
 //go:embed environment-probe.schema.json
 var EnvironmentProbeSchemaJSON []byte
 
+// RunOutcomeSchemaJSON is the input every exit hook receives once its run
+// settles. It is generated from the Python SDK's RunOutcome model.
+//
+//go:embed run-outcome.schema.json
+var RunOutcomeSchemaJSON []byte
+
 // ValueReferenceSchemaJSON is the reference that replaces a large canonical
 // JSON value in a target scheduler parameter.
 //

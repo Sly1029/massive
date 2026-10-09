@@ -68,6 +68,10 @@ func (command *InspectCommand) Run(ctx context.Context, stdout io.Writer) error 
 	for _, decision := range journal.Decisions {
 		fmt.Fprintf(stdout, "  decision %s  %s  %s\n", decision.NodeID, decision.Status, decision.SelectedCase)
 	}
+	if hook := journal.ExitHook; hook != nil && command.Step == "" {
+		fmt.Fprintf(stdout, "  exit hook %s  %s\n", hook.NodeID, hook.Status)
+		renderAttempts(stdout, hook.Attempts, "    ")
+	}
 	if journal.Result != nil {
 		fmt.Fprintf(stdout, "result %s  %s\n", journal.Result.Key, journal.Result.Hash)
 	}

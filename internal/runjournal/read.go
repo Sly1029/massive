@@ -74,6 +74,11 @@ func Parse(data []byte) (*Manifest, error) {
 			}
 		}
 	}
+	if hook := manifest.ExitHook; hook != nil {
+		if err := validateAttempts(hook.Attempts, hook.Status); err != nil {
+			return nil, fmt.Errorf("exit hook %q %w", hook.NodeID, err)
+		}
+	}
 	return &manifest, nil
 }
 

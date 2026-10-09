@@ -12,13 +12,16 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/controlplane"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/target/argo"
 	"github.com/Sly1029/massive/internal/valueparam"
 	"github.com/alecthomas/kong"
 )
@@ -132,6 +135,61 @@ type RuntimeCommand struct {
 	Entry   RuntimeEntryCommand   `cmd:"" help:"Normalize a submitted workflow input for a control task."`
 	Step    RuntimeStepCommand    `cmd:"" help:"Execute one compiled step in a remote executor."`
 	Map     RuntimeMapCommand     `cmd:"" help:"Execute finite-map transport operations."`
+	// ExitHook runs from Argo's exit handler, after the workflow settles.
+	ExitHook RuntimeExitHookCommand `cmd:"" name:"exit-hook" help:"Execute the plan's exit hook with the settled run's outcome."`
+}
+
+type RuntimeExitHookCommand struct {
+	Plan            string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
+	RuntimeSources  `embed:""`
+	Node            string `help:"The plan's exit hook id." required:""`
+	Status          string `help:"Argo's {{workflow.status}}: Succeeded, Failed, or Error." required:""`
+	Failures        string `help:"Argo's {{workflow.failures}} JSON." required:""`
+	StartedAt       string `name:"started-at" help:"Argo's {{workflow.creationTimestamp}}." required:""`
+	Output          string `help:"Write canonical JSON result to this path." required:"" type:"path"`
+	Project         string `help:"Stable remote project identity." required:""`
+	RunID           string `name:"run-id" help:"Remote workflow run identifier." required:""`
+	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
+}
+
+func (command *RuntimeExitHookCommand) Run(ctx context.Context) error {
+	workflowPlan, err := readRuntimePlan(command.Plan)
+	if err != nil {
+		return err
+	}
+	if workflowPlan.GetGraph().GetExitHook().GetId() != command.Node {
+		return fmt.Errorf("%q is not the plan's exit hook", command.Node)
+	}
+	status, failedNode, err := argo.ExitStatus(workflowPlan, command.Status, command.Failures)
+	if err != nil {
+		return err
+	}
+	started, err := time.Parse(time.RFC3339, command.StartedAt)
+	if err != nil {
+		return fmt.Errorf("workflow creation time: %w", err)
+	}
+	input, err := canonical.Marshal(orchestrator.RunOutcome{
+		RunID: command.RunID, Status: status, FailedNode: failedNode,
+		StartedAt: orchestrator.OutcomeTime(started), FinishedAt: orchestrator.OutcomeTime(time.Now()),
+	})
+	if err != nil {
+		return err
+	}
+	// The outcome holds no secrets; logging it shows operators what the hook saw.
+	fmt.Printf("exit hook %s outcome %s\n", command.Node, input)
+	_, descriptor, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
+	if err != nil {
+		return err
+	}
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, 0, nil)
+	if err != nil {
+		return err
+	}
+	parameter, err := valueparam.EncodePublished(result)
+	if err != nil {
+		return err
+	}
+	return writeRuntimeOutput(command.Output, parameter)
 }
 
 type RuntimeMapCommand struct {
@@ -211,8 +269,16 @@ type runOutput struct {
 	RunID    string          `json:"runId"`
 	Status   string          `json:"status"`
 	Result   json.RawMessage `json:"result,omitempty"`
+	ExitHook *exitHookOutput `json:"exitHook,omitempty"`
 	PlanHash string          `json:"planHash,omitempty"`
 	Store    string          `json:"store,omitempty"`
+}
+
+// exitHookOutput reports the exit hook separately: its status never changes
+// the run's status or the CLI's exit code.
+type exitHookOutput struct {
+	NodeID string `json:"nodeId"`
+	Status string `json:"status"`
 }
 
 func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) error {
@@ -263,8 +329,12 @@ func renderRun(writer io.Writer, jsonMode, verbose bool, result *controlplane.Lo
 		status = result.Run.Status
 		runID = result.Run.RunID
 	}
+	var exitHook *exitHookOutput
+	if result.Run != nil && result.Run.ExitHook != nil {
+		exitHook = &exitHookOutput{NodeID: result.Run.ExitHook.NodeID, Status: result.Run.ExitHook.Status}
+	}
 	if jsonMode {
-		output := runOutput{RunID: runID, Status: status, Result: value}
+		output := runOutput{RunID: runID, Status: status, Result: value, ExitHook: exitHook}
 		if verbose {
 			output.PlanHash = result.Plan.PlanHash
 			output.Store = result.Store
@@ -281,6 +351,13 @@ func renderRun(writer io.Writer, jsonMode, verbose bool, result *controlplane.Lo
 			}
 			fmt.Fprintf(writer, "  %-16s %s %s\n", step.NodeID, mark, step.Status)
 		}
+	}
+	if exitHook != nil {
+		mark := "✓"
+		if exitHook.Status != orchestrator.StatusSucceeded {
+			mark = "✗"
+		}
+		fmt.Fprintf(writer, "  exit hook %-6s %s %s\n", exitHook.NodeID, mark, exitHook.Status)
 	}
 	if status == orchestrator.StatusSucceeded {
 		fmt.Fprintf(writer, "\n✓ succeeded  run %s\n  result  %s\n", runID, value)

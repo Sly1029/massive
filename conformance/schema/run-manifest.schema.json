@@ -1005,6 +1005,9 @@
         },
         "environment": {
           "$ref": "#/$defs/environment"
+        },
+        "exitHook": {
+          "$ref": "#/$defs/exitHook"
         }
       },
       "required": [
@@ -1058,6 +1061,9 @@
         },
         "environment": {
           "$ref": "#/$defs/environment"
+        },
+        "exitHook": {
+          "$ref": "#/$defs/exitHook"
         }
       },
       "required": [
@@ -1115,6 +1121,9 @@
         },
         "environment": {
           "$ref": "#/$defs/environment"
+        },
+        "exitHook": {
+          "$ref": "#/$defs/exitHook"
         }
       },
       "required": [
@@ -1161,6 +1170,36 @@
           "additionalProperties": false
         }
       ]
+    },
+    "exitHook": {
+      "description": "The exit hook's single attempt after the run settled. Its status never changes the run's status.",
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "failed"
+          ]
+        },
+        "attempts": {
+          "minItems": 1,
+          "maxItems": 1,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attempt"
+          }
+        }
+      },
+      "required": [
+        "nodeId",
+        "status",
+        "attempts"
+      ],
+      "additionalProperties": false
     }
   },
   "$id": "https://massive.dev/conformance/schema/run-manifest.schema.json",

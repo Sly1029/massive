@@ -21,6 +21,7 @@ from .contracts import (
     retry,
 )
 from .files import ArtifactFiles, Blob, Tree
+from .outcome import RunOutcome
 from .source_package import SourcePackage, source_package
 
 __all__ = [
@@ -39,6 +40,7 @@ __all__ = [
     "NodeHandle",
     "NonRetryableError",
     "Retry",
+    "RunOutcome",
     "SourcePackage",
     "StepContext",
     "Tree",

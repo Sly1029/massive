@@ -38,6 +38,7 @@ from .context import InputT, StepContext
 from .contracts import SECOND, ExecutionContract, Retry, whole_seconds
 from .hashing import SOURCE_PACKAGE_HASHING, WORKFLOW_SPEC_HASHING
 from .identity import SAFE_PATH_SEGMENT, SafePathSegment
+from .outcome import RunOutcome
 from .source_package import SourcePackage
 
 OutputT = TypeVar("OutputT")
@@ -291,6 +292,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self.output_type = output_type
         self.defaults = defaults
         self.deadline = deadline
+        self._exit_hook: tuple[str, _Step[Any, Any]] | None = None
         self._graph_token = object()
         self.start = NodeHandle[Never, WorkflowInputT](
             graph_token=self._graph_token,
@@ -326,11 +328,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         node_id = SAFE_PATH_SEGMENT.validate_python(id)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved call id {node_id!r}")
-        if graph.deadline is not None:
-            raise ValueError(
-                f"called graph {graph.name!r} has a run deadline, which bounds only a whole run;"
-                " set the deadline on the calling graph"
-            )
+        graph._check_callable()
         handle = NodeHandle[InputT, OutputT](
             graph_token=self._graph_token,
             node_id=node_id,
@@ -778,6 +776,47 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
             timeout=base.timeout if timeout is None else timeout,
         )
 
+    def on_exit(
+        self,
+        function: Callable[[StepContext[RunOutcome]], Awaitable[None]]
+        | Callable[[StepContext[RunOutcome]], None],
+        *,
+        id: str | None = None,
+        contract: ExecutionContract | None = None,
+        timeout: timedelta | None = None,
+    ) -> None:
+        """Run ``function`` once after every run settles, whatever its status.
+
+        The hook receives a ``RunOutcome`` and returns ``None``. Its failure is
+        recorded but never changes the run's status. It runs once: a retry
+        policy in the selected contract does not apply to it.
+        """
+        if self._emitted:
+            raise RuntimeError("graph has already been emitted")
+        if self._exit_hook is not None:
+            raise ValueError(f"graph {self.name!r} already has an exit hook")
+        base = self._registration_contract(contract, None, timeout) or self.defaults
+        hook = _Step[Any, Any].from_callable(function, contract=replace(base, retry=None))
+        if hook.input_type is not RunOutcome or hook.output_type is not type(None):
+            raise TypeError("an exit hook must accept StepContext[RunOutcome] and return None")
+        hook_id = SAFE_PATH_SEGMENT.validate_python(id or hook.function.__name__)
+        if hook_id in self._known_node_ids():
+            raise ValueError(f"exit hook id {hook_id!r} is already a node id")
+        self._exit_hook = (hook_id, hook)
+
+    def _check_callable(self) -> None:
+        """A deadline or exit hook belongs to a whole run, never to a called graph."""
+        if self.deadline is not None:
+            raise ValueError(
+                f"called graph {self.name!r} has a run deadline, which bounds only a whole run;"
+                " set the deadline on the calling graph"
+            )
+        if self._exit_hook is not None:
+            raise ValueError(
+                f"called graph {self.name!r} has an exit hook, which runs only after a whole run;"
+                " register it on the calling graph"
+            )
+
     def _known_node_ids(self) -> set[str]:
         return {
             _START,
@@ -1130,6 +1169,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         ):
             if child._emitting:
                 raise ValueError(f"recursive workflow call at {call_id!r}")
+            child._check_callable()
             if child._cached_spec is None:
                 child_spec = child.emit(source=source)
             else:
@@ -1249,6 +1289,29 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                 if key in edge
             )
         )
+        exit_hook: dict[str, JsonValue] = {}
+        if self._exit_hook is not None:
+            hook_id, hook = self._exit_hook
+            if any(node["id"] == hook_id for node in nodes):
+                raise ValueError(f"exit hook id {hook_id!r} is already a node id")
+            module = _symbol_module(hook.function, source.root)
+            symbol_ref = f"{source.package_id}:{module}#{hook.function.__name__}"
+            symbols[symbol_ref] = {
+                "packageId": source.package_id,
+                "language": "python",
+                "module": module,
+                "export": hook.function.__name__,
+            }
+            exit_hook["exitHook"] = {
+                "id": hook_id,
+                "kind": "exit-hook",
+                "inputSchema": schema_ref(
+                    RunOutcome, "exit hook input schema", SchemaPurpose.INPUT
+                ),
+                "outputSchema": schema_ref(None, "exit hook output schema", SchemaPurpose.OUTPUT),
+                "symbolRef": symbol_ref,
+                "contractRef": contract_ref(cast(ExecutionContract, hook.contract)),
+            }
         value = cast(
             JsonValue,
             {
@@ -1272,6 +1335,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                     "end": _END,
                     "nodes": nodes,
                     "edges": edges,
+                    **exit_hook,
                 },
                 "schemas": schema_table,
                 "symbols": symbols,

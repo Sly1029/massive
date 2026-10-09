@@ -218,6 +218,16 @@ func compileGraph(workflowSpec *spec.WorkflowSpec, schedule Schedule, schemaHash
 	if workflowSpec.Workflow.DeadlineSeconds != 0 {
 		graph.DeadlineSeconds = uint32Ptr(workflowSpec.Workflow.DeadlineSeconds)
 	}
+	if hook := workflowSpec.Graph.ExitHook; hook != nil {
+		graph.ExitHook = &planpb.GraphNode{
+			Id:           stringPtr(hook.ID),
+			Kind:         stringPtr(spec.NodeKindExitHook),
+			InputSchema:  stringPtr(schemaHashes[hook.InputSchema]),
+			OutputSchema: stringPtr(schemaHashes[hook.OutputSchema]),
+			SymbolRef:    stringPtr(hook.SymbolRef),
+			ContractRef:  stringPtr(contractHashes[hook.ContractRef]),
+		}
+	}
 	return graph
 }
 

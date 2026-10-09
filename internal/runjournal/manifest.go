@@ -14,6 +14,9 @@ type Manifest struct {
 	Steps       []Step        `json:"steps"`
 	Decisions   []Decision    `json:"decisions"`
 	Result      *DataArtifact `json:"result,omitempty"`
+	// ExitHook records the plan's exit hook, which runs once after the run
+	// settles. Its status never changes the run's.
+	ExitHook *Step `json:"exitHook,omitempty"`
 }
 
 // The run journal is versioned independently of graph IR. Only v5/json-v5 is
