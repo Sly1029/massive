@@ -1,9 +1,10 @@
 package orchestrator
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/sourceidentity"
@@ -46,35 +46,32 @@ func attemptEnvironmentKey(outputManifestKey string) datastore.Key {
 func isolatedPreflight(ctx context.Context, store datastore.Datastore, request environment.Request, descriptor StepInvocationDescriptor, source SourceArchive) (string, error) {
 	fail := func(err error) (string, error) { return "", &PreflightError{NodeID: descriptor.NodeID, Err: err} }
 	packageHash := descriptor.SourcePackage.PackageHash
-	// Embedded bodies were verified when installed. Under object-store-v0 the
-	// pod checks the same published object the runner will import, so an
-	// absent archive can never pass as an empty, undeclared project.
-	archive := source.Body
-	if archive == nil {
-		object, err := store.Get(ctx, datastore.MustKey(sourceArchiveKey(packageHash, source.Digest)))
-		// Like the runner, treat a denied read as missing: without
-		// s3:ListBucket, S3 reports an unpublished key as AccessDenied.
-		if errors.Is(err, datastore.ErrNotFound) || errors.Is(err, datastore.ErrAccessDenied) {
-			return fail(fmt.Errorf("source archive %s for package %s is not readable from the datastore; publish the bundle with `massive publish`, or grant the pod read access to it", source.Digest, packageHash))
-		}
-		if err != nil {
-			return "", fmt.Errorf("read source archive for preflight: %w", err)
-		}
-		if canonical.DigestBytes(object.Body) != source.Digest {
-			return fail(fmt.Errorf("datastore source archive for package %s does not match its pinned digest %s", packageHash, source.Digest))
-		}
-		if err := sourceidentity.VerifyArchive(object.Body, packageHash); err != nil {
-			return fail(err)
-		}
-		archive = object.Body
-	}
-	root, err := os.MkdirTemp("", "massive-preflight-*")
+	scratch, err := os.MkdirTemp("", "massive-preflight-*")
 	if err != nil {
 		return "", fmt.Errorf("create preflight directory: %w", err)
 	}
-	defer os.RemoveAll(root)
-	if err := extractSourceArchive(archive, root); err != nil {
-		return "", err
+	defer os.RemoveAll(scratch)
+	root := filepath.Join(scratch, "source")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		return "", fmt.Errorf("create preflight directory: %w", err)
+	}
+	// Embedded bodies are small and were verified when installed. Under
+	// object-store-v0 the pod checks the same published object the runner will
+	// import, so an absent archive can never pass as an empty project.
+	archive, size := io.Reader(bytes.NewReader(source.Body)), int64(len(source.Body))
+	if source.Body == nil {
+		file, written, refusal, err := fetchSourceArchive(ctx, store, packageHash, source.Digest, filepath.Join(scratch, "source.tar"))
+		if refusal != nil {
+			return fail(refusal)
+		}
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+		archive, size = file, written
+	}
+	if err := sourceidentity.ExtractArchive(archive, size, packageHash, root); err != nil {
+		return fail(err)
 	}
 	request.ProjectRoot = root
 	report, err := environment.Check(ctx, request)
@@ -112,31 +109,50 @@ func isolatedPreflight(ctx context.Context, store datastore.Datastore, request e
 	return report.Interpreter.Executable, nil
 }
 
-// extractSourceArchive writes an already verified source archive, which
-// contains only regular files at normalized relative paths.
-func extractSourceArchive(archive []byte, root string) error {
-	reader := tar.NewReader(bytes.NewReader(archive))
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("read source archive: %w", err)
-		}
-		if header.Typeflag != tar.TypeReg || !safeArchivePath(header.Name) {
-			return fmt.Errorf("source archive entry %q is not a regular file at a safe path", header.Name)
-		}
-		path := filepath.Join(root, filepath.FromSlash(header.Name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return err
-		}
-		body, err := io.ReadAll(reader)
-		if err != nil {
-			return fmt.Errorf("read source archive entry %q: %w", header.Name, err)
-		}
-		if err := os.WriteFile(path, body, 0o644); err != nil {
-			return err
-		}
+// fetchSourceArchive streams a pinned object-store archive into a scratch
+// file, as the Python runner does. It bounds the read by the largest valid
+// source archive and checks the digest before any entry is read. A refusal
+// (missing, denied, oversized, or mismatched) cannot succeed on retry; other
+// errors can.
+func fetchSourceArchive(ctx context.Context, store datastore.Datastore, packageHash, digest, path string) (file *os.File, size int64, refusal, err error) {
+	reader, info, err := store.Open(ctx, datastore.MustKey(sourceArchiveKey(packageHash, digest)))
+	// Like the runner, treat a denied read as missing: without s3:ListBucket,
+	// S3 reports an unpublished key as AccessDenied.
+	if errors.Is(err, datastore.ErrNotFound) || errors.Is(err, datastore.ErrAccessDenied) {
+		return nil, 0, fmt.Errorf("source archive %s for package %s is not readable from the datastore (%v); publish the bundle with `massive publish`, or grant the pod read access to it", digest, packageHash, err), nil
 	}
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("open source archive for preflight: %w", err)
+	}
+	defer reader.Close()
+	tooLarge := func(bytes int64) error {
+		return fmt.Errorf("datastore source archive for package %s is %d bytes, above the %d-byte limit of any source package", packageHash, bytes, int64(sourceidentity.MaxArchiveBytes))
+	}
+	if info.Size > sourceidentity.MaxArchiveBytes {
+		return nil, 0, tooLarge(info.Size), nil
+	}
+	file, err = os.Create(path)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("create source archive scratch file: %w", err)
+	}
+	hash := sha256.New()
+	written, err := io.Copy(io.MultiWriter(file, hash), io.LimitReader(reader, sourceidentity.MaxArchiveBytes+1))
+	switch {
+	case err != nil:
+		err = fmt.Errorf("read source archive for preflight: %w", err)
+	case written > sourceidentity.MaxArchiveBytes:
+		refusal = tooLarge(written)
+	case written != info.Size:
+		err = fmt.Errorf("read %d of the %d bytes of source archive %s", written, info.Size, digest)
+	case "sha256:"+hex.EncodeToString(hash.Sum(nil)) != digest:
+		refusal = fmt.Errorf("datastore source archive for package %s does not match its pinned digest %s", packageHash, digest)
+	}
+	if err == nil && refusal == nil {
+		_, err = file.Seek(0, io.SeekStart)
+	}
+	if err != nil || refusal != nil {
+		_ = file.Close()
+		return nil, 0, refusal, err
+	}
+	return file, written, nil, nil
 }

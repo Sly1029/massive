@@ -63,6 +63,25 @@ func TestVerifyArchiveRejectsUnsafeAndMismatchedSource(t *testing.T) {
 			if (err == nil) != test.valid {
 				t.Fatalf("valid=%v, verification error=%v", test.valid, err)
 			}
+			// Streaming extraction makes the same decision and never writes
+			// outside its directory, even before identity is known.
+			parent := t.TempDir()
+			directory := filepath.Join(parent, "extracted")
+			if err := os.Mkdir(directory, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			err = ExtractArchive(bytes.NewReader(archive.Bytes()), int64(archive.Len()), test.hash, directory)
+			if (err == nil) != test.valid {
+				t.Fatalf("valid=%v, extraction error=%v", test.valid, err)
+			}
+			if entries, _ := os.ReadDir(parent); len(entries) != 1 {
+				t.Fatalf("extraction wrote outside its directory: %v", entries)
+			}
+			if test.valid {
+				if body, err := os.ReadFile(filepath.Join(directory, "workflow.py")); err != nil || !bytes.Equal(body, content) {
+					t.Fatalf("extracted body = %q, %v", body, err)
+				}
+			}
 			if test.valid {
 				for name, changed := range map[string][]byte{
 					"missing-end":      archive.Bytes()[:len(archive.Bytes())-1024],
@@ -72,6 +91,9 @@ func TestVerifyArchiveRejectsUnsafeAndMismatchedSource(t *testing.T) {
 				} {
 					if err := VerifyArchive(changed, expected); err == nil {
 						t.Errorf("%s archive was accepted", name)
+					}
+					if err := ExtractArchive(bytes.NewReader(changed), int64(len(changed)), expected, t.TempDir()); err == nil {
+						t.Errorf("%s archive was extracted", name)
 					}
 				}
 			}
