@@ -45,7 +45,8 @@ const (
 
 	referencePrefix = '@'
 	// maxEnvelopeBytes bounds one item result envelope: an index of at most
-	// MaxMapItems plus an inline value of ItemInlineLimit bytes or a Ref.
+	// MaxMapItems plus an inline value or failure record of ItemInlineLimit
+	// bytes, or a Ref under "ref" or "failureRef" (at most 126 bytes).
 	maxEnvelopeBytes = 128
 	// argoParameterBudget leaves headroom below Linux's 128 KiB per string for
 	// the rest of a collector's Argo template.
@@ -194,6 +195,17 @@ type envelope struct {
 	Ref     json.RawMessage `json:"ref,omitempty"`
 	ListRef json.RawMessage `json:"listRef,omitempty"`
 	Empty   bool            `json:"empty,omitempty"`
+	// Outcome envelopes of a map that collects item failures.
+	Failure    json.RawMessage `json:"failure,omitempty"`
+	FailureRef json.RawMessage `json:"failureRef,omitempty"`
+	Fatal      bool            `json:"fatal,omitempty"`
+	Lost       bool            `json:"lost,omitempty"`
+}
+
+// outcome reports whether the envelope is one only a collecting map's
+// outcome collector accepts.
+func (fields envelope) outcome() bool {
+	return fields.Failure != nil || fields.FailureRef != nil || fields.Fatal || fields.Lost
 }
 
 // ExpandItems projects a map input parameter into indexed loop envelopes
@@ -238,7 +250,7 @@ func (codec Codec) DecodeItem(ctx context.Context, body []byte) (mapexec.Item, b
 	if fields.Empty {
 		return mapexec.Item{}, true, nil
 	}
-	if fields.Ref != nil || (fields.Value == nil) == (fields.ListRef == nil) {
+	if fields.Ref != nil || fields.outcome() || (fields.Value == nil) == (fields.ListRef == nil) {
 		return mapexec.Item{}, false, contractError("map item must contain an index and exactly one of value or listRef")
 	}
 	if fields.Value != nil {
@@ -285,59 +297,148 @@ func EncodePublishedItemResult(index int, body []byte) ([]byte, error) {
 // item, and returns the source-ordered list as a parameter. It is the only
 // control operation that publishes a body.
 func (codec Codec) CollectResults(ctx context.Context, aggregate []byte) ([]byte, error) {
-	var values []json.RawMessage
-	if err := json.Unmarshal(aggregate, &values); err != nil {
-		return nil, contractError("decode Argo map results: %v", err)
+	envelopes, empty, err := aggregateEnvelopes(aggregate)
+	if err != nil || empty {
+		return emptyCollection(err)
 	}
-	results := make([]mapexec.Result, 0, len(values))
-	emptyMarkers := 0
-	for position, value := range values {
-		body := []byte(value)
-		if len(body) > 0 && body[0] == '"' {
-			var encoded string
-			if err := json.Unmarshal(body, &encoded); err != nil {
-				return nil, contractError("decode Argo map result %d string: %v", position, err)
-			}
-			body = []byte(encoded)
+	results := make([]mapexec.Result, 0, len(envelopes))
+	for position, fields := range envelopes {
+		if fields.outcome() {
+			return nil, contractError("map result %d is an item outcome, but this map fails on item failures", position)
 		}
-		fields, err := parseEnvelope(body)
+		result, err := codec.itemValue(ctx, position, fields.Value, fields.Ref)
 		if err != nil {
-			return nil, fmt.Errorf("map result %d: %w", position, err)
-		}
-		if fields.Empty {
-			emptyMarkers++
-			continue
-		}
-		if fields.ListRef != nil || (fields.Value == nil) == (fields.Ref == nil) {
-			return nil, contractError("map result %d must contain an index and exactly one of value or ref", position)
-		}
-		var result []byte
-		if fields.Value != nil {
-			if result, err = canonical.CanonicalizeJSON(fields.Value); err != nil || len(result) > ItemInlineLimit {
-				return nil, contractError("map result %d must be canonical JSON of at most %d bytes inline", position, ItemInlineLimit)
-			}
-		} else {
-			ref, err := parseRef(fields.Ref, ItemInlineLimit)
-			if err != nil {
-				return nil, fmt.Errorf("map result %d: %w", position, err)
-			}
-			if result, err = codec.resolve(ctx, ref); err != nil {
-				return nil, err
-			}
+			return nil, err
 		}
 		results = append(results, mapexec.Result{Index: *fields.Index, Body: result})
-	}
-	if emptyMarkers > 0 {
-		if emptyMarkers != 1 || len(values) != 1 {
-			return nil, contractError("empty-map marker cannot be combined with map results")
-		}
-		return []byte(`[]`), nil
 	}
 	collected, err := mapexec.Collect(len(results), results)
 	if err != nil {
 		return nil, err
 	}
 	return codec.Encode(ctx, collected)
+}
+
+// CollectOutcomes builds a collecting map's source-ordered outcome list from
+// Argo's aggregate output. Each item runs inside a DAG that continues past
+// its failed pod, so every item reports exactly one envelope, in source
+// order: a value, a failure, the fatal marker of a failure the map does not
+// keep, or LostItemEnvelope. A fatal marker fails the map; a lost item failed
+// all maxAttempts attempts.
+func (codec Codec) CollectOutcomes(ctx context.Context, aggregate []byte, maxAttempts int) ([]byte, error) {
+	if maxAttempts < 1 {
+		return nil, contractError("maxAttempts %d must be positive", maxAttempts)
+	}
+	envelopes, empty, err := aggregateEnvelopes(aggregate)
+	if err != nil || empty {
+		return emptyCollection(err)
+	}
+	outcomes := make([]mapexec.Outcome, len(envelopes))
+	for position, fields := range envelopes {
+		outcomes[position].Index = position
+		if fields.Lost {
+			lost := mapexec.NewFailure(mapexec.FailureKilled, maxAttempts, LostItemDiagnostic)
+			outcomes[position].Failure = &lost
+			continue
+		}
+		if *fields.Index != position {
+			return nil, contractError("map outcome %d reports item index %d", position, *fields.Index)
+		}
+		switch {
+		case fields.Fatal:
+			return nil, fmt.Errorf("map item %d failed with an error that fails the map, such as a schema, dependency preflight, or infrastructure failure; see that item's pod log", position)
+		case fields.Failure != nil || fields.FailureRef != nil:
+			body, err := codec.inlineOrReferenced(ctx, position, fields.Failure, fields.FailureRef)
+			if err != nil {
+				return nil, err
+			}
+			failure, err := mapexec.ParseFailure(body, maxAttempts)
+			if err != nil {
+				return nil, contractError("map outcome %d: %v", position, err)
+			}
+			outcomes[position].Failure = &failure
+		default:
+			if outcomes[position].Value, err = codec.itemValue(ctx, position, fields.Value, fields.Ref); err != nil {
+				return nil, err
+			}
+		}
+	}
+	collected, err := mapexec.CollectOutcomes(len(outcomes), outcomes)
+	if err != nil {
+		return nil, err
+	}
+	return codec.Encode(ctx, collected)
+}
+
+// aggregateEnvelopes unwraps Argo's aggregate output, accepting both raw JSON
+// objects and the JSON-string form used by some Argo releases. It reports
+// the singleton marker that carries an empty map through Argo.
+func aggregateEnvelopes(aggregate []byte) ([]envelope, bool, error) {
+	var values []json.RawMessage
+	if err := json.Unmarshal(aggregate, &values); err != nil {
+		return nil, false, contractError("decode Argo map results: %v", err)
+	}
+	envelopes := make([]envelope, 0, len(values))
+	emptyMarkers := 0
+	for position, value := range values {
+		body := []byte(value)
+		if len(body) > 0 && body[0] == '"' {
+			var encoded string
+			if err := json.Unmarshal(body, &encoded); err != nil {
+				return nil, false, contractError("decode Argo map result %d string: %v", position, err)
+			}
+			body = []byte(encoded)
+		}
+		fields, err := parseEnvelope(body)
+		if err != nil {
+			return nil, false, fmt.Errorf("map result %d: %w", position, err)
+		}
+		if fields.Empty {
+			emptyMarkers++
+			continue
+		}
+		if fields.ListRef != nil {
+			return nil, false, contractError("map result %d carries an item list reference", position)
+		}
+		envelopes = append(envelopes, fields)
+	}
+	if emptyMarkers > 0 && (emptyMarkers != 1 || len(values) != 1) {
+		return nil, false, contractError("empty-map marker cannot be combined with map results")
+	}
+	return envelopes, emptyMarkers == 1, nil
+}
+
+func emptyCollection(err error) ([]byte, error) {
+	if err != nil {
+		return nil, err
+	}
+	return []byte(`[]`), nil
+}
+
+// itemValue resolves a mapper result carried inline or by reference.
+func (codec Codec) itemValue(ctx context.Context, position int, inline, referenced json.RawMessage) ([]byte, error) {
+	if (inline == nil) == (referenced == nil) {
+		return nil, contractError("map result %d must contain an index and exactly one of value or ref", position)
+	}
+	return codec.inlineOrReferenced(ctx, position, inline, referenced)
+}
+
+func (codec Codec) inlineOrReferenced(ctx context.Context, position int, inline, referenced json.RawMessage) ([]byte, error) {
+	if (inline == nil) == (referenced == nil) {
+		return nil, contractError("map result %d must carry its body exactly once, inline or by reference", position)
+	}
+	if inline != nil {
+		body, err := canonical.CanonicalizeJSON(inline)
+		if err != nil || len(body) > ItemInlineLimit {
+			return nil, contractError("map result %d must be canonical JSON of at most %d bytes inline", position, ItemInlineLimit)
+		}
+		return body, nil
+	}
+	ref, err := parseRef(referenced, ItemInlineLimit)
+	if err != nil {
+		return nil, fmt.Errorf("map result %d: %w", position, err)
+	}
+	return codec.resolve(ctx, ref)
 }
 
 func parseEnvelope(body []byte) (envelope, error) {
@@ -351,11 +452,18 @@ func parseEnvelope(body []byte) (envelope, error) {
 	if err := decoder.Decode(&fields); err != nil {
 		return envelope{}, contractError("decode map envelope: %v", err)
 	}
-	if fields.Empty {
-		if fields.Index != nil || fields.Value != nil || fields.Ref != nil || fields.ListRef != nil {
-			return envelope{}, contractError("empty-map marker must contain only empty")
+	if fields.Empty || fields.Lost {
+		if fields.Empty && fields.Lost || fields.Index != nil || fields.Value != nil || fields.Ref != nil || fields.ListRef != nil ||
+			fields.Failure != nil || fields.FailureRef != nil || fields.Fatal {
+			return envelope{}, contractError("empty-map and lost-item markers must contain only their flag")
 		}
 		return fields, nil
+	}
+	if fields.Fatal && (fields.Value != nil || fields.Ref != nil || fields.ListRef != nil || fields.Failure != nil || fields.FailureRef != nil) {
+		return envelope{}, contractError("fatal item marker must contain only its index")
+	}
+	if (fields.Failure != nil || fields.FailureRef != nil) && (fields.Value != nil || fields.Ref != nil || fields.ListRef != nil) {
+		return envelope{}, contractError("map outcome cannot carry both a value and a failure")
 	}
 	if fields.Index == nil || *fields.Index < 0 {
 		return envelope{}, contractError("map envelope needs a nonnegative index")
@@ -475,4 +583,41 @@ var refSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 
 func blobKey(hash string) (datastore.Key, error) {
 	return datastore.BlobKeySHA256Hex(strings.TrimPrefix(hash, "sha256:"))
+}
+
+// LostItemEnvelope is the outcome Argo reports for an item pod that ended
+// without writing one: the container was killed with its runtime, as by an
+// out-of-memory kill under cgroup v2 group kill, evicted, or lost with its
+// node. Argo retries such pods within the attempt budget, so a lost item
+// used every attempt.
+const LostItemEnvelope = `{"lost":true}`
+
+// LostItemDiagnostic describes a lost item in its failure record.
+const LostItemDiagnostic = "item pod ended without reporting an outcome (an out-of-memory kill, eviction, or node loss)"
+
+// EncodeItemFailure binds a collected item failure to its source index. Like
+// a mapper result, a record above ItemInlineLimit travels by reference.
+func (codec Codec) EncodeItemFailure(ctx context.Context, index int, failure mapexec.Failure) ([]byte, error) {
+	if index < 0 {
+		return nil, fmt.Errorf("map failure index %d must be nonnegative", index)
+	}
+	body, err := canonical.Marshal(failure)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) <= ItemInlineLimit {
+		return canonical.Marshal(map[string]any{"failure": json.RawMessage(body), "index": index})
+	}
+	ref, err := codec.publish(ctx, body)
+	if err != nil {
+		return nil, err
+	}
+	return canonical.Marshal(map[string]any{"failureRef": ref, "index": index})
+}
+
+// FatalItemEnvelope marks an item whose terminal failure a collecting map
+// does not keep. Argo continues past failed item pods, so the collector
+// fails the map when it reads this marker.
+func FatalItemEnvelope(index int) ([]byte, error) {
+	return canonical.Marshal(map[string]any{"fatal": true, "index": index})
 }

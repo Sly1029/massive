@@ -145,3 +145,30 @@ func CollectOutcomes(expectedCount int, outcomes []Outcome) ([]byte, error) {
 	}
 	return Collect(expectedCount, results)
 }
+
+// ParseFailure reads a canonical failure record that an item runtime built
+// for an attempt budget of maxAttempts.
+func ParseFailure(body []byte, maxAttempts int) (Failure, error) {
+	canonicalBody, err := canonical.CanonicalizeJSON(body)
+	if err != nil || !bytes.Equal(canonicalBody, body) {
+		return Failure{}, fmt.Errorf("failure record must be canonical JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	var failure Failure
+	if err := decoder.Decode(&failure); err != nil {
+		return Failure{}, fmt.Errorf("decode failure record: %w", err)
+	}
+	switch failure.Kind {
+	case FailureError, FailureKilled, FailureNonRetryable, FailureTimeout:
+	default:
+		return Failure{}, fmt.Errorf("failure kind %q is not a collected kind", failure.Kind)
+	}
+	if failure.Attempts < 1 || failure.Attempts > maxAttempts {
+		return Failure{}, fmt.Errorf("failure after %d attempts is outside the %d-attempt budget", failure.Attempts, maxAttempts)
+	}
+	if failure != NewFailure(failure.Kind, failure.Attempts, failure.Diagnostic) {
+		return Failure{}, fmt.Errorf("failure diagnostic must be valid UTF-8 of at most %d code points", DiagnosticLimit)
+	}
+	return failure, nil
+}
