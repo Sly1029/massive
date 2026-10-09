@@ -312,9 +312,12 @@ type GraphIR struct {
 	Edges        []*GraphEdge           `protobuf:"bytes,7,rep,name=edges,proto3" json:"edges,omitempty"`
 	// Semantic Graph IR version, deliberately distinct from the enclosing plan
 	// transport schema_version.
-	IrVersion     *string `protobuf:"bytes,8,opt,name=ir_version,json=irVersion,proto3,oneof" json:"ir_version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	IrVersion *string `protobuf:"bytes,8,opt,name=ir_version,json=irVersion,proto3,oneof" json:"ir_version,omitempty"`
+	// Wall-clock limit for the whole run, from submission to its last task.
+	// Absent means no run deadline.
+	DeadlineSeconds *uint32 `protobuf:"varint,9,opt,name=deadline_seconds,json=deadlineSeconds,proto3,oneof" json:"deadline_seconds,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *GraphIR) Reset() {
@@ -401,6 +404,13 @@ func (x *GraphIR) GetIrVersion() string {
 		return *x.IrVersion
 	}
 	return ""
+}
+
+func (x *GraphIR) GetDeadlineSeconds() uint32 {
+	if x != nil && x.DeadlineSeconds != nil {
+		return *x.DeadlineSeconds
+	}
+	return 0
 }
 
 type GraphNode struct {
@@ -1647,7 +1657,7 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\v_provenanceB\n" +
 	"\n" +
 	"\b_hashingB\x0f\n" +
-	"\r_spec_hashing\"\xb1\x03\n" +
+	"\r_spec_hashing\"\xf6\x03\n" +
 	"\aGraphIR\x12(\n" +
 	"\rworkflow_name\x18\x01 \x01(\tH\x00R\fworkflowName\x88\x01\x01\x12&\n" +
 	"\finput_schema\x18\x02 \x01(\tH\x01R\vinputSchema\x88\x01\x01\x12(\n" +
@@ -1658,13 +1668,15 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\x05nodes\x18\x06 \x03(\v2\x1a.massive.plan.v1.GraphNodeR\x05nodes\x120\n" +
 	"\x05edges\x18\a \x03(\v2\x1a.massive.plan.v1.GraphEdgeR\x05edges\x12\"\n" +
 	"\n" +
-	"ir_version\x18\b \x01(\tH\x05R\tirVersion\x88\x01\x01B\x10\n" +
+	"ir_version\x18\b \x01(\tH\x05R\tirVersion\x88\x01\x01\x12.\n" +
+	"\x10deadline_seconds\x18\t \x01(\rH\x06R\x0fdeadlineSeconds\x88\x01\x01B\x10\n" +
 	"\x0e_workflow_nameB\x0f\n" +
 	"\r_input_schemaB\x10\n" +
 	"\x0e_output_schemaB\r\n" +
 	"\v_start_nodeB\v\n" +
 	"\t_end_nodeB\r\n" +
-	"\v_ir_version\"\xff\x05\n" +
+	"\v_ir_versionB\x13\n" +
+	"\x11_deadline_seconds\"\xff\x05\n" +
 	"\tGraphNode\x12\x13\n" +
 	"\x02id\x18\x01 \x01(\tH\x00R\x02id\x88\x01\x01\x12\x17\n" +
 	"\x04kind\x18\x02 \x01(\tH\x01R\x04kind\x88\x01\x01\x12&\n" +

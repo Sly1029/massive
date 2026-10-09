@@ -56,6 +56,8 @@ type Workflow struct {
 	Name         string `json:"name"`
 	InputSchema  string `json:"inputSchema"`
 	OutputSchema string `json:"outputSchema"`
+	// DeadlineSeconds bounds the whole run; zero means no deadline.
+	DeadlineSeconds uint32 `json:"deadlineSeconds,omitempty"`
 }
 
 type Graph struct {

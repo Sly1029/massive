@@ -348,6 +348,56 @@ def test_steps_without_retry_or_timeout_emit_neither() -> None:
     assert "timeoutSeconds" not in contract
 
 
+def test_run_deadline_is_emitted_as_whole_seconds_only_when_set() -> None:
+    graphs = [
+        GraphBuilder(
+            name="deadline",
+            input_type=Request,
+            output_type=Result,
+            defaults=_defaults(),
+            deadline=deadline,
+        )
+        for deadline in (timedelta(hours=2), None)
+    ]
+    for graph in graphs:
+        graph.edge_from(graph.start).to(graph.add(identity)).to_end(graph.end)
+    bounded, unbounded = (_emit(graph).value for graph in graphs)
+
+    _validate_workflow_spec(bounded)
+    assert bounded["workflow"]["deadlineSeconds"] == 7200
+    assert "deadlineSeconds" not in unbounded["workflow"]
+
+
+@pytest.mark.parametrize(
+    "deadline",
+    [timedelta(0), timedelta(seconds=1.5), timedelta(days=7, seconds=1), 60],
+)
+def test_run_deadline_rejects_values_outside_the_spec(deadline: Any) -> None:
+    with pytest.raises(ValueError, match="run deadline must be whole seconds from 1 to 604800"):
+        GraphBuilder(
+            name="deadline",
+            input_type=Request,
+            output_type=Result,
+            defaults=_defaults(),
+            deadline=deadline,
+        )
+
+
+def test_workflow_call_rejects_a_child_with_its_own_run_deadline() -> None:
+    child = GraphBuilder(
+        name="child",
+        input_type=Request,
+        output_type=Request,
+        defaults=_defaults(),
+        deadline=timedelta(minutes=5),
+    )
+    parent = GraphBuilder(
+        name="parent", input_type=Request, output_type=Request, defaults=_defaults()
+    )
+    with pytest.raises(ValueError, match="called graph 'child' has a run deadline"):
+        parent.call(child, id="child")
+
+
 def _validate_workflow_spec(spec: dict[str, Any]) -> None:
     schema_path = (
         Path(__file__).resolve().parents[3] / "conformance/schema/workflow-spec.schema.json"

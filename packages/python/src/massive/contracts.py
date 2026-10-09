@@ -11,7 +11,7 @@ from .canonical import JsonValue
 
 _IMAGE_DIGEST = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
 _PLATFORM = re.compile(r"^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$")
-_SECOND = timedelta(seconds=1)
+SECOND = timedelta(seconds=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +64,7 @@ class Retry:
         if type(self.backoff) is not int or not 1 <= self.backoff <= 10:
             raise ValueError("retry backoff must be an integer from 1 to 10")
         for name, delay in (("delay", self.delay), ("max_delay", self.max_delay)):
-            if not _whole_seconds(delay, 0, 86400):
+            if not whole_seconds(delay, 0, 86400):
                 raise ValueError(f"retry {name} must be whole seconds from 0 to 86400")
         if self.max_delay < self.delay:
             raise ValueError("retry max_delay must not be shorter than delay")
@@ -72,9 +72,9 @@ class Retry:
     def as_json(self) -> dict[str, JsonValue]:
         return {
             "maxAttempts": self.attempts,
-            "delaySeconds": self.delay // _SECOND,
+            "delaySeconds": self.delay // SECOND,
             "backoffFactor": self.backoff,
-            "maxDelaySeconds": self.max_delay // _SECOND,
+            "maxDelaySeconds": self.max_delay // SECOND,
         }
 
 
@@ -93,7 +93,7 @@ class ExecutionContract:
             raise ValueError("network egress must be 'none' or 'any'")
         if any(not name or not ref for name, ref in self.secrets.items()):
             raise ValueError("secret names and refs must be non-empty strings")
-        if self.timeout is not None and not _whole_seconds(self.timeout, 1, 604800):
+        if self.timeout is not None and not whole_seconds(self.timeout, 1, 604800):
             raise ValueError("step timeout must be whole seconds from 1 to 604800")
         refs = dict(
             sorted(
@@ -119,7 +119,7 @@ class ExecutionContract:
         if self.retry is not None:
             value["retry"] = self.retry.as_json()
         if self.timeout is not None:
-            value["timeoutSeconds"] = self.timeout // _SECOND
+            value["timeoutSeconds"] = self.timeout // SECOND
         return value
 
 
@@ -170,7 +170,5 @@ def retry(
     return Retry(attempts=attempts, delay=delay, backoff=backoff, max_delay=max_delay)
 
 
-def _whole_seconds(value: timedelta, minimum: int, maximum: int) -> bool:
-    return (
-        type(value) is timedelta and not value % _SECOND and minimum <= value // _SECOND <= maximum
-    )
+def whole_seconds(value: timedelta, minimum: int, maximum: int) -> bool:
+    return type(value) is timedelta and not value % SECOND and minimum <= value // SECOND <= maximum

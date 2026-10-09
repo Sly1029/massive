@@ -35,7 +35,7 @@ from typing_extensions import TypeForm
 from ._step import StepDefinition as _Step
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InputT, StepContext
-from .contracts import ExecutionContract, Retry
+from .contracts import SECOND, ExecutionContract, Retry, whole_seconds
 from .hashing import SOURCE_PACKAGE_HASHING, WORKFLOW_SPEC_HASHING
 from .identity import SAFE_PATH_SEGMENT, SafePathSegment
 from .source_package import SourcePackage
@@ -281,11 +281,16 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         input_type: type[WorkflowInputT],
         output_type: type[WorkflowOutputT],
         defaults: ExecutionContract,
+        deadline: timedelta | None = None,
     ) -> None:
+        """``deadline`` bounds the whole run's wall-clock time on every target."""
         self.name = _WorkflowIdentity(name=name).name
+        if deadline is not None and not whole_seconds(deadline, 1, 604800):
+            raise ValueError("run deadline must be whole seconds from 1 to 604800")
         self.input_type = input_type
         self.output_type = output_type
         self.defaults = defaults
+        self.deadline = deadline
         self._graph_token = object()
         self.start = NodeHandle[Never, WorkflowInputT](
             graph_token=self._graph_token,
@@ -321,6 +326,11 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         node_id = SAFE_PATH_SEGMENT.validate_python(id)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved call id {node_id!r}")
+        if graph.deadline is not None:
+            raise ValueError(
+                f"called graph {graph.name!r} has a run deadline, which bounds only a whole run;"
+                " set the deadline on the calling graph"
+            )
         handle = NodeHandle[InputT, OutputT](
             graph_token=self._graph_token,
             node_id=node_id,
@@ -1250,6 +1260,11 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                     "name": self.name,
                     "inputSchema": input_schema,
                     "outputSchema": output_schema,
+                    **(
+                        {}
+                        if self.deadline is None
+                        else {"deadlineSeconds": self.deadline // SECOND}
+                    ),
                 },
                 "graph": {
                     "irVersion": GRAPH_IR_VERSION,

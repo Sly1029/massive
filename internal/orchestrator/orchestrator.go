@@ -115,6 +115,13 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			return nil, &InvalidRunInputError{Field: "source package hash", Value: sourcePackage.GetPackageHash(), Message: "must be a canonical sha256:<64 lowercase hex> digest"}
 		}
 	}
+	// The deadline covers everything the run does, including materialization,
+	// and stops it through the same path as an operator's cancellation.
+	if seconds := config.Plan.GetGraph().GetDeadlineSeconds(); seconds > 0 {
+		var stop context.CancelFunc
+		ctx, stop = context.WithTimeoutCause(ctx, time.Duration(seconds)*time.Second, &RunDeadlineError{Seconds: seconds})
+		defer stop()
+	}
 	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: config.DatastoreRoot})
 	if err != nil {
 		return nil, fmt.Errorf("open local datastore: %w", err)
@@ -166,18 +173,27 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		status := StatusFailed
 		cause := runErr
 		diagnostic := runErr.Error()
+		var deadline *RunDeadlineError
 		if ctx.Err() != nil && errors.Is(runErr, ctx.Err()) {
 			status = StatusCancelled
 			if reason := context.Cause(ctx); reason != nil {
 				diagnostic = reason.Error()
 				cause = errors.Join(cause, reason)
 			}
+			// The plan's own deadline fails the run, as it does on Argo.
+			if errors.As(context.Cause(ctx), &deadline) {
+				status = StatusFailed
+			}
 		}
 		result.Status = status
 		failure := &RunError{StepID: activeNodeID, Diagnostic: diagnostic, Cause: cause, Result: result}
 		// Runner output and cancellation causes belong to the caller diagnostic,
-		// never the shared journal: author code may print credentials.
+		// never the shared journal: author code may print credentials. The
+		// plan's deadline is a safe cause.
 		durableDiagnostic := "run " + status
+		if deadline != nil {
+			durableDiagnostic = deadline.Error()
+		}
 		if activeNodeID != "" {
 			durableDiagnostic += " at node " + activeNodeID
 		}
