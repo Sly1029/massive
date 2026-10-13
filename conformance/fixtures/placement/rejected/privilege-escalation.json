@@ -1,0 +1,14 @@
+{
+  "defaults": {
+    "podSpecPatch": {
+      "containers": [
+        {
+          "name": "main",
+          "securityContext": {
+            "allowPrivilegeEscalation": true
+          }
+        }
+      ]
+    }
+  }
+}

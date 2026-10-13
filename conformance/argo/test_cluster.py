@@ -40,6 +40,38 @@ DATASTORE = {
     "endpoint": "http://minio:9000",
     "forcePathStyle": True,
 }
+# Deployment placement for argo-placement: defaults reach every pod, and the
+# square override reaches only the map item pods that run author code.
+PLACEMENT = {
+    "defaults": {
+        "labels": {"massive-conformance/cost-center": "research"},
+        "annotations": {"massive-conformance/owner": "conformance"},
+        "tolerations": [
+            {
+                "key": "massive-conformance/spot",
+                "operator": "Exists",
+                "effect": "NoSchedule",
+            }
+        ],
+        "priorityClassName": "massive-conformance",
+    },
+    "nodes": {
+        "square": {
+            "nodeSelector": {"massive-conformance/pool": "placement"},
+            "labels": {"massive-conformance/role": "item"},
+            "runtimeClassName": "massive-conformance",
+            "podSpecPatch": {
+                "terminationGracePeriodSeconds": 7,
+                "containers": [
+                    {
+                        "name": "main",
+                        "securityContext": {"allowPrivilegeEscalation": False},
+                    }
+                ],
+            },
+        }
+    },
+}
 
 
 def kubectl(*args: str, document: dict | None = None) -> dict:
@@ -64,6 +96,7 @@ def install_workflow(
     pyproject: str | None = None,
     lock: str | None = None,
     publish: bool = False,
+    placement: dict | None = None,
 ) -> None:
     with tempfile.TemporaryDirectory(prefix="massive-argo-") as directory:
         root = Path(directory)
@@ -76,6 +109,9 @@ def install_workflow(
         bundle = root / "bundle"
         bindings = root / "secret-bindings.json"
         bindings.write_text(json.dumps(secret_bindings or {}))
+        if placement is not None:
+            (root / "placement.json").write_text(json.dumps(placement))
+            build_args = (*build_args, "--placement", str(root / "placement.json"))
         subprocess.run(
             [
                 "go",
@@ -461,6 +497,28 @@ class DecisionConformance(unittest.TestCase):
                 else (),
                 publish=published,
             )
+        # A RuntimeClass on kind's runc handler, a PriorityClass the admission
+        # controller resolves, and a node label make every placement field
+        # observable on a pod that actually runs.
+        for document in (
+            {
+                "apiVersion": "node.k8s.io/v1",
+                "kind": "RuntimeClass",
+                "metadata": {"name": "massive-conformance"},
+                "handler": "runc",
+            },
+            {
+                "apiVersion": "scheduling.k8s.io/v1",
+                "kind": "PriorityClass",
+                "metadata": {"name": "massive-conformance"},
+                "value": 1000,
+            },
+        ):
+            kubectl("apply", "-f", "-", document=document)
+        kubectl("label", "nodes", "--all", "massive-conformance/pool=placement")
+        install_workflow(
+            fixture_source(Path(__file__).parent / "placement.py"), placement=PLACEMENT
+        )
         large_values = fixture_source(Path(__file__).parent / "large_values.py")
         install_workflow(large_values, selector="#graph")
         install_workflow(large_values, selector="#entry_graph")
@@ -500,6 +558,7 @@ class DecisionConformance(unittest.TestCase):
             "small-values": {"count": 10},
             "entry-values": ENTRY_RECORDS,
             "reference-input": REFERENCE_INPUT,
+            "placement": 3,
         }.items():
             run = kubectl(
                 "create",
@@ -530,6 +589,7 @@ class DecisionConformance(unittest.TestCase):
                                 "small-values": "large-values",
                                 "entry-values": "large-values-entry",
                                 "reference-input": "large-values",
+                                "placement": "argo-placement",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -767,6 +827,79 @@ class DecisionConformance(unittest.TestCase):
                     app_variables[0]["valueFrom"]["secretKeyRef"],
                     {"name": "application.credentials", "key": ".token"},
                 )
+
+    def test_placement_reaches_every_pod_and_overrides_only_item_pods(self) -> None:
+        self.successful("placement", 0 + 1 + 4)
+        run = self.completed("placement")
+        nodes = run["status"]["nodes"]
+        pods = kubectl(
+            "get",
+            "pods",
+            "-l",
+            f"workflows.argoproj.io/workflow={run['metadata']['name']}",
+            "-o",
+            "json",
+        )["items"]
+        templates = sorted(
+            nodes[pod["metadata"]["annotations"]["workflows.argoproj.io/node-id"]][
+                "templateName"
+            ]
+            for pod in pods
+        )
+        self.assertEqual(
+            templates,
+            ["map-collect-square", "map-expand-square"]
+            + ["map-item-square"] * 3
+            + ["step-items", "step-total"],
+        )
+        for pod in pods:
+            template = nodes[
+                pod["metadata"]["annotations"]["workflows.argoproj.io/node-id"]
+            ]["templateName"]
+            item = template == "map-item-square"
+            metadata, spec = pod["metadata"], pod["spec"]
+            self.assertEqual(
+                metadata["labels"]["massive-conformance/cost-center"], "research"
+            )
+            self.assertEqual(
+                metadata["annotations"]["massive-conformance/owner"], "conformance"
+            )
+            self.assertIn(
+                {
+                    "key": "massive-conformance/spot",
+                    "operator": "Exists",
+                    "effect": "NoSchedule",
+                },
+                spec["tolerations"],
+            )
+            # Admission resolved the PriorityClass the template named.
+            self.assertEqual(
+                (spec["priorityClassName"], spec["priority"]),
+                ("massive-conformance", 1000),
+            )
+            self.assertEqual(
+                metadata["labels"].get("massive-conformance/role"),
+                "item" if item else None,
+            )
+            self.assertEqual(
+                spec.get("nodeSelector", {}).get("massive-conformance/pool"),
+                "placement" if item else None,
+            )
+            # runtimeClassName and the patch reach Kubernetes only through
+            # podSpecPatch; the kubelet ran these pods with that RuntimeClass.
+            self.assertEqual(
+                spec.get("runtimeClassName"), "massive-conformance" if item else None
+            )
+            self.assertEqual(spec.get("terminationGracePeriodSeconds") == 7, item)
+            main = next(
+                container
+                for container in spec["containers"]
+                if container["name"] == "main"
+            )
+            self.assertEqual(
+                main.get("securityContext", {}).get("allowPrivilegeEscalation"),
+                False if item else None,
+            )
 
     def pods(self, run: dict, template: str) -> list[dict]:
         return [

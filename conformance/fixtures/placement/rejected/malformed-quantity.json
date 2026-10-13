@@ -1,0 +1,16 @@
+{
+  "defaults": {
+    "podSpecPatch": {
+      "containers": [
+        {
+          "name": "main",
+          "resources": {
+            "limits": {
+              "nvidia.com/gpu": "garbage"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -35,6 +35,10 @@ var DataArtifactManifestSchemaJSON []byte
 // WorkflowTemplate schema used for offline target validation.
 const ArgoWorkflowsCRDVersion = "v3.7.16"
 
+// ArgoWorkflowsSchemaID is the pinned schema's own $id. References into it,
+// including the Kubernetes definitions placement uses, resolve against it.
+const ArgoWorkflowsSchemaID = "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json"
+
 //go:embed argo-workflows-v3.7.16.schema.json
 var ArgoWorkflowsCRDSchemaJSON []byte
 

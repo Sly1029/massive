@@ -34,5 +34,10 @@ compiler CRD-version decision).
 2. Replace `argo-workflows-v<version>.schema.json` and update the `//go:embed`
    directive plus `ArgoWorkflowsCRDVersion` in `schema.go`.
 3. Update the version above and in `open-questions.md`.
-4. Re-run `go test ./internal/target/...` — the offline structure-validation
-   tests are the regression gate.
+4. Re-run `go test ./internal/target/... ./internal/deployment/...` — the
+   offline structure-validation tests are the regression gate.
+
+`deployment-spec.schema.json` refers to this file's Kubernetes definitions
+(placement affinity, tolerations, and patch fields) through its `$id`,
+`ArgoWorkflowsSchemaID` in `schema.go`. The deployment validator loads it with
+unknown fields rejected.

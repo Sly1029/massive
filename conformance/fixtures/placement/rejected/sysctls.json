@@ -1,0 +1,14 @@
+{
+  "defaults": {
+    "podSpecPatch": {
+      "securityContext": {
+        "sysctls": [
+          {
+            "name": "kernel.shm_rmid_forced",
+            "value": "1"
+          }
+        ]
+      }
+    }
+  }
+}
