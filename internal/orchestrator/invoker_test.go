@@ -245,3 +245,28 @@ func mustAbs(t *testing.T, path string) string {
 	}
 	return absolute
 }
+
+func TestReadRunnerMessageValidatesBoundedStructuredResults(t *testing.T) {
+	for name, body := range map[string]string{
+		"valid":      `{"exitCode":66,"message":"real failure"}`,
+		"missing":    `{"exitCode":66}`,
+		"null":       `{"exitCode":66,"message":null}`,
+		"mismatched": `{"exitCode":67,"message":"wrong exit"}`,
+		"oversized":  `{"exitCode":66,"message":"` + strings.Repeat("x", 9000) + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "descriptor.json")
+			if err := os.WriteFile(path+".failure.json", []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			message, err := readRunnerMessage(path, 66)
+			if name == "valid" {
+				if err != nil || message != "real failure" {
+					t.Fatalf("message = %q, error = %v", message, err)
+				}
+			} else if err == nil {
+				t.Fatalf("invalid result returned message %q", message)
+			}
+		})
+	}
+}

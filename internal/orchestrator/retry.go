@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -16,6 +15,7 @@ const (
 	runnerExitSchemaValidation     = 65
 	runnerExitStepExecution        = 66
 	runnerExitNonRetryable         = 67
+	runnerExitInfrastructure       = 70
 )
 
 // executionPolicy is the executor view of a contract's retry and timeout
@@ -64,7 +64,7 @@ func retryableOutcome(outcome StepInvocationOutcome) bool {
 		return false
 	}
 	switch outcome.ExitCode {
-	case runnerExitDescriptorResolution, runnerExitSchemaValidation, runnerExitNonRetryable:
+	case runnerExitDescriptorResolution, runnerExitSchemaValidation, runnerExitNonRetryable, runnerExitInfrastructure:
 		return false
 	}
 	return true
@@ -80,30 +80,24 @@ func mapItemFailure(outcome StepInvocationOutcome, attempt int) (mapexec.Failure
 	switch {
 	case outcome.TimedOutAfter > 0:
 		return mapexec.NewFailure(mapexec.FailureTimeout, attempt, summary), true
-	case outcome.ExitCode == runnerExitDescriptorResolution || outcome.ExitCode == runnerExitSchemaValidation:
+	case outcome.ExitCode == runnerExitDescriptorResolution || outcome.ExitCode == runnerExitSchemaValidation || outcome.ExitCode == runnerExitInfrastructure:
 		return mapexec.Failure{}, false
 	case outcome.ExitCode == runnerExitNonRetryable:
-		return mapexec.NewFailure(mapexec.FailureNonRetryable, attempt, withRunnerMessage(summary, outcome.Diagnostic, "non-retryable-step-failure")), true
+		return mapexec.NewFailure(mapexec.FailureNonRetryable, attempt, withRunnerMessage(summary, outcome.RunnerMessage)), true
 	case outcome.ExitCode == runnerExitStepExecution:
-		return mapexec.NewFailure(mapexec.FailureError, attempt, withRunnerMessage(summary, outcome.Diagnostic, "step-execution-failure")), true
-	// Go reports -1 for a process ended by a signal; container runtimes and
-	// shells report 128 plus the signal number.
-	case outcome.ExitCode < 0 || outcome.ExitCode > 128:
+		return mapexec.NewFailure(mapexec.FailureError, attempt, withRunnerMessage(summary, outcome.RunnerMessage)), true
+	// The process owner reports signal termination as a negative exit code.
+	// Positive exits, including 128+signal, are ordinary process exits.
+	case outcome.ExitCode < 0:
 		return mapexec.NewFailure(mapexec.FailureKilled, attempt, summary), true
 	default:
 		return mapexec.NewFailure(mapexec.FailureError, attempt, summary), true
 	}
 }
 
-// withRunnerMessage appends the message from the runner's own final
-// "<label>: <message>" line, which follows any author output. Earlier output
-// is never included, so author logs do not enter the outcome.
-func withRunnerMessage(summary, output, label string) string {
-	start := strings.LastIndex("\n"+output, "\n"+label+": ")
-	if start < 0 {
-		return summary
-	}
-	message := strings.TrimSpace(output[start+len(label)+2:])
+// withRunnerMessage uses only the separately validated runner result. Captured
+// author logs never supply a failure message.
+func withRunnerMessage(summary, message string) string {
 	if message == "" {
 		return summary
 	}

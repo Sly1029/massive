@@ -224,9 +224,15 @@ def run_descriptor_path(path: Path) -> int:
         label, message, code = "step-execution-failure", str(error), _STEP_EXIT
     except NonRetryableStepError as error:
         label, message, code = "non-retryable-step-failure", str(error), _NON_RETRYABLE_STEP_EXIT
-    # The failure line is the runner's last output: a collecting map reads the
-    # message after it, so flush author output the step left buffered first.
-    sys.stdout.flush()
+    # Exception messages travel independently of bounded author logs.
+    try:
+        Path(str(path) + ".failure.json").write_text(
+            json.dumps({"exitCode": code, "message": message[:1024]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError as error:
+        print(f"runner-result-publication-failure: {error}", file=sys.stderr)
+        return 70
     print(f"{label}: {message}", file=sys.stderr, flush=True)
     return code
 

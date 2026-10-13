@@ -39,11 +39,8 @@ from .context import InputT, StepContext
 from .contracts import SECOND, ExecutionContract, Retry, whole_seconds
 from .hashing import SOURCE_PACKAGE_HASHING, WORKFLOW_SPEC_HASHING
 from .identity import SAFE_PATH_SEGMENT, SafePathSegment
-<<<<<<< HEAD
 from .outcome import RunOutcome
-=======
 from .outcomes import MapItemOutcome
->>>>>>> e75da70 (Collect map item failures as typed outcomes on the local target)
 from .source_package import SourcePackage
 
 OutputT = TypeVar("OutputT")

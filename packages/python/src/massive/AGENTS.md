@@ -70,13 +70,10 @@ retried: without s3:ListBucket, S3 reports a missing key as AccessDenied.
 Keep the extracted source directory importable throughout invocation and output
 serialization; ordinary functions and validators may lazily import sibling modules.
 
-<<<<<<< HEAD
 Exit-hook contracts always contain a finite timeout: keep the selected timeout
 or supply five minutes. Strip inherited retries before contract hashing.
-=======
 `map(..., item_failures="collect")` returns `list[MapItemOutcome[R]]`. The
 outcome models in `outcomes.py` are the Go-checked contract: keep fields
 sorted, without defaults or docstrings, so validation and serialization emit
 the schema in `conformance/fixtures/map-outcomes`. The IR omits the default
 policy; never emit `itemFailures: "fail"`.
->>>>>>> e75da70 (Collect map item failures as typed outcomes on the local target)

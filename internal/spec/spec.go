@@ -28,13 +28,10 @@ const (
 	NodeKindSelect   = "select"
 	NodeKindMap      = "map"
 	NodeKindEnd      = "end"
-<<<<<<< HEAD
 	NodeKindExitHook = "exit-hook"
-=======
 
 	// MapItemFailuresCollect makes a map succeed with one outcome per item.
 	MapItemFailuresCollect = "collect"
->>>>>>> e75da70 (Collect map item failures as typed outcomes on the local target)
 )
 
 type WorkflowSpec struct {

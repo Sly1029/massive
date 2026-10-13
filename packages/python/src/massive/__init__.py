@@ -29,11 +29,8 @@ if TYPE_CHECKING:
         retry,
     )
     from .files import ArtifactFiles, Blob, Tree
-<<<<<<< HEAD
     from .outcome import RunOutcome
-=======
     from .outcomes import MapItemFailed, MapItemFailure, MapItemOutcome, MapItemSucceeded
->>>>>>> e75da70 (Collect map item failures as typed outcomes on the local target)
 
 __all__ = [
     "DEFAULT_MAP_CONCURRENCY",
@@ -92,14 +89,11 @@ _EXPORT_MODULES = {
     "ArtifactFiles": "files",
     "Blob": "files",
     "Tree": "files",
-<<<<<<< HEAD
     "RunOutcome": "outcome",
-=======
     "MapItemFailed": "outcomes",
     "MapItemFailure": "outcomes",
     "MapItemOutcome": "outcomes",
     "MapItemSucceeded": "outcomes",
->>>>>>> e75da70 (Collect map item failures as typed outcomes on the local target)
 }
 
 

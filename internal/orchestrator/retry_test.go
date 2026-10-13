@@ -371,7 +371,7 @@ func compileRetryFixture(t *testing.T, name string, sourceDir string, maxAttempt
 
 func TestMapItemFailureClassifiesTerminalRunnerOutcomes(t *testing.T) {
 	failed := func(exitCode int, output string) StepInvocationOutcome {
-		return StepInvocationOutcome{Status: StatusFailed, ExitCode: exitCode, Diagnostic: output}
+		return StepInvocationOutcome{Status: StatusFailed, ExitCode: exitCode, RunnerMessage: output}
 	}
 	for _, test := range []struct {
 		name    string
@@ -380,14 +380,14 @@ func TestMapItemFailureClassifiesTerminalRunnerOutcomes(t *testing.T) {
 		kept    bool
 	}{
 		{
-			name:    "exception keeps only the runner's final message",
-			outcome: failed(66, "author log\nstep-execution-failure: early\nmore author output\nstep-execution-failure: bad row\nwith detail"),
+			name:    "exception uses the structured runner message",
+			outcome: failed(66, "bad row\nwith detail"),
 			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureError, Diagnostic: "step-execution-failure (exit 66): bad row\nwith detail"},
 			kept:    true,
 		},
 		{
 			name:    "exit 66 without a runner line",
-			outcome: failed(66, "SECRET author output"),
+			outcome: StepInvocationOutcome{Status: StatusFailed, ExitCode: 66, Diagnostic: "step-execution-failure: SECRET author output"},
 			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureError, Diagnostic: "step-execution-failure (exit 66)"},
 			kept:    true,
 		},
@@ -399,7 +399,7 @@ func TestMapItemFailureClassifiesTerminalRunnerOutcomes(t *testing.T) {
 		},
 		{
 			name:    "non-retryable",
-			outcome: failed(67, "non-retryable-step-failure: unsupported"),
+			outcome: failed(67, "unsupported"),
 			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureNonRetryable, Diagnostic: "non-retryable-step-failure (exit 67): unsupported"},
 			kept:    true,
 		},
@@ -410,9 +410,9 @@ func TestMapItemFailureClassifiesTerminalRunnerOutcomes(t *testing.T) {
 			kept:    true,
 		},
 		{
-			name:    "signal reported as 128 plus its number",
+			name:    "ordinary positive exit",
 			outcome: failed(137, ""),
-			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureKilled, Diagnostic: "runner-failure (exit 137)"},
+			want:    mapexec.Failure{Attempts: 3, Kind: mapexec.FailureError, Diagnostic: "runner-failure (exit 137)"},
 			kept:    true,
 		},
 		{
@@ -435,7 +435,7 @@ func TestMapItemFailureClassifiesTerminalRunnerOutcomes(t *testing.T) {
 
 func TestMapItemFailureBoundsTheDiagnostic(t *testing.T) {
 	message := strings.Repeat("é", mapexec.DiagnosticLimit) + "\xff"
-	got, _ := mapItemFailure(StepInvocationOutcome{Status: StatusFailed, ExitCode: 66, Diagnostic: "step-execution-failure: " + message}, 1)
+	got, _ := mapItemFailure(StepInvocationOutcome{Status: StatusFailed, ExitCode: 66, RunnerMessage: message}, 1)
 	if runes := []rune(got.Diagnostic); len(runes) != mapexec.DiagnosticLimit || !utf8.ValidString(got.Diagnostic) {
 		t.Fatalf("diagnostic has %d code points, valid UTF-8 %t", len(runes), utf8.ValidString(got.Diagnostic))
 	}

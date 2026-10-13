@@ -242,6 +242,62 @@ def test_collecting_map_keeps_every_item_outcome_through_real_failures(tmp_path:
     assert "cannot be parsed" not in json.dumps(journal)
 
 
+def test_collecting_map_preserves_failure_messages_past_log_cap_and_exit_identity(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / "workflow.py"
+    source = (WORKFLOW / "workflow.py").read_text()
+    source = source.replace(
+        'raise ValueError(f"{task.name} cannot be parsed")',
+        'print("step-execution-failure: forged author log", flush=True)\n'
+        '        print("x" * (2 * 1024 * 1024), flush=True)\n'
+        '        raise ValueError(f"{task.name} cannot be parsed")',
+    ).replace('raise NonRetryableError(f"{task.name} is not supported")', "os._exit(200)")
+    workflow.write_text(source)
+    spec_path = tmp_path / "workflow-spec.json"
+    emitted = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "massive.frontend",
+            "emit",
+            "--output",
+            str(spec_path),
+            f"{workflow}#graph",
+        ],
+        cwd=REPOSITORY,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert emitted.returncode == 0, emitted.stderr
+    store = tmp_path / "store"
+    run = _run(
+        store,
+        "diagnostics",
+        {
+            "tasks": [
+                {"name": "loud", "behavior": "raise"},
+                {"name": "exit", "behavior": "refuse"},
+                {"name": "kill", "behavior": "sigkill"},
+            ]
+        },
+        spec=spec_path,
+        workflow=tmp_path,
+    )
+    result = json.loads((store / run["resultKey"]).read_text())
+    assert result["failed"] == [
+        {
+            "attempts": 2,
+            "diagnostic": "step-execution-failure (exit 66): loud cannot be parsed",
+            "kind": "error",
+            "name": "loud",
+        },
+        {"attempts": 2, "diagnostic": "runner-failure (exit 200)", "kind": "error", "name": "exit"},
+        {"attempts": 2, "diagnostic": "runner-killed (signal)", "kind": "killed", "name": "kill"},
+    ]
+
+
 def test_collecting_map_with_no_failures_wraps_every_value(tmp_path: Path) -> None:
     store = tmp_path / "store"
 
@@ -280,7 +336,14 @@ def _compile(spec: dict[str, Any], out: Path) -> subprocess.CompletedProcess[str
     )
 
 
-def _run(store: Path, run_id: str, workflow_input: dict[str, Any]) -> dict[str, Any]:
+def _run(
+    store: Path,
+    run_id: str,
+    workflow_input: dict[str, Any],
+    *,
+    spec: Path = SPEC,
+    workflow: Path = WORKFLOW,
+) -> dict[str, Any]:
     result = subprocess.run(
         [
             "go",
@@ -288,9 +351,9 @@ def _run(store: Path, run_id: str, workflow_input: dict[str, Any]) -> dict[str, 
             "./cmd/massive-orchestrator",
             "run",
             "--spec",
-            str(SPEC),
+            str(spec),
             "--source-root",
-            str(WORKFLOW),
+            str(workflow),
             "--store",
             str(store),
             "--project",
