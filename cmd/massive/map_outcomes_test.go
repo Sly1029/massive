@@ -93,7 +93,7 @@ func TestArgoMapOutcomesMatchLocalExecution(t *testing.T) {
 				break
 			}
 			// Argo's retry expression stops on these exits; the rest retry.
-			if slices.Contains([]int{64, 65, 67, 68, 70}, exitCodeFor(err)) || retries == maxAttempts-1 {
+			if slices.Contains([]int{64, 65, 67, 68, 69, 70}, exitCodeFor(err)) || retries == maxAttempts-1 {
 				t.Fatalf("item %d failed terminally instead of reporting an outcome: %v", index, err)
 			}
 		}

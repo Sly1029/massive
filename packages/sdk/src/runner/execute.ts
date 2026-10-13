@@ -7,7 +7,7 @@ import {
   type DatastoreClient,
   DatastoreNotFoundError,
 } from "../datastore/types.ts";
-import { NonRetryableError } from "../errors.ts";
+import { FatalRunError, NonRetryableError } from "../errors.ts";
 import {
   CanonicalJsonError,
   decodeCanonicalUtf8,
@@ -79,10 +79,14 @@ export async function executeStep(
             maxAttempts: descriptor.maxAttempts,
             idempotencyKey: invocationIdempotencyKey(descriptor),
             item: descriptor.scope === undefined ? null : Object.freeze({
-              index: descriptor.scope.frames[descriptor.scope.frames.length - 1]!.index,
-              path: Object.freeze(descriptor.scope.frames.map((frame) =>
-                Object.freeze({ ...frame })
-              )),
+              index:
+                descriptor.scope.frames[descriptor.scope.frames.length - 1]!
+                  .index,
+              path: Object.freeze(
+                descriptor.scope.frames.map((frame) =>
+                  Object.freeze({ ...frame })
+                ),
+              ),
             }),
           },
         });
@@ -126,6 +130,13 @@ export async function executeStep(
     }
     if (error instanceof StepExecutionError) {
       return stepExecutionFailure(error);
+    }
+    if (error instanceof FatalRunError) {
+      return {
+        kind: "fatal-run-failure",
+        exitCode: RUNNER_EXIT_CODES.fatalRunFailure,
+        error,
+      };
     }
     if (error instanceof NonRetryableError) {
       return nonRetryableStepFailure(error);

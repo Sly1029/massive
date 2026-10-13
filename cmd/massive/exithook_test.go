@@ -307,24 +307,44 @@ graph.on_exit(record)
 	})
 
 	outcomeFile := filepath.Join(root, "outcome.json")
-	command := exec.Command(binary, "runtime", "exit-hook", "--plan", filepath.Join(mount, "massive-plan.json"),
-		"--bundle-dir", mount, "--node=record", "--status=Failed",
-		`--failures="[{\"displayName\":\"check\",\"templateName\":\"step-check\",\"phase\":\"Failed\",\"finishedAt\":\"2026-01-01T00:00:09Z\"}]"`,
-		"--started-at=2026-01-01T00:00:00Z", "--output", filepath.Join(root, "result.json"),
-		"--project", "argo/checked", "--run-id", "argo-run", "--datastore-config", descriptor)
-	command.Env = append(environment, "OUTCOME_FILE="+outcomeFile)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("runtime exit-hook: %v\n%s", err, output)
-	}
-	body, err = os.ReadFile(outcomeFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var outcome orchestrator.RunOutcome
-	if err := json.Unmarshal(body, &outcome); err != nil {
-		t.Fatal(err)
-	}
-	if outcome.RunID != "argo-run" || outcome.Status != "failed" || outcome.FailedNode == nil || *outcome.FailedNode != "check" || outcome.StartedAt != "2026-01-01T00:00:00Z" {
-		t.Fatalf("outcome = %s", body)
+	for _, marker := range []string{"absent", "unreadable"} {
+		t.Run(marker, func(t *testing.T) {
+			if marker == "unreadable" {
+				key, err := orchestrator.FatalRunKey("argo/checked", "argo-run")
+				if err != nil {
+					t.Fatal(err)
+				}
+				// A directory at the object key produces a real datastore read error
+				// without preventing the hook from publishing its own artifacts.
+				if err := os.MkdirAll(filepath.Join(root, "store", key.String()), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			command := exec.Command(binary, "runtime", "exit-hook", "--plan", filepath.Join(mount, "massive-plan.json"),
+				"--bundle-dir", mount, "--node=record", "--status=Failed",
+				`--failures="[{\"displayName\":\"check\",\"templateName\":\"step-check\",\"phase\":\"Failed\",\"finishedAt\":\"2026-01-01T00:00:09Z\"}]"`,
+				"--started-at=2026-01-01T00:00:00Z", "--output", filepath.Join(root, "result.json"),
+				"--project", "argo/checked", "--run-id", "argo-run", "--datastore-config", descriptor)
+			command.Env = append(environment, "OUTCOME_FILE="+outcomeFile)
+			started := time.Now()
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("runtime exit-hook: %v\n%s", err, output)
+			}
+			if marker == "unreadable" && (!strings.Contains(string(output), "fatal marker unavailable after 3 reads; proceeding with fatal=null") || time.Since(started) < 750*time.Millisecond) {
+				t.Fatalf("marker read failure did not retry and diagnose: %s", output)
+			}
+			body, err = os.ReadFile(outcomeFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var outcome orchestrator.RunOutcome
+			if err := json.Unmarshal(body, &outcome); err != nil {
+				t.Fatal(err)
+			}
+			if outcome.Fatal != nil || outcome.RunID != "argo-run" || outcome.Status != "failed" || outcome.FailedNode == nil || *outcome.FailedNode != "check" || outcome.StartedAt != "2026-01-01T00:00:00Z" {
+				t.Fatalf("outcome = %s", body)
+			}
+		})
 	}
 }

@@ -59,3 +59,14 @@ func TestCollectingMapPreservesPlacementDeadlineAndExitHook(t *testing.T) {
 		t.Fatalf("collected failures changed hook outcome: %s %v %v", status, node, err)
 	}
 }
+
+func TestAuthorTemplatesDoNotMountSchedulerCredentials(t *testing.T) {
+	compiled := exitHookPlan(t, "python-map-outcomes")
+	templates := compiledTemplates(t, compiled.Plan)
+	for _, name := range []string{"map-item-scan", "step-plan", "exit-notify"} {
+		pod := templateByName(t, templates, name)
+		if pod["automountServiceAccountToken"] == true {
+			t.Fatalf("author pod received API token: %s", name)
+		}
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/taskprocess"
 )
 
@@ -142,6 +143,9 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 					started[index] = true
 					outcome, err := i.invokeOne(batchContext, descriptorDir, batch.Steps[index])
 					outcomes[index] = outcome
+					if outcome.Fatal != nil {
+						err = &FatalRunError{Failure: *outcome.Fatal}
+					}
 					if err != nil {
 						firstErrorOnce.Do(func() {
 							firstError = err
@@ -271,10 +275,10 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 	exitCode := exitError.ExitCode()
 	// A signal can supersede a failure published before interpreter shutdown.
 	// Only the runner's diagnostic exit codes consume that structured result.
-	var message string
-	if exitCode >= runnerExitDescriptorResolution && exitCode <= runnerExitNonRetryable {
+	var result runnerFailure
+	if (exitCode >= runnerExitDescriptorResolution && exitCode <= runnerExitNonRetryable) || exitCode == FatalRunExitCode {
 		var resultErr error
-		message, resultErr = readRunnerMessage(descriptorPath, exitCode)
+		result, resultErr = readRunnerFailure(descriptorPath, exitCode)
 		if resultErr != nil {
 			return infrastructureFailure(fmt.Errorf("runner result for %s: %w", descriptor.NodeID, resultErr))
 		}
@@ -283,13 +287,18 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		return infrastructureFailure(fmt.Errorf("runner failed to publish its result for %s (exit 70)", descriptor.NodeID))
 	}
 
+	var fatal *runjournal.FatalFailure
+	if exitCode == FatalRunExitCode {
+		fatal = &runjournal.FatalFailure{Type: result.Type, Message: result.Message, NodeID: descriptor.NodeID}
+	}
 	return StepInvocationOutcome{
 		NodeID:        descriptor.NodeID,
 		Attempt:       descriptor.Attempt,
 		Scope:         descriptor.Scope,
 		Status:        StatusFailed,
 		ExitCode:      exitError.ExitCode(),
-		RunnerMessage: message,
+		Fatal:         fatal,
+		RunnerMessage: result.Message,
 		Diagnostic:    diagnostic,
 	}, nil
 }
@@ -338,39 +347,42 @@ func substituteDescriptorPath(command []string, descriptorPath string) []string 
 	return argv
 }
 
-// readRunnerMessage treats absence as an abrupt exit without an exception
+// readRunnerFailure treats absence as an abrupt exit without an exception
 // message. Invalid or mismatched structured results are infrastructure errors.
-func readRunnerMessage(descriptorPath string, exitCode int) (string, error) {
+func readRunnerFailure(descriptorPath string, exitCode int) (runnerFailure, error) {
 	file, err := os.Open(descriptorPath + ".failure.json")
-	if os.IsNotExist(err) {
-		return "", nil
+	if os.IsNotExist(err) && exitCode != FatalRunExitCode {
+		return runnerFailure{}, nil
 	}
 	if err != nil {
-		return "", err
+		return runnerFailure{}, err
 	}
 	defer file.Close()
 	// ASCII JSON uses a twelve-byte surrogate pair per astral code point.
 	// Include the fixed exitCode/message object overhead as well.
-	const maxResultBytes = 12*1024 + 128
+	const maxResultBytes = 12*(1024+64) + 256
 	body, err := io.ReadAll(io.LimitReader(file, maxResultBytes+1))
 	if err != nil {
-		return "", err
+		return runnerFailure{}, err
 	}
 	if len(body) > maxResultBytes {
-		return "", fmt.Errorf("runner failure result exceeds %d bytes", maxResultBytes)
+		return runnerFailure{}, fmt.Errorf("runner failure result exceeds %d bytes", maxResultBytes)
 	}
 	if err := validateJSONAgainstSchema(string(schemacontract.RunnerFailureSchemaJSON), body); err != nil {
-		return "", fmt.Errorf("invalid runner failure result: %w", err)
+		return runnerFailure{}, fmt.Errorf("invalid runner failure result: %w", err)
 	}
-	var result struct {
-		ExitCode int    `json:"exitCode"`
-		Message  string `json:"message"`
-	}
+	var result runnerFailure
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", err
+		return runnerFailure{}, err
 	}
 	if result.ExitCode != exitCode {
-		return "", fmt.Errorf("runner result exit %d differs from process exit %d", result.ExitCode, exitCode)
+		return runnerFailure{}, fmt.Errorf("runner result exit %d differs from process exit %d", result.ExitCode, exitCode)
 	}
-	return result.Message, nil
+	return result, nil
+}
+
+type runnerFailure struct {
+	ExitCode int    `json:"exitCode"`
+	Message  string `json:"message"`
+	Type     string `json:"type,omitempty"`
 }

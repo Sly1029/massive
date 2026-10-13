@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { parseStepInvocationDescriptorText } from "./descriptor.ts";
 import { executeStep } from "./execute.ts";
 import {
@@ -52,15 +52,24 @@ if (
   if (outcome.kind !== "success") {
     if (descriptorPath !== undefined) {
       try {
-        await writeFile(
-          descriptorPath + ".failure.json",
-          JSON.stringify({
-            exitCode: outcome.exitCode,
-            message: Array.from(
-              `${outcome.error.name}: ${outcome.error.message}`,
-            ).slice(0, 1024).join(""),
-          }),
+        const path = descriptorPath + ".failure.json";
+        const record = JSON.stringify({
+          exitCode: outcome.exitCode,
+          ...(outcome.kind === "fatal-run-failure" &&
+              outcome.error.type !== undefined
+            ? { type: outcome.error.type }
+            : {}),
+          message: Array.from(
+            outcome.kind === "fatal-run-failure"
+              ? outcome.error.message
+              : `${outcome.error.name}: ${outcome.error.message}`,
+          ).slice(0, 1024).join(""),
+        }).replace(
+          /[\u007f-\uffff]/g,
+          (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
         );
+        await writeFile(path + ".tmp", record);
+        await rename(path + ".tmp", path);
       } catch (error) {
         console.error(`runner-result-publication-failure: ${error}`);
         deno.exit(70);

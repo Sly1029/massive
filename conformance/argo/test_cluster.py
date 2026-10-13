@@ -527,6 +527,9 @@ class DecisionConformance(unittest.TestCase):
         install_workflow(fixture_source(Path(__file__).parent / "deadline.py"))
         install_workflow(fixture_source(Path(__file__).parent / "exit_hooks.py"))
         install_workflow(fixture_source(Path(__file__).parent / "exit_retry.py"))
+        fatal_source = fixture_source(Path(__file__).parent / "fatal_run.py")
+        install_workflow(fatal_source, selector="#graph")
+        install_workflow(fatal_source, selector="#plain")
         map_outcomes = fixture_source(Path(__file__).parent / "map_outcomes.py")
         install_workflow(map_outcomes, selector="#graph")
         # Locally nothing limits memory, so the local run omits the OOM item.
@@ -579,6 +582,8 @@ class DecisionConformance(unittest.TestCase):
             "exit-hook": 21,
             "exit-retry": 21,
             "map-outcomes": MAP_OUTCOME_TASKS,
+            "fatal-map": list(range(12)),
+            "fatal-step": 0,
         }.items():
             run = kubectl(
                 "create",
@@ -614,6 +619,8 @@ class DecisionConformance(unittest.TestCase):
                                 "exit-hook": "argo-exit-hook",
                                 "exit-retry": "argo-exit-retry",
                                 "map-outcomes": "argo-map-outcomes",
+                                "fatal-map": "argo-fatal-map",
+                                "fatal-step": "argo-fatal-step",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -1031,6 +1038,84 @@ class DecisionConformance(unittest.TestCase):
         self.assertEqual(run["status"]["phase"], "Failed")
         items = self.pods(run, "map-item-guarded")
         self.assertEqual([node["phase"] for node in items], ["Failed", "Failed"])
+
+    def test_fatal_collecting_map_stops_live_siblings_and_preserves_safe_cause(
+        self,
+    ) -> None:
+        run = self.completed("fatal-map")
+        self.assertEqual(run["status"]["phase"], "Failed", run["status"])
+        self.assertNotIn("shutdown", run["spec"])
+        items = self.pods(run, "map-item-guarded")
+        self.assertGreaterEqual(len(items), 2)
+        # Only item 1 publishes the S3 gate, and item 0 cannot raise its fatal
+        # signal until reading it. The safe cause below proves that handshake.
+        logs = self.main_log(run)
+        self.assertNotIn(" completed", logs)
+        self.assertNotIn("SECRET", logs)
+        self.assertFalse(self.pods(run, "step-after"))
+        self.assertEqual(
+            [node["phase"] for node in self.pods(run, "exit-notify")], ["Succeeded"]
+        )
+        (outcome,) = self.outcomes(run, "notify")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["failed_node"], "guarded")
+        self.assertEqual(
+            outcome["fatal"], {"message": "Input is invalid", "type": "input.invalid"}
+        )
+        pods = kubectl(
+            "get",
+            "pods",
+            "-l",
+            "workflows.argoproj.io/workflow=" + run["metadata"]["name"],
+            "-o",
+            "json",
+        )["items"]
+        # Match the indexed invocation in the physical pod, then prove its
+        # main process exited before the author's 120-second sleep completed.
+        sibling = next(
+            pod
+            for pod in pods
+            if any(
+                container["name"] == "main"
+                and any(
+                    arg.startswith("--item=")
+                    and json.loads(arg.removeprefix("--item="))["index"] == 1
+                    for arg in container.get("args", [])
+                )
+                for container in pod["spec"]["containers"]
+            )
+        )
+        termination = next(
+            container["state"]["terminated"]
+            for container in sibling["status"]["containerStatuses"]
+            if container["name"] == "main"
+        )
+        self.assertEqual(termination["exitCode"], 69, termination)
+        elapsed = datetime.fromisoformat(
+            termination["finishedAt"].replace("Z", "+00:00")
+        ) - datetime.fromisoformat(termination["startedAt"].replace("Z", "+00:00"))
+        self.assertLess(elapsed.total_seconds(), 120, termination)
+        self.assertTrue(
+            any(
+                container.get("state", {}).get("terminated", {}).get("exitCode") == 69
+                for pod in pods
+                for container in pod.get("status", {}).get("containerStatuses", [])
+                if container["name"] == "main"
+            ),
+            pods,
+        )
+
+    def test_plain_fatal_step_is_never_retried(self) -> None:
+        run = self.completed("fatal-step")
+        self.assertEqual(run["status"]["phase"], "Failed", run["status"])
+        self.assertEqual(len(self.pods(run, "step-refuse")), 1)
+        (outcome,) = self.outcomes(run, "notify")
+        self.assertEqual(outcome["failed_node"], "refuse")
+        self.assertEqual(
+            outcome["fatal"],
+            {"message": "Upstream source unavailable", "type": "source.unavailable"},
+        )
+        self.assertNotIn("SECRET", self.main_log(run))
 
     def test_pod_preflight_accepts_a_satisfied_project(self) -> None:
         self.successful("preflight", 42)

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,11 +18,18 @@ import (
 // RunOutcome is an exit hook's input on every target. Its JSON schema is
 // conformance/schema/run-outcome.schema.json, generated from the Python SDK.
 type RunOutcome struct {
-	RunID      string  `json:"run_id"`
-	Status     string  `json:"status"`
-	FailedNode *string `json:"failed_node"`
-	StartedAt  string  `json:"started_at"`
-	FinishedAt string  `json:"finished_at"`
+	Fatal      *FatalFailure `json:"fatal"`
+	RunID      string        `json:"run_id"`
+	Status     string        `json:"status"`
+	FailedNode *string       `json:"failed_node"`
+	StartedAt  string        `json:"started_at"`
+	FinishedAt string        `json:"finished_at"`
+}
+
+// FatalFailure is the target-neutral safe cause passed to an exit hook.
+type FatalFailure struct {
+	Message string `json:"message"`
+	Type    string `json:"type,omitempty"`
 }
 
 // OutcomeTime renders an outcome timestamp in the form both targets use.
@@ -82,7 +90,8 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 		return record("exit hook descriptor could not be built")
 	}
 	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}})
-	if err != nil || len(outcomes) != 1 {
+	var fatal *FatalRunError
+	if (err != nil && !errors.As(err, &fatal)) || len(outcomes) != 1 {
 		return record("invocation infrastructure failed")
 	}
 	if outcomes[0].Status != StatusSucceeded {

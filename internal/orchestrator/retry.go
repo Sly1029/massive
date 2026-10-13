@@ -64,7 +64,7 @@ func retryableOutcome(outcome StepInvocationOutcome) bool {
 		return false
 	}
 	switch outcome.ExitCode {
-	case runnerExitDescriptorResolution, runnerExitSchemaValidation, runnerExitNonRetryable, runnerExitInfrastructure:
+	case runnerExitDescriptorResolution, runnerExitSchemaValidation, runnerExitNonRetryable, FatalRunExitCode, runnerExitInfrastructure:
 		return false
 	}
 	return true
@@ -80,7 +80,7 @@ func mapItemFailure(outcome StepInvocationOutcome, attempt int) (mapexec.Failure
 	switch {
 	case outcome.TimedOutAfter > 0:
 		return mapexec.NewFailure(mapexec.FailureTimeout, attempt, summary), true
-	case outcome.ExitCode == runnerExitDescriptorResolution || outcome.ExitCode == runnerExitSchemaValidation || outcome.ExitCode == runnerExitInfrastructure:
+	case outcome.ExitCode == runnerExitDescriptorResolution || outcome.ExitCode == runnerExitSchemaValidation || outcome.ExitCode == runnerExitInfrastructure || outcome.ExitCode == FatalRunExitCode:
 		return mapexec.Failure{}, false
 	case outcome.ExitCode == runnerExitNonRetryable:
 		return mapexec.NewFailure(mapexec.FailureNonRetryable, attempt, withRunnerMessage(summary, outcome.RunnerMessage)), true

@@ -24,7 +24,7 @@ func TestRetryPolicyLowersToRunnerTemplatesOnly(t *testing.T) {
 	want := map[string]any{
 		"limit":       "3",
 		"retryPolicy": "Always",
-		"expression":  "!(lastRetry.exitCode in ['64', '65', '67', '68', '70'])",
+		"expression":  "!(lastRetry.exitCode in ['64', '65', '67', '68', '69', '70'])",
 		"backoff":     map[string]any{"duration": "10s", "factor": "3", "cap": "120s"},
 	}
 	if got := item["retryStrategy"]; !reflect.DeepEqual(got, want) {

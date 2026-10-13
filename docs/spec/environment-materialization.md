@@ -192,7 +192,7 @@ A Python environment that passes preflight yields a `RealizedEnvironment`
   paths. Two environments synced from the same lock on the same platform share it.
 
 `massive run` stores the record content-addressed under
-`environments/sha256-<hex>/realized-environment.json`. Journal v5 has a required
+`environments/sha256-<hex>/realized-environment.json`. Journal v6 has a required
 `environment` entry: `null` without preflight (TypeScript), otherwise both hashes
 and the record reference. `massive inspect --environment` checks the stored
 bytes against that reference and recomputes both identities before displaying

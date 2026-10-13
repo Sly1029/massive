@@ -282,9 +282,35 @@ succeed. A step calling `sys.exit()` is an ordinary, retried step failure. `ctx.
 current attempt, while `ctx.invocation.idempotency_key` stays the same across
 attempts so a retry can recognize side effects an earlier attempt committed.
 
+Raise `FatalRunError(message, type=None)` when an author failure must stop the
+entire run:
+
+```python
+from massive import FatalRunError
+
+if not input_is_valid:
+    raise FatalRunError("Input is invalid", type="input.invalid")
+```
+
+`FatalRunError` derives from `NonRetryableError`. Its explicitly safe message is
+truncated to 1,024 Unicode characters, and its optional type to 64. The constructor
+never rejects an input: non-string messages use a safe fallback and non-string
+types are omitted. Exception chains and exception-group text are omitted. A fatal
+signal is never retried or collected by `item_failures="collect"`. Local execution
+stops dispatch and cancels running sibling process groups, retaining verified
+completed outputs. The v6 journal and `massive run --json` carry `failure` with
+message, optional type, and node ID; the CLI exits 69. Older journals require a
+rebuild and a new run.
+
+On Argo, author invocations check a run-scoped datastore marker before dispatch
+and poll it during execution, cancelling the runner context when a valid cause
+appears. Read errors back off and retry. Pending collecting-map pods may start
+and immediately exit 69. No watcher or Workflow patch permission is required;
+the exit hook remains available and receives the first safe cause.
+
 ### Step hooks
 
-Pre- and post-step behavior such as tracing, cost budgets, or output redaction
+Pre- and post-step behavior such as tracing, input validation, or output redaction
 is an ordinary decorator. Apply it with `functools.wraps` where the step is
 defined, and type it so checkers keep the step's input and output:
 
@@ -364,7 +390,8 @@ graph.on_exit(notify, timeout=timedelta(minutes=5))
 
 `RunOutcome` carries `run_id`, `status` (`succeeded`, `failed`, or
 `cancelled`), `failed_node` (the node whose failure ended a failed run, when
-known), `started_at`, and `finished_at`. The hook is an ordinary top-level
+known), `started_at`, and `finished_at`. Its `fatal` is null for other outcomes
+and otherwise contains the author-supplied safe `message` and optional `type`. The hook is an ordinary top-level
 function with its own contract, secrets, and timeout, and it must return
 `None`. Every hook has a finite timeout: an explicit or inherited timeout is
 used, otherwise registration assigns five minutes. Compiled plans without a
@@ -564,7 +591,7 @@ no other task output is copied into it.
 
 Only failures of the item's own code are collected, and only after its retries
 are exhausted. Schema violations, a broken environment, output verification,
-infrastructure errors, and cancellation still fail the map. The type checker
+infrastructure errors, cancellation, and `FatalRunError` still fail the map. The type checker
 and the Go compiler both require the consumer to accept
 `list[MapItemOutcome[Result]]`, and the run journal marks each failed item.
 The map has no failure threshold; raise `NonRetryableError` downstream, as
@@ -604,7 +631,7 @@ The important runtime categories are:
 At the command boundary, descriptor errors exit 64, schema/artifact failures
 exit 65, a user-step exception exits 66, and a `NonRetryableError` exits 67 so
 the orchestrator does not retry it. On Argo, a failed dependency preflight of
-the image exits 68 and is not retried either. Datastore outages are deliberately
+the image exits 68 and is not retried either. `FatalRunError` exits 69 and stops the whole run, including collecting maps. Datastore outages are deliberately
 not rewritten as artifact conflicts so retry policy can recognize them as
 transient infrastructure failures.
 

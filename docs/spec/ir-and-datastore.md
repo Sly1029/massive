@@ -408,14 +408,18 @@ projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.j
 projects/<project-key>/runs/<run-id>/result.json
 ```
 
-The run manifest is independently versioned as `schemaVersion: 5`,
-`encoding: "json-v5"`. It records the checked dependency environment (or `null`),
+The run manifest is independently versioned as `schemaVersion: 6`,
+`encoding: "json-v6"`. It records the checked dependency environment (or `null`),
 durable decision selections, inactive
 branches, and source-indexed finite-map items. A map that collects item
 failures records `itemFailures: "collect"` on its step; only such a successful
 map may contain `failed` items, whose attempts carry durable runner summaries
 without exception messages. Failed and cancelled runs have
-a root diagnostic and terminal steps; completed artifacts survive cancellation,
+a root diagnostic and terminal steps. Fatal author signals additionally carry an
+optional `failure` object with a bounded explicitly safe message, optional
+error type, and the originating node id. Journal v6 rejects older artifacts with a
+rebuild diagnostic; remote `fatal.json` markers use the same cause schema.
+Exit hooks receive `fatal: {message, type?}` (null for other outcomes). Completed artifacts survive cancellation,
 while undispatched work has no attempts. Attempts are dense and 1-based; every
 attempt before the last failed, and the last attempt carries the entry status.
 There is no compatibility reader

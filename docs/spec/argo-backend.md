@@ -650,8 +650,8 @@ credentials. Credential acquisition failures stop invocation before artifact IO.
 A contract's `retry` lowers to a `retryStrategy` on runner templates only
 (static steps and map items); decision, expansion, and collection control pods
 never retry. The strategy uses `limit: maxAttempts - 1`, `retryPolicy: Always`,
-and `expression: "!(lastRetry.exitCode in ['64', '65', '67', '68', '70'])"`, so descriptor,
-schema, author non-retryable, dependency preflight (68), and runner-result
+and `expression: "!(lastRetry.exitCode in ['64', '65', '67', '68', '69', '70'])"`, so descriptor,
+schema, author non-retryable, dependency preflight (68), fatal run (69), and runner-result
 publication (70) failures stop
 immediately. Before each Python attempt, `massive runtime step` and
 `runtime map item` extract the verified source archive and run dependency
@@ -832,3 +832,28 @@ the caller's environment without selective binding or secret preflight. There
 is no `.env` loader, secret-manager lookup, optional-secret fallback, or secret
 value serialization. The live Argo gate checks a real Secret through a mapped
 invocation and verifies that other pods never receive its environment entry.
+
+### Fatal run cancellation
+
+Author `FatalRunError(message, type?)`, a `NonRetryableError` subtype, exits 69
+and bypasses retries and map outcome collection. The runtime publishes a bounded,
+schema-validated `fatal.json` under the run namespace with first-writer ownership.
+Every step and map-item runtime checks the marker before dispatch, then polls
+it during execution at an initial jittered interval of 4–5 seconds, doubling
+the interval after absent markers or read errors up to a 30-second cap
+(24–30 seconds with jitter). A valid cause cancels the context used by the
+isolated runner, stopping its process group. Read errors
+back off and retry; they never establish a fatal run.
+
+Each pending collecting-map item starts a pod and immediately exits 69, so fatal
+drain time grows with the number of remaining items and with the longest sibling
+retry backoff before its next pod starts. Existing Argo retry expressions reject
+that exit. Cooperative cancellation needs no
+watcher, Workflow patch permission, or Kubernetes API token in author pods.
+The ordinary exit handler remains available and reads the marker for its safe
+cause and originating node, even when sibling termination changes the controller's
+failure attribution. Marker reads use a five-second timeout and up to three
+attempts with 250 ms and 500 ms backoffs. If all reads fail, the hook runs with
+`fatal=null` and the runtime reports a diagnostic. The hook is exempt from the
+guard and polling; its own fatal error stays a hook failure. Cancellation does
+not roll back external effects.

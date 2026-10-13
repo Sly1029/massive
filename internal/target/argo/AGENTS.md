@@ -79,7 +79,7 @@ matches the node-id annotation (not a label), requires main-container OOMKilled
 or signal evidence plus schema-valid last phase `author`, and counts the Retry
 node's actual children. Eviction, missing pods, fatal termination markers,
 and ordinary/executor exits fail the run. Preserve pods through collection.
-Only the collecting-map control pod mounts a Kubernetes API token; its service
+The collecting-map control pod mounts a Kubernetes API token; its service
 account needs Workflow get and Pod list in the deployment namespace. Application
 pods retain no API token. Runtime errors report an unindexed fatal envelope
 from before datastore opening and decoding; failed result writes also report
@@ -90,3 +90,12 @@ Use File termination policy and fixed-size, single-write updates of the
 kubelet-mounted inode; rename cannot replace that mount. Missing or non-author
 phase evidence fails the run. Preserve the reconciliation diagnostic so live
 OOM conformance proves it exercised a missing envelope.
+
+Fatal author failures publish the first bounded, schema-validated run-scoped
+cause before exit 69; retries and outcome collection reject that exit. Runtime
+step and map-item processes poll the datastore marker and cancel their isolated
+runner context. Pending collecting-map pods may start and immediately exit 69
+at the pre-dispatch guard. No watcher, Workflow patch permission, or author API
+token is needed. Read the marker for exit-hook attribution; exempt the hook from
+cancellation and prevent its own failure from publishing a new run cause. Preserve
+this behavior with live S3 handshake cases proving a started sibling stops early.

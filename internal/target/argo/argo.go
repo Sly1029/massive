@@ -601,6 +601,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 
 // Argo returns valueFrom.default literally. Evaluate the fallback in scope so
 // the lost envelope carries the actual last retry child's pod node ID.
+
 const mapItemOutcomeExpression = "tasks.attempt.outputs?.parameters?.result ?? toJSON({lost: tasks.attempt.id})"
 
 func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target, controlPlacement, itemPlacement deployment.PodPlacement, sourceArgs []string) ([]any, error) {
@@ -1067,7 +1068,7 @@ func boolp(v bool) *bool   { return &v }
 // descriptor and schema failures are deterministic, 67 is the author's explicit
 // opt-out, and 68 is a failed dependency preflight of the image. Timeouts (124),
 // author exceptions (66), and pod errors retry.
-var runnerNonRetryableExitCodes = []string{"64", "65", "67", "68", "70"}
+var runnerNonRetryableExitCodes = []string{"64", "65", "67", "68", "69", "70"}
 
 // retryArgs tells the runtime which attempt Argo is dispatching so descriptors,
 // manifest slots, and step context agree with the scheduler's retry count.

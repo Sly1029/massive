@@ -26,3 +26,11 @@ not depend on the policy. A collecting map is always followed by a step that
 reads its outcomes, which keeps region output types independent of the policy.
 Its outcome schema is hand-spelled in Pydantic's `$ref` form so the compiler's
 annotation-insensitive comparison is exercised, not only exact equality.
+
+Fatal scripts consume bytes after the existing faults and collection policies,
+so earlier seeds retain their meaning. Script any retry attempt and make earlier
+attempts retryable; optionally leave an earlier map item awaiting backoff when
+the fatal signal fires. The
+interpreter stops a fatal map round
+at the signal, preserves completed items, and leaves undispatched items blocked;
+collecting maps cannot turn this fault into an item outcome.

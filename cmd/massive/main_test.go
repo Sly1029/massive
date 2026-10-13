@@ -262,7 +262,7 @@ func TestInspectCommandRendersAndFiltersStoredJournals(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	journal := runjournal.Manifest{Kind: "RunManifest", SchemaVersion: 5, Encoding: "json-v5", PlanHash: "sha256:plan", ProjectKey: projectKey, RunID: "recorded", Status: "failed", Diagnostic: "step failed", Steps: []runjournal.Step{{NodeID: "task", Status: "failed", Attempts: []runjournal.Attempt{{Attempt: 1, Status: "failed", Input: runjournal.DataArtifact{Key: "input", Hash: "hash", ContentType: "application/json", Schema: "schema"}, Diagnostic: "step failed"}}}}, Decisions: []runjournal.Decision{}}
+	journal := runjournal.Manifest{Kind: "RunManifest", SchemaVersion: 6, Encoding: "json-v6", PlanHash: "sha256:plan", ProjectKey: projectKey, RunID: "recorded", Status: "failed", Diagnostic: "step failed", Steps: []runjournal.Step{{NodeID: "task", Status: "failed", Attempts: []runjournal.Attempt{{Attempt: 1, Status: "failed", Input: runjournal.DataArtifact{Key: "input", Hash: "hash", ContentType: "application/json", Schema: "schema"}, Diagnostic: "step failed"}}}}, Decisions: []runjournal.Decision{}}
 	body, err := json.Marshal(journal)
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestInspectCommandRendersAndFiltersStoredJournals(t *testing.T) {
 	}{
 		{"text", "", false, "step failed", false},
 		{"step", "task", false, "task  failed", false},
-		{"json", "", true, `"schemaVersion":5`, false},
+		{"json", "", true, `"schemaVersion":6`, false},
 		{"unknown step", "missing", false, "omit --step", true},
 		{"environment", "", false, "recorded no dependency environment", true},
 	} {

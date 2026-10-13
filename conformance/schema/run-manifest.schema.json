@@ -73,11 +73,11 @@
     },
     "version": {
       "type": "number",
-      "const": 5
+      "const": 6
     },
     "encoding": {
       "type": "string",
-      "const": "json-v5"
+      "const": "json-v6"
     },
     "planHash": {
       "type": "string"
@@ -1036,6 +1036,9 @@
         },
         "exitHook": {
           "$ref": "#/$defs/exitHook"
+        },
+        "failure": {
+          "$ref": "#/$defs/fatalFailure"
         }
       },
       "required": [
@@ -1228,8 +1231,38 @@
         "attempts"
       ],
       "additionalProperties": false
+    },
+    "fatalFailure": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "nodeId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.@:#-]+$",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "enum": [
+              ".",
+              ".."
+            ]
+          }
+        },
+        "type": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "message",
+        "nodeId"
+      ],
+      "additionalProperties": false
     }
   },
   "$id": "https://massive.dev/conformance/schema/run-manifest.schema.json",
-  "title": "RunManifest v4"
+  "title": "RunManifest v6"
 }

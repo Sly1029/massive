@@ -82,7 +82,10 @@ type Outcome struct {
 	// Attempts lists each attempt's scripted fault for a step.
 	Attempts []Fault
 	// Items lists each source-indexed map item when the map runs.
-	Items        []ItemOutcome
+	Items []ItemOutcome
+	// Fatal identifies the scripted invocation that stops this node, including
+	// a later attempt while other map items await retries.
+	Fatal        *Invocation
 	SelectedCase string
 }
 
@@ -241,6 +244,9 @@ func (in *interpreter) compute(node *Node) (*Outcome, error) {
 	case spec.NodeKindStep:
 		outcome := &Outcome{Input: input}
 		outcome.Attempts, outcome.Status = in.attempts(node, -1)
+		if outcome.Attempts[len(outcome.Attempts)-1] == FailFatal {
+			outcome.Fatal = &Invocation{NodeID: node.ID, Item: -1, Attempt: len(outcome.Attempts)}
+		}
 		if outcome.Status == Succeeded {
 			var err error
 			if outcome.Value, err = in.workflow.Behaviors[node.Symbol].Evaluate(node.Symbol, input); err != nil {
@@ -286,13 +292,30 @@ func (in *interpreter) mapOutcome(node *Node, input []byte) (*Outcome, error) {
 		pending[index] = index
 		outcome.Items[index].Input = item
 	}
+rounds:
 	for attempt := 1; len(pending) > 0; attempt++ {
 		var retry []int
 		terminal := false
-		for _, index := range pending {
+		for position, index := range pending {
 			item := &outcome.Items[index]
 			fault := in.workflow.Fault(Invocation{NodeID: node.ID, Item: index, Attempt: attempt})
 			item.Attempts = append(item.Attempts, fault)
+			if fault == FailFatal {
+				outcome.Fatal = &Invocation{NodeID: node.ID, Item: index, Attempt: attempt}
+				item.Status = Failed
+				outcome.Status = Failed
+				for _, queued := range pending[position+1:] {
+					if len(outcome.Items[queued].Attempts) == 0 {
+						outcome.Items[queued].Status = Blocked
+					} else {
+						outcome.Items[queued].Status = Failed
+					}
+				}
+				for _, queued := range retry {
+					outcome.Items[queued].Status = Failed
+				}
+				break rounds
+			}
 			switch {
 			case fault == Succeed:
 				value, err := behavior.Evaluate(node.Symbol, item.Input)

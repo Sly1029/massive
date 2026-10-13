@@ -23,6 +23,7 @@ const (
 	ExitSchemaValidation = 65
 	ExitStepExecution    = 66
 	ExitNonRetryable     = 67
+	ExitFatal            = 69
 	// The local process owner reports signal termination as a negative exit.
 	ExitKilled = -1
 )
@@ -48,6 +49,9 @@ const (
 	// MissingOutput reports success without publishing anything.
 	MissingOutput
 	faultCount
+	// FailFatal is scripted after the existing fault and collection bytes,
+	// so adding it preserves prior seeds. It aborts collecting maps too.
+	FailFatal
 )
 
 // Retryable reports whether another attempt may fix the failure.
@@ -205,6 +209,7 @@ func Generate(data []byte) (*Workflow, error) {
 		}
 	}
 	if len(collect) == 0 {
+		scriptFatal(c, workflow)
 		return workflow, nil
 	}
 	_, collecting, err := emitWorkflow(main, style, collect)
@@ -212,6 +217,7 @@ func Generate(data []byte) (*Workflow, error) {
 		return nil, err
 	}
 	collecting.Input, collecting.Faults, collecting.Interrupt = workflow.Input, workflow.Faults, workflow.Interrupt
+	scriptFatal(c, collecting)
 	return collecting, nil
 }
 
@@ -329,6 +335,39 @@ func scriptFaults(c *choices, w *Workflow) {
 	}
 	if c.chance(1, 4) {
 		w.Interrupt = &Interrupt{Batch: c.intn(12), Position: c.intn(maxMapItems + 2), Kind: InterruptKind(c.intn(int(interruptCount)))}
+	}
+}
+
+// scriptFatal extends the byte contract after the ordinary faults and policies.
+func scriptFatal(c *choices, w *Workflow) {
+	if !c.chance(1, 4) {
+		return
+	}
+	var executable []string
+	for _, id := range w.NodeOrder {
+		if kind := w.Nodes[id].Kind; kind == spec.NodeKindStep || kind == spec.NodeKindMap {
+			executable = append(executable, id)
+		}
+	}
+	if len(executable) == 0 {
+		return
+	}
+	node := w.Nodes[executable[c.intn(len(executable))]]
+	item := -1
+	if node.Kind == spec.NodeKindMap {
+		item = c.intn(maxMapItems + 1)
+	}
+	attempt := 1 + c.intn(node.MaxAttempts)
+	for prior := 1; prior < attempt; prior++ {
+		w.Faults[Invocation{NodeID: node.ID, Item: item, Attempt: prior}] = FailRetryable
+	}
+	w.Faults[Invocation{NodeID: node.ID, Item: item, Attempt: attempt}] = FailFatal
+	if node.Kind == spec.NodeKindMap && item > 0 && c.chance(1, 2) {
+		// An earlier item reaches backoff before this fatal signal. It must
+		// retain its failed attempts without dispatching another retry.
+		for siblingAttempt := 1; siblingAttempt <= attempt; siblingAttempt++ {
+			w.Faults[Invocation{NodeID: node.ID, Item: item - 1, Attempt: siblingAttempt}] = FailRetryable
+		}
 	}
 }
 
