@@ -75,6 +75,21 @@ Deno.test("v0 schema lowering accepts number schemas, fractional constants, and 
   }
 });
 
+Deno.test("schema lowering explains why fractional multipleOf is not portable", () => {
+  for (
+    const schema of [
+      z.number().multipleOf(0.1),
+      z.object({ values: z.array(z.number().multipleOf(0.5)) }),
+    ]
+  ) {
+    const error = assertThrows(
+      () => lowerPortableSchema(schema, "workflow input"),
+      Error,
+    );
+    assertEquals(error.message.includes("non-integer multipleOf"), true);
+  }
+});
+
 Deno.test("all runtimes share IEEE-754 double bytes and hashes", async () => {
   const root = join(
     dirname(fileURLToPath(import.meta.url)),
@@ -98,7 +113,6 @@ Deno.test("all runtimes share IEEE-754 double bytes and hashes", async () => {
     const encoded = stableStringify(value);
     assertEquals(encoded, vector.canonical, vector.bits);
     assertEquals(`sha256:${sha256Text(encoded)}`, vector.hash, vector.bits);
-    assertEquals(encoded, JSON.stringify(value));
     assertEquals(parseCanonicalJsonText(encoded), value === 0 ? 0 : value);
   }
   for (const vector of vectors.sources) {

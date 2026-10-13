@@ -73,6 +73,17 @@ function visitSchema(
   }
 
   if (Array.isArray(def.checks) && def.checks.length > 0) {
+    if (type === "number") {
+      const { multipleOf } = z.toJSONSchema(schema) as { multipleOf?: number };
+      if (
+        multipleOf !== undefined && !Number.isInteger(multipleOf)
+      ) {
+        throw new SchemaPortabilityError(
+          role,
+          "non-integer multipleOf is not portable across JSON Schema validators",
+        );
+      }
+    }
     throw new SchemaPortabilityError(role, `${type} uses checks/refinements`);
   }
 

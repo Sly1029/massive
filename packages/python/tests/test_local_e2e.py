@@ -10,7 +10,73 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import pytest
+
 from massive import source_package
+
+
+@pytest.mark.parametrize("value", [1e20, float(2**53)])
+def test_integral_doubles_survive_two_step_pydantic_json_value_round_trip(
+    tmp_path: Path, value: float
+) -> None:
+    from massive import canonical_json
+
+    repository = Path(__file__).resolve().parents[3]
+    fixture = Path(__file__).parent / "fixtures/integral_double_workflow.py"
+    module = _load_fixture(fixture)
+    specification = module.graph.emit(
+        source=source_package(root=fixture.parent, include=[fixture.name], package_id="doubles")
+    )
+    spec_path = tmp_path / "workflow-spec.json"
+    spec_path.write_text(specification.to_json())
+    store = tmp_path / "store"
+    command = [
+        "go",
+        "run",
+        "./cmd/massive-orchestrator",
+        "run",
+        "--spec",
+        str(spec_path),
+        "--source-root",
+        str(fixture.parent),
+        "--store",
+        str(store),
+        "--project",
+        "example/integral-doubles",
+        "--run-id",
+        "doubles",
+        "--json",
+        "--input",
+    ]
+    result = subprocess.run(
+        [*command, canonical_json(value)],
+        cwd=repository,
+        env={**os.environ, "MASSIVE_PYTHON": sys.executable},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    run = json.loads(result.stdout)
+    assert run["status"] == "succeeded"
+    assert run["steps"] == [
+        {"nodeId": "produce", "status": "succeeded"},
+        {"nodeId": "echo", "status": "succeeded"},
+    ]
+    assert (store / run["resultKey"]).read_text() == canonical_json(
+        {"identifier": int(value), "metadata": {"x": value}}
+    )
+    # The same real CLI must reject a lossy integer before invoking author code.
+    rejected = subprocess.run(
+        [*command, "12345678901234567"],
+        cwd=repository,
+        env={**os.environ, "MASSIVE_PYTHON": sys.executable},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "integer JSON token" in rejected.stderr
 
 
 def test_python_workflow_runs_through_go_orchestrator(tmp_path: Path) -> None:

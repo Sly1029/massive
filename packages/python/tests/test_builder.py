@@ -13,7 +13,7 @@ from uuid import UUID
 
 import pytest
 from jsonschema import Draft202012Validator
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from massive import (
     DEFAULT_MAP_CONCURRENCY,
@@ -1047,13 +1047,48 @@ def test_public_json_value_models_portable_escape_hatches() -> None:
 def test_schema_validation_accepts_finite_float_constants_and_bounds() -> None:
     _assert_canonical_json_schema({"const": 1.5}, "step 'float-constant' output schema")
     _assert_canonical_json_schema({"minimum": 1.5, "type": "integer"}, "integer bound")
+    _assert_canonical_json_schema({"type": "number", "multipleOf": 2.0}, "integer divisor")
+
+
+def test_emit_rejects_pydantic_fractional_multiple_of() -> None:
+    class FractionalMultiple(BaseModel):
+        value: float = Field(multiple_of=0.1)
+
+    # Demonstrate why accepting this model would fail publication validation.
+    value = FractionalMultiple(value=0.3)
+    assert not Draft202012Validator(FractionalMultiple.model_json_schema()).is_valid(
+        value.model_dump()
+    )
+    graph = GraphBuilder(
+        name="fractional-multiple",
+        input_type=FractionalMultiple,
+        output_type=FractionalMultiple,
+        defaults=_defaults(),
+    )
+    graph.add(identity)
+    graph.edge_from(graph.start).to_end(graph.end)
+    with pytest.raises(ValueError, match=r"non-integer multipleOf.*#/properties/value/multipleOf"):
+        _emit(graph)
 
 
 @pytest.mark.parametrize(
     "schema",
     [
-        {"const": 1 << 53},
-        {"enum": [1, 1 << 53]},
+        {"type": "number", "multipleOf": 0.1},
+        {"$defs": {"measurement": {"type": "number", "multipleOf": 0.5}}},
+        {"type": "array", "items": {"type": "number", "multipleOf": 1.5}},
+    ],
+)
+def test_schema_validation_rejects_fractional_multiple_of(schema: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="non-integer multipleOf"):
+        _assert_canonical_json_schema(schema, "workflow input")
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"const": (1 << 53) + 1},
+        {"enum": [1, (1 << 53) + 1]},
     ],
 )
 def test_schema_validation_rejects_unsafe_integer_constants_and_enums(
@@ -1075,7 +1110,7 @@ def test_schema_validation_escapes_json_pointer_tokens_in_diagnostics() -> None:
     "schema",
     [
         {"minimum": float("inf"), "type": "number"},
-        {"description": "integer", "examples": [1 << 53], "type": "integer"},
+        {"description": "integer", "examples": [(1 << 53) + 1], "type": "integer"},
     ],
 )
 def test_schema_validation_rejects_noncanonical_metadata_and_bounds(schema: dict[str, Any]) -> None:

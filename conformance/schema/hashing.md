@@ -69,13 +69,19 @@ must reproduce them byte for byte, and the golden vector exercises each rule.
   lowercase `e`, an explicit `+` for positive exponents, and no leading exponent
   zeros. Examples: `1e21` → `1e+21`, `1e-7` → `1e-7`, smallest positive double
   → `5e-324`. NaN and infinities (including numeric overflow) are rejected.
-- **Exact integers remain portable only in ±(2^53 − 1).** Python author-side
-  `int` values outside that range are rejected, including integer schema
-  constants; use a string/Decimal for exact arithmetic or an explicit `float`
-  for double semantics. TypeScript `number` and Go's JSON number canonicalizer
-  use double semantics, including rounding of noncanonical source input.
-  Canonical byte readers compare the re-encoded bytes and reject spellings
-  that round to different text (`9007199254740993` is not canonical).
+- **Every integer in ±(2^53 − 1) is exact.** Python `int` values outside that
+  range are accepted only when conversion to a finite double is lossless
+  (`int(float(value)) == value`), then serialized as that double. This also
+  supports Pydantic restoring integral doubles in `int` or `JsonValue` fields.
+  Other integers are rejected; use strings/Decimal for arbitrary precision.
+  Go preserves JSON number tokens before converting them to doubles. An
+  integer-lexical token (no fraction or exponent) is rejected if its canonical
+  double text differs, except `-0`, which normalizes to `0`. For example,
+  `12345678901234567` and `9007199254740993` are rejected rather than rounded.
+  Fraction/exponent tokens use rounding to the nearest IEEE-754 double:
+  `9007199254740993.0` becomes `9007199254740992`. Overflow is rejected.
+  Canonical byte readers in all three languages additionally compare the
+  re-encoded bytes and reject any noncanonical source spelling.
   Large *integral doubles* are valid, including `9007199254740992` and
   `100000000000000000000`. Python's wire decoder retains safe integer tokens
   as integers and interprets larger integer tokens as doubles. Schema `number`
@@ -83,6 +89,12 @@ must reproduce them byte for byte, and the golden vector exercises each rule.
   fractional values. Pydantic float fields restore the requested Python type
   even when canonical text is integral. This is not arbitrary-precision integer
   transport.
+
+- **Schema `multipleOf` must be a positive integer.** Fractional divisors such
+  as `0.1` disagree across Pydantic, Python jsonschema, and Go validators
+  (`0.3` is one example). Python and TypeScript reject them during emission;
+  Go's spec schema rejects them before compilation. Use integer units with
+  an integer divisor for portable divisibility constraints.
 
 Go delegates numeric formatting to the Apache-2.0 WebPKI JCS implementation;
 Python uses Apache-2.0 `rfc8785`; TypeScript uses `JSON.stringify` after rejecting

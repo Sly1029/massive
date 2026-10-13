@@ -323,9 +323,9 @@ func missingRequiredContractRefDiagnostics(data []byte) []Diagnostic {
 }
 
 func schemaDiagnostics(validation *jsonschema.ValidationError) []Diagnostic {
-	basic := validation.BasicOutput()
+	detailed := validation.DetailedOutput()
 	var diagnostics []Diagnostic
-	collectSchemaDiagnostics(basic, &diagnostics)
+	collectSchemaDiagnostics(detailed, &diagnostics)
 	if len(diagnostics) == 0 {
 		return []Diagnostic{{Path: "$", Ref: "workflow-spec.schema.json", Message: validation.Error()}}
 	}

@@ -38,6 +38,24 @@ func TestParseAcceptsValidFixtures(t *testing.T) {
 	}
 }
 
+func TestParseRejectsFractionalMultipleOf(t *testing.T) {
+	for _, schema := range []map[string]any{
+		{"type": "number", "multipleOf": 0.1},
+		{"$defs": map[string]any{"value": map[string]any{"type": "number", "multipleOf": 0.5}}},
+		{"type": "array", "items": map[string]any{"type": "number", "multipleOf": 1.5}},
+		{"not": map[string]any{"type": "number", "multipleOf": 0.1}},
+	} {
+		data := mutateValidFixture(t, "linear-chain", func(root map[string]any) {
+			for ref := range root["schemas"].(map[string]any) {
+				root["schemas"].(map[string]any)[ref] = schema
+			}
+		})
+		if _, err := Parse(data); err == nil || !strings.Contains(err.Error(), "multipleOf") {
+			t.Fatalf("fractional multipleOf diagnostic: %v", err)
+		}
+	}
+}
+
 func TestParseReportsMissingContractRefFixture(t *testing.T) {
 	data, err := os.ReadFile(fixturePath("invalid-missing-contract-ref"))
 	if err != nil {

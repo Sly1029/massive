@@ -299,7 +299,7 @@ func TestMarshalRejectsInvalidUTF8BeforeEncoding(t *testing.T) {
 }
 
 func TestSelfExclusionRejectsNumericOverflowBeforeDeletingMember(t *testing.T) {
-	for _, body := range []string{`{"a":1,"self":1e400}`, `{"a":1,"self":{"nested":-1e400}}`} {
+	for _, body := range []string{`{"a":1,"self":1e400}`, `{"a":1,"self":{"nested":-1e400}}`, `{"a":1,"self":12345678901234567}`} {
 		if digest, err := DigestJSONWithRootMemberExcluded([]byte(body), "self"); err == nil {
 			t.Fatalf("overflow acquired identity %s", digest)
 		}

@@ -539,16 +539,21 @@ publication. Use Pydantic `FiniteFloat` when you also want validation to reject
 non-finite values earlier; ordinary `float` fields and JSON Schema `number`
 inputs and outputs are supported.
 
-Python `int` values must still lie in `[-(2**53 - 1), 2**53 - 1]`; they are
-encoded exactly. Larger integers are not an exact portable numeric type:
-use strings or `Decimal` for exact values, or explicitly convert to `float`
-when double precision is intended. TypeScript numbers and Go's canonical JSON
-number reader use double precision, so precision may already be lost outside
-that integer range. Integral doubles above the safe range are supported:
+Every Python `int` in `[-(2**53 - 1), 2**53 - 1]` is encoded exactly. Larger
+integers are accepted only if `int(float(value)) == value`, then encoded as
+doubles; other integers are rejected. Use strings or `Decimal` for arbitrary
+precision. Go rejects integer JSON tokens whose canonical double text differs
+instead of silently rounding IDs. Fraction/exponent tokens use double rounding;
+canonical byte readers require the source spelling to be canonical.
+Integral doubles above the safe range are supported:
 `float(2**53)` encodes as `9007199254740992`. Python's canonical wire reader
 keeps safe integer tokens as `int` and decodes larger integer tokens as `float`,
 because JCS can write doubles such as `1e20` without a decimal point or exponent.
 A float-typed Pydantic field restores `3` to `3.0` when decoding an input.
+An `int` or `JsonValue` field may restore an integral token as `int`; exactly
+representable values such as `2**53` and `10**20` can be published again.
+Fractional `Field(multiple_of=...)` constraints are rejected during emission
+because their validation differs across runtimes; use integer units instead.
 
 Massive emits Pydantic's **validation schema** for workflow and step inputs,
 and its **serialization schema** for outputs. Inputs use

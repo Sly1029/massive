@@ -1527,6 +1527,12 @@ def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
             )
         if not isinstance(value, dict):
             return
+        multiple = value.get("multipleOf")
+        if isinstance(multiple, (int, float)) and multiple % 1 != 0:
+            raise ValueError(
+                f"{role} has non-integer multipleOf at {pointer(path, 'multipleOf')}; "
+                "fractional divisibility is not portable across JSON Schema validators."
+            )
         non_metadata = set(value) - metadata
         if not non_metadata:
             raise ValueError(

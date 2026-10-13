@@ -39,7 +39,7 @@
     "schemas": {
       "type": "object",
       "propertyNames": { "$ref": "#/$defs/hashRef" },
-      "additionalProperties": { "type": "object" }
+      "additionalProperties": { "type": "object", "$ref": "#/$defs/portableValueSchema" }
     },
     "symbols": {
       "type": "object",
@@ -63,6 +63,46 @@
     }
   },
   "$defs": {
+    "portableValueSchema": {
+      "description": "Fractional multipleOf is not portable across JSON Schema validators. Rebuild the workflow with an integer divisor.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "multipleOf": { "type": "integer", "minimum": 1 },
+            "$defs": { "$ref": "#/$defs/valueSchemaMap" },
+            "definitions": { "$ref": "#/$defs/valueSchemaMap" },
+            "dependentSchemas": { "$ref": "#/$defs/valueSchemaMap" },
+            "patternProperties": { "$ref": "#/$defs/valueSchemaMap" },
+            "properties": { "$ref": "#/$defs/valueSchemaMap" },
+            "additionalProperties": { "$ref": "#/$defs/portableValueSchema" },
+            "contains": { "$ref": "#/$defs/portableValueSchema" },
+            "contentSchema": { "$ref": "#/$defs/portableValueSchema" },
+            "else": { "$ref": "#/$defs/portableValueSchema" },
+            "if": { "$ref": "#/$defs/portableValueSchema" },
+            "items": { "$ref": "#/$defs/portableValueSchema" },
+            "not": { "$ref": "#/$defs/portableValueSchema" },
+            "propertyNames": { "$ref": "#/$defs/portableValueSchema" },
+            "then": { "$ref": "#/$defs/portableValueSchema" },
+            "unevaluatedItems": { "$ref": "#/$defs/portableValueSchema" },
+            "unevaluatedProperties": { "$ref": "#/$defs/portableValueSchema" },
+            "allOf": { "$ref": "#/$defs/valueSchemaArray" },
+            "anyOf": { "$ref": "#/$defs/valueSchemaArray" },
+            "oneOf": { "$ref": "#/$defs/valueSchemaArray" },
+            "prefixItems": { "$ref": "#/$defs/valueSchemaArray" }
+          }
+        },
+        { "type": "boolean" }
+      ]
+    },
+    "valueSchemaMap": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/portableValueSchema" }
+    },
+    "valueSchemaArray": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/portableValueSchema" }
+    },
     "id": {
       "type": "string",
       "minLength": 1,

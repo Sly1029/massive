@@ -76,7 +76,9 @@ def canonical_fixture_payload(path: Path) -> bytes:
     return fixture[:-1]
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), 1 << 53, -(1 << 53)])
+@pytest.mark.parametrize(
+    "value", [float("nan"), float("inf"), -float("inf"), (1 << 53) + 1, -((1 << 53) + 1), 10**400]
+)
 def test_canonical_json_rejects_values_outside_v0_number_contract(value: float) -> None:
     with pytest.raises((TypeError, ValueError)):
         canonical_json(cast(JsonValue, value))
@@ -119,5 +121,6 @@ def test_shared_ieee_double_vectors() -> None:
 def test_integral_float_and_integer_share_identity() -> None:
     assert canonical_json(3.0) == canonical_json(3) == "3"
     assert sha256_ref(canonical_json(3.0)) == sha256_ref(canonical_json(3))
-    assert canonical_json(float(1 << 53)) == "9007199254740992"
+    assert canonical_json(float(1 << 53)) == canonical_json(1 << 53) == "9007199254740992"
+    assert canonical_json(10**20) == canonical_json(1e20) == "100000000000000000000"
     assert isinstance(parse_canonical_json(b"9007199254740992"), float)

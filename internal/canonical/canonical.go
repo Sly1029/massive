@@ -109,12 +109,49 @@ func decodeJSON(data []byte) (any, error) {
 		return nil, fmt.Errorf("decode JSON field tree: trailing JSON content")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	// Decode all numbers as IEEE-754 doubles. The JSON decoder rejects overflow
-	// before self-exclusion can remove a non-finite member.
+	decoder.UseNumber()
 
 	var value any
 	if err := decoder.Decode(&value); err != nil {
 		return nil, fmt.Errorf("decode JSON field tree: %w", err)
+	}
+	return decodeNumbers(value)
+}
+
+// Validate the entire tree before self-exclusion can discard an invalid number.
+func decodeNumbers(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		double, err := typed.Float64()
+		if err != nil {
+			return nil, fmt.Errorf("decode finite JSON number %q: %w", typed, err)
+		}
+		if !strings.ContainsAny(string(typed), ".eE") && typed != "-0" {
+			encoded, err := jsoncanonicalizer.NumberToJSON(double)
+			if err != nil {
+				return nil, err
+			}
+			if encoded != string(typed) {
+				return nil, fmt.Errorf("integer JSON token %q changes under double serialization to %s; use a string for exact integers", typed, encoded)
+			}
+		}
+		return double, nil
+	case []any:
+		for index, item := range typed {
+			decoded, err := decodeNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[index] = decoded
+		}
+	case map[string]any:
+		for key, item := range typed {
+			decoded, err := decodeNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[key] = decoded
+		}
 	}
 	return value, nil
 }
@@ -138,6 +175,7 @@ func writeCanonicalJSON(out *bytes.Buffer, value any) error {
 		}
 		out.WriteString("false")
 	case float64:
+		// NumberToJSON implements ES6 Number::toString per RFC 8785 §3.2.2.3.
 		encoded, err := jsoncanonicalizer.NumberToJSON(typed)
 		if err != nil {
 			return fmt.Errorf("encode finite JSON number %v: %w", typed, err)
