@@ -15,5 +15,6 @@ owns environment-variable restrictions and injects only refs declared by a user
 invocation; Kubernetes resolves their values in the deployment namespace.
 
 Placement security contexts allow hardening only. Validate extended resource
-quantities with the Kubernetes parser at both placement and DeploymentSpec
+names using Kubernetes extended-resource/quota qualified-name rules in the
+shared schema, and quantities with the Kubernetes parser at both placement and DeploymentSpec
 read boundaries; whole-number requests must equal their limits.

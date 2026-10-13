@@ -206,7 +206,14 @@
       "description": "Extended resources such as GPUs. CPU and memory are execution requirements in the plan.",
       "type": "object",
       "minProperties": 1,
-      "propertyNames": { "allOf": [{ "$ref": "#/$defs/labelKey" }, { "pattern": "/" }, { "not": { "pattern": "(^|\\.)(kubernetes\\.io|k8s\\.io)/" } }] },
+      "propertyNames": {
+        "description": "Kubernetes IsExtendedResourceName: non-native, no requests. prefix, and requests.<name> must be a qualified quota name (domain at most 244 characters).",
+        "allOf": [
+          { "$ref": "#/$defs/labelKey" },
+          { "pattern": "^[^/]{1,244}/" },
+          { "not": { "pattern": "(^requests\\.|kubernetes\\.io/)" } }
+        ]
+      },
       "properties": { "cpu": false, "memory": false },
       "additionalProperties": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.apimachinery.pkg.api.resource.Quantity" }
     },

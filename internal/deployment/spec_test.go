@@ -502,7 +502,7 @@ func TestPlacementAcceptsHardeningAndEquivalentWholeQuantities(t *testing.T) {
 	_, err := ParsePlacement([]byte(`{"defaults":{"podSpecPatch":{
 		"securityContext":{"runAsNonRoot":true,"runAsUser":1000,"runAsGroup":1000,"seccompProfile":{"type":"RuntimeDefault"}},
 		"containers":[{"name":"main","securityContext":{"readOnlyRootFilesystem":true,"allowPrivilegeEscalation":false,"privileged":false,"capabilities":{"drop":["ALL"]},"appArmorProfile":{"type":"Localhost","localhostProfile":"restricted"}},
-		"resources":{"requests":{"example.com/device":"3000m"},"limits":{"example.com/device":"3"}}}]
+		"resources":{"requests":{"example.com/device":"3000m"},"limits":{"example.com/device":"3","k8s.io/device":"1"}}}]
 	}}}`))
 	if err != nil {
 		t.Fatal(err)

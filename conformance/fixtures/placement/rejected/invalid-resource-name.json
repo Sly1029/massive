@@ -1,0 +1,16 @@
+{
+  "defaults": {
+    "podSpecPatch": {
+      "containers": [
+        {
+          "name": "main",
+          "resources": {
+            "limits": {
+              "example.com/-device": "1"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
