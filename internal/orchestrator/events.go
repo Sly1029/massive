@@ -142,6 +142,11 @@ func (events *runEvents) closeOpenAttempts(status, node string) {
 	if events == nil {
 		return
 	}
+	// An unreported execution outcome cannot establish success, even if the
+	// returned outcomes leave its journal step skipped or not started.
+	if status != StatusCancelled {
+		status = StatusFailed
+	}
 	events.mu.Lock()
 	defer events.mu.Unlock()
 	for identity, started := range events.attemptStarts {

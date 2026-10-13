@@ -25,12 +25,8 @@ func TestRunEventsCloseStartedAttemptsAfterRejectedBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("MASSIVE_EVENT_PROCESS", "1")
-	for _, withStepFinish := range []bool{false, true} {
-		name := "run finish"
-		if withStepFinish {
-			name = "step then run finish"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, stepStatus := range []string{"", StatusFailed, StatusNotStarted, StatusCancelled} {
+		t.Run("step status="+stepStatus, func(t *testing.T) {
 			queue := make(chan runevent.Event, 32)
 			planHash := processMapDescriptor("rejected", 0).PlanHash
 			events := newRunEvents(RunConfig{Plan: &planpb.WorkflowPlan{PlanHash: &planHash}, Hooks: RunHooks{OnRunEvent: func(event runevent.Event) { queue <- event }}}, "project", "rejected", time.Now(), nil)
@@ -45,8 +41,12 @@ func TestRunEventsCloseStartedAttemptsAfterRejectedBatch(t *testing.T) {
 			if _, err := mapOutcomesByIndex("map-items", 1, outcomes, []int{0, 1}, true); err == nil {
 				t.Fatal("duplicate outcome accepted")
 			}
-			if withStepFinish {
-				events.stepFinished(&runjournal.Step{NodeID: "map-items", Status: StatusFailed})
+			if stepStatus != "" {
+				events.stepFinished(&runjournal.Step{NodeID: "map-items", Status: stepStatus})
+			}
+			wantAttemptStatus := StatusFailed
+			if stepStatus == StatusCancelled {
+				wantAttemptStatus = StatusCancelled
 			}
 			events.runFinished(StatusFailed)
 			close(queue)
@@ -68,7 +68,7 @@ func TestRunEventsCloseStartedAttemptsAfterRejectedBatch(t *testing.T) {
 					starts[*event.ItemIndex] = true
 				case "step.attempt.finished":
 					index := *event.ItemIndex
-					if !starts[index] || finishes[index] || event.Status != StatusFailed {
+					if !starts[index] || finishes[index] || event.Status != wantAttemptStatus {
 						t.Fatalf("incorrect cleanup event: %+v", event)
 					}
 					finishes[index] = true
