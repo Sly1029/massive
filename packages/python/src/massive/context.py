@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
+
+if TYPE_CHECKING:
+    from .identity import MapItemIdentity
 
 InputT = TypeVar("InputT")
 
@@ -23,6 +26,7 @@ class InvocationContext:
     idempotency_key: str
     attempt: int
     max_attempts: int
+    item: MapItemIdentity | None
 
 
 @dataclass(frozen=True, slots=True)

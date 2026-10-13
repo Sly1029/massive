@@ -9,15 +9,34 @@ export const END_NODE = "__end";
 // Graph IR node ids (conformance/schema/workflow-spec.schema.json).
 export const NODE_ID_PATTERN = /^[A-Za-z0-9_.@:#-]{1,128}$/;
 
+export interface MapItemScopeFrame {
+  readonly kind: "map-item";
+  readonly mapId: string;
+  readonly index: number;
+}
+
+/** Item position, stable across retries, with the full outer-to-inner path.
+ * The final frame is the current map; mapId is its emitted graph node ID,
+ * including any static call prefix. Equal input values have distinct indices.
+ */
+export interface MapItemIdentity {
+  readonly index: number;
+  readonly path: readonly MapItemScopeFrame[];
+}
+
+export interface InvocationContext {
+  readonly runId: string;
+  readonly stepId: string;
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  readonly idempotencyKey: string;
+  /** null for an invocation outside a map. */
+  readonly item: MapItemIdentity | null;
+}
+
 export type StepRun<Input, Output> = (context: {
   readonly input: Input;
-  readonly context: {
-    readonly runId: string;
-    readonly stepId: string;
-    readonly attempt: number;
-    readonly maxAttempts: number;
-    readonly idempotencyKey: string;
-  };
+  readonly context: InvocationContext;
 }) => Output | Promise<Output>;
 
 export interface StepSpec<InputSchema extends AnySchema, OutputSchema extends AnySchema> {

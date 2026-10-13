@@ -47,6 +47,20 @@ class MapItemScopeFrame(BaseModel):
     index: ScopeIndex
 
 
+class MapItemIdentity(BaseModel):
+    """A mapped invocation's zero-based index and full outer-to-inner scope path.
+
+    The path includes the current map as its final frame. Map IDs are emitted
+    graph node IDs (including any static ``call()`` prefix). Identity is stable
+    across retries; indices identify positions, not distinct input values.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    index: ScopeIndex
+    path: tuple[MapItemScopeFrame, ...] = Field(min_length=1)
+
+
 class ExecutionScope(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -74,6 +88,7 @@ class InvocationIdentity(BaseModel):
             for frame in self.scope.frames:
                 parts.extend(("maps", frame.map_id, "items", str(frame.index)))
         return "/".join(parts)
+
 
 SAFE_PATH_SEGMENT: TypeAdapter[str] = TypeAdapter(SafePathSegment)
 SHA256_REFERENCE: TypeAdapter[str] = TypeAdapter(Sha256Reference)

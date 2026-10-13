@@ -4,6 +4,8 @@ import type {
   ErrorObject,
   ValidateFunction,
 } from "ajv/dist/2020.js";
+import type { MapItemScopeFrame } from "../workflow.ts";
+export type { MapItemScopeFrame } from "../workflow.ts";
 import { DescriptorError } from "./outcomes.ts";
 
 export type HashRef = `sha256:${string}`;
@@ -75,12 +77,6 @@ export interface StepInvocationDescriptor {
   readonly input: DataArtifactRef;
   readonly output: DataArtifactManifestDestination;
   readonly datastore: DatastoreDescriptor;
-}
-
-export interface MapItemScopeFrame {
-  readonly kind: "map-item";
-  readonly mapId: string;
-  readonly index: number;
 }
 
 export interface ExecutionScope {

@@ -153,7 +153,7 @@ class _ResolvedStep:
         from pydantic import ValidationError as PydanticValidationError
         from pydantic_core import PydanticSerializationError
 
-        from .identity import InvocationIdentity
+        from .identity import InvocationIdentity, MapItemIdentity
 
         # Artifacts are JSON, so decode and encode in Pydantic's JSON mode: strict
         # models accept ISO strings and arrays there, and fields use schema aliases.
@@ -161,21 +161,28 @@ class _ResolvedStep:
             input_value = self.input_adapter.validate_json(input_body, context=files)
         except PydanticValidationError as error:
             raise SchemaError(f"input does not satisfy the step input type: {error}") from error
+        identity = InvocationIdentity.model_validate(
+            {
+                "runId": descriptor["runId"],
+                "nodeId": descriptor["nodeId"],
+                **({} if "scope" not in descriptor else {"scope": descriptor["scope"]}),
+            }
+        )
         context = StepContext[object](
             inputs=input_value,
             workspace=workspace,
             invocation=InvocationContext(
                 run_id=descriptor["runId"],
                 step_id=descriptor["nodeId"],
-                idempotency_key=InvocationIdentity.model_validate(
-                    {
-                        "runId": descriptor["runId"],
-                        "nodeId": descriptor["nodeId"],
-                        **({} if "scope" not in descriptor else {"scope": descriptor["scope"]}),
-                    }
-                ).idempotency_key,
+                idempotency_key=identity.idempotency_key,
                 attempt=descriptor["attempt"],
                 max_attempts=descriptor["maxAttempts"],
+                item=None
+                if identity.scope is None
+                else MapItemIdentity(
+                    index=identity.scope.frames[-1].index,
+                    path=identity.scope.frames,
+                ),
             ),
         )
         _write_execution_phase(termination_log, "author")

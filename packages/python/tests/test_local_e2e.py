@@ -465,3 +465,54 @@ def test_finite_floats_cross_decisions_maps_and_large_artifacts(tmp_path: Path) 
             assert (
                 store / "blobs/sha256" / sha256_ref(item_body).removeprefix("sha256:")
             ).read_bytes() == item_body
+
+
+@pytest.mark.parametrize(
+    "graph_name,map_id", [("graph", "capture"), ("composed", "child--capture")]
+)
+@pytest.mark.parametrize("values", [[], [7, 7, 9]])
+def test_map_exposes_item_identity_locally(
+    tmp_path: Path, graph_name: str, map_id: str, values: list[int]
+) -> None:
+    repository = Path(__file__).resolve().parents[3]
+    fixture = Path(__file__).parent / "fixtures/item_identity_workflow.py"
+    module = _load_fixture(fixture)
+    specification = getattr(module, graph_name).emit(
+        source=source_package(root=fixture.parent, include=[fixture.name], package_id="identity")
+    )
+    spec_path = tmp_path / "workflow-spec.json"
+    spec_path.write_text(specification.to_json())
+    store = tmp_path / "store"
+    result = subprocess.run(
+        [
+            "go",
+            "run",
+            "./cmd/massive-orchestrator",
+            "run",
+            "--spec",
+            str(spec_path),
+            "--source-root",
+            str(fixture.parent),
+            "--store",
+            str(store),
+            "--project",
+            "example/item-identity",
+            "--run-id",
+            "item-identity",
+            "--json",
+            "--input",
+            json.dumps(values),
+        ],
+        cwd=repository,
+        env={**os.environ, "MASSIVE_PYTHON": sys.executable},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    run = json.loads(result.stdout)
+    assert run["status"] == "succeeded"
+    assert json.loads((store / run["resultKey"]).read_text()) == [
+        {"index": index, "path": [{"kind": "map-item", "mapId": map_id, "index": index}]}
+        for index in range(len(values))
+    ]

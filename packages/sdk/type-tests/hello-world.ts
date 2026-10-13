@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { workflow } from "../src/index.ts";
+import { type InvocationContext, type MapItemIdentity, type MapItemScopeFrame, workflow } from "../src/index.ts";
 
 const helloWorld = workflow({
   name: "hello-world",
@@ -52,3 +52,15 @@ numeric.start().to(double);
 
 // @ts-expect-error numeric workflow output is number, not string
 numeric.from(double).to(stringify).to(numeric.end());
+
+
+export function itemIdentity(context: InvocationContext): number | null {
+  const item: MapItemIdentity | null = context.item;
+  if (item === null) return null;
+  const frame: MapItemScopeFrame = item.path[item.path.length - 1]!;
+  // @ts-expect-error item paths are immutable
+  item.path.push(frame);
+  // @ts-expect-error scope frames are immutable
+  frame.index = 3;
+  return item.index;
+}

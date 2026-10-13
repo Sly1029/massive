@@ -40,6 +40,9 @@ export {
 } from "./emit.ts";
 export {
   type CallNode,
+  type InvocationContext,
+  type MapItemIdentity,
+  type MapItemScopeFrame,
   type EndHandle,
   type MergeBuilder,
   type PathBuilder,

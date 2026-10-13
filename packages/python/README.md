@@ -639,6 +639,26 @@ The graph is static: define all nodes and edges during authoring rather than
 creating graph structure from step results. Step inputs and outputs must be
 canonical JSON values representable by their Pydantic schemas.
 `StepContext[Input]` provides typed inputs, invocation metadata, and a workspace.
+`ctx.invocation.item` is `MapItemIdentity | None`: `None` outside a map, otherwise
+an immutable identity with a zero-based `index` and an immutable `path` of
+`MapItemScopeFrame` values, ordered outermost first and including the current map
+as the final frame. Each frame has `kind="map-item"`, `map_id` (the emitted map
+node ID, including any `call()` prefix), and `index`. Equal input values still
+have different positions; the identity stays the same across retries.
+
+```python
+item = ctx.invocation.item
+if item is not None:
+    item_index = item.index
+    scope_path = tuple((frame.map_id, frame.index) for frame in item.path)
+```
+
+This comes directly from the descriptor's validated `scope.frames`; consumers
+need not parse `idempotency_key`. The TypeScript equivalent is
+`context.item: MapItemIdentity | null`, with `index` and a readonly `path` of
+`{ kind: "map-item", mapId: string, index: number }` frames. Current graphs
+support single-step maps and statically composed map IDs; nested map execution
+is not supported. Runners preserve every frame when given a multi-level scope.
 Create service clients inside task code from deployment-bound configuration;
 live Python objects are not transported between workers. Python is the
 primary SDK; the artifact manifest protocol is shared with the other Massive
