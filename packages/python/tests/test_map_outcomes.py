@@ -298,6 +298,74 @@ def test_collecting_map_preserves_failure_messages_past_log_cap_and_exit_identit
     ]
 
 
+@pytest.mark.parametrize(
+    ("exception", "kind", "diagnostic"),
+    [
+        ('os.fsdecode(b"\\xff")', "error", "step-execution-failure (exit 66): \ufffd"),
+        (
+            '"\\U0001f680" * 1025',
+            "error",
+            ("step-execution-failure (exit 66): " + "🚀" * 1024)[:1024],
+        ),
+        (
+            '"shutdown failure"',
+            "killed",
+            "runner-killed (signal)",
+        ),
+    ],
+    ids=["lone-surrogate", "astral-bound", "shutdown-sigkill"],
+)
+def test_collecting_map_handles_unicode_messages_and_signals_after_failure_publication(
+    tmp_path: Path, exception: str, kind: str, diagnostic: str
+) -> None:
+    source = (
+        (WORKFLOW / "workflow.py")
+        .read_text()
+        .replace(
+            'raise ValueError(f"{task.name} cannot be parsed")',
+            (
+                "import atexit\n"
+                "        atexit.register(lambda: os.kill(os.getpid(), signal.SIGKILL))\n"
+                if kind == "killed"
+                else ""
+            )
+            + ("        " if kind == "killed" else "")
+            + f"raise ValueError({exception})",
+        )
+    )
+    workflow = tmp_path / "workflow.py"
+    workflow.write_text(source)
+    spec = tmp_path / "workflow-spec.json"
+    emitted = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "massive.frontend",
+            "emit",
+            "--output",
+            str(spec),
+            f"{workflow}#graph",
+        ],
+        cwd=REPOSITORY,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert emitted.returncode == 0, emitted.stderr
+    store = tmp_path / "store"
+    run = _run(
+        store,
+        "failure-evidence",
+        {"tasks": [{"name": "failed", "behavior": "raise"}]},
+        spec=spec,
+        workflow=tmp_path,
+    )
+    assert run["status"] == "succeeded"
+    assert json.loads((store / run["resultKey"]).read_text())["failed"] == [
+        {"attempts": 2, "diagnostic": diagnostic, "kind": kind, "name": "failed"}
+    ]
+
+
 def test_collecting_map_with_no_failures_wraps_every_value(tmp_path: Path) -> None:
     store = tmp_path / "store"
 

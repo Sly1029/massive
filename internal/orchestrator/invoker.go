@@ -268,11 +268,18 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		return infrastructureFailure(fmt.Errorf("invoke runner for %s: %w", descriptor.NodeID, err))
 	}
 
-	message, resultErr := readRunnerMessage(descriptorPath, exitError.ExitCode())
-	if resultErr != nil {
-		return infrastructureFailure(fmt.Errorf("runner result for %s: %w", descriptor.NodeID, resultErr))
+	exitCode := exitError.ExitCode()
+	// A signal can supersede a failure published before interpreter shutdown.
+	// Only the runner's diagnostic exit codes consume that structured result.
+	var message string
+	if exitCode >= runnerExitDescriptorResolution && exitCode <= runnerExitNonRetryable {
+		var resultErr error
+		message, resultErr = readRunnerMessage(descriptorPath, exitCode)
+		if resultErr != nil {
+			return infrastructureFailure(fmt.Errorf("runner result for %s: %w", descriptor.NodeID, resultErr))
+		}
 	}
-	if exitError.ExitCode() == runnerExitInfrastructure {
+	if exitCode == runnerExitInfrastructure {
 		return infrastructureFailure(fmt.Errorf("runner failed to publish its result for %s (exit 70)", descriptor.NodeID))
 	}
 
@@ -342,8 +349,9 @@ func readRunnerMessage(descriptorPath string, exitCode int) (string, error) {
 		return "", err
 	}
 	defer file.Close()
-	// 1024 code points can require six bytes each when JSON escaped.
-	const maxResultBytes = 8 * 1024
+	// ASCII JSON uses a twelve-byte surrogate pair per astral code point.
+	// Include the fixed exitCode/message object overhead as well.
+	const maxResultBytes = 12*1024 + 128
 	body, err := io.ReadAll(io.LimitReader(file, maxResultBytes+1))
 	if err != nil {
 		return "", err

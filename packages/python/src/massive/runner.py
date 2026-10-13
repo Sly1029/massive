@@ -226,10 +226,15 @@ def run_descriptor_path(path: Path) -> int:
         label, message, code = "non-retryable-step-failure", str(error), _NON_RETRYABLE_STEP_EXIT
     # Exception messages travel independently of bounded author logs.
     try:
-        Path(str(path) + ".failure.json").write_text(
-            json.dumps({"exitCode": code, "message": message[:1024]}, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        # ASCII JSON preserves lone surrogates from filesystem error messages.
+        # Rename only a closed, complete file beside the descriptor.
+        with TemporaryDirectory(dir=path.parent) as temporary:
+            result = Path(temporary) / "failure.json"
+            result.write_text(
+                json.dumps({"exitCode": code, "message": message[:1024]}, ensure_ascii=True),
+                encoding="ascii",
+            )
+            result.replace(Path(str(path) + ".failure.json"))
     except OSError as error:
         print(f"runner-result-publication-failure: {error}", file=sys.stderr)
         return 70

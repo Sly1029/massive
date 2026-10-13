@@ -249,6 +249,7 @@ func mustAbs(t *testing.T, path string) string {
 func TestReadRunnerMessageValidatesBoundedStructuredResults(t *testing.T) {
 	for name, body := range map[string]string{
 		"valid":      `{"exitCode":66,"message":"real failure"}`,
+		"astral":     `{"exitCode":66,"message":"` + strings.Repeat(`\ud83d\ude80`, 1024) + `"}`,
 		"missing":    `{"exitCode":66}`,
 		"null":       `{"exitCode":66,"message":null}`,
 		"mismatched": `{"exitCode":67,"message":"wrong exit"}`,
@@ -260,7 +261,11 @@ func TestReadRunnerMessageValidatesBoundedStructuredResults(t *testing.T) {
 				t.Fatal(err)
 			}
 			message, err := readRunnerMessage(path, 66)
-			if name == "valid" {
+			if name == "astral" {
+				if err != nil || message != strings.Repeat("🚀", 1024) {
+					t.Fatalf("astral message length = %d, error = %v", len(message), err)
+				}
+			} else if name == "valid" {
 				if err != nil || message != "real failure" {
 					t.Fatalf("message = %q, error = %v", message, err)
 				}

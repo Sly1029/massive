@@ -83,7 +83,10 @@ item's outcome only when `mapItemFailure` classifies it (exceptions,
 stop sibling retries. Both targets must build identical records, so the Argo
 item runtime classifies through the same function. The record's message comes
 only from the bounded, schema-validated `.failure.json` beside the invocation
-descriptor, with an exit code matching the process result. Never scrape author
+descriptor, consumed only for diagnostic exits 64–67 matching the process result.
+Signal termination supersedes any failure file published during shutdown.
+Write failure files atomically as ASCII JSON; bound readers for twelve escaped
+bytes per code point plus the object overhead. Never scrape author
 logs for messages, and keep exception messages out of the journal. Only negative
 process exit codes establish signal termination; positive exits are ordinary
 errors. Failure-result publication errors (exit 70) fail the run.
