@@ -361,6 +361,13 @@ func scriptFatal(c *choices, w *Workflow) {
 		w.Faults[Invocation{NodeID: node.ID, Item: item, Attempt: prior}] = FailRetryable
 	}
 	w.Faults[Invocation{NodeID: node.ID, Item: item, Attempt: attempt}] = FailFatal
+	if node.Kind == spec.NodeKindMap && item > 0 && c.chance(1, 2) {
+		// An earlier item reaches backoff before this fatal signal. It must
+		// retain its failed attempts without dispatching another retry.
+		for siblingAttempt := 1; siblingAttempt <= attempt; siblingAttempt++ {
+			w.Faults[Invocation{NodeID: node.ID, Item: item - 1, Attempt: siblingAttempt}] = FailRetryable
+		}
+	}
 }
 
 // choices reads fuzz bytes as bounded decisions. Exhausted input reads as

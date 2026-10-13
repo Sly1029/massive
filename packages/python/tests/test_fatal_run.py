@@ -35,7 +35,12 @@ def test_fatal_constructor_bounds_text_without_throwing() -> None:
         def __str__(self) -> str:
             raise RuntimeError("cannot format")
 
-    for value in [None, 7, Unprintable()]:
+    class Uninspectable:
+        @property
+        def __class__(self) -> type:
+            raise RuntimeError("cannot inspect")
+
+    for value in [None, 7, Unprintable(), Uninspectable()]:
         error = FatalRunError(value, value)
         assert str(error) == "Fatal run failure"
         assert error.type is None
@@ -165,6 +170,7 @@ graph.on_exit(notify)
         if collect:
             mapper = next(step for step in journal["steps"] if step["nodeId"] == "stop")
             assert mapper["status"] == "failed"
+            assert "fatal run failure [input.invalid]" in mapper["attempts"][0]["diagnostic"]
             assert mapper["items"][0]["status"] == "failed"
             assert mapper["items"][1]["status"] == "cancelled"
             assert all(item["status"] == "not-started" for item in mapper["items"][2:])
@@ -214,3 +220,8 @@ graph.on_exit(notify)
     assert run["result"] == 42
     assert "failure" not in run
     assert run["exitHook"]["status"] == "failed"
+    project = "sha256-" + sha256(b"fatal-conformance").hexdigest()
+    journal = json.loads(
+        (tmp_path / "store" / "projects" / project / "runs/hook-test/run-manifest.json").read_text()
+    )
+    assert journal["exitHook"]["attempts"][0]["diagnostic"] == "fatal-run-failure (exit 69)"

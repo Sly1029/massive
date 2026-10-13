@@ -79,17 +79,19 @@ export async function executeStep(
             maxAttempts: descriptor.maxAttempts,
             idempotencyKey: invocationIdempotencyKey(descriptor),
             item: descriptor.scope === undefined ? null : Object.freeze({
-              index: descriptor.scope.frames[descriptor.scope.frames.length - 1]!.index,
-              path: Object.freeze(descriptor.scope.frames.map((frame) =>
-                Object.freeze({ ...frame })
-              )),
+              index:
+                descriptor.scope.frames[descriptor.scope.frames.length - 1]!
+                  .index,
+              path: Object.freeze(
+                descriptor.scope.frames.map((frame) =>
+                  Object.freeze({ ...frame })
+                ),
+              ),
             }),
           },
         });
       } catch (error) {
-        if (
-          error instanceof FatalRunError || error instanceof NonRetryableError
-        ) throw error;
+        if (error instanceof NonRetryableError) throw error;
         const message = error instanceof Error ? error.message : String(error);
         throw new StepExecutionError(message);
       } finally {

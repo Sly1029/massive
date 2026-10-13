@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Generic, TypeVar
@@ -30,11 +31,11 @@ class FatalRunError(NonRetryableError):
     def __init__(self, message: object, type: object = None) -> None:
         safe_message = (
             str.__getitem__(message, slice(0, 1024))
-            if isinstance(message, str)
+            if builtins.type(message) is str
             else "Fatal run failure"
         )
         self.type: str | None = (
-            str.__getitem__(type, slice(0, 64)) if isinstance(type, str) else None
+            str.__getitem__(type, slice(0, 64)) if builtins.type(type) is str else None
         )
         super().__init__(safe_message)
 

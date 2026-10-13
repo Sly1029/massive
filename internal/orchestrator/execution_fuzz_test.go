@@ -360,6 +360,24 @@ func (o *executionOracle) checkTerminalStatus(runErr error) {
 		if !errors.As(runErr, &fatal) || *o.journal.Failure != fatal.Failure || o.journal.Status != StatusFailed {
 			t.Fatalf("fatal cause not preserved: %+v, %v", o.journal.Failure, runErr)
 		}
+		predicted := o.prediction.Nodes[fatal.Failure.NodeID]
+		if predicted == nil || predicted.Fatal == nil {
+			t.Fatalf("unexpected fatal invocation: %+v", fatal.Failure)
+		}
+		found := false
+		for _, entry := range o.executor.log {
+			if entry.invocation == *predicted.Fatal && entry.fault == graphgen.FailFatal {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("fatal invocation differs from reference: %+v", predicted.Fatal)
+		}
+		for _, step := range o.journal.Steps {
+			if step.NodeID == fatal.Failure.NodeID && step.Items != nil && !strings.Contains(step.Attempts[0].Diagnostic, "fatal run failure") {
+				t.Fatalf("fatal map diagnostic: %q", step.Attempts[0].Diagnostic)
+			}
+		}
 		return
 	}
 	if !strings.HasPrefix(o.journal.Diagnostic, "run "+o.journal.Status) {

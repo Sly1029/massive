@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -89,7 +90,8 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 		return record("exit hook descriptor could not be built")
 	}
 	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}})
-	if err != nil || len(outcomes) != 1 {
+	var fatal *FatalRunError
+	if (err != nil && !errors.As(err, &fatal)) || len(outcomes) != 1 {
 		return record("invocation infrastructure failed")
 	}
 	if outcomes[0].Status != StatusSucceeded {

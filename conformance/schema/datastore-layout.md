@@ -259,7 +259,7 @@ projects/<project-key>/runs/<run-id>/steps/<step-id>/scopes/maps/<map-id>/items/
 
 Static invocations omit `scope` and retain the original static paths.
 
-`run-manifest.json` is the v5 (`schemaVersion: 5`, `encoding: "json-v5"`) run
+`run-manifest.json` is the v6 (`schemaVersion: 6`, `encoding: "json-v6"`) run
 manifest the orchestrator records when it creates a run: plan hash, run status,
 the checked dependency environment, per-step attempt/artifact records, finite-map
 item records, and durable decision outcomes. `environment` is required: either
@@ -271,7 +271,10 @@ record has `status: "failed"` and a safe diagnostic; an inactive nested decision
 has `status: "skipped"` and the same structured `skipReason` used by steps. The
 orchestrator persists a successful selection before it schedules downstream
 nodes, and a future resume or replay must use the journaled selection rather
-than run the classifier again.
+than run the classifier again. A fatal run adds `failure` containing a bounded
+safe `message`, optional `type`, and originating `nodeId`. Its run-scoped
+`fatal.json` marker uses the same schema and first-writer ownership. Older
+journals require a rebuild with the current SDK and a new run.
 
 An unselected branch step has status `"skipped"`, no attempts, and a
 `skipReason` with `kind: "decision-not-selected"`, the `decisionId`, and the

@@ -310,7 +310,7 @@ the exit hook remains available and receives the first safe cause.
 
 ### Step hooks
 
-Pre- and post-step behavior such as tracing, cost budgets, or output redaction
+Pre- and post-step behavior such as tracing, input validation, or output redaction
 is an ordinary decorator. Apply it with `functools.wraps` where the step is
 defined, and type it so checkers keep the step's input and output:
 

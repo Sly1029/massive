@@ -42,11 +42,11 @@ export class FatalRunError extends NonRetryableError {
   constructor(message: unknown, type?: unknown) {
     super(
       typeof message === "string"
-        ? Array.from(message).slice(0, 1024).join("")
+        ? Array.from(message.slice(0, 2048)).slice(0, 1024).join("")
         : "Fatal run failure",
     );
     this.type = typeof type === "string"
-      ? Array.from(type).slice(0, 64).join("")
+      ? Array.from(type.slice(0, 128)).slice(0, 64).join("")
       : undefined;
     this.name = "FatalRunError";
   }

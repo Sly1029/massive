@@ -60,7 +60,7 @@ func TestCollectingMapPreservesPlacementDeadlineAndExitHook(t *testing.T) {
 	}
 }
 
-func TestFatalWatcherUsesOnlyControlCredentialsAndGatesDispatch(t *testing.T) {
+func TestAuthorTemplatesDoNotMountSchedulerCredentials(t *testing.T) {
 	compiled := exitHookPlan(t, "python-map-outcomes")
 	templates := compiledTemplates(t, compiled.Plan)
 	for _, name := range []string{"map-item-scan", "step-plan", "exit-notify"} {
