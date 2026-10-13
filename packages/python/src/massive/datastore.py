@@ -10,11 +10,8 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, BinaryIO, Literal, NotRequired, Protocol, TypedDict, cast
 from uuid import uuid4
 
-from botocore.config import Config
-from botocore.exceptions import ClientError
-from botocore.session import get_session
-
 if TYPE_CHECKING:
+    from botocore.exceptions import ClientError
     from mypy_boto3_s3 import S3Client
     from mypy_boto3_s3.type_defs import GetObjectOutputTypeDef
 
@@ -198,6 +195,9 @@ class LocalDatastore:
 
 class S3Datastore:
     def __init__(self, descriptor: S3DatastoreDescriptor) -> None:
+        from botocore.config import Config
+        from botocore.session import get_session
+
         self.bucket = descriptor["bucket"]
         prefix = descriptor.get("prefix", "")
         self.prefix = _normalize_prefix(prefix)
@@ -219,6 +219,8 @@ class S3Datastore:
     def put(
         self, key: str, body: bytes, *, content_type: str, if_absent: bool = False
     ) -> ObjectInfo:
+        from botocore.exceptions import ClientError
+
         _validate_key(key)
         try:
             if if_absent:
@@ -269,6 +271,8 @@ class S3Datastore:
         )
 
     def _get_object(self, key: str) -> GetObjectOutputTypeDef:
+        from botocore.exceptions import ClientError
+
         _validate_key(key)
         try:
             return self.client.get_object(Bucket=self.bucket, Key=self._key(key))

@@ -26,6 +26,24 @@ from massive.datastore import DatastoreObjectTooLargeError, LocalDatastore, S3Da
 PROJECT_KEY = "sha256-" + "b" * 64
 
 
+def test_local_runner_executes_without_cloud_clients_or_authoring_imports(tmp_path: Path) -> None:
+    descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
+    archive = _source_archive(
+        Path(__file__).parent / "fixtures", entries=("import_guard_workflow.py",)
+    )
+    source_archive = descriptor["sourcePackage"]["sourceArchive"]
+    (store / source_archive["key"]).write_bytes(archive)
+    source_archive["hash"] = sha256_ref(archive)
+    descriptor["symbol"]["module"] = "import_guard_workflow"
+    descriptor_path.write_text(canonical_json(descriptor))
+
+    result = _run(descriptor_path)
+
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads((store / descriptor["output"]["manifestKey"]).read_text())
+    assert json.loads((store / manifest["body"]["key"]).read_text()) == {"value": 42}
+
+
 @pytest.mark.parametrize(
     ("export", "expected"),
     [("double", {"value": 42}), ("increment", {"value": 22}), ("lazy_increment", {"value": 22})],

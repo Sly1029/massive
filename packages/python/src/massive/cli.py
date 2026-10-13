@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -22,6 +21,8 @@ def main() -> NoReturn:
     arguments = [str(executable), *sys.argv[1:]]
     if os.name != "nt":
         os.execve(executable, arguments, environment)
+    import subprocess
+
     raise SystemExit(subprocess.call(arguments, env=environment))
 
 
