@@ -32,7 +32,11 @@ def guarded(ctx: StepContext[int]) -> int:
         while True:
             try:
                 body = store.get_object(Bucket="my-bucket", Key=key)["Body"]
-                body.close()
+                try:
+                    if body.read() != b"ready":
+                        raise RuntimeError("invalid sibling handshake")
+                finally:
+                    body.close()
                 break
             except ClientError as error:
                 if error.response["ResponseMetadata"]["HTTPStatusCode"] != 404:
@@ -46,7 +50,8 @@ def guarded(ctx: StepContext[int]) -> int:
             "SECRET exception chain"
         )
     print(f"sibling {ctx.inputs} started", flush=True)
-    store.put_object(Bucket="my-bucket", Key=key, Body=b"ready")
+    if ctx.inputs == 1:
+        store.put_object(Bucket="my-bucket", Key=key, Body=b"ready")
     time.sleep(120)
     print(f"sibling {ctx.inputs} completed", flush=True)
     return ctx.inputs

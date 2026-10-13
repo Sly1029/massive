@@ -1047,9 +1047,9 @@ class DecisionConformance(unittest.TestCase):
         self.assertNotIn("shutdown", run["spec"])
         items = self.pods(run, "map-item-guarded")
         self.assertGreaterEqual(len(items), 2)
-        # The S3 handshake proves a sibling reached author code before the fatal.
+        # Only item 1 publishes the S3 gate, and item 0 cannot raise its fatal
+        # signal until reading it. The safe cause below proves that handshake.
         logs = self.main_log(run)
-        self.assertIn("sibling 1 started", logs)
         self.assertNotIn(" completed", logs)
         self.assertNotIn("SECRET", logs)
         self.assertFalse(self.pods(run, "step-after"))
@@ -1070,27 +1070,20 @@ class DecisionConformance(unittest.TestCase):
             "-o",
             "json",
         )["items"]
-        # Find the physical pod whose author log proves it started, then prove
-        # cooperative cancellation ended its main process before the sleep.
+        # Match the indexed invocation in the physical pod, then prove its
+        # main process exited before the author's 120-second sleep completed.
         sibling = next(
             pod
             for pod in pods
-            if "sibling 1 started"
-            in subprocess.run(
-                [
-                    os.environ.get("KUBECTL", "kubectl"),
-                    "-n",
-                    "argo",
-                    "logs",
-                    pod["metadata"]["name"],
-                    "-c",
-                    "main",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            ).stdout
+            if any(
+                container["name"] == "main"
+                and any(
+                    arg.startswith("--item=")
+                    and json.loads(arg.removeprefix("--item="))["index"] == 1
+                    for arg in container.get("args", [])
+                )
+                for container in pod["spec"]["containers"]
+            )
         )
         termination = next(
             container["state"]["terminated"]
@@ -1098,8 +1091,6 @@ class DecisionConformance(unittest.TestCase):
             if container["name"] == "main"
         )
         self.assertEqual(termination["exitCode"], 69, termination)
-        from datetime import datetime
-
         elapsed = datetime.fromisoformat(
             termination["finishedAt"].replace("Z", "+00:00")
         ) - datetime.fromisoformat(termination["startedAt"].replace("Z", "+00:00"))
