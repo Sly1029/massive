@@ -24,8 +24,15 @@ func TestMain(m *testing.M) {
 
 func runFixture(mode, ready string) {
 	if mode == "output" {
-		fmt.Print(strings.Repeat("x", outputLimit*2))
+		fmt.Print("discarded-prefix\n" + strings.Repeat("x", outputLimit*2) + "final-tail\n")
 		return
+	}
+	if mode == "chunked-output" {
+		for index := range 600 {
+			fmt.Print(strings.Repeat(string(rune('a'+index%26)), 4093))
+		}
+		fmt.Fprint(os.Stderr, "final-stderr-tail\n")
+		os.Exit(42)
 	}
 	if mode == "failure" {
 		fmt.Fprintln(os.Stderr, "author diagnostic")
@@ -156,7 +163,7 @@ func TestRunBoundsOutputAndPreservesAuthorExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(output, "x") != outputLimit || !strings.HasSuffix(output, "[task output truncated at 1048576 bytes]\n") {
+	if !strings.HasPrefix(output, "[task output truncated; showing last 1048576 bytes]\n") || !strings.HasSuffix(output, "final-tail\n") || strings.Contains(output, "discarded-prefix") || len(output) > outputLimit+100 {
 		t.Fatalf("output was not bounded and marked: length %d", len(output))
 	}
 	output, err = Run(t.Context(), []string{executable, "process-fixture", "failure", "unused"}, "")
@@ -190,7 +197,7 @@ func TestRunToPreservesProtocolOutputAndSeparateDiagnostics(t *testing.T) {
 	if err := RunTo(t.Context(), []string{executable, "process-fixture", "output", "unused"}, "", nil, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if stdout.String() != strings.Repeat("x", outputLimit*2) || stderr.Len() != 0 {
+	if stdout.String() != "discarded-prefix\n"+strings.Repeat("x", outputLimit*2)+"final-tail\n" || stderr.Len() != 0 {
 		t.Fatalf("protocol output truncated or mixed: stdout=%d stderr=%d", stdout.Len(), stderr.Len())
 	}
 	stdout.Reset()
@@ -199,5 +206,27 @@ func TestRunToPreservesProtocolOutputAndSeparateDiagnostics(t *testing.T) {
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 42 || stdout.Len() != 0 || stderr.String() != "author diagnostic\n" {
 		t.Fatalf("diagnostic output mixed or exit lost: stdout=%q stderr=%q err=%v", stdout.String(), stderr.String(), err)
+	}
+}
+
+func TestRunRetainsChunkedOutputAcrossRingWraps(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := Run(t.Context(), []string{executable, "process-fixture", "chunked-output", "unused"}, "")
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 42 {
+		t.Fatalf("exit = %v", err)
+	}
+	var expected strings.Builder
+	for index := range 600 {
+		expected.WriteString(strings.Repeat(string(rune('a'+index%26)), 4093))
+	}
+	expected.WriteString("final-stderr-tail\n")
+	text := expected.String()
+	want := "[task output truncated; showing last 1048576 bytes]\n" + text[len(text)-outputLimit:]
+	if output != want {
+		t.Fatalf("chunked output tail differs: got %d bytes, want %d", len(output), len(want))
 	}
 }
