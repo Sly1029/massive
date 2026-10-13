@@ -184,7 +184,7 @@ func (command *RuntimeExitHookCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, 0, nil)
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, 0, nil, "")
 	if err != nil {
 		return err
 	}
