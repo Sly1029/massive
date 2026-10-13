@@ -134,12 +134,12 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		return nil, fmt.Errorf("canonicalize workflow input: %w", err)
 	}
 
-	manifest := newRunManifest(config.Plan.GetPlanHash(), projectKey, runID, index.stepOrder, index.nodesByID)
+	manifest := localJournal{Manifest: newRunManifest(config.Plan.GetPlanHash(), projectKey, runID, index.stepOrder, index.nodesByID)}
 	manifest.Environment = config.Environment
 	manifestKey := runManifestKey(projectKey, runID)
 	// Creating the journal claims the run id, so a reused id cannot overwrite
 	// an earlier run's record; later journal updates replace it in place.
-	manifestBody, err := canonical.Marshal(manifest)
+	manifestBody, err := canonical.Marshal(manifest.Manifest)
 	if err != nil {
 		return nil, fmt.Errorf("marshal run manifest: %w", err)
 	}
@@ -154,8 +154,12 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		ProjectKey:  projectKey,
 		Status:      StatusRunning,
 		ManifestKey: manifestKey.String(),
-		Steps:       summariesFromManifest(manifest),
+		Steps:       summariesFromManifest(manifest.Manifest),
 	}
+
+	manifest.events = newRunEvents(config, index, runID, startedAt)
+	// Registered first: completion follows terminal publication and the exit hook.
+	defer func() { manifest.finishEvents(result) }()
 
 	// The deadline covers everything the run does, including materialization,
 	// and stops it through the same path as an operator's cancellation.
@@ -199,7 +203,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			result.ExitHook = &StepSummary{NodeID: record.NodeID, Status: record.Status, Diagnostic: record.Attempts[0].Diagnostic}
 			publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer stop()
-			if err := writeRunManifest(publication, store, manifestKey, manifest); err != nil {
+			if err := writeRunManifest(publication, store, manifestKey, manifest.Manifest); err != nil {
 				result.ExitHookPersistenceDiagnostic = "exit hook record could not be published: " + err.Error()
 			}
 		}()
@@ -245,11 +249,11 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			failure.StepID = fatal.Failure.NodeID
 		}
 		manifest.Terminate(status, durableDiagnostic)
-		result.Steps = summariesFromManifest(manifest)
+		result.Steps = summariesFromManifest(manifest.Manifest)
 		// Cancellation ends execution, not the bounded publication of its outcome.
 		finalContext, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()
-		if err := writeRunManifest(finalContext, store, manifestKey, manifest); err != nil {
+		if err := writeRunManifest(finalContext, store, manifestKey, manifest.Manifest); err != nil {
 			failure.Cause = errors.Join(cause, err)
 			failure.Diagnostic += "; terminal journal could not be published: " + err.Error()
 		}
@@ -287,7 +291,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			default:
 				return nil, fmt.Errorf("unsupported plan node kind %q for %q", node.GetKind(), nodeID)
 			}
-			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+			if err := writeRunManifest(ctx, store, manifestKey, manifest.Manifest); err != nil {
 				return nil, err
 			}
 			continue
@@ -305,7 +309,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 				Status:       "selected",
 				SelectedCase: selectedCase,
 			})
-			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+			if err := writeRunManifest(ctx, store, manifestKey, manifest.Manifest); err != nil {
 				return nil, err
 			}
 			continue
@@ -359,11 +363,11 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			}
 
 			markAttemptRunning(&manifest, nodeID, attempt, inputArtifact)
-			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+			if err := writeRunManifest(ctx, store, manifestKey, manifest.Manifest); err != nil {
 				return nil, err
 			}
 
-			outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}})
+			outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, OnStarted: func(StepInvocationDescriptor) { manifest.observe(findManifestStep(&manifest, nodeID), nil) }})
 			if len(outcomes) != 1 {
 				if len(outcomes) == 0 && invokeErr != nil {
 					// Drop the undispatched attempt. Earlier failed attempts keep
@@ -379,6 +383,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			}
 			dispatchedNodes[nodeID] = true
 			outcome := outcomes[0]
+			manifest.events.outcome(outcome)
 			if outcome.Status != StatusSucceeded {
 				status, diagnostic := StatusFailed, durableRunnerDiagnostic(outcome)
 				if outcome.Status == StatusCancelled {
@@ -389,7 +394,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 				}
 				if invokeErr == nil && attempt < policy.maxAttempts && retryableOutcome(outcome) {
 					markAttemptRetrying(&manifest, nodeID, diagnostic)
-					if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+					if err := writeRunManifest(ctx, store, manifestKey, manifest.Manifest); err != nil {
 						return nil, err
 					}
 					if err := waitBeforeRetry(ctx, policy.delayBefore(attempt+1)); err != nil {
@@ -419,7 +424,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			resolution.outputs[nodeID] = output
 			markAttemptSucceeded(&manifest, nodeID, output.Published)
 			publicationContext, finishPublication := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			err = writeRunManifest(publicationContext, store, manifestKey, manifest)
+			err = writeRunManifest(publicationContext, store, manifestKey, manifest.Manifest)
 			finishPublication()
 			if err != nil {
 				return nil, err
@@ -438,13 +443,13 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 	}
 	manifest.Status = StatusSucceeded
 	manifest.Result = &resultArtifact
-	if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+	if err := writeRunManifest(ctx, store, manifestKey, manifest.Manifest); err != nil {
 		return nil, err
 	}
 
 	result.Status = StatusSucceeded
 	result.ResultKey = resultArtifact.Key
-	result.Steps = summariesFromManifest(manifest)
+	result.Steps = summariesFromManifest(manifest.Manifest)
 	return result, nil
 }
 
@@ -986,7 +991,7 @@ func descriptorForMapItem(planHash string, binding DatastoreDescriptor, projectK
 	return descriptor, nil
 }
 
-func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, projectKey string, runID string, node *planpb.GraphNode, resolution *executionResolver, manifest *runjournal.Manifest, manifestKey datastore.Key) (nodeOutput, error) {
+func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, projectKey string, runID string, node *planpb.GraphNode, resolution *executionResolver, manifest *localJournal, manifestKey datastore.Key) (nodeOutput, error) {
 	inputBytes, err := resolution.inputForNode(node)
 	if err != nil {
 		return nodeOutput{}, err
@@ -1002,7 +1007,8 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 	}
 
 	markAttemptRunning(manifest, node.GetId(), 1, input)
-	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+	manifest.observe(findManifestStep(manifest, node.GetId()), nil)
+	if err := writeRunManifest(ctx, store, manifestKey, manifest.Manifest); err != nil {
 		return nodeOutput{}, err
 	}
 	items, err := mapexec.Expand(inputBytes)
@@ -1025,7 +1031,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		}
 		itemInputs[item.Index] = itemInput
 	}
-	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+	if err := writeRunManifest(ctx, store, manifestKey, manifest.Manifest); err != nil {
 		return nodeOutput{}, err
 	}
 
@@ -1050,7 +1056,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 	// previous attempt failed retryably, under the same concurrency bound.
 	for attempt := 1; len(pending) > 0; attempt++ {
 		if attempt > 1 {
-			if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+			if err := writeRunManifest(ctx, store, manifestKey, manifest.Manifest); err != nil {
 				return nodeOutput{}, err
 			}
 			if err := waitBeforeRetry(ctx, policy.delayBefore(attempt)); err != nil {
@@ -1065,71 +1071,67 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 			}
 			invocations = append(invocations, StepInvocation{Descriptor: descriptor, Timeout: policy.timeout})
 		}
-		outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: invocations, MaxConcurrency: int(node.GetMaxConcurrency())})
-		byIndex, err := mapOutcomesByIndex(node.GetId(), attempt, outcomes, pending, invokeErr == nil)
-		if err != nil {
-			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map invocation protocol failed", err)
-		}
-
-		// Record every reported dispatch before verification can fail. Otherwise a
-		// publication error on an early item would mislabel later started items as
-		// never dispatched when the root journal is terminalized.
-		for _, itemIndex := range pending {
-			outcome, started := byIndex[itemIndex]
-			if !started {
-				continue
-			}
-			markMapItemRunning(manifest, node.GetId(), itemIndex, attempt, itemInputs[itemIndex])
-			if outcome.Status == StatusCancelled {
-				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusCancelled, "invocation cancelled")
-			}
-			if outcome.Status == stepInvocationStatusInfraFailed {
-				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "invocation infrastructure failed")
-			}
-		}
 		retry := make([]int, 0, len(pending))
 		retryDiagnostics := make(map[int]string, len(pending))
 		terminalFailure := false
+		descriptors := make(map[int]StepInvocationDescriptor, len(invocations))
 		for position, itemIndex := range pending {
-			outcome, started := byIndex[itemIndex]
-			if !started {
-				continue
-			}
-			if outcome.Status != StatusSucceeded {
-				if outcome.Status == StatusCancelled || outcome.Status == stepInvocationStatusInfraFailed {
-					continue
-				}
-				diagnostic := durableRunnerDiagnostic(outcome)
-				if attempt < policy.maxAttempts && retryableOutcome(outcome) {
-					markMapItemRetrying(manifest, node.GetId(), itemIndex, diagnostic)
-					retry = append(retry, itemIndex)
-					retryDiagnostics[itemIndex] = diagnostic
-					continue
-				}
-				if failure, collected := mapItemFailure(outcome, attempt); collectFailures && collected {
-					failures[itemIndex] = failure
-					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, diagnostic)
-					continue
-				}
-				terminalFailure = true
-				if firstRunnerFailure == "" {
-					firstRunnerFailure = runnerDiagnostic(outcome) + attemptSuffix(attempt, policy)
-				}
-				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, diagnostic)
-				continue
-			}
-			output, err := settleInvocation(ctx, store, invocations[position].Descriptor, resolution.index, config.Hooks)
-			if err != nil {
-				terminalFailure = true
-				if firstRunnerFailure == "" {
-					firstRunnerFailure = err.Error()
-				}
-				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "map item output verification failed")
-				continue
-			}
-			markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
-			results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
+			descriptors[itemIndex] = invocations[position].Descriptor
 		}
+		outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{
+			Steps: invocations, MaxConcurrency: int(node.GetMaxConcurrency()),
+			OnStarted: func(descriptor StepInvocationDescriptor) {
+				itemIndex := descriptor.Scope.Frames[0].Index
+				markMapItemRunning(manifest, node.GetId(), itemIndex, attempt, itemInputs[itemIndex])
+			},
+			OnFinished: func(outcome StepInvocationOutcome) {
+				itemIndex := outcome.Scope.Frames[0].Index
+				manifest.events.outcome(outcome)
+				if outcome.Status == StatusCancelled {
+					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusCancelled, "invocation cancelled")
+					return
+				}
+				if outcome.Status == stepInvocationStatusInfraFailed {
+					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "invocation infrastructure failed")
+					return
+				}
+				if outcome.Status != StatusSucceeded {
+					diagnostic := durableRunnerDiagnostic(outcome)
+					if attempt < policy.maxAttempts && retryableOutcome(outcome) {
+						markMapItemRetrying(manifest, node.GetId(), itemIndex, diagnostic)
+						retry = append(retry, itemIndex)
+						retryDiagnostics[itemIndex] = diagnostic
+						return
+					}
+					if failure, collected := mapItemFailure(outcome, attempt); collectFailures && collected {
+						failures[itemIndex] = failure
+					} else {
+						terminalFailure = true
+						if firstRunnerFailure == "" {
+							firstRunnerFailure = runnerDiagnostic(outcome) + attemptSuffix(attempt, policy)
+						}
+					}
+					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, diagnostic)
+					return
+				}
+				output, err := settleInvocation(ctx, store, descriptors[itemIndex], resolution.index, config.Hooks)
+				if err != nil {
+					terminalFailure = true
+					if firstRunnerFailure == "" {
+						firstRunnerFailure = err.Error()
+					}
+					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "map item output verification failed")
+					return
+				}
+				markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
+				results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
+			},
+		})
+		if _, err := mapOutcomesByIndex(node.GetId(), attempt, outcomes, pending, invokeErr == nil); err != nil {
+			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map invocation protocol failed", err)
+		}
+		sort.Ints(retry)
+
 		for _, outcome := range outcomes {
 			if outcome.Fatal != nil {
 				invokeErr = &FatalRunError{Failure: *outcome.Fatal}
@@ -1159,7 +1161,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		pending = retry
 	}
 
-	if mapHasFailedItem(*manifest, node.GetId(), failures) {
+	if mapHasFailedItem(manifest.Manifest, node.GetId(), failures) {
 		if firstRunnerFailure == "" {
 			firstRunnerFailure = "one or more map items failed"
 		}
@@ -1201,7 +1203,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 	}
 	output := nodeOutputFromPublished(published, verifiedBody)
 	markAttemptSucceeded(manifest, node.GetId(), output.Published)
-	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+	if err := writeRunManifest(ctx, store, manifestKey, manifest.Manifest); err != nil {
 		return nodeOutput{}, err
 	}
 	return output, nil
@@ -1436,7 +1438,7 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 	}
 }
 
-func findManifestStep(manifest *runjournal.Manifest, nodeID string) *runjournal.Step {
+func findManifestStep(manifest *localJournal, nodeID string) *runjournal.Step {
 	for index := range manifest.Steps {
 		if manifest.Steps[index].NodeID == nodeID {
 			return &manifest.Steps[index]
@@ -1445,7 +1447,7 @@ func findManifestStep(manifest *runjournal.Manifest, nodeID string) *runjournal.
 	return nil
 }
 
-func markMapItemsPending(manifest *runjournal.Manifest, nodeID string, items []mapexec.Item) {
+func markMapItemsPending(manifest *localJournal, nodeID string, items []mapexec.Item) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil {
 		return
@@ -1455,13 +1457,16 @@ func markMapItemsPending(manifest *runjournal.Manifest, nodeID string, items []m
 		journalItems[index] = runjournal.MapItem{Index: item.Index, Status: StatusPending, Attempts: []runjournal.Attempt{}}
 	}
 	step.Items = &journalItems
+	manifest.events.maps[nodeID] = &mapProgress{total: len(items)}
+	manifest.events.progress(nodeID)
 }
 
-func markMapItemRunning(manifest *runjournal.Manifest, nodeID string, itemIndex int, attempt int, input runjournal.DataArtifact) {
+func markMapItemRunning(manifest *localJournal, nodeID string, itemIndex int, attempt int, input runjournal.DataArtifact) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
 		return
 	}
+	defer manifest.observe(step, &itemIndex)
 	item := &(*step.Items)[itemIndex]
 	item.Status = StatusRunning
 	item.Attempts = append(item.Attempts, runjournal.Attempt{Attempt: attempt, Status: StatusRunning, Input: input})
@@ -1469,22 +1474,24 @@ func markMapItemRunning(manifest *runjournal.Manifest, nodeID string, itemIndex 
 
 // markMapItemRetrying closes the latest attempt as failed while the item stays
 // running until a later attempt settles it.
-func markMapItemRetrying(manifest *runjournal.Manifest, nodeID string, itemIndex int, diagnostic string) {
+func markMapItemRetrying(manifest *localJournal, nodeID string, itemIndex int, diagnostic string) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
 		return
 	}
+	defer manifest.observe(step, &itemIndex)
 	item := &(*step.Items)[itemIndex]
 	if last := lastAttempt(item.Attempts); last != nil {
 		last.Status, last.Diagnostic = StatusFailed, diagnostic
 	}
 }
 
-func markMapItemSucceeded(manifest *runjournal.Manifest, nodeID string, itemIndex int, output runjournal.PublishedArtifact) {
+func markMapItemSucceeded(manifest *localJournal, nodeID string, itemIndex int, output runjournal.PublishedArtifact) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
 		return
 	}
+	defer manifest.observe(step, &itemIndex)
 	item := &(*step.Items)[itemIndex]
 	item.Status = StatusSucceeded
 	last := lastAttempt(item.Attempts)
@@ -1492,11 +1499,12 @@ func markMapItemSucceeded(manifest *runjournal.Manifest, nodeID string, itemInde
 	last.Output = &output
 }
 
-func markMapItemTerminal(manifest *runjournal.Manifest, nodeID string, itemIndex int, status, diagnostic string) {
+func markMapItemTerminal(manifest *localJournal, nodeID string, itemIndex int, status, diagnostic string) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil || itemIndex < 0 || itemIndex >= len(*step.Items) {
 		return
 	}
+	defer manifest.observe(step, &itemIndex)
 	item := &(*step.Items)[itemIndex]
 	item.Status = status
 	if len(item.Attempts) == 0 {
@@ -1530,17 +1538,21 @@ func mapHasFailedItem(manifest runjournal.Manifest, nodeID string, collected map
 	return false
 }
 
-func failMapNode(ctx context.Context, manifest *runjournal.Manifest, nodeID string, durableDiagnostic string, cause error) error {
+func failMapNode(ctx context.Context, manifest *localJournal, nodeID string, durableDiagnostic string, cause error) error {
 	status := StatusFailed
 	if ctx.Err() != nil && errors.Is(cause, ctx.Err()) {
 		status = StatusCancelled
 	}
 	markUnfinishedMapItemsTerminal(manifest, nodeID, status)
+	step := findManifestStep(manifest, nodeID)
+	for index := range *step.Items {
+		manifest.observe(step, &index)
+	}
 	markAttemptTerminal(manifest, nodeID, status, durableDiagnostic)
 	return cause
 }
 
-func markUnfinishedMapItemsTerminal(manifest *runjournal.Manifest, nodeID, status string) {
+func markUnfinishedMapItemsTerminal(manifest *localJournal, nodeID, status string) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil || step.Items == nil {
 		return
@@ -1563,7 +1575,7 @@ func markUnfinishedMapItemsTerminal(manifest *runjournal.Manifest, nodeID, statu
 	}
 }
 
-func markAttemptRunning(manifest *runjournal.Manifest, nodeID string, attempt int, input runjournal.DataArtifact) {
+func markAttemptRunning(manifest *localJournal, nodeID string, attempt int, input runjournal.DataArtifact) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil {
 		return
@@ -1578,32 +1590,35 @@ func markAttemptRunning(manifest *runjournal.Manifest, nodeID string, attempt in
 
 // markAttemptRetrying closes the latest attempt as failed while the step stays
 // running until a later attempt settles it.
-func markAttemptRetrying(manifest *runjournal.Manifest, nodeID, diagnostic string) {
+func markAttemptRetrying(manifest *localJournal, nodeID, diagnostic string) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil {
 		return
 	}
+	defer manifest.observe(step, nil)
 	if last := lastAttempt(step.Attempts); last != nil {
 		last.Status, last.Diagnostic = StatusFailed, diagnostic
 	}
 }
 
-func markAttemptSucceeded(manifest *runjournal.Manifest, nodeID string, output runjournal.PublishedArtifact) {
+func markAttemptSucceeded(manifest *localJournal, nodeID string, output runjournal.PublishedArtifact) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil {
 		return
 	}
+	defer manifest.observe(step, nil)
 	step.Status = StatusSucceeded
 	last := lastAttempt(step.Attempts)
 	last.Status = StatusSucceeded
 	last.Output = &output
 }
 
-func markAttemptTerminal(manifest *runjournal.Manifest, nodeID, status, diagnostic string) {
+func markAttemptTerminal(manifest *localJournal, nodeID, status, diagnostic string) {
 	step := findManifestStep(manifest, nodeID)
 	if step == nil {
 		return
 	}
+	defer manifest.observe(step, nil)
 	step.Status = status
 	if len(step.Attempts) == 0 {
 		step.Attempts = []runjournal.Attempt{{Attempt: 1, Status: status, Diagnostic: diagnostic}}
@@ -1614,18 +1629,19 @@ func markAttemptTerminal(manifest *runjournal.Manifest, nodeID, status, diagnost
 	last.Diagnostic = diagnostic
 }
 
-func markStepSkipped(manifest *runjournal.Manifest, nodeID string, reason runjournal.SkipReason) {
+func markStepSkipped(manifest *localJournal, nodeID string, reason runjournal.SkipReason) {
 	for index := range manifest.Steps {
 		if manifest.Steps[index].NodeID != nodeID {
 			continue
 		}
 		manifest.Steps[index].Status = StatusSkipped
 		manifest.Steps[index].SkipReason = &reason
+		manifest.observe(&manifest.Steps[index], nil)
 		return
 	}
 }
 
-func markDecisionFailed(manifest *runjournal.Manifest, nodeID string, diagnostic string) {
+func markDecisionFailed(manifest *localJournal, nodeID string, diagnostic string) {
 	manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
 		NodeID:     nodeID,
 		Status:     "failed",
@@ -1633,7 +1649,7 @@ func markDecisionFailed(manifest *runjournal.Manifest, nodeID string, diagnostic
 	})
 }
 
-func markDecisionSkipped(manifest *runjournal.Manifest, nodeID string, reason runjournal.SkipReason) {
+func markDecisionSkipped(manifest *localJournal, nodeID string, reason runjournal.SkipReason) {
 	manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
 		NodeID:     nodeID,
 		Status:     StatusSkipped,

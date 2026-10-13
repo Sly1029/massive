@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/runevent"
 	"github.com/Sly1029/massive/internal/runjournal"
 )
 
@@ -58,6 +59,9 @@ type SourcePackageFile struct {
 }
 
 type RunHooks struct {
+	// OnRunEvent observes journal transitions synchronously. It must not mutate
+	// execution state. Observers own delivery errors; they cannot change outcomes.
+	OnRunEvent          func(runevent.Event)
 	AfterStepInvocation func(context.Context, StepInvocationDescriptor) error
 }
 
@@ -145,6 +149,10 @@ type StepInvoker interface {
 type StepInvocationBatch struct {
 	Steps          []StepInvocation
 	MaxConcurrency int
+	// Invokers call these callbacks once per dispatched invocation, serializing
+	// callbacks across workers. Finished runs before InvokeSteps returns.
+	OnStarted  func(StepInvocationDescriptor)
+	OnFinished func(StepInvocationOutcome)
 }
 
 type StepInvocation struct {

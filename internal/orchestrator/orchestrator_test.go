@@ -1139,6 +1139,9 @@ func (i *functionalStepInvoker) InvokeSteps(ctx context.Context, batch StepInvoc
 	outcomes := make([]StepInvocationOutcome, 0, len(batch.Steps))
 	for _, step := range batch.Steps {
 		descriptor := step.Descriptor
+		if batch.OnStarted != nil {
+			batch.OnStarted(descriptor)
+		}
 		i.descriptors = append(i.descriptors, descriptor)
 		inputObject, err := store.Get(ctx, datastore.MustKey(descriptor.Input.Artifact.Key))
 		if err != nil {
@@ -1171,6 +1174,9 @@ func (i *functionalStepInvoker) InvokeSteps(ctx context.Context, batch StepInvoc
 			Scope:   descriptor.Scope,
 			Status:  StatusSucceeded,
 		})
+		if batch.OnFinished != nil {
+			batch.OnFinished(outcomes[len(outcomes)-1])
+		}
 	}
 	return outcomes, nil
 }

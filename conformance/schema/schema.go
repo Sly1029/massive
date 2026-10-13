@@ -79,3 +79,8 @@ var MapItemFailureSchemaJSON []byte
 //
 //go:embed execution-evidence.schema.json
 var ExecutionEvidenceSchemaJSON []byte
+
+// RunEventSchemaJSON defines local NDJSON lifecycle events.
+//
+//go:embed run-event.schema.json
+var RunEventSchemaJSON []byte

@@ -167,6 +167,7 @@ func Emit(ctx context.Context, entry string, scope environment.Scope) (*Frontend
 }
 
 type LocalRunRequest struct {
+	Hooks    orchestrator.RunHooks
 	Frontend *FrontendResult
 	Input    []byte
 	Store    string
@@ -240,6 +241,7 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 		RunnerWorkingDir:  request.Frontend.PackageRoot,
 		SourcePackageRoot: request.Frontend.PackageRoot,
 		SourceManifests:   sourceManifests(request.Frontend.Spec, request.Frontend.PackageRoot),
+		Hooks:             request.Hooks,
 	}, request.Input)
 	if runErr != nil {
 		return &LocalRunResult{Run: runResultFromError(runErr), Plan: compiled, Reused: reused, Store: storeRoot}, runErr
