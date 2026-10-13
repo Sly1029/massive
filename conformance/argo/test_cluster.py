@@ -881,7 +881,7 @@ class DecisionConformance(unittest.TestCase):
             templates,
             ["map-collect-square", "map-expand-square"]
             + ["map-item-square"] * 3
-            + ["massive-fatal-watcher", "step-items", "step-total"],
+            + ["step-items", "step-total"],
         )
         for pod in pods:
             template = nodes[
@@ -1044,7 +1044,7 @@ class DecisionConformance(unittest.TestCase):
     ) -> None:
         run = self.completed("fatal-map")
         self.assertEqual(run["status"]["phase"], "Failed", run["status"])
-        self.assertEqual(run["spec"]["shutdown"], "Stop")
+        self.assertNotIn("shutdown", run["spec"])
         items = self.pods(run, "map-item-guarded")
         self.assertGreaterEqual(len(items), 2)
         # The S3 handshake proves a sibling reached author code before the fatal.
@@ -1057,15 +1057,10 @@ class DecisionConformance(unittest.TestCase):
             [node["phase"] for node in self.pods(run, "exit-notify")], ["Succeeded"]
         )
         (outcome,) = self.outcomes(run, "notify")
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["failed_node"], "guarded")
         self.assertEqual(
-            (
-                outcome["status"],
-                outcome["failed_node"],
-                outcome["failure_kind"],
-                outcome["category"],
-                outcome["message"],
-            ),
-            ("failed", "guarded", "fatal", "budget.exhausted", "Spend limit reached"),
+            outcome["fatal"], {"message": "Input is invalid", "type": "input.invalid"}
         )
         pods = kubectl(
             "get",
@@ -1075,6 +1070,40 @@ class DecisionConformance(unittest.TestCase):
             "-o",
             "json",
         )["items"]
+        # Find the physical pod whose author log proves it started, then prove
+        # cooperative cancellation ended its main process before the sleep.
+        sibling = next(
+            pod
+            for pod in pods
+            if "sibling 1 started"
+            in subprocess.run(
+                [
+                    os.environ.get("KUBECTL", "kubectl"),
+                    "-n",
+                    "argo",
+                    "logs",
+                    pod["metadata"]["name"],
+                    "-c",
+                    "main",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            ).stdout
+        )
+        termination = next(
+            container["state"]["terminated"]
+            for container in sibling["status"]["containerStatuses"]
+            if container["name"] == "main"
+        )
+        self.assertEqual(termination["exitCode"], 69, termination)
+        from datetime import datetime
+
+        elapsed = datetime.fromisoformat(
+            termination["finishedAt"].replace("Z", "+00:00")
+        ) - datetime.fromisoformat(termination["startedAt"].replace("Z", "+00:00"))
+        self.assertLess(elapsed.total_seconds(), 120, termination)
         self.assertTrue(
             any(
                 container.get("state", {}).get("terminated", {}).get("exitCode") == 69
@@ -1090,14 +1119,10 @@ class DecisionConformance(unittest.TestCase):
         self.assertEqual(run["status"]["phase"], "Failed", run["status"])
         self.assertEqual(len(self.pods(run, "step-refuse")), 1)
         (outcome,) = self.outcomes(run, "notify")
+        self.assertEqual(outcome["failed_node"], "refuse")
         self.assertEqual(
-            (
-                outcome["failed_node"],
-                outcome["failure_kind"],
-                outcome["category"],
-                outcome["message"],
-            ),
-            ("refuse", "fatal", "credential.revoked", "Credential revoked"),
+            outcome["fatal"],
+            {"message": "Upstream source unavailable", "type": "source.unavailable"},
         )
         self.assertNotIn("SECRET", self.main_log(run))
 

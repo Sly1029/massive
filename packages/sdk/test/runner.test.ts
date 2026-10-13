@@ -417,22 +417,21 @@ Deno.test("runner reports NonRetryableError subclasses with exit 67", async () =
 });
 
 Deno.test("fatal signals validate safe cause and propagate through a real runner process", async () => {
-  for (
-    const category of [
-      "",
-      "Budget",
-      "policy violation",
-      "a".repeat(65),
-      "secret\n",
-    ]
-  ) {
-    assertThrows(() => new FatalRunError(category, "Safe message"));
+  const error = new FatalRunError("🚀".repeat(1025), "t".repeat(65));
+  assertEquals(error instanceof NonRetryableError, true);
+  assertEquals(error.message, "🚀".repeat(1024));
+  assertEquals(error.type, "t".repeat(64));
+  assertEquals(new FatalRunError("Safe message").type, undefined);
+  const unprintable = {
+    toString() {
+      throw new Error("cannot format");
+    },
+  };
+  for (const value of [null, 7, unprintable]) {
+    const error = new FatalRunError(value, value);
+    assertEquals(error.message, "Fatal run failure");
+    assertEquals(error.type, undefined);
   }
-  assertThrows(() => new FatalRunError("budget.exhausted", "a".repeat(1025)));
-  assertEquals(
-    new FatalRunError("budget.exhausted", "🚀".repeat(1024)).message,
-    "🚀".repeat(1024),
-  );
   await withRunnerFixture(
     { input: { value: 1 }, stepExport: "abortRun" },
     async ({ descriptorPath }) => {
@@ -457,8 +456,8 @@ Deno.test("fatal signals validate safe cause and propagate through a real runner
       );
       assertEquals(failure, {
         exitCode: 69,
-        category: "retention.refused",
-        message: "Retention policy refused processing",
+        type: "input.invalid",
+        message: "Input is invalid",
       });
     },
   );

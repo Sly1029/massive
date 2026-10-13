@@ -112,7 +112,10 @@ const FatalRunExitCode = 69
 type FatalRunError struct{ Failure runjournal.FatalFailure }
 
 func (e *FatalRunError) Error() string {
-	return "fatal run failure [" + e.Failure.Category + "]: " + e.Failure.Message
+	if e.Failure.Type != "" {
+		return "fatal run failure [" + e.Failure.Type + "]: " + e.Failure.Message
+	}
+	return "fatal run failure: " + e.Failure.Message
 }
 
 type RunError struct {

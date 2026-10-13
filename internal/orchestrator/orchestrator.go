@@ -180,9 +180,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		defer func() {
 			outcome := RunOutcome{RunID: runID, Status: manifest.Status, StartedAt: OutcomeTime(startedAt), FinishedAt: OutcomeTime(time.Now())}
 			if manifest.Failure != nil {
-				outcome.FailureKind = &manifest.Failure.Kind
-				outcome.Category = &manifest.Failure.Category
-				outcome.Message = &manifest.Failure.Message
+				outcome.Fatal = &FatalFailure{Message: manifest.Failure.Message, Type: manifest.Failure.Type}
 				outcome.FailedNode = &manifest.Failure.NodeID
 			}
 			if manifest.Status == StatusFailed && outcome.FailedNode == nil {
@@ -1140,7 +1138,10 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		}
 		if invokeErr != nil {
 			diagnostic := "map invocation infrastructure failed"
-			if ctx.Err() != nil && errors.Is(invokeErr, ctx.Err()) {
+			var fatal *FatalRunError
+			if errors.As(invokeErr, &fatal) {
+				diagnostic = fatal.Error()
+			} else if ctx.Err() != nil && errors.Is(invokeErr, ctx.Err()) {
 				diagnostic = "map execution cancelled"
 			}
 			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), diagnostic, invokeErr)
@@ -1424,8 +1425,8 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 	}
 	return runjournal.Manifest{
 		Kind:          "RunManifest",
-		SchemaVersion: 5,
-		Encoding:      "json-v5",
+		SchemaVersion: 6,
+		Encoding:      "json-v6",
 		PlanHash:      planHash,
 		ProjectKey:    projectKey,
 		RunID:         runID,
@@ -1694,7 +1695,7 @@ func runnerFailureSummary(outcome StepInvocationOutcome, fallback string) string
 	case runnerExitStepExecution:
 		label = "step-execution-failure"
 	case FatalRunExitCode:
-        label = "fatal-run-failure"
+		label = "fatal-run-failure"
 	case runnerExitNonRetryable:
 		label = "non-retryable-step-failure"
 	}

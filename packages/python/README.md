@@ -282,33 +282,31 @@ succeed. A step calling `sys.exit()` is an ordinary, retried step failure. `ctx.
 current attempt, while `ctx.invocation.idempotency_key` stays the same across
 attempts so a retry can recognize side effects an earlier attempt committed.
 
-Raise `FatalRunError(category, message)` when a policy must stop the entire run,
-for example an exhausted spend budget, a refused retention gate, or a revoked
-credential:
+Raise `FatalRunError(message, type=None)` when an author failure must stop the
+entire run:
 
 ```python
 from massive import FatalRunError
 
-if budget.exhausted:
-    raise FatalRunError("budget.exhausted", "Spend limit reached")
+if not input_is_valid:
+    raise FatalRunError("Input is invalid", type="input.invalid")
 ```
 
-The category is a stable identifier matching `[a-z][a-z0-9_.-]{0,63}`; the
-explicit message is limited to 1,024 Unicode characters. Both must be safe to
-persist. Chained exceptions and exception-group text are omitted; to include
-exception details, explicitly put safe details in the message. A fatal signal
-is never retried or collected by `item_failures="collect"`. Local execution
+`FatalRunError` derives from `NonRetryableError`. Its explicitly safe message is
+truncated to 1,024 Unicode characters, and its optional type to 64. The constructor
+never rejects an input: non-string messages use a safe fallback and non-string
+types are omitted. Exception chains and exception-group text are omitted. A fatal
+signal is never retried or collected by `item_failures="collect"`. Local execution
 stops dispatch and cancels running sibling process groups, retaining verified
-completed outputs. The failed run journal and `massive run --json` carry a typed
-`failure` with `kind="fatal"`, category, message, and node ID; the CLI exits 69.
+completed outputs. The v6 journal and `massive run --json` carry `failure` with
+message, optional type, and node ID; the CLI exits 69. Older journals require a
+rebuild and a new run.
 
-On Argo, each author invocation checks a run-scoped fatal marker before running.
-A control-only daemon polls that marker and requests workflow `shutdown: Stop`,
-which cancels sibling pods and preserves `onExit`. Cancellation takes effect
-as the controller reconciles the workflow. Its service account needs Workflow
-`patch` permission in addition to the collecting-map reader permissions; the
-daemon checks permission before author dispatch. Author pods receive no API
-token. Exit hooks receive the same safe fatal cause on both targets.
+On Argo, author invocations check a run-scoped datastore marker before dispatch
+and poll it during execution, cancelling the runner context when a valid cause
+appears. Read errors back off and retry. Pending collecting-map pods may start
+and immediately exit 69. No watcher or Workflow patch permission is required;
+the exit hook remains available and receives the first safe cause.
 
 ### Step hooks
 
@@ -392,9 +390,8 @@ graph.on_exit(notify, timeout=timedelta(minutes=5))
 
 `RunOutcome` carries `run_id`, `status` (`succeeded`, `failed`, or
 `cancelled`), `failed_node` (the node whose failure ended a failed run, when
-known), `started_at`, and `finished_at`. It also carries `failure_kind`,
-`category`, and `message`: all are null for other outcomes; fatal outcomes have
-`failure_kind="fatal"` and the author-supplied safe cause. The hook is an ordinary top-level
+known), `started_at`, and `finished_at`. Its `fatal` is null for other outcomes
+and otherwise contains the author-supplied safe `message` and optional `type`. The hook is an ordinary top-level
 function with its own contract, secrets, and timeout, and it must return
 `None`. Every hook has a finite timeout: an explicit or inherited timeout is
 used, otherwise registration assigns five minutes. Compiled plans without a

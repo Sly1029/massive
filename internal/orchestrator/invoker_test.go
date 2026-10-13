@@ -266,7 +266,7 @@ func TestReadRunnerMessageValidatesBoundedStructuredResults(t *testing.T) {
 				if err != nil || message != strings.Repeat("🚀", 1024) {
 					t.Fatalf("astral message length = %d, error = %v", len(message), err)
 				}
-			} else if name == "valid" {
+			} else if name == "valid" || name == "no type" {
 				if err != nil || message != "real failure" {
 					t.Fatalf("message = %q, error = %v", message, err)
 				}
@@ -279,14 +279,14 @@ func TestReadRunnerMessageValidatesBoundedStructuredResults(t *testing.T) {
 
 func TestFatalRunnerRecordIsRequiredAndValidated(t *testing.T) {
 	for name, body := range map[string]string{
-		"valid":            `{"exitCode":69,"category":"budget.exhausted","message":"Safe cause"}`,
-		"missing":          "",
-		"no category":      `{"exitCode":69,"message":"Safe cause"}`,
-		"invalid category": `{"exitCode":69,"category":"Secret value","message":"Safe cause"}`,
-		"long category":    `{"exitCode":69,"category":"` + strings.Repeat("a", 65) + `","message":"Safe cause"}`,
-		"long message":     `{"exitCode":69,"category":"policy","message":"` + strings.Repeat("a", 1025) + `"}`,
-		"wrong exit":       `{"exitCode":67,"message":"Safe cause"}`,
-		"extra exception":  `{"exitCode":69,"category":"policy","message":"Safe cause","exception":"SECRET"}`,
+		"valid":           `{"exitCode":69,"type":"input.invalid","message":"Safe cause"}`,
+		"missing":         "",
+		"no type":         `{"exitCode":69,"message":"Safe cause"}`,
+		"invalid type":    `{"exitCode":69,"type":7,"message":"Safe cause"}`,
+		"long type":       `{"exitCode":69,"type":"` + strings.Repeat("a", 65) + `","message":"Safe cause"}`,
+		"long message":    `{"exitCode":69,"type":"input.invalid","message":"` + strings.Repeat("a", 1025) + `"}`,
+		"wrong exit":      `{"exitCode":67,"message":"Safe cause"}`,
+		"extra exception": `{"exitCode":69,"type":"input.invalid","message":"Safe cause","exception":"SECRET"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "descriptor.json")
@@ -296,8 +296,8 @@ func TestFatalRunnerRecordIsRequiredAndValidated(t *testing.T) {
 				}
 			}
 			result, err := readRunnerFailure(path, FatalRunExitCode)
-			if name == "valid" {
-				if err != nil || result.Category != "budget.exhausted" || result.Message != "Safe cause" {
+			if name == "valid" || name == "no type" {
+				if err != nil || (name == "valid" && result.Type != "input.invalid") || result.Message != "Safe cause" {
 					t.Fatalf("fatal record: %+v %v", result, err)
 				}
 			} else if err == nil {

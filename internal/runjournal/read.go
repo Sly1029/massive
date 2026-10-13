@@ -41,7 +41,7 @@ func Parse(data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("invalid run journal JSON: %w", err)
 	}
 	if err := schemas.manifest.Validate(value); err != nil {
-		return nil, fmt.Errorf("unsupported or malformed run journal; create a new run with the current SDK: %w", err)
+		return nil, fmt.Errorf("unsupported or malformed run journal; rebuild with the current SDK and create a new run: %w", err)
 	}
 	var manifest Manifest
 	if err := json.Unmarshal(data, &manifest); err != nil {

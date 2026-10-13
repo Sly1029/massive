@@ -835,21 +835,18 @@ invocation and verifies that other pods never receive its environment entry.
 
 ### Fatal run cancellation
 
-Author `FatalRunError(category, message)` exits 69, bypassing retries and map
-outcome collection. The runtime publishes a schema-validated `fatal.json` under
-the run namespace with first-writer ownership. A control-only daemon checks
-Workflow patch permission with a dry-run before becoming ready, then polls the
-marker and requests `spec.shutdown: Stop`. Author templates gate dispatch on the
-daemon and check the marker before invoking a runner. Only the daemon and
-collecting-map reader mount Kubernetes API tokens; the daemon needs Workflow
-`patch` in the execution namespace. The exit runtime reads the durable marker
-for its safe cause and originating node, including when sibling cancellation
-changes the controller's failure attribution.
+Author `FatalRunError(message, type?)`, a `NonRetryableError` subtype, exits 69
+and bypasses retries and map outcome collection. The runtime publishes a bounded,
+schema-validated `fatal.json` under the run namespace with first-writer ownership.
+Every step and map-item runtime checks the marker before dispatch, then polls
+it during execution at jittered intervals of 1–5 seconds. A valid cause cancels
+the context used by the isolated runner, stopping its process group. Read errors
+back off and retry; they never establish a fatal run.
 
-In [Argo v3.7.16 execution control](https://github.com/argoproj/argo-workflows/blob/v3.7.16/workflow/controller/exec_control.go),
-Stop terminates running non-exit containers, and
-[shutdown scheduling](https://github.com/argoproj/argo-workflows/blob/v3.7.16/pkg/apis/workflow/v1alpha1/workflow_types.go)
-permits only exit-handler pods. Terminate would skip the hook; DAG failFast
-alone would wait for in-flight children. Stop therefore preserves cleanup while
-cancelling work. This is asynchronous controller cancellation, not transactional
-rollback of external effects or instant prevention of every pod creation.
+Pending collecting-map items may start a pod and immediately exit 69. Existing
+Argo retry expressions reject that exit. Cooperative cancellation needs no
+watcher, Workflow patch permission, or Kubernetes API token in author pods.
+The ordinary exit handler remains available and reads the marker for its safe
+cause and originating node, even when sibling termination changes the controller's
+failure attribution. The hook is exempt from the guard and polling; its own
+fatal error stays a hook failure. Cancellation does not roll back external effects.

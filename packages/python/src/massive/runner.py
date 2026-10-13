@@ -234,7 +234,7 @@ class _ResolvedStep:
 
 
 def run_descriptor_path(path: Path, termination_log: Path | None = None) -> int:
-    category: str | None = None
+    failure_type: str | None = None
     try:
         _write_execution_phase(termination_log, "hydrate")
         descriptor = _load_descriptor(path)
@@ -242,7 +242,7 @@ def run_descriptor_path(path: Path, termination_log: Path | None = None) -> int:
         return 0
     except FatalRunError as error:
         label, message, code = "fatal-run-failure", str(error), 69
-        category = error.category
+        failure_type = error.type
     except DescriptorError as error:
         label, message, code = "descriptor-resolution-failure", str(error), _DESCRIPTOR_EXIT
     except SchemaError as error:
@@ -262,7 +262,11 @@ def run_descriptor_path(path: Path, termination_log: Path | None = None) -> int:
                     {
                         "exitCode": code,
                         "message": message[:1024],
-                        **({"category": category} if code == 69 else {}),
+                        **(
+                            {"type": failure_type}
+                            if code == 69 and failure_type is not None
+                            else {}
+                        ),
                     },
                     ensure_ascii=True,
                 ),

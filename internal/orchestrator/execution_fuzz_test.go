@@ -258,7 +258,7 @@ func (e *generatedExecutor) invoke(ctx context.Context, step StepInvocation, max
 		outcome.ExitCode = graphgen.ExitKilled
 	case graphgen.FailFatal:
 		outcome.ExitCode = graphgen.ExitFatal
-		outcome.Fatal = &runjournal.FatalFailure{Kind: "fatal", Category: "policy.limit", Message: "Run limit reached", NodeID: node.ID}
+		outcome.Fatal = &runjournal.FatalFailure{Type: "input.invalid", Message: "Input is invalid", NodeID: node.ID}
 	case graphgen.FailNonRetryable:
 		outcome.ExitCode = graphgen.ExitNonRetryable
 	case graphgen.FailSchema:

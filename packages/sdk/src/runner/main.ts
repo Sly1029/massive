@@ -55,8 +55,9 @@ if (
         const path = descriptorPath + ".failure.json";
         const record = JSON.stringify({
           exitCode: outcome.exitCode,
-          ...(outcome.kind === "fatal-run-failure"
-            ? { category: outcome.error.category }
+          ...(outcome.kind === "fatal-run-failure" &&
+              outcome.error.type !== undefined
+            ? { type: outcome.error.type }
             : {}),
           message: Array.from(
             outcome.kind === "fatal-run-failure"

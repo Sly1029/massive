@@ -25,6 +25,8 @@ Its outcome schema is hand-spelled in Pydantic's `$ref` form so the compiler's
 annotation-insensitive comparison is exercised, not only exact equality.
 
 Fatal scripts consume bytes after the existing faults and collection policies,
-so earlier seeds retain their meaning. The interpreter stops a fatal map round
+so earlier seeds retain their meaning. Script any retry attempt and make earlier
+attempts retryable; include fatal signals while siblings await backoff. The
+interpreter stops a fatal map round
 at the signal, preserves completed items, and leaves undispatched items blocked;
 collecting maps cannot turn this fault into an item outcome.

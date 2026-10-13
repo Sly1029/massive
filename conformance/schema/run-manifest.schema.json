@@ -73,11 +73,11 @@
     },
     "version": {
       "type": "number",
-      "const": 5
+      "const": 6
     },
     "encoding": {
       "type": "string",
-      "const": "json-v5"
+      "const": "json-v6"
     },
     "planHash": {
       "type": "string"
@@ -1235,13 +1235,6 @@
     "fatalFailure": {
       "type": "object",
       "properties": {
-        "kind": {
-          "const": "fatal"
-        },
-        "category": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
-        },
         "message": {
           "type": "string",
           "maxLength": 1024
@@ -1257,11 +1250,13 @@
               ".."
             ]
           }
+        },
+        "type": {
+          "type": "string",
+          "maxLength": 64
         }
       },
       "required": [
-        "kind",
-        "category",
         "message",
         "nodeId"
       ],
@@ -1269,5 +1264,5 @@
     }
   },
   "$id": "https://massive.dev/conformance/schema/run-manifest.schema.json",
-  "title": "RunManifest v4"
+  "title": "RunManifest v6"
 }

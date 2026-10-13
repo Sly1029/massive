@@ -44,7 +44,7 @@ Implemented:
 - Dependency preflight checks the launching interpreter before importing author
   code: `requires-python`, direct requirements, shadowed distributions and
   modules, the SDK release, and with `uv.lock` an offline check that the locked
-  runtime set is installed. Local run journals (v5) bind the content-addressed
+  runtime set is installed. Local run journals (v6) bind the content-addressed
   `RealizedEnvironment` and its requirement/realization identities, shown by
   `massive inspect --environment`. Each Argo attempt checks its image against the
   archived project before author code runs (exit 68, not retried) and records
@@ -81,10 +81,10 @@ for what works today.
   failing the map, so siblings' results survive and a downstream step decides.
   The local executor journals each failed item; Argo builds the same outcomes,
   including for a real out-of-memory kill of the item pod.
-- `FatalRunError(category, message)` bypasses retries and collecting maps,
+- `FatalRunError(message, type?)` bypasses retries and collecting maps,
   stops dispatch, cancels in-flight siblings, and supplies an explicitly safe
-  typed cause to the terminal journal, run JSON, and exit hook. Argo uses a
-  control daemon and workflow `Stop` to preserve `onExit` while cancelling pods.
+  cause to the terminal v6 journal, run JSON, and exit hook. Argo runtime
+  invocations cooperatively cancel running siblings through a datastore marker.
 - Persist bounded task logs and structured lifecycle events. Inspection is available
   in the shipped Go CLI; the Deno CLI has been removed.
 - Treat external side effects separately from immutable artifact publication:

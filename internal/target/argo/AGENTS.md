@@ -92,12 +92,10 @@ phase evidence fails the run. Preserve the reconciliation diagnostic so live
 OOM conformance proves it exercised a missing envelope.
 
 Fatal author failures publish the first bounded, schema-validated run-scoped
-cause before pod exit 69; retries and outcome collection reject that exit.
-The control-only daemon checks Workflow patch permission before readiness,
-then polls the datastore marker and patches `shutdown: Stop`. Argo v3.7.16
-execution control cancels non-exit pods and prevents new dispatch under Stop,
-while permitting onExit. Keep API tokens off author pods. Gate new invocations
-on the durable marker, and read it for exit-hook attribution rather than using
-cancelled sibling status. The hook may execute despite that marker; its own
-failure cannot publish a new run cause. Preserve this behavior with live S3
-handshake cases, since failFast alone waits for running loop children.
+cause before exit 69; retries and outcome collection reject that exit. Runtime
+step and map-item processes poll the datastore marker and cancel their isolated
+runner context. Pending collecting-map pods may start and immediately exit 69
+at the pre-dispatch guard. No watcher, Workflow patch permission, or author API
+token is needed. Read the marker for exit-hook attribution; exempt the hook from
+cancellation and prevent its own failure from publishing a new run cause. Preserve
+this behavior with live S3 handshake cases proving a started sibling stops early.

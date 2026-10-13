@@ -73,7 +73,7 @@ metadata:
 rules:
 - apiGroups: ["argoproj.io"]
   resources: ["workflows"]
-  verbs: ["get", "patch"]
+  verbs: ["get"]
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["list"]

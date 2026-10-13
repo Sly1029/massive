@@ -356,7 +356,11 @@ func scriptFatal(c *choices, w *Workflow) {
 	if node.Kind == spec.NodeKindMap {
 		item = c.intn(maxMapItems + 1)
 	}
-	w.Faults[Invocation{NodeID: node.ID, Item: item, Attempt: 1}] = FailFatal
+	attempt := 1 + c.intn(node.MaxAttempts)
+	for prior := 1; prior < attempt; prior++ {
+		w.Faults[Invocation{NodeID: node.ID, Item: item, Attempt: prior}] = FailRetryable
+	}
+	w.Faults[Invocation{NodeID: node.ID, Item: item, Attempt: attempt}] = FailFatal
 }
 
 // choices reads fuzz bytes as bounded decisions. Exhausted input reads as

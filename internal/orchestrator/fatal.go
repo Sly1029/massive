@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
+	"time"
 
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
@@ -12,7 +14,7 @@ import (
 )
 
 // FatalRunKey is run-scoped; a remote target publishes the first safe fatal cause
-// before signalling its scheduler. No author logs or exception chains enter it.
+// before stopping sibling invocations. No author logs or exception chains enter it.
 func FatalRunKey(project, runID string) (datastore.Key, error) {
 	if !ValidSafePathSegment(runID) {
 		return datastore.Key{}, fmt.Errorf("invalid fatal run id")
@@ -58,4 +60,41 @@ func ReadFatalRun(ctx context.Context, store datastore.Datastore, key datastore.
 		return nil, fmt.Errorf("fatal cause exceeds size limit")
 	}
 	return runjournal.ParseFatalFailure(body)
+}
+
+// WithFatalRunCancellation cooperatively stops an invocation when another
+// invocation publishes the run's safe cause. Read failures back off and retry;
+// they never establish a fatal run. The returned stop waits for polling to end.
+func WithFatalRunCancellation(parent context.Context, store datastore.Datastore, key datastore.Key) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		backoff := time.Second
+		for {
+			timer := time.NewTimer(time.Second + time.Duration(rand.Int64N(int64(backoff))))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			readCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+			fatal, err := ReadFatalRun(readCtx, store, key)
+			stop()
+			if err != nil {
+				backoff = min(4*time.Second, 2*backoff)
+				continue
+			}
+			backoff = time.Second
+			if fatal != nil {
+				cancel(&FatalRunError{Failure: *fatal})
+				return
+			}
+		}
+	}()
+	return ctx, func() {
+		cancel(context.Canceled)
+		<-done
+	}
 }

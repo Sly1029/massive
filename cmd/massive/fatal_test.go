@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Sly1029/massive/internal/executionphase"
 	"github.com/Sly1029/massive/internal/orchestrator"
@@ -29,12 +31,17 @@ func TestArgoFatalRuntimePublishesSafeCauseGuardsDispatchAndInvokesHook(t *testi
 	outcomePath := filepath.Join(root, "outcome.json")
 	authorPath := filepath.Join(root, "started")
 	if err := os.WriteFile(source, []byte(fmt.Sprintf(`from pathlib import Path
+import time
 from massive import FatalRunError, GraphBuilder, MapItemOutcome, RunOutcome, StepContext, container, execution, retry
 
 def refuse(ctx: StepContext[int]) -> int:
     Path(%q).write_text(str(ctx.inputs))
     if ctx.inputs == 0:
-        raise FatalRunError("retention.refused", "Retention gate refused processing") from RuntimeError("SECRET exception chain")
+        raise FatalRunError("Input is invalid", "input.invalid") from RuntimeError("SECRET exception chain")
+    if ctx.inputs == 1:
+        Path(%q).touch()
+        time.sleep(60)
+        Path(%q).touch()
     return ctx.inputs
 
 def notify(ctx: StepContext[RunOutcome]) -> None:
@@ -50,7 +57,7 @@ mapped = GraphBuilder(name="fatal-map", input_type=list[int], output_type=int, d
 outcomes = mapped.map(mapped.start, refuse, id="refuse", item_failures="collect", concurrency=2)
 mapped.edge_from(outcomes).to(mapped.add(collect)).to_end(mapped.end)
 mapped.on_exit(notify)
-`, authorPath, outcomePath)), 0600); err != nil {
+`, authorPath, authorPath+"-sibling", authorPath+"-completed", outcomePath)), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, collecting := range []bool{false, true} {
@@ -67,17 +74,51 @@ mapped.on_exit(notify)
 			planPath := filepath.Join(bundle, "massive-plan.json")
 			sources := RuntimeSources{BundleDir: filepath.Join(bundle, "runtime-assets")}
 			output, termination := filepath.Join(root, "result.json"), filepath.Join(root, "termination.json")
+			_ = os.Remove(authorPath + "-sibling")
+			ctx, stop := context.WithTimeout(t.Context(), 30*time.Second)
+			defer stop()
+			siblingResult := make(chan error, 1)
+			go func() {
+				if collecting {
+					siblingResult <- (&RuntimeMapItemCommand{Plan: planPath, RuntimeSources: sources, Node: "refuse", Item: `{"index":1,"value":1}`, Output: output + "-sibling", Project: "fatal-runtime", RunID: "run", DatastoreConfig: config}).Run(ctx)
+				} else {
+					siblingResult <- (&RuntimeStepCommand{Plan: planPath, RuntimeSources: sources, Node: "refuse", WorkflowInput: "1", Output: output + "-sibling", Project: "fatal-runtime", RunID: "run", DatastoreConfig: config}).Run(ctx)
+				}
+			}()
+			for {
+				if _, err := os.Stat(authorPath + "-sibling"); err == nil {
+					break
+				}
+				select {
+				case err := <-siblingResult:
+					t.Fatalf("sibling exited before author handshake: %v", err)
+				case <-ctx.Done():
+					t.Fatal("sibling did not reach author code")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
 			if collecting {
 				err = (&RuntimeMapItemCommand{Plan: planPath, RuntimeSources: sources, Node: "refuse", Item: `{"index":0,"value":0}`, Output: output, Project: "fatal-runtime", RunID: "run", DatastoreConfig: config, TerminationLog: termination}).Run(t.Context())
 				if string(readFile(t, output)) != valueparam.FatalItemEnvelope {
 					t.Fatal("fatal collected as outcome")
 				}
 			} else {
-				err = (&RuntimeStepCommand{Plan: planPath, RuntimeSources: sources, Node: "refuse", WorkflowInput: "0", Output: output, Project: "fatal-runtime", RunID: "run", DatastoreConfig: config, TerminationLog: termination}).Run(t.Context())
+				err = (&RuntimeStepCommand{Plan: planPath, RuntimeSources: sources, Node: "refuse", WorkflowInput: "0", Output: output, Project: "fatal-runtime", RunID: "run", DatastoreConfig: config}).Run(t.Context())
 			}
 			var fatal *orchestrator.FatalRunError
 			if !errors.As(err, &fatal) || exitCodeFor(err) != 69 {
 				t.Fatalf("fatal runtime exit: %v", err)
+			}
+			select {
+			case siblingErr := <-siblingResult:
+				if !errors.As(siblingErr, &fatal) || exitCodeFor(siblingErr) != 69 {
+					t.Fatalf("sibling cancellation: %v", siblingErr)
+				}
+			case <-ctx.Done():
+				t.Fatal("fatal marker did not cancel started sibling")
+			}
+			if _, err := os.Stat(authorPath + "-completed"); !os.IsNotExist(err) {
+				t.Fatal("sibling completed")
 			}
 			codec, _, err := openRuntimeDatastore(t.Context(), config)
 			if err != nil {
@@ -91,9 +132,11 @@ mapped.on_exit(notify)
 			if err != nil || cause == nil || *cause != fatal.Failure {
 				t.Fatalf("durable cause: %+v %v", cause, err)
 			}
-			evidence, err := executionphase.Parse(string(readFile(t, termination)))
-			if err != nil || !evidence.Fatal {
-				t.Fatalf("fatal termination evidence: %+v %v", evidence, err)
+			if collecting {
+				evidence, err := executionphase.Parse(string(readFile(t, termination)))
+				if err != nil || !evidence.Fatal {
+					t.Fatalf("fatal termination evidence: %+v %v", evidence, err)
+				}
 			}
 			// A later pod must reject the marker before entering author code.
 			err = (&RuntimeStepCommand{Plan: planPath, RuntimeSources: sources, Node: "refuse", WorkflowInput: "1", Output: output, Project: "fatal-runtime", RunID: "run", DatastoreConfig: config}).Run(t.Context())
@@ -108,23 +151,9 @@ mapped.on_exit(notify)
 			if err := json.Unmarshal(readFile(t, outcomePath), &outcome); err != nil {
 				t.Fatal(err)
 			}
-			if outcome.FailureKind == nil || *outcome.FailureKind != "fatal" || outcome.Category == nil || *outcome.Category != cause.Category || outcome.Message == nil || *outcome.Message != cause.Message || outcome.FailedNode == nil || *outcome.FailedNode != "refuse" {
+			if outcome.Fatal == nil || outcome.Fatal.Type != cause.Type || outcome.Fatal.Message != cause.Message || outcome.FailedNode == nil || *outcome.FailedNode != "refuse" {
 				t.Fatalf("fatal hook input: %+v", outcome)
 			}
 		})
-	}
-}
-
-func TestFatalWatcherProbeUsesTheRealReadinessFile(t *testing.T) {
-	ready := filepath.Join(t.TempDir(), "ready")
-	command := &RuntimeWatchFatalCommand{Probe: true, ReadyFile: ready}
-	if err := command.Run(t.Context()); !os.IsNotExist(err) {
-		t.Fatalf("premature readiness: %v", err)
-	}
-	if err := os.WriteFile(ready, []byte("ready"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := command.Run(t.Context()); err != nil {
-		t.Fatal(err)
 	}
 }

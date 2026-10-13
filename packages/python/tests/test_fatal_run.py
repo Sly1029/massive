@@ -11,9 +11,8 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
-from massive import FatalRunError
+from massive import FatalRunError, NonRetryableError
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -25,16 +24,21 @@ def fatal_cli(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return binary
 
 
-@pytest.mark.parametrize("category", ["", "Budget", "budget exceeded", "a" * 65, "secret\n"])
-def test_fatal_categories_are_stable_bounded_identifiers(category: str) -> None:
-    with pytest.raises(ValidationError):
-        FatalRunError(category, "Safe message")
+def test_fatal_constructor_bounds_text_without_throwing() -> None:
+    error = FatalRunError("🚀" * 1025, "t" * 65)
+    assert isinstance(error, NonRetryableError)
+    assert str(error) == "🚀" * 1024
+    assert error.type == "t" * 64
+    assert FatalRunError("Safe message").type is None
 
+    class Unprintable:
+        def __str__(self) -> str:
+            raise RuntimeError("cannot format")
 
-def test_fatal_message_requires_an_explicit_bounded_string() -> None:
-    with pytest.raises(ValidationError):
-        FatalRunError("budget.exhausted", "a" * 1025)
-    assert str(FatalRunError("budget.exhausted", "Safe message")) == "Safe message"
+    for value in [None, 7, Unprintable()]:
+        error = FatalRunError(value, value)
+        assert str(error) == "Fatal run failure"
+        assert error.type is None
 
 
 @pytest.mark.parametrize("collect,group", [(False, False), (True, False), (True, True)])
@@ -67,7 +71,7 @@ def stop(ctx: StepContext[int]) -> int:
             while not (STATE / 'ready').exists():
                 if time.monotonic() > deadline: raise RuntimeError('handshake deadline')
                 time.sleep(.01)
-        fatal = FatalRunError('budget.exhausted', 'Spend limit reached')
+        fatal = FatalRunError('Input is invalid', 'input.invalid')
         if {group!r}:
             raise ExceptionGroup('SECRET group', [RuntimeError('SECRET sibling'), ExceptionGroup('SECRET nested', [fatal])])
         raise fatal from RuntimeError('SECRET chained cause')
@@ -135,9 +139,8 @@ graph.on_exit(notify)
                 if connection is not None:
                     connection.close()
         expected = {
-            "kind": "fatal",
-            "category": "budget.exhausted",
-            "message": "Spend limit reached",
+            "type": "input.invalid",
+            "message": "Input is invalid",
             "nodeId": "stop",
         }
         run = json.loads(stdout)
@@ -156,13 +159,9 @@ graph.on_exit(notify)
         assert not (tmp_path / "sibling-completed").exists()
         assert not (tmp_path / "downstream").exists()
         outcome = json.loads((tmp_path / "outcome.json").read_text())
-        assert (
-            outcome["status"],
-            outcome["failed_node"],
-            outcome["failure_kind"],
-            outcome["category"],
-            outcome["message"],
-        ) == ("failed", "stop", "fatal", "budget.exhausted", "Spend limit reached")
+        assert outcome["status"] == "failed"
+        assert outcome["failed_node"] == "stop"
+        assert outcome["fatal"] == {"message": "Input is invalid", "type": "input.invalid"}
         if collect:
             mapper = next(step for step in journal["steps"] if step["nodeId"] == "stop")
             assert mapper["status"] == "failed"
@@ -179,7 +178,7 @@ def test_fatal_exit_hook_does_not_change_a_successful_run(tmp_path: Path, fatal_
 def good(ctx: StepContext[int]) -> int: return ctx.inputs
 
 def notify(ctx: StepContext[RunOutcome]) -> None:
-    raise FatalRunError('notification.refused', 'Notification policy refused delivery')
+    raise FatalRunError('Upstream source unavailable', 'source.unavailable')
 
 graph = GraphBuilder(name='fatal-hook', input_type=int, output_type=int,
     defaults=execution(environment=container('example.invalid/runner@sha256:' + '0'*64)))

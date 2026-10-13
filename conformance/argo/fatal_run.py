@@ -1,4 +1,4 @@
-"""A fatal policy signal stops a collecting loop and preserves its exit hook."""
+"""A fatal author signal stops a collecting loop and preserves its exit hook."""
 
 from __future__ import annotations
 
@@ -42,9 +42,9 @@ def guarded(ctx: StepContext[int]) -> int:
                         "sibling did not reach the functional gate"
                     ) from None
                 time.sleep(0.1)
-        raise FatalRunError(
-            "budget.exhausted", "Spend limit reached"
-        ) from RuntimeError("SECRET exception chain")
+        raise FatalRunError("Input is invalid", "input.invalid") from RuntimeError(
+            "SECRET exception chain"
+        )
     print(f"sibling {ctx.inputs} started", flush=True)
     store.put_object(Bucket="my-bucket", Key=key, Body=b"ready")
     time.sleep(120)
@@ -53,9 +53,9 @@ def guarded(ctx: StepContext[int]) -> int:
 
 
 def refuse(ctx: StepContext[int]) -> int:
-    raise FatalRunError("credential.revoked", "Credential revoked") from RuntimeError(
-        "SECRET exception chain"
-    )
+    raise FatalRunError(
+        "Upstream source unavailable", "source.unavailable"
+    ) from RuntimeError("SECRET exception chain")
 
 
 def after(ctx: StepContext[list[MapItemOutcome[int]]]) -> int:
@@ -63,9 +63,12 @@ def after(ctx: StepContext[list[MapItemOutcome[int]]]) -> int:
 
 
 def notify(ctx: StepContext[RunOutcome]) -> None:
-    assert ctx.inputs.failure_kind == "fatal"
-    assert ctx.inputs.category in {"budget.exhausted", "credential.revoked"}
-    assert ctx.inputs.message in {"Spend limit reached", "Credential revoked"}
+    assert ctx.inputs.fatal is not None
+    assert ctx.inputs.fatal.type in {"input.invalid", "source.unavailable"}
+    assert ctx.inputs.fatal.message in {
+        "Input is invalid",
+        "Upstream source unavailable",
+    }
 
 
 graph = GraphBuilder(

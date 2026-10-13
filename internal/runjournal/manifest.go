@@ -20,21 +20,20 @@ type Manifest struct {
 	ExitHook *Step `json:"exitHook,omitempty"`
 }
 
-// The run journal is versioned independently of graph IR. Only v5/json-v5 is
+// The run journal is versioned independently of graph IR. Only v6/json-v6 is
 // accepted. Terminal runs distinguish cancelled attempts from undispatched work;
 // every planned step has a terminal status. Attempts are ordered and 1-based;
 // only the last attempt of a step or map item can still be running.
 
-// Environment binds a run to the dependency realization that passed preflight.
-// Record is the content-addressed RealizedEnvironment carrying both identities.
 // FatalFailure is an author-supplied safe terminal cause, never captured logs.
 type FatalFailure struct {
-	Kind     string `json:"kind"`
-	Category string `json:"category"`
-	Message  string `json:"message"`
-	NodeID   string `json:"nodeId"`
+	Message string `json:"message"`
+	Type    string `json:"type,omitempty"`
+	NodeID  string `json:"nodeId"`
 }
 
+// Environment binds a run to the dependency realization that passed preflight.
+// Record is the content-addressed RealizedEnvironment carrying both identities.
 type Environment struct {
 	RequirementHash string      `json:"requirementHash"`
 	RealizationHash string      `json:"realizationHash"`

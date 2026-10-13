@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 export class MassiveError extends Error {
   constructor(message: string) {
     super(message);
@@ -30,25 +28,27 @@ export class SourcePackagePathError extends MassiveError {
 
 // Step code throws this (or a subclass) for failures another attempt cannot
 // fix. The runner exits 67 and the orchestrator does not retry the step.
-export class FatalRunError extends Error {
-  readonly category: string;
-
-  constructor(category: string, message: string) {
-    super(
-      z.string().transform((value) => Array.from(value))
-        .pipe(z.array(z.string()).max(1024)).parse(message).join(""),
-    );
-    this.category = z.string().regex(/^[a-z][a-z0-9_.-]{0,63}$/).parse(
-      category,
-    );
-    this.name = "FatalRunError";
-  }
-}
-
 export class NonRetryableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "NonRetryableError";
+  }
+}
+
+// Stop the run, including retries and collecting maps, with a safe cause.
+export class FatalRunError extends NonRetryableError {
+  readonly type?: string;
+
+  constructor(message: unknown, type?: unknown) {
+    super(
+      typeof message === "string"
+        ? Array.from(message).slice(0, 1024).join("")
+        : "Fatal run failure",
+    );
+    this.type = typeof type === "string"
+      ? Array.from(type).slice(0, 64).join("")
+      : undefined;
+    this.name = "FatalRunError";
   }
 }
 

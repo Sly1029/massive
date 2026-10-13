@@ -37,7 +37,9 @@ export const rejectPermanently = {
 
 export const assertAttemptContext = {
   run: (({ context }) => {
-    if (context.item !== null) throw new Error("static invocation has item identity");
+    if (context.item !== null) {
+      throw new Error("static invocation has item identity");
+    }
     const expected = "massive-invocation-v2/run-runner-fixture-0001/double";
     if (context.idempotencyKey !== expected) {
       throw new Error(
@@ -57,10 +59,12 @@ export const assertMappedIdentity = {
         `unexpected idempotency identity: ${context.idempotencyKey}`,
       );
     }
-    if (JSON.stringify(context.item) !== JSON.stringify({
-      index: 3,
-      path: [{ kind: "map-item", mapId: "map-double", index: 3 }],
-    })) throw new Error("unexpected mapped item identity");
+    if (
+      JSON.stringify(context.item) !== JSON.stringify({
+        index: 3,
+        path: [{ kind: "map-item", mapId: "map-double", index: 3 }],
+      })
+    ) throw new Error("unexpected mapped item identity");
     return { value: input.value * 2 };
   }) satisfies StepRun<ValueInput, ValueOutput>,
 };
@@ -74,13 +78,15 @@ export const assertNestedMappedIdentity = {
         `unexpected idempotency identity: ${context.idempotencyKey}`,
       );
     }
-    if (JSON.stringify(context.item) !== JSON.stringify({
-      index: 4,
-      path: [
-        { kind: "map-item", mapId: "outer", index: 0 },
-        { kind: "map-item", mapId: "inner", index: 4 },
-      ],
-    })) throw new Error("unexpected nested item identity");
+    if (
+      JSON.stringify(context.item) !== JSON.stringify({
+        index: 4,
+        path: [
+          { kind: "map-item", mapId: "outer", index: 0 },
+          { kind: "map-item", mapId: "inner", index: 4 },
+        ],
+      })
+    ) throw new Error("unexpected nested item identity");
     return { value: input.value * 2 };
   }) satisfies StepRun<ValueInput, ValueOutput>,
 };
@@ -88,8 +94,8 @@ export const assertNestedMappedIdentity = {
 export const abortRun = {
   run: (() => {
     throw new FatalRunError(
-      "retention.refused",
-      "Retention policy refused processing",
+      "Input is invalid",
+      "input.invalid",
     );
   }) satisfies StepRun<ValueInput, ValueOutput>,
 };

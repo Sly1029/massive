@@ -275,9 +275,6 @@ func checkLoweredDAG(t *testing.T, p *planpb.WorkflowPlan, templates []any) {
 	} else if tasks[entryTaskName] != nil {
 		t.Fatalf("%s task without a control consumer", entryTaskName)
 	}
-	if tasks[fatalWatcherName] != nil {
-		executable++
-	}
 	if len(tasks) != executable {
 		t.Fatalf("DAG has %d tasks for %d executable nodes", len(tasks), executable)
 	}
@@ -288,15 +285,6 @@ func checkLoweredDAG(t *testing.T, p *planpb.WorkflowPlan, templates []any) {
 func checkDepends(t *testing.T, node *planpb.GraphNode, task map[string]any, sources []string) {
 	t.Helper()
 	depends, _ := task["depends"].(string)
-	if depends == fatalWatcherName+".Daemoned" {
-		depends = ""
-	} else {
-		suffix := " && " + fatalWatcherName + ".Daemoned"
-		if !strings.HasSuffix(depends, suffix) {
-			t.Fatalf("task lacks fatal watcher readiness: %v", task)
-		}
-		depends = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSuffix(depends, suffix), "("), ")")
-	}
 	if len(sources) == 0 {
 		if depends != "" {
 			t.Fatalf("entry task for %s depends on %q", node.GetId(), depends)

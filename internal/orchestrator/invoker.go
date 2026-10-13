@@ -175,11 +175,6 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 			completed = append(completed, outcomes[index])
 		}
 	}
-	for _, outcome := range completed {
-		if outcome.Fatal != nil {
-			return completed, &FatalRunError{Failure: *outcome.Fatal}
-		}
-	}
 	if firstError != nil {
 		return completed, firstError
 	}
@@ -294,7 +289,7 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 
 	var fatal *runjournal.FatalFailure
 	if exitCode == FatalRunExitCode {
-		fatal = &runjournal.FatalFailure{Kind: "fatal", Category: result.Category, Message: result.Message, NodeID: descriptor.NodeID}
+		fatal = &runjournal.FatalFailure{Type: result.Type, Message: result.Message, NodeID: descriptor.NodeID}
 	}
 	return StepInvocationOutcome{
 		NodeID:        descriptor.NodeID,
@@ -365,7 +360,7 @@ func readRunnerFailure(descriptorPath string, exitCode int) (runnerFailure, erro
 	defer file.Close()
 	// ASCII JSON uses a twelve-byte surrogate pair per astral code point.
 	// Include the fixed exitCode/message object overhead as well.
-	const maxResultBytes = 12*1024 + 256
+	const maxResultBytes = 12*(1024+64) + 256
 	body, err := io.ReadAll(io.LimitReader(file, maxResultBytes+1))
 	if err != nil {
 		return runnerFailure{}, err
@@ -389,5 +384,5 @@ func readRunnerFailure(descriptorPath string, exitCode int) (runnerFailure, erro
 type runnerFailure struct {
 	ExitCode int    `json:"exitCode"`
 	Message  string `json:"message"`
-	Category string `json:"category,omitempty"`
+	Type     string `json:"type,omitempty"`
 }

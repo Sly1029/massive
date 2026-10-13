@@ -54,7 +54,7 @@ from pathlib import Path
 journal=json.loads(Path(sys.argv[1]).read_text())
 assert journal["status"] == "succeeded"
 assert journal["runId"] == "clean-wheel"
-assert journal["schemaVersion"] == 5
+assert journal["schemaVersion"] == 6
 assert journal["environment"]["realizationHash"].startswith("sha256:"), journal
 assert journal["steps"][0]["attempts"][0]["output"]["manifest"]["key"]
 PYJOURNAL

@@ -135,39 +135,12 @@ func (command *RuntimeEntryCommand) Run(ctx context.Context) error {
 }
 
 type RuntimeCommand struct {
-	WatchFatal RuntimeWatchFatalCommand `cmd:"" name:"watch-fatal" help:"Stop an Argo workflow when a safe fatal cause is published."`
-	Control    RuntimeControlCommand    `cmd:"" help:"Validate a decision or selected value without invoking user code."`
-	Entry      RuntimeEntryCommand      `cmd:"" help:"Normalize a submitted workflow input for a control task."`
-	Step       RuntimeStepCommand       `cmd:"" help:"Execute one compiled step in a remote executor."`
-	Map        RuntimeMapCommand        `cmd:"" help:"Execute finite-map transport operations."`
+	Control RuntimeControlCommand `cmd:"" help:"Validate a decision or selected value without invoking user code."`
+	Entry   RuntimeEntryCommand   `cmd:"" help:"Normalize a submitted workflow input for a control task."`
+	Step    RuntimeStepCommand    `cmd:"" help:"Execute one compiled step in a remote executor."`
+	Map     RuntimeMapCommand     `cmd:"" help:"Execute finite-map transport operations."`
 	// ExitHook runs from Argo's exit handler, after the workflow settles.
 	ExitHook RuntimeExitHookCommand `cmd:"" name:"exit-hook" help:"Execute the plan's exit hook with the settled run's outcome."`
-}
-
-type RuntimeWatchFatalCommand struct {
-	Probe           bool   `help:"Check the daemon readiness file without opening the datastore."`
-	Namespace       string `required:""`
-	Workflow        string `required:""`
-	Project         string `required:""`
-	RunID           string `name:"run-id" required:""`
-	ReadyFile       string `name:"ready-file" required:"" type:"path"`
-	DatastoreConfig string `name:"datastore-config" required:"" type:"existingfile"`
-}
-
-func (command *RuntimeWatchFatalCommand) Run(ctx context.Context) error {
-	if command.Probe {
-		_, err := os.Stat(command.ReadyFile)
-		return err
-	}
-	codec, _, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
-	if err != nil {
-		return err
-	}
-	key, err := orchestrator.FatalRunKey(command.Project, command.RunID)
-	if err != nil {
-		return err
-	}
-	return argo.WatchFatalRun(ctx, codec.Store, key, command.Namespace, command.Workflow, command.RunID, command.ReadyFile)
 }
 
 type RuntimeExitHookCommand struct {
@@ -217,7 +190,7 @@ func (command *RuntimeExitHookCommand) Run(ctx context.Context) error {
 	}
 	if fatal != nil {
 		outcome.Status = "failed"
-		outcome.FailureKind, outcome.Category, outcome.Message = &fatal.Kind, &fatal.Category, &fatal.Message
+		outcome.Fatal = &orchestrator.FatalFailure{Message: fatal.Message, Type: fatal.Type}
 		outcome.FailedNode = &fatal.NodeID
 	}
 	input, err := canonical.Marshal(outcome)
@@ -250,7 +223,6 @@ type RuntimeMapCommand struct {
 }
 
 type RuntimeStepCommand struct {
-	TerminationLog  string `name:"termination-log" type:"path"`
 	Plan            string `help:"Mounted canonical WorkflowPlan." required:"" type:"existingfile"`
 	RuntimeSources  `embed:""`
 	Node            string   `help:"Static plan node to execute." required:""`
@@ -540,7 +512,7 @@ func (command *RuntimeStepCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, command.RetryCount, nil, command.TerminationLog)
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, command.RetryCount, nil, "")
 	if err != nil {
 		return err
 	}
@@ -743,6 +715,9 @@ func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan
 		if fatal != nil {
 			return nil, &orchestrator.FatalRunError{Failure: *fatal}
 		}
+		var stop context.CancelFunc
+		ctx, stop = orchestrator.WithFatalRunCancellation(ctx, store, key)
+		defer stop()
 	}
 	sources, err := runtimeSources.resolve(workflowPlan)
 	if err != nil {
@@ -765,8 +740,11 @@ func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan
 		result, err = orchestrator.RunIsolatedStep(ctx, config, input)
 	}
 	var fatal *orchestrator.FatalRunError
+	if !errors.As(err, &fatal) && errors.As(context.Cause(ctx), &fatal) {
+		result, err = nil, fatal
+	}
 	if !isHook && errors.As(err, &fatal) {
-		// The safe cause survives sibling termination and drives both Stop and onExit.
+		// The safe cause survives sibling termination and cancels sibling invocations and reaches the exit hook.
 		publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()
 		err = errors.Join(err, executionphase.Write(terminationLog, executionphase.Evidence{Fatal: true}), orchestrator.PublishFatalRun(publication, store, key, fatal.Failure))
