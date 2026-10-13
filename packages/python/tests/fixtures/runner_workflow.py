@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 import sys
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 from massive import Blob, GraphBuilder, NonRetryableError, StepContext, container, execution
 
@@ -196,3 +198,35 @@ class FloatResult(BaseModel):
 
 def nonfinite_output(context: StepContext[Request]) -> FloatResult:
     return FloatResult(value=[float("nan"), float("inf"), -float("inf")][context.inputs.value])
+
+
+class KillDuringHydration(BaseModel):
+    value: int
+
+    @field_validator("value")
+    @classmethod
+    def hydrate(cls, value: int) -> int:
+        os.kill(os.getpid(), signal.SIGKILL)
+        return value
+
+
+class KillDuringPublication(BaseModel):
+    value: int
+
+    @field_serializer("value")
+    def publish(self, value: int) -> int:
+        os.kill(os.getpid(), signal.SIGKILL)
+        return value
+
+
+def killed_during_hydration(context: StepContext[KillDuringHydration]) -> Request:
+    raise AssertionError("author code must not start")
+
+
+def killed_during_author(context: StepContext[Request]) -> Request:
+    os.kill(os.getpid(), signal.SIGKILL)
+    raise AssertionError("author code must not finish")
+
+
+def killed_during_publication(context: StepContext[Request]) -> KillDuringPublication:
+    return KillDuringPublication(value=context.inputs.value)

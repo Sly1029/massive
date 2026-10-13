@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sly1029/massive/internal/executionphase"
 	"github.com/Sly1029/massive/internal/mapexec"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -147,7 +148,7 @@ func missingItemFailure(workflow itemSchedulerWorkflow, pods []corev1.Pod, id st
 	var terminal *corev1.Pod
 	for i := range pods {
 		pod := &pods[i]
-		if pod.Labels["workflows.argoproj.io/node-id"] != id {
+		if pod.Annotations["workflows.argoproj.io/node-id"] != id {
 			continue
 		}
 		if terminal != nil {
@@ -179,16 +180,26 @@ func missingItemFailure(workflow itemSchedulerWorkflow, pods []corev1.Pod, id st
 		if termination == nil {
 			return failed("main container has no terminal status")
 		}
-		var marker struct {
-			Fatal bool `json:"fatal"`
+		fileEvidence := slices.ContainsFunc(terminal.Spec.Containers, func(spec corev1.Container) bool {
+			return spec.Name == "main" && spec.TerminationMessagePolicy == corev1.TerminationMessageReadFile
+		})
+		if !fileEvidence {
+			return failed("main container must use terminationMessagePolicy File")
 		}
-		if json.Unmarshal([]byte(termination.Message), &marker) == nil && marker.Fatal {
+		marker, err := executionphase.Parse(termination.Message)
+		if err != nil {
+			return failed(fmt.Sprintf("execution phase evidence is absent or invalid: %v", err))
+		}
+		if marker.Fatal {
 			return failed("runtime reported a fatal infrastructure or contract error")
+		}
+		if marker.Phase != executionphase.Author {
+			return failed(fmt.Sprintf("container died during runtime phase %s, not author execution", marker.Phase))
 		}
 		if termination.Reason != "OOMKilled" && termination.Signal <= 0 {
 			return failed("main container exited without OOM or signal evidence")
 		}
-		return mapexec.NewFailure(mapexec.FailureKilled, attempts, "runner-killed (signal)"), nil
+		return mapexec.NewFailure(mapexec.FailureKilled, attempts, "runner-killed (signal; Argo author-phase reconciliation)"), nil
 	}
 	return failed("main container status is unavailable")
 }

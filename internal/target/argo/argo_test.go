@@ -439,7 +439,11 @@ func TestFiniteMapLowersToBoundedIndexedArgoFanoutAndCollection(t *testing.T) {
 	}
 
 	itemTemplate := templateByName(t, templates, "map-item-map-items")
-	args := itemTemplate["container"].(map[string]any)["args"].([]any)
+	itemContainer := itemTemplate["container"].(map[string]any)
+	if itemContainer["terminationMessagePath"] != "/dev/termination-log" || itemContainer["terminationMessagePolicy"] != "File" {
+		t.Fatalf("map item lacks file-only termination evidence: %v", itemContainer)
+	}
+	args := itemContainer["args"].([]any)
 	if !containsArgs(args, "runtime", "map", "item") || !containsArgs(args, "--node=map-items") {
 		t.Fatalf("mapped runtime command = %v", args)
 	}

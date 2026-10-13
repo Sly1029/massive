@@ -632,6 +632,9 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	if err != nil {
 		return nil, err
 	}
+	itemContainer := itemTemplate["container"].(map[string]any)
+	itemContainer["terminationMessagePath"] = "/dev/termination-log"
+	itemContainer["terminationMessagePolicy"] = "File"
 	applyRetryStrategy(itemTemplate, contract)
 	collectArgs := []string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath}
 	invokeName := itemName

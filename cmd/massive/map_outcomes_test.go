@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Sly1029/massive/internal/canonical"
+	"github.com/Sly1029/massive/internal/executionphase"
 	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/runjournal"
@@ -81,11 +82,12 @@ func TestArgoMapOutcomesMatchLocalExecution(t *testing.T) {
 	outcomes := make([]string, len(items))
 	for index, item := range items {
 		output := filepath.Join(t.TempDir(), "result.json")
+		termination := filepath.Join(t.TempDir(), "termination.json")
 		for retries := range maxAttempts {
 			err := (&RuntimeMapItemCommand{
 				Plan: filepath.Join(bundle, "massive-plan.json"), RuntimeSources: RuntimeSources{BundleDir: filepath.Join(bundle, "runtime-assets")},
 				Node: "scan", Item: string(item), Output: output, Project: "argo/map-outcomes", RunID: "argo",
-				DatastoreConfig: datastoreConfig, RetryCount: retries,
+				DatastoreConfig: datastoreConfig, RetryCount: retries, TerminationLog: termination,
 			}).Run(t.Context())
 			if err == nil {
 				break
@@ -94,6 +96,10 @@ func TestArgoMapOutcomesMatchLocalExecution(t *testing.T) {
 			if slices.Contains([]int{64, 65, 67, 68, 70}, exitCodeFor(err)) || retries == maxAttempts-1 {
 				t.Fatalf("item %d failed terminally instead of reporting an outcome: %v", index, err)
 			}
+		}
+		evidence, err := executionphase.Parse(string(readFile(t, termination)))
+		if err != nil || evidence.Phase != executionphase.Publish {
+			t.Fatalf("completed item phase = %+v, error = %v", evidence, err)
 		}
 		outcomes[index] = string(readFile(t, output))
 	}
@@ -292,8 +298,9 @@ func TestMapItemReportsFatalBeforeHydrationAndAfterPublicationErrors(t *testing.
 			if err == nil {
 				t.Fatal("runtime accepted damaged input")
 			}
-			if string(readFile(t, termination)) != valueparam.FatalItemEnvelope {
-				t.Fatal("no fatal termination marker")
+			evidence, phaseErr := executionphase.Parse(string(readFile(t, termination)))
+			if phaseErr != nil || !evidence.Fatal {
+				t.Fatalf("no fatal termination marker: %+v, %v", evidence, phaseErr)
 			}
 			if mode != "unwritable output" {
 				marker := readFile(t, output)
@@ -306,6 +313,95 @@ func TestMapItemReportsFatalBeforeHydrationAndAfterPublicationErrors(t *testing.
 			}
 			if mode == "corrupt" && exitCodeFor(err) != 64 {
 				t.Fatalf("corruption exit = %d, error = %v", exitCodeFor(err), err)
+			}
+		})
+	}
+}
+
+func TestMapItemRejectsSignalOutsideAuthorExecution(t *testing.T) {
+	repository, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	python := filepath.Join(repository, "packages", "python", ".venv", "bin", "python")
+	if _, err := os.Stat(python); err != nil {
+		t.Skip("Python SDK environment is unavailable")
+	}
+	t.Setenv("MASSIVE_PYTHON", python)
+	root := t.TempDir()
+	workflow := filepath.Join(root, "workflow.py")
+	if err := os.WriteFile(workflow, []byte(`import os
+import signal
+from massive import GraphBuilder, MapItemOutcome, StepContext, container, execution
+from pydantic import BaseModel, field_validator, field_serializer
+
+class Item(BaseModel):
+    value: int
+    @field_validator("value")
+    @classmethod
+    def hydrate(cls, value: int) -> int:
+        if value == 1:
+            os.kill(os.getpid(), signal.SIGKILL)
+        return value
+
+class Output(BaseModel):
+    value: int
+    @field_serializer("value")
+    def publish(self, value: int) -> int:
+        if value == 3:
+            os.kill(os.getpid(), signal.SIGKILL)
+        return value
+
+def scan(context: StepContext[Item]) -> Output:
+    if context.inputs.value == 2:
+        os.kill(os.getpid(), signal.SIGKILL)
+    return Output(value=context.inputs.value)
+
+graph = GraphBuilder(name="phase-evidence", input_type=list[Item], output_type=list[MapItemOutcome[Output]],
+    defaults=execution(environment=container("example.invalid/runner@sha256:" + "0" * 64)))
+outcomes = graph.map(graph.start, scan, id="scan", item_failures="collect")
+graph.edge_from(outcomes).to_end(graph.end)
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(t.TempDir(), "bundle")
+	if err := (&BuildCommand{Entry: workflow + "#graph", Output: bundle, Profile: "test", RuntimeTransport: "embedded-v0", Namespace: "argo", ServiceAccount: "runner", ArtifactStore: "artifacts"}).Run(t.Context(), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		value  int
+		author bool
+	}{
+		{"hydrate", 1, false}, {"author", 2, true}, {"publish", 3, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			output, termination := filepath.Join(root, "result.json"), filepath.Join(root, "termination.json")
+			err := (&RuntimeMapItemCommand{
+				Plan: filepath.Join(bundle, "massive-plan.json"), RuntimeSources: RuntimeSources{BundleDir: filepath.Join(bundle, "runtime-assets")},
+				Node: "scan", Item: fmt.Sprintf(`{"index":0,"value":{"value":%d}}`, test.value),
+				Output: output, Project: "test/phase-evidence", RunID: test.name,
+				DatastoreConfig: localDatastoreConfig(t), TerminationLog: termination,
+			}).Run(t.Context())
+			if test.author {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Contains(readFile(t, output), []byte(`"kind":"killed"`)) {
+					t.Fatalf("no killed item outcome: %s", readFile(t, output))
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), "outside author execution (phase "+test.name+")") {
+					t.Fatalf("runtime signal became author failure: %v", err)
+				}
+				if string(readFile(t, output)) != valueparam.FatalItemEnvelope {
+					t.Fatal("missing fatal result")
+				}
+				evidence, err := executionphase.Parse(string(readFile(t, termination)))
+				if err != nil || !evidence.Fatal {
+					t.Fatalf("missing fatal evidence: %+v, %v", evidence, err)
+				}
 			}
 		})
 	}

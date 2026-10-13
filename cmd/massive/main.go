@@ -19,6 +19,7 @@ import (
 	"github.com/Sly1029/massive/internal/controlplane"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/environment"
+	"github.com/Sly1029/massive/internal/executionphase"
 	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
@@ -260,7 +261,7 @@ type RuntimeMapItemCommand struct {
 	Project         string `help:"Stable remote project identity." required:""`
 	RunID           string `name:"run-id" help:"Remote workflow run identifier." required:""`
 	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
-	TerminationLog  string `name:"termination-log" help:"Write runtime fatal markers to the Kubernetes termination log." type:"path"`
+	TerminationLog  string `name:"termination-log" help:"Record execution phases and fatal errors in the Kubernetes termination file." type:"path"`
 	RetryCount      int    `name:"retry-count" help:"Retries already attempted by the target scheduler; the attempt is retry-count + 1." default:"0"`
 }
 
@@ -488,7 +489,7 @@ func (command *RuntimeStepCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, command.RetryCount, nil)
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, command.RetryCount, nil, "")
 	if err != nil {
 		return err
 	}
@@ -539,11 +540,13 @@ func (command *RuntimeMapItemCommand) Run(ctx context.Context) (resultErr error)
 		if resultErr == nil {
 			return
 		}
+		// Preserve fatal evidence before any further result I/O can fail or die.
+		resultErr = errors.Join(resultErr, executionphase.Write(command.TerminationLog, executionphase.Evidence{Fatal: true}))
 		resultErr = errors.Join(resultErr, writeRuntimeOutput(command.Output, []byte(valueparam.FatalItemEnvelope)))
-		if command.TerminationLog != "" {
-			resultErr = errors.Join(resultErr, os.WriteFile(command.TerminationLog, []byte(valueparam.FatalItemEnvelope), 0o600))
-		}
 	}()
+	if err := executionphase.Write(command.TerminationLog, executionphase.Evidence{Phase: executionphase.Hydrate}); err != nil {
+		return err
+	}
 	codec, descriptor, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
 	if err != nil {
 		return err
@@ -553,13 +556,16 @@ func (command *RuntimeMapItemCommand) Run(ctx context.Context) (resultErr error)
 		return err
 	}
 	if empty {
+		if err := executionphase.Write(command.TerminationLog, executionphase.Evidence{Phase: executionphase.Publish}); err != nil {
+			return err
+		}
 		return writeRuntimeOutput(command.Output, []byte(`{"empty":true}`))
 	}
 	workflowPlan, err := readRuntimePlan(command.Plan)
 	if err != nil {
 		return err
 	}
-	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, item.Body, command.Project, command.RunID, descriptor, command.RetryCount, &item.Index)
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, item.Body, command.Project, command.RunID, descriptor, command.RetryCount, &item.Index, command.TerminationLog)
 	if err != nil {
 		if !collectsItemFailures(workflowPlan, command.Node) {
 			return err
@@ -665,7 +671,7 @@ func openRuntimeDatastore(ctx context.Context, path string) (valueparam.Codec, o
 	return valueparam.Codec{Store: store}, descriptor, nil
 }
 
-func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan, runtimeSources RuntimeSources, nodeID string, input []byte, project, runID string, descriptor orchestrator.DatastoreDescriptor, retryCount int, mapItemIndex *int) ([]byte, error) {
+func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan, runtimeSources RuntimeSources, nodeID string, input []byte, project, runID string, descriptor orchestrator.DatastoreDescriptor, retryCount int, mapItemIndex *int, terminationLog string) ([]byte, error) {
 	if retryCount < 0 {
 		return nil, fmt.Errorf("retry count %d must be nonnegative", retryCount)
 	}
@@ -681,7 +687,7 @@ func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan
 		Environment: pythonEnvironment,
 		Plan:        workflowPlan, NodeID: nodeID, Datastore: descriptor,
 		ProjectID: project, RunID: runID,
-		SourceArchives: sources, Attempt: retryCount + 1,
+		SourceArchives: sources, Attempt: retryCount + 1, TerminationLog: terminationLog,
 	}
 	if mapItemIndex != nil {
 		return orchestrator.RunIsolatedMapItem(ctx, config, input, *mapItemIndex)

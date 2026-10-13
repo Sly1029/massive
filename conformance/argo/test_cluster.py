@@ -1309,12 +1309,54 @@ class DecisionConformance(unittest.TestCase):
             [outcome["status"] for outcome in outcomes],
             ["succeeded", "succeeded", "failed", "failed", "failed", "failed"],
         )
-        # Under cgroup v2 group kill the item pod dies with its runtime and
-        # reports nothing; otherwise the runtime sees its runner killed.
+        # Require cgroup OOM death of the main container and missing-envelope
+        # reconciliation; a surviving runtime publishing a kill is insufficient.
         self.assertEqual(killed["status"], "failed")
         self.assertEqual(killed["failure"]["kind"], "killed")
         self.assertEqual(killed["failure"]["attempts"], 2)
-        self.assertEqual(killed["failure"]["diagnostic"], "runner-killed (signal)")
+        self.assertEqual(
+            killed["failure"]["diagnostic"],
+            "runner-killed (signal; Argo author-phase reconciliation)",
+        )
+        terminal_oom_pods = []
+        for pod in kubectl(
+            "get",
+            "pods",
+            "-l",
+            f"workflows.argoproj.io/workflow={run['metadata']['name']}",
+            "-o",
+            "json",
+        )["items"]:
+            main = next(
+                (
+                    status
+                    for status in pod["status"].get("containerStatuses", [])
+                    if status["name"] == "main"
+                ),
+                None,
+            )
+            termination = (
+                {} if main is None else main.get("state", {}).get("terminated", {})
+            )
+            if termination.get("reason") != "OOMKilled":
+                continue
+            terminal_oom_pods.append(pod)
+            self.assertEqual(json.loads(termination["message"]), {"phase": "author"})
+            main_spec = next(
+                container
+                for container in pod["spec"]["containers"]
+                if container["name"] == "main"
+            )
+            self.assertEqual(main_spec["terminationMessagePolicy"], "File")
+            node_id = pod["metadata"]["annotations"]["workflows.argoproj.io/node-id"]
+            node = run["status"]["nodes"][node_id]
+            self.assertFalse(
+                any(
+                    parameter["name"] == "result"
+                    for parameter in node.get("outputs", {}).get("parameters", [])
+                )
+            )
+        self.assertEqual(len(terminal_oom_pods), 2)
         # Failed item pods did not fail the DAG.
         pods = self.pods(run, "map-item-scan")
         self.assertTrue(pods)

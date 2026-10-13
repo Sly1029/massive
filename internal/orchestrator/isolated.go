@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/environment"
+	"github.com/Sly1029/massive/internal/executionphase"
 	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/sourceidentity"
@@ -34,6 +36,8 @@ type IsolatedStepConfig struct {
 	// Attempt is the 1-based attempt the target is dispatching. Zero means 1.
 	// Targets own retry scheduling; this primitive runs exactly one attempt.
 	Attempt int
+	// TerminationLog is the container's configured termination-message file.
+	TerminationLog string
 }
 
 // SourceArchive is the runtime half of a target's source transport.
@@ -115,6 +119,9 @@ func RunIsolatedMapItem(ctx context.Context, config IsolatedStepConfig, inputJSO
 }
 
 func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, inputJSON []byte, mapItemIndex *int) ([]byte, error) {
+	if err := executionphase.Write(config.TerminationLog, executionphase.Evidence{Phase: executionphase.Hydrate}); err != nil {
+		return nil, err
+	}
 	if config.Plan == nil {
 		return nil, errors.New("isolated step requires a workflow plan")
 	}
@@ -212,9 +219,27 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 			return nil, err
 		}
 		runnerCommand = PythonRunnerCommand(python)
+		if config.TerminationLog != "" {
+			runnerCommand = append(runnerCommand, "--termination-log", config.TerminationLog)
+		}
 	}
 	invoker := ProcessStepInvoker{CommandTemplate: runnerCommand, WorkingDir: config.WorkingDir, ProcessLimit: 1}
 	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, MaxConcurrency: 1})
+	if err == nil && config.TerminationLog != "" && len(outcomes) == 1 && outcomes[0].Status == StatusFailed && outcomes[0].ExitCode < 0 && outcomes[0].TimedOutAfter == 0 {
+		body, readErr := os.ReadFile(config.TerminationLog)
+		if readErr != nil {
+			err = fmt.Errorf("runner died without execution phase evidence: %w", readErr)
+		} else if evidence, parseErr := executionphase.Parse(string(body)); parseErr != nil {
+			err = fmt.Errorf("runner died with invalid execution phase evidence: %w", parseErr)
+		} else if evidence.Phase != executionphase.Author {
+			err = fmt.Errorf("runner died outside author execution (phase %s)", evidence.Phase)
+		}
+	}
+	// Author execution is over, including abrupt runner death. Subsequent
+	// artifact verification and outcome publication belong to the runtime.
+	if phaseErr := executionphase.Write(config.TerminationLog, executionphase.Evidence{Phase: executionphase.Publish}); phaseErr != nil {
+		return nil, errors.Join(err, phaseErr)
+	}
 	if err != nil {
 		return nil, err
 	}

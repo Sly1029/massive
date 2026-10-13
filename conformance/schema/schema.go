@@ -74,3 +74,8 @@ var RunnerFailureSchemaJSON []byte
 //
 //go:embed map-item-failure.schema.json
 var MapItemFailureSchemaJSON []byte
+
+// ExecutionEvidenceSchemaJSON defines the tiny termination-file phase/fatal record.
+//
+//go:embed execution-evidence.schema.json
+var ExecutionEvidenceSchemaJSON []byte

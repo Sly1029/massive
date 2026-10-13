@@ -73,11 +73,18 @@ do not prove a terminal failure; return an unknown failed node for them.
 A collecting map loops over per-item DAGs that continue past the item pod.
 A missing result carries the terminal pod's Argo node ID. Absence alone never
 establishes process death: the collector reads terminal Workflow/Pod status,
-requires main-container OOMKilled or signal evidence, and counts the Retry
+matches the node-id annotation (not a label), requires main-container OOMKilled
+or signal evidence plus schema-valid last phase `author`, and counts the Retry
 node's actual children. Eviction, missing pods, fatal termination markers,
 and ordinary/executor exits fail the run. Preserve pods through collection.
 Only the collecting-map control pod mounts a Kubernetes API token; its service
 account needs Workflow get and Pod list in the deployment namespace. Application
 pods retain no API token. Runtime errors report an unindexed fatal envelope
 from before datastore opening and decoding; failed result writes also report
-the fatal marker through the Kubernetes termination log.
+the fatal marker before further result I/O. Phase/fatal records follow
+`conformance/schema/execution-evidence.schema.json`; record hydration before
+setup and bracket the Python function call with author/publish transitions.
+Use File termination policy and fixed-size, single-write updates of the
+kubelet-mounted inode; rename cannot replace that mount. Missing or non-author
+phase evidence fails the run. Preserve the reconciliation diagnostic so live
+OOM conformance proves it exercised a missing envelope.

@@ -301,18 +301,34 @@ Retryable failures exit normally for Argo to retry. Every runtime-controlled
 error reports `{"fatal":true}`, starting before datastore opening, item
 hydration, and plan loading. Failure-reference publication and result-write
 errors fail the run too; the runtime also writes a fatal marker to the
-Kubernetes termination log, independently of its result parameter.
+Kubernetes termination file before any further result I/O. The runtime and
+Python runner record `{"phase":"hydrate"}`, `{"phase":"author"}`, and
+`{"phase":"publish"}` before each phase. Author evidence brackets only the
+function call and its awaited work; validation, serialization, verification,
+and publication are runtime work. Records follow
+`conformance/schema/execution-evidence.schema.json`, padded to 32 bytes and
+written in one fixed-size overwrite of the kubelet-mounted inode (which cannot
+be replaced by rename). Item containers explicitly use
+`terminationMessagePolicy: File` with `/dev/termination-log`, so author logs
+cannot supply evidence.
 
 `runtime map collect-outcomes --max-attempts=<n> --workflow=<name>
 --namespace=<namespace>` rejects fatal markers. A missing outcome requires
 terminal scheduler evidence: the collector reads the Workflow and Pod API,
-requires main-container `OOMKilled` or a recorded termination signal, and
-counts the actual children of the terminal Retry node. Ordinary positive
+matches Argo's `workflows.argoproj.io/node-id` annotation, verifies workflow
+ownership, requires main-container `OOMKilled` or a recorded termination signal
+and schema-valid last-phase evidence of `author`, and counts the actual children
+of the terminal Retry node. Ordinary positive
 exits, executor output-extraction failures, evictions, node loss, unavailable
-pods, and fatal termination markers fail the run. They do not become item
-outcomes. The contract's attempt budget validates the count; it never supplies
-an assumed count. A confirmed kill uses `runner-killed (signal)`, matching the
-local target. Failure records are validated against the shared JSON Schema
+pods, fatal markers, and absent, unparseable, or non-author phase evidence fail
+the run. A Python runner killed during hydration or publication also fails the
+run even when the Go runtime survives. The contract's attempt budget validates
+the count; it never supplies
+an assumed count. A reconciled kill uses
+`runner-killed (signal; Argo author-phase reconciliation)` so live conformance
+can prove the missing-envelope path. Runner-reported kills retain the local
+`runner-killed (signal)` diagnostic. Failure records are validated against the
+shared JSON Schema
 before decoding, including required non-null diagnostics.
 
 Only collecting-map control pods mount a Kubernetes API token. Their service
