@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -126,7 +127,9 @@ unwritable_hook.on_exit(unwritable)
 			}
 			outcomeFile := filepath.Join(t.TempDir(), "outcome.json")
 			runID := "hook-" + test.graph + test.input
-			command := exec.Command(binary, "run", entry+"#"+test.graph, "--input="+test.input, "--store", store,
+			commandContext, stop := context.WithTimeout(t.Context(), 30*time.Second)
+			defer stop()
+			command := exec.CommandContext(commandContext, binary, "run", entry+"#"+test.graph, "--input="+test.input, "--store", store,
 				"--project", "test/exit-hooks", "--run-id", runID, "--json")
 			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "OUTCOME_FILE="+outcomeFile, "STORE_ROOT="+store)
 			var stdout, stderr bytes.Buffer
@@ -192,11 +195,11 @@ unwritable_hook.on_exit(unwritable)
 				return
 			}
 			hook := manifest.ExitHook
-			if test.graph == "timed_hook" && (hook == nil || !strings.Contains(hook.Attempts[0].Diagnostic, "2-second timeout")) {
-				t.Fatalf("hook timeout was not recorded: %s", inspected)
-			}
 			if manifest.Status != test.run || hook == nil || hook.Status != test.hook || len(hook.Attempts) != 1 {
 				t.Fatalf("journal = %s", inspected)
+			}
+			if test.graph == "timed_hook" && !strings.Contains(hook.Attempts[0].Diagnostic, "2-second timeout") {
+				t.Fatalf("hook timeout was not recorded: %s", inspected)
 			}
 			if (test.hook == "failed") != (hook.Attempts[0].Diagnostic != "") {
 				t.Fatalf("exit hook attempt = %+v", hook.Attempts[0])

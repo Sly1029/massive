@@ -1190,12 +1190,16 @@ func mapOutcomesByIndex(mapID string, attempt int, outcomes []StepInvocationOutc
 	return byIndex, nil
 }
 
-// settleInvocation verifies one reported success independently of execution
-// cancellation. Each publication has its own finite budget; a large map does
-// not consume every item's verification time in one shared deadline.
+// settleInvocation gives ordinary tasks a detached verification budget so
+// cancellation preserves completed work. Exit hooks retain their own lifetime
+// across preparation, invocation, and verification.
 func settleInvocation(ctx context.Context, store datastore.Datastore, descriptor StepInvocationDescriptor, index executionIndex, hooks RunHooks) (nodeOutput, error) {
-	settlementContext, stop := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer stop()
+	settlementContext := ctx
+	if index.nodesByID[descriptor.NodeID].GetKind() != "exit-hook" {
+		var stop context.CancelFunc
+		settlementContext, stop = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer stop()
+	}
 	if hooks.AfterStepInvocation != nil {
 		if err := hooks.AfterStepInvocation(settlementContext, descriptor); err != nil {
 			return nodeOutput{}, err
