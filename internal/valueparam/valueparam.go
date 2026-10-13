@@ -605,10 +605,6 @@ func blobKey(hash string) (datastore.Key, error) {
 	return datastore.BlobKeySHA256Hex(strings.TrimPrefix(hash, "sha256:"))
 }
 
-// LostItemEnvelope carries the terminal pod node ID; absence alone never
-// establishes process death or the number of attempts.
-const LostItemEnvelope = `{"lost":"{{tasks.attempt.id}}"}`
-
 // MissingOutcomeNodes returns the scheduler identities needing reconciliation.
 func MissingOutcomeNodes(aggregate []byte) ([]string, error) {
 	envelopes, _, err := aggregateEnvelopes(aggregate)

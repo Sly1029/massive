@@ -292,8 +292,10 @@ the collector publishes canonical `[]`.
 successful children, so such a map loops over a per-item DAG (`map-outcome-*`)
 instead of the item pod. Its one task runs the item pod template, retry
 strategy included, with `continueOn: {failed: true, error: true}`, and the DAG's
-`result` output is the pod's `result` parameter with the `valueFrom.default`
-`{"lost":"{{tasks.attempt.id}}"}`. Each item therefore reports an envelope in
+`result` output is a `valueFrom.expression` that forwards the pod's `result`
+parameter or JSON-encodes `{"lost": <terminal pod node ID>}` in task scope.
+Argo returns `valueFrom.default` literally, so a dynamic task reference cannot
+be placed there. Each item therefore reports an envelope in
 source order. Template `parallelism` still bounds the running item DAGs. The
 item runtime reports a mapper result (`value`/`ref`) or a terminal collected
 failure (`failure`/`failureRef`, above 100 bytes), and exits 0 for either.
@@ -318,13 +320,11 @@ terminal scheduler evidence: the collector reads the Workflow and Pod API,
 matches Argo's `workflows.argoproj.io/node-id` annotation, verifies workflow
 ownership, requires main-container `OOMKilled` or a recorded termination signal
 and schema-valid last-phase evidence of `author`, and counts the actual children
-of the terminal Retry node. Ordinary positive
-exits, executor output-extraction failures, evictions, node loss, unavailable
+of the terminal Retry node. Ordinary positive exits, executor output-extraction failures, evictions, node loss, unavailable
 pods, fatal markers, and absent, unparseable, or non-author phase evidence fail
 the run. A Python runner killed during hydration or publication also fails the
 run even when the Go runtime survives. The contract's attempt budget validates
-the count; it never supplies
-an assumed count. A reconciled kill uses
+the count; it never supplies an assumed count. A reconciled kill uses
 `runner-killed (signal; Argo author-phase reconciliation)` so live conformance
 can prove the missing-envelope path. Runner-reported kills retain the local
 `runner-killed (signal)` diagnostic. Failure records are validated against the

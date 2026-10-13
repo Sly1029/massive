@@ -71,7 +71,9 @@ identified by the generated task name and template. Failed attempt pods alone
 do not prove a terminal failure; return an unknown failed node for them.
 
 A collecting map loops over per-item DAGs that continue past the item pod.
-A missing result carries the terminal pod's Argo node ID. Absence alone never
+A missing result carries the terminal pod's Argo node ID through a
+`valueFrom.expression`: Argo returns `valueFrom.default` literally and does not
+expand task references inside it. Absence alone never
 establishes process death: the collector reads terminal Workflow/Pod status,
 matches the node-id annotation (not a label), requires main-container OOMKilled
 or signal evidence plus schema-valid last phase `author`, and counts the Retry

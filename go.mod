@@ -6,6 +6,7 @@ require (
 	github.com/alecthomas/kong v1.16.1
 	github.com/cyberphone/json-canonicalization v0.0.0-20210204075859-f9218ae53759
 	github.com/distribution/reference v0.6.0
+	github.com/expr-lang/expr v1.17.7
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2

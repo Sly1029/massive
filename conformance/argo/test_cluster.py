@@ -1109,20 +1109,19 @@ class DecisionConformance(unittest.TestCase):
                 gate = DATASTORE["prefix"] + "/gates/{{workflow.uid}}"
                 # Gate the first attempt before hydration. Releasing its object
                 # also releases subsequent retries, without a timing assumption.
-                gate_script = (
-                    "import boto3,time\nfrom botocore.exceptions import ClientError\n"
-                    "s=boto3.client('s3',endpoint_url='http://minio:9000')\n"
-                    "while True:\n"
-                    f" try: s.head_object(Bucket={DATASTORE['bucket']!r},Key={gate!r}); break\n"
-                    " except ClientError as e:\n"
-                    "  if e.response['Error']['Code'] not in ('404','NoSuchKey'): raise\n"
-                    "  time.sleep(0.2)\n"
-                )
+                gate_script = (Path(__file__).parent / "reference_gate.py").read_text()
                 item_template["initContainers"] = [
                     {
                         "name": "reference-gate",
                         "image": item_template["container"]["image"],
-                        "command": ["python", "-c", gate_script],
+                        "command": [
+                            "python",
+                            "-c",
+                            gate_script,
+                            DATASTORE["bucket"],
+                            gate,
+                            "http://minio:9000",
+                        ],
                         "env": item_template["container"]["env"],
                     }
                 ]
@@ -1196,7 +1195,27 @@ class DecisionConformance(unittest.TestCase):
                         )
                     ]
                     if expanded and gated:
-                        break
+                        gate_logs = subprocess.run(
+                            [
+                                os.environ.get("KUBECTL", "kubectl"),
+                                "-n",
+                                "argo",
+                                "logs",
+                                gated[0]["metadata"]["name"],
+                                "-c",
+                                "reference-gate",
+                            ],
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        if "REFERENCE_GATE_WAITING" in gate_logs.stdout:
+                            break
+                    if run.get("status", {}).get("phase") in ("Failed", "Error"):
+                        self.fail(
+                            f"{name} failed before reaching the expansion gate: {run['status']}"
+                        )
                     time.sleep(0.5)
                 else:
                     self.fail(f"{name} did not reach the expansion gate")
@@ -1214,7 +1233,8 @@ class DecisionConformance(unittest.TestCase):
                     else f"s.put_object(Bucket={DATASTORE['bucket']!r},Key={key!r},Body=b'x'*{ref['size']},ContentType='application/json')"
                 )
                 mutate = (
-                    "import boto3; s=boto3.client('s3',endpoint_url='http://minio:9000'); "
+                    "import botocore.session; "
+                    "s=botocore.session.get_session().create_client('s3',endpoint_url='http://minio:9000',region_name='us-east-1'); "
                     + operation
                     + "; "
                     + f"s.put_object(Bucket={DATASTORE['bucket']!r},Key={DATASTORE['prefix'] + '/gates/' + uid!r},Body=b'go')"

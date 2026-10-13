@@ -22,7 +22,6 @@ import (
 	"github.com/Sly1029/massive/internal/materialization"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
-	"github.com/Sly1029/massive/internal/valueparam"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"google.golang.org/protobuf/encoding/protojson"
 	"sigs.k8s.io/yaml"
@@ -600,6 +599,10 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 	}, runtimeName, nil
 }
 
+// Argo returns valueFrom.default literally. Evaluate the fallback in scope so
+// the lost envelope carries the actual last retry child's pod node ID.
+const mapItemOutcomeExpression = "tasks.attempt.outputs?.parameters?.result ?? toJSON({lost: tasks.attempt.id})"
+
 func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target, controlPlacement, itemPlacement deployment.PodPlacement, sourceArgs []string) ([]any, error) {
 	expandName := argoFieldName("map-expand-" + node.GetId())
 	itemName := argoFieldName("map-item-" + node.GetId())
@@ -651,8 +654,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 			"inputs": map[string]any{"parameters": []any{map[string]any{"name": "input"}}},
 			"outputs": map[string]any{"parameters": []any{map[string]any{
 				"name": "result", "valueFrom": map[string]any{
-					"parameter": "{{tasks.attempt.outputs.parameters.result}}",
-					"default":   valueparam.LostItemEnvelope,
+					"expression": mapItemOutcomeExpression,
 				},
 			}}},
 			"dag": map[string]any{"tasks": []any{map[string]any{

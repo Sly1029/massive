@@ -14,7 +14,6 @@ import (
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/Sly1029/massive/internal/spec"
-	"github.com/Sly1029/massive/internal/valueparam"
 )
 
 // FuzzGeneratedPlanLowering lowers every generated plan, including scoped,
@@ -366,7 +365,7 @@ func checkMapItemFailures(t *testing.T, p *planpb.WorkflowPlan, node *planpb.Gra
 		t.Fatalf("collecting map %s item DAG attempt = %v", node.GetId(), attempt)
 	}
 	result := outcome["outputs"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["valueFrom"].(map[string]any)
-	if result["parameter"] != "{{tasks.attempt.outputs.parameters.result}}" || result["default"] != valueparam.LostItemEnvelope {
+	if result["expression"] != mapItemOutcomeExpression || result["default"] != nil || result["parameter"] != nil {
 		t.Fatalf("collecting map %s item outcome = %v", node.GetId(), result)
 	}
 	maxAttempts := uint32(1)
