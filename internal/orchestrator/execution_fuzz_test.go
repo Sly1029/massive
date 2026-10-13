@@ -469,7 +469,7 @@ func expectedDiagnostic(fault graphgen.Fault, timeoutSeconds uint32, item bool) 
 	case graphgen.FailRetryable, graphgen.OrphanFailure:
 		return "step-execution-failure (exit 66)"
 	case graphgen.Crash:
-		return "runner-failure (exit 137)"
+		return "runner-killed (signal)"
 	case graphgen.FailFatal:
 		return "fatal-run-failure (exit 69)"
 	case graphgen.FailNonRetryable:

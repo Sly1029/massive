@@ -114,7 +114,7 @@ func collectedFailure(fault Fault, attempt int, timeoutSeconds uint32) *ItemFail
 	case FailRetryable, OrphanFailure:
 		failure.Kind, failure.Diagnostic = "error", "step-execution-failure (exit 66)"
 	case Crash:
-		failure.Kind, failure.Diagnostic = "killed", "runner-failure (exit 137)"
+		failure.Kind, failure.Diagnostic = "killed", "runner-killed (signal)"
 	case FailNonRetryable:
 		failure.Kind, failure.Diagnostic = "non-retryable", "non-retryable-step-failure (exit 67)"
 	case Timeout:
