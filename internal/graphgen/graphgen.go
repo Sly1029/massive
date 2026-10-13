@@ -23,7 +23,8 @@ const (
 	ExitSchemaValidation = 65
 	ExitStepExecution    = 66
 	ExitNonRetryable     = 67
-	ExitKilled           = 137
+	// The local process owner reports signal termination as a negative exit.
+	ExitKilled = -1
 )
 
 // Fault is the scripted outcome of one invocation attempt.

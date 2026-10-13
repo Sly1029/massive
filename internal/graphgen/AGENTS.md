@@ -3,6 +3,9 @@
 Test support for the compiler, executor, and target fuzzers. Production
 packages must not import it.
 
+Crash faults model signal termination with a negative process exit code.
+Positive exits, including 137, remain ordinary errors rather than killed items.
+
 Every byte sequence must decode into a spec that `spec.Parse` accepts. When the
 generator produces a rejected spec, decide whether the generator or the
 validator is wrong; do not narrow the generator to hide a validator bug.
