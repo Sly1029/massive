@@ -76,7 +76,7 @@ func TestRunProgressEventsMatchRealPythonJournals(t *testing.T) {
 				t.Fatalf("run: %v\n%s", err, &stderr)
 			}
 			sequence := readProgressEvents(t, events)
-			journal := assertProgressJournal(t, store, "observed", sequence)
+			journal := assertProgressJournal(t, store, "test/progress", "observed", sequence)
 			assertProgressJSON(t, stdout.Bytes(), "observed", "succeeded", test.expected)
 			for _, line := range []string{"run observed started (", " attempt 1/", " succeeded (", "STEP                     STATUS          DURATION", "run observed succeeded; total wall time "} {
 				if !strings.Contains(stderr.String(), line) {
@@ -169,12 +169,7 @@ type progressAttempt struct {
 
 // Compare every emitted terminal attempt/step with the actual durable journal,
 // including collected failures, and check temporal/identity ordering independently.
-func assertProgressJournal(t *testing.T, store, runID string, events []runevent.Event) *runjournal.Manifest {
-	t.Helper()
-	return assertProgressJournalForProject(t, store, "test/progress", runID, events)
-}
-
-func assertProgressJournalForProject(t *testing.T, store, project, runID string, events []runevent.Event) *runjournal.Manifest {
+func assertProgressJournal(t *testing.T, store, project, runID string, events []runevent.Event) *runjournal.Manifest {
 	t.Helper()
 	path := filepath.Join(store, "projects", orchestrator.NormalizeProjectKey(project), "runs", runID, "run-manifest.json")
 	journal, err := runjournal.Parse(readFile(t, path))
@@ -408,7 +403,7 @@ graph.edge_from(items).to_end(graph.end)
 		t.Fatalf("live map run: %v\n%s", err, readFile(t, stderrPath))
 	}
 	events := readProgressEvents(t, eventsPath)
-	assertProgressJournal(t, store, "live", events)
+	assertProgressJournal(t, store, "test/progress", "live", events)
 	assertProgressJSON(t, stdout.Bytes(), "live", "succeeded", "")
 }
 
@@ -462,18 +457,27 @@ graph = GraphBuilder(name="terminal-progress", input_type=int, output_type=int, 
     deadline=timedelta(seconds=3))
 graph.edge_from(graph.start).to(graph.add(task)).to(graph.add(after)).to_end(graph.end)
 graph.on_exit(hook)
+
+def sum_items(ctx: StepContext[list[int]]) -> int:
+    return sum(ctx.inputs)
+
+failed_map = GraphBuilder(name="failed-map-progress", input_type=list[int], output_type=int, defaults=DEFAULTS)
+items = failed_map.map(failed_map.start, task, id="tasks", concurrency=2)
+failed_map.edge_from(items).to(failed_map.add(sum_items)).to_end(failed_map.end)
+failed_map.on_exit(hook)
 `
 	if err := os.WriteFile(workflow, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, test := range []struct{ name, input, status, hook string }{
-		{"failed task", "-1", "failed", "succeeded"},
-		{"failed hook", "1", "succeeded", "failed"},
-		{"deadline", "-2", "failed", "succeeded"},
+	for _, test := range []struct{ name, graph, input, status, hook, failedNode string }{
+		{"failed task", "graph", "-1", "failed", "succeeded", "task"},
+		{"failed map", "failed_map", "[-1,1]", "failed", "succeeded", "tasks"},
+		{"failed hook", "graph", "1", "succeeded", "failed", ""},
+		{"deadline", "graph", "-2", "failed", "succeeded", "task"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, eventsPath := progressStore(t), filepath.Join(t.TempDir(), "events.ndjson")
-			command := exec.Command(binary, "run", workflow+"#graph", "--project", "test/progress", "--store", store, "--run-id", "terminal", "--input="+test.input, "--json", "--progress", "plain", "--events", eventsPath)
+			command := exec.Command(binary, "run", workflow+"#"+test.graph, "--project", "test/progress", "--store", store, "--run-id", "terminal", "--input="+test.input, "--json", "--progress", "plain", "--events", eventsPath)
 			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
 			var stdout, stderr bytes.Buffer
 			command.Stdout, command.Stderr = &stdout, &stderr
@@ -482,22 +486,36 @@ graph.on_exit(hook)
 				t.Fatalf("run: %v\n%s", err, &stderr)
 			}
 			events := readProgressEvents(t, eventsPath)
-			journal := assertProgressJournal(t, store, "terminal", events)
+			journal := assertProgressJournal(t, store, "test/progress", "terminal", events)
 			assertProgressJSON(t, stdout.Bytes(), "terminal", test.status, "")
 			last := events[len(events)-1]
 			if last.ExitHook == nil || last.ExitHook.Status != test.hook {
 				t.Fatalf("exit hook missing from completion: %+v", last)
 			}
 			if test.status == "failed" {
-				if last.FailedNode == nil || *last.FailedNode != "task" {
+				if last.FailedNode == nil || *last.FailedNode != test.failedNode {
 					t.Fatalf("failed node = %+v", last.FailedNode)
 				}
 				if journal.Steps[1].Status != "not-started" {
 					t.Fatal("queued task was incorrectly dispatched")
 				}
 			}
-			if test.name == "failed task" && (!strings.Contains(stderr.String(), "terminal-log-sentinel") || !strings.Contains(stderr.String(), "terminal-diagnostic-sentinel")) {
+			if (test.name == "failed task" || test.name == "failed map") && (!strings.Contains(stderr.String(), "terminal-log-sentinel") || !strings.Contains(stderr.String(), "terminal-diagnostic-sentinel")) {
 				t.Fatalf("missing failure context: %s", &stderr)
+			}
+			if test.name == "failed map" {
+				collectionFailure := false
+				for _, event := range events {
+					if event.Type == "step.attempt.finished" && event.NodeID == "tasks" && event.ItemIndex == nil {
+						collectionFailure = true
+						if event.Classification != "error" {
+							t.Fatalf("map failure mislabeled: %+v", event)
+						}
+					}
+				}
+				if !collectionFailure {
+					t.Fatal("missing map collection failure")
+				}
 			}
 			// Validate strict consumer behavior using a real event as the base record.
 			line, err := json.Marshal(events[0])

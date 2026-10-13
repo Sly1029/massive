@@ -105,6 +105,6 @@ Local run events observe journal transitions through `localJournal`. Invokers
 serialize `StepInvocationBatch` callbacks across workers: start once per dispatch,
 finish once per reported outcome, before returning. Map completion callbacks
 verify and reconcile each item immediately; publish the item journal once per
-round. Emit terminal events after bulk terminalization and `run.finished` after
-the exit hook's record publication. Keep author diagnostics/log tails only in
+round. Reconcile events for bulk terminalization and emit `run.finished` after
+terminal publication and the exit hook's record publication. Keep author diagnostics/log tails only in
 local events and stderr; root journals retain safe lifecycle summaries.

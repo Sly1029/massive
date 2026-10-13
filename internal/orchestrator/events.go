@@ -121,7 +121,7 @@ func (journal *localJournal) observe(step *runjournal.Step, itemIndex *int) {
 			}
 			delete(events.outcomes, attemptIdentity)
 		} else if attempt.Status == StatusFailed {
-			classification = "verification"
+			classification = "error"
 		}
 		events.emit(runevent.Event{Type: "step.attempt.finished", NodeID: step.NodeID, ItemIndex: itemIndex, Attempt: attempt.Attempt, MaxAttempts: maxAttempts, DurationMS: &duration, Status: attempt.Status, Classification: classification, Diagnostic: boundedEventText(diagnostic, 2048), LogTail: tail})
 	}

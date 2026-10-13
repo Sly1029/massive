@@ -129,7 +129,7 @@ graph.on_exit(record)
 	if !strings.Contains(string(inspected), `"status":"cancelled"`) {
 		t.Fatalf("journal = %s", inspected)
 	}
-	assertProgressJournalForProject(t, store, "test/interrupt", "interrupted", readProgressEvents(t, eventsPath))
+	assertProgressJournal(t, store, "test/interrupt", "interrupted", readProgressEvents(t, eventsPath))
 	// The exit hook still ran after the interrupt and saw the cancellation.
 	if body, err := os.ReadFile(outcome); err != nil || string(body) != "cancelled" {
 		t.Fatalf("exit hook outcome = %q (%v)", body, err)
