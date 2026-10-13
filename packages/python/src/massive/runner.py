@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import importlib
 import importlib.resources
@@ -9,25 +8,14 @@ import json
 import re
 import shutil
 import sys
-import tarfile
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import BinaryIO, Literal, NotRequired, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, BinaryIO, Literal, NotRequired, Protocol, TypedDict, cast
 
-from jsonschema import Draft202012Validator
-from jsonschema.exceptions import SchemaError as JsonSchemaError
-from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
-from pydantic import TypeAdapter
-from pydantic import ValidationError as PydanticValidationError
-from pydantic_core import PydanticSerializationError
-from referencing.exceptions import Unresolvable
-
-from ._step import StepDefinition
-from .artifact import ArtifactError, ArtifactRuntime, Destination, Producer
 from .canonical import (
     CanonicalJsonError,
     JsonValue,
@@ -45,9 +33,12 @@ from .datastore import (
     LocalDatastore,
     S3Datastore,
 )
-from .files import ArtifactFiles
-from .identity import SHA256_REFERENCE, InvocationIdentity
-from .identity import ExecutionScope as ArtifactExecutionScope
+
+if TYPE_CHECKING:
+    from pydantic import TypeAdapter
+
+    from .artifact import Destination, Producer
+    from .files import ArtifactFiles
 
 _SOURCE_ARCHIVE_CONTENT_TYPE = "application/vnd.massive.source-tar"
 _MAX_SOURCE_FILES = 16384
@@ -156,6 +147,11 @@ class _ResolvedStep:
         files: ArtifactFiles,
         workspace: Path,
     ) -> bytes:
+        from pydantic import ValidationError as PydanticValidationError
+        from pydantic_core import PydanticSerializationError
+
+        from .identity import InvocationIdentity
+
         # Artifacts are JSON, so decode and encode in Pydantic's JSON mode: strict
         # models accept ISO strings and arrays there, and fields use schema aliases.
         try:
@@ -182,6 +178,8 @@ class _ResolvedStep:
         try:
             output = self.function(context)
             if inspect.isawaitable(output):
+                import asyncio
+
                 output = asyncio.run(_await_output(output))
         except NonRetryableError as error:
             raise NonRetryableStepError(str(error)) from error
@@ -234,6 +232,8 @@ def run_descriptor_path(path: Path) -> int:
 
 @cache
 def _descriptor_validator() -> SchemaValidator:
+    from jsonschema import Draft202012Validator
+
     packaged_schema = importlib.resources.files("massive").joinpath(
         "schemas", "step-invocation-descriptor.schema.json"
     )
@@ -251,6 +251,8 @@ def _descriptor_validator() -> SchemaValidator:
 
 
 def _load_descriptor(path: Path) -> StepInvocationDescriptor:
+    from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+
     try:
         descriptor: object = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as error:
@@ -271,6 +273,11 @@ def _load_descriptor(path: Path) -> StepInvocationDescriptor:
 
 
 def _execute(descriptor: StepInvocationDescriptor) -> None:
+    from pydantic import ValidationError as PydanticValidationError
+
+    from .artifact import ArtifactError, ArtifactRuntime
+    from .files import ArtifactFiles
+
     symbol = descriptor["symbol"]
     source_package = descriptor["sourcePackage"]
     if symbol["language"] != "python" or source_package["language"] != "python":
@@ -302,6 +309,9 @@ def _execute(descriptor: StepInvocationDescriptor) -> None:
 def _publication_identity(
     descriptor: StepInvocationDescriptor,
 ) -> tuple[Destination, Producer]:
+    from .artifact import Destination, Producer
+    from .identity import ExecutionScope as ArtifactExecutionScope
+
     output = descriptor["output"]
     return (
         Destination(manifest_key=output["manifestKey"], schema_ref=output["schema"]),
@@ -338,6 +348,10 @@ def _read_input(descriptor: StepInvocationDescriptor, datastore: Datastore) -> b
 
 
 def _schema(datastore: Datastore, reference: str) -> dict[str, object]:
+    from pydantic import ValidationError as PydanticValidationError
+
+    from .identity import SHA256_REFERENCE
+
     try:
         SHA256_REFERENCE.validate_python(reference)
     except PydanticValidationError:
@@ -352,6 +366,11 @@ def _schema(datastore: Datastore, reference: str) -> dict[str, object]:
 
 
 def _validate(schema: Mapping[str, object], value: object, role: str) -> None:
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import SchemaError as JsonSchemaError
+    from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+    from referencing.exceptions import Unresolvable
+
     try:
         Draft202012Validator.check_schema(schema)
         validator = cast(SchemaValidator, Draft202012Validator(schema))
@@ -412,6 +431,8 @@ def _source_root(
 
 
 def _extract_source(archive: BinaryIO, root: Path) -> None:
+    import tarfile
+
     try:
         with tarfile.open(fileobj=archive, mode="r:") as archive_file:
             names: set[str] = set()
@@ -453,6 +474,10 @@ def _resolved_step(
 
 
 def _load_step(symbol: SymbolDescriptor) -> _ResolvedStep:
+    from pydantic import TypeAdapter
+
+    from ._step import StepDefinition
+
     module_name = symbol["module"]
     if not module_name or any(not part.isidentifier() for part in module_name.split(".")):
         raise DescriptorError("Python module must be a dotted identifier")

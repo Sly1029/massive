@@ -8,10 +8,7 @@ from functools import cache
 from pathlib import Path
 from typing import Protocol, cast
 
-from jsonschema import Draft202012Validator
-from jsonschema.exceptions import SchemaError, ValidationError
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StrictStr
-from referencing.exceptions import Unresolvable
 
 from .canonical import (
     CanonicalJsonError,
@@ -179,6 +176,8 @@ class ArtifactRuntime:
     def resolve_json(
         self, destination: Destination, producer: Producer
     ) -> tuple[PublishedJSON, bytes]:
+        from jsonschema.exceptions import ValidationError
+
         _validate_destination(destination, producer)
         try:
             manifest_object = self._datastore.get(destination.manifest_key)
@@ -267,6 +266,10 @@ def _scope_key_suffix(scope: ExecutionScope | None) -> str:
 
 
 def _validate_canonical_json(datastore: Datastore, schema_ref: str, body: bytes) -> None:
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import SchemaError, ValidationError
+    from referencing.exceptions import Unresolvable
+
     document = _parse_canonical_json(body, "value", ArtifactValidationError)
     schema_key = blob_key(schema_ref)
     try:
@@ -299,6 +302,8 @@ def _parse_canonical_json(body: bytes, label: str, error_type: type[ArtifactErro
 
 
 def _canonical_manifest(manifest: dict[str, JsonValue]) -> bytes:
+    from jsonschema.exceptions import ValidationError
+
     try:
         _manifest_validator().validate(manifest)
         return canonical_json(manifest).encode()
@@ -340,6 +345,8 @@ def blob_key(hash_ref: str) -> str:
 
 @cache
 def _manifest_validator() -> SchemaValidator:
+    from jsonschema import Draft202012Validator
+
     source = importlib.resources.files("massive").joinpath(
         "schemas", "data-artifact-manifest.schema.json"
     )

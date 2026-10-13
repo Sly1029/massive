@@ -8,6 +8,10 @@ in `_step.py`, shared by emission and runner loading. `StepContext[Input]` has n
 dependency generic: live application clients are constructed within tasks.
 Keep authoring graph composition separate from worker imports. The runner loads
 the function by its archived module/export without importing an SDK wrapper type.
+Package exports are lazy with typed imports for checkers. Keep `source_package`
+lightweight: its eagerly exported factory shares the submodule name, so lazy
+loading would let Python replace the factory with the module. Load source config
+and hashing at use, cloud clients for S3, and validation libraries at validation.
 Step hooks are `functools.wraps` decorators applied at definition: emission
 locates the module through `inspect.unwrap` and requires the module attribute to
 be the registered function itself, so the runner imports exactly what was added.
