@@ -114,6 +114,9 @@ func (journal *localJournal) observe(step *runjournal.Step, itemIndex *int) {
 			}
 			if outcome.Status != StatusSucceeded {
 				diagnostic = withRunnerMessage(runnerFailureSummary(outcome, "runner failed"), outcome.RunnerMessage)
+				if outcome.Status == StatusCancelled || outcome.Status == stepInvocationStatusInfraFailed {
+					diagnostic = attempt.Diagnostic
+				}
 				tail = boundedLogTail(outcome.Diagnostic)
 			}
 			delete(events.outcomes, attemptIdentity)

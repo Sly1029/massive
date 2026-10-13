@@ -74,8 +74,9 @@ graph.on_exit(record)
 		t.Fatal(err)
 	}
 
+	eventsPath := filepath.Join(root, "events.ndjson")
 	command := exec.Command(binary, "run", entry, "--input", string(input), "--store", store,
-		"--project", "test/interrupt", "--run-id", "interrupted", "--json")
+		"--project", "test/interrupt", "--run-id", "interrupted", "--json", "--events", eventsPath, "--progress", "none")
 	outcome := filepath.Join(root, "outcome")
 	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "OUTCOME_FILE="+outcome)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -128,6 +129,7 @@ graph.on_exit(record)
 	if !strings.Contains(string(inspected), `"status":"cancelled"`) {
 		t.Fatalf("journal = %s", inspected)
 	}
+	assertProgressJournalForProject(t, store, "test/interrupt", "interrupted", readProgressEvents(t, eventsPath))
 	// The exit hook still ran after the interrupt and saw the cancellation.
 	if body, err := os.ReadFile(outcome); err != nil || string(body) != "cancelled" {
 		t.Fatalf("exit hook outcome = %q (%v)", body, err)

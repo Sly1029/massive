@@ -198,7 +198,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 					}
 				}
 			}
-			record := runExitHook(ctx, store, config, invoker, index, projectKey, runID, hook, outcome)
+			record := runExitHook(ctx, store, config, invoker, index, projectKey, runID, hook, outcome, manifest.events)
 			manifest.ExitHook = &record
 			result.ExitHook = &StepSummary{NodeID: record.NodeID, Status: record.Status, Diagnostic: record.Attempts[0].Diagnostic}
 			publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

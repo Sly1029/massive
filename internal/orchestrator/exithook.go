@@ -41,7 +41,7 @@ func OutcomeTime(at time.Time) string {
 // and returns its journal record. The hook's failure is recorded, never
 // returned, so it cannot change the run's status. Cancellation of the run does
 // not stop the hook; its finite contract timeout and fresh signal context bound it.
-func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, index executionIndex, projectKey, runID string, hook *planpb.GraphNode, outcome RunOutcome) runjournal.Step {
+func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, index executionIndex, projectKey, runID string, hook *planpb.GraphNode, outcome RunOutcome, events *runEvents) runjournal.Step {
 	// Subscribe afresh: the CLI's run signal context may already be cancelled.
 	ctx, stopSignals := signal.NotifyContext(context.WithoutCancel(ctx), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -56,6 +56,12 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 			Hash: canonical.DigestBytes(body), ContentType: jsonContentType, Schema: hook.GetInputSchema(),
 		},
 	}
+	journal := localJournal{events: events}
+	step := runjournal.Step{NodeID: hook.GetId(), Status: StatusRunning}
+	attempt.Status = StatusRunning
+	step.Attempts = []runjournal.Attempt{attempt}
+	events.policies[hook.GetId()] = 1
+	journal.observe(&step, nil)
 	record := func(diagnostic string) runjournal.Step {
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
@@ -68,7 +74,9 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 			status = StatusSucceeded
 		}
 		attempt.Status, attempt.Diagnostic = status, diagnostic
-		return runjournal.Step{NodeID: hook.GetId(), Status: status, Attempts: []runjournal.Attempt{attempt}}
+		step.Status, step.Attempts = status, []runjournal.Attempt{attempt}
+		journal.observe(&step, nil)
+		return step
 	}
 	if encodeErr != nil {
 		return record("exit hook input could not be encoded")
@@ -90,6 +98,9 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 		return record("exit hook descriptor could not be built")
 	}
 	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}})
+	if len(outcomes) == 1 {
+		events.outcome(outcomes[0])
+	}
 	var fatal *FatalRunError
 	if (err != nil && !errors.As(err, &fatal)) || len(outcomes) != 1 {
 		return record("invocation infrastructure failed")

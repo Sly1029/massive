@@ -149,11 +149,6 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 					callbacks.Unlock()
 					outcome, err := i.invokeOne(batchContext, descriptorDir, batch.Steps[index])
 					outcomes[index] = outcome
-					callbacks.Lock()
-					if batch.OnFinished != nil {
-						batch.OnFinished(outcome)
-					}
-					callbacks.Unlock()
 					if outcome.Fatal != nil {
 						err = &FatalRunError{Failure: *outcome.Fatal}
 					}
@@ -163,6 +158,11 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 							cancel()
 						})
 					}
+					callbacks.Lock()
+					if batch.OnFinished != nil {
+						batch.OnFinished(outcome)
+					}
+					callbacks.Unlock()
 				}
 			}
 		}()
