@@ -23,6 +23,10 @@ Implemented:
   700 KiB embedded ConfigMap limit: `massive publish` uploads verified archives
   and pods verify them by pinned digest. Source packages may hold 16,384 files
   and 256 MiB.
+- Canonical JSON supports finite IEEE-754 doubles with RFC 8785 number
+  formatting across Go, Python, and TypeScript. Safe integer bytes and existing
+  hashes remain unchanged; `3.0` and `3` share identity, and NaN/infinity are
+  rejected. Python float models work through decisions, maps, and references.
 - JSON values above 4 KiB cross Argo parameters as content-addressed datastore
   references, hydrated before typed step inputs; local execution passes the
   same values as artifacts. Multi-MB values flow through steps, decisions,

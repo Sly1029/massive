@@ -113,12 +113,12 @@ function writeCanonicalJson(
   }
 
   if (typeof value === "number") {
-    if (!Number.isSafeInteger(value)) {
+    if (!Number.isFinite(value)) {
       throw new CanonicalJsonError(
-        "v0 canonical JSON numbers must be safe integers",
+        "canonical JSON numbers must be finite",
       );
     }
-    out.push(String(value));
+    out.push(JSON.stringify(value));
     return;
   }
 

@@ -11,14 +11,12 @@ import (
 	"io"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 )
 
-const maxSafeInteger = 1<<53 - 1
-
-var canonicalIntegerPattern = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 var sha256RefPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // Marshal encodes a Go value using its JSON representation and returns the v0
@@ -117,6 +115,44 @@ func decodeJSON(data []byte) (any, error) {
 	if err := decoder.Decode(&value); err != nil {
 		return nil, fmt.Errorf("decode JSON field tree: %w", err)
 	}
+	return decodeNumbers(value)
+}
+
+// Validate the entire tree before self-exclusion can discard an invalid number.
+func decodeNumbers(value any) (any, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		double, err := typed.Float64()
+		if err != nil {
+			return nil, fmt.Errorf("decode finite JSON number %q: %w", typed, err)
+		}
+		if !strings.ContainsAny(string(typed), ".eE") && typed != "-0" {
+			encoded, err := jsoncanonicalizer.NumberToJSON(double)
+			if err != nil {
+				return nil, err
+			}
+			if encoded != string(typed) {
+				return nil, fmt.Errorf("integer JSON token %q changes under double serialization to %s; use a string for exact integers", typed, encoded)
+			}
+		}
+		return double, nil
+	case []any:
+		for index, item := range typed {
+			decoded, err := decodeNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[index] = decoded
+		}
+	case map[string]any:
+		for key, item := range typed {
+			decoded, err := decodeNumbers(item)
+			if err != nil {
+				return nil, err
+			}
+			typed[key] = decoded
+		}
+	}
 	return value, nil
 }
 
@@ -138,11 +174,13 @@ func writeCanonicalJSON(out *bytes.Buffer, value any) error {
 			return nil
 		}
 		out.WriteString("false")
-	case json.Number:
-		if err := validateCanonicalInteger(typed); err != nil {
-			return err
+	case float64:
+		// NumberToJSON implements ES6 Number::toString per RFC 8785 §3.2.2.3.
+		encoded, err := jsoncanonicalizer.NumberToJSON(typed)
+		if err != nil {
+			return fmt.Errorf("encode finite JSON number %v: %w", typed, err)
 		}
-		out.WriteString(typed.String())
+		out.WriteString(encoded)
 	case string:
 		out.WriteString(jsonQuote(typed))
 	case []any:
@@ -177,26 +215,6 @@ func writeCanonicalJSON(out *bytes.Buffer, value any) error {
 		out.WriteByte('}')
 	default:
 		return fmt.Errorf("unsupported JSON value type %T", typed)
-	}
-
-	return nil
-}
-
-func validateCanonicalInteger(number json.Number) error {
-	text := number.String()
-	if !canonicalIntegerPattern.MatchString(text) {
-		return fmt.Errorf("non-canonical number %q: v0 canonical field trees restrict numbers to canonical safe integers", text)
-	}
-	if text == "-0" {
-		return fmt.Errorf("non-canonical number %q: v0 canonical field trees require zero to use 0", text)
-	}
-
-	parsed, err := strconv.ParseInt(text, 10, 64)
-	if err != nil {
-		return fmt.Errorf("parse canonical integer %q: %w", text, err)
-	}
-	if parsed > maxSafeInteger || parsed < -maxSafeInteger {
-		return fmt.Errorf("number %q exceeds the safe-integer range ±(2^53-1)", text)
 	}
 
 	return nil

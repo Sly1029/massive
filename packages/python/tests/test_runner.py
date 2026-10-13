@@ -303,7 +303,7 @@ def test_runner_reports_a_missing_required_input_object_as_schema_failure(
 
 
 @pytest.mark.parametrize("body", [b"\x80", b"1.5", b'{"value":21 }'])
-def test_runner_reports_invalid_utf8_float_and_noncanonical_input_as_schema_failures(
+def test_runner_reports_invalid_utf8_and_noncanonical_input_as_schema_failures(
     tmp_path: Path, body: bytes
 ) -> None:
     descriptor_path, descriptor, store = _descriptor(tmp_path, export="double")
@@ -503,7 +503,9 @@ def test_runner_reports_an_unpublished_source_archive_as_a_descriptor_failure(
 @pytest.mark.parametrize(
     "vector",
     json.loads(
-        (Path(__file__).resolve().parents[3] / "conformance/fixtures/source-limits/limits.json").read_text()
+        (
+            Path(__file__).resolve().parents[3] / "conformance/fixtures/source-limits/limits.json"
+        ).read_text()
     )["cases"],
     ids=lambda vector: vector["archive"],
 )
@@ -594,7 +596,11 @@ def test_scoped_s3_credentials_report_a_missing_archive_as_a_descriptor_failure(
     archive_key = descriptor["sourcePackage"]["sourceArchive"]["key"]
     for path in store.rglob("*"):
         key = str(path.relative_to(store))
-        if path.is_file() and ".massive-datastore-metadata" not in path.parts and key != archive_key:
+        if (
+            path.is_file()
+            and ".massive-datastore-metadata" not in path.parts
+            and key != archive_key
+        ):
             root.put_object(Bucket=bucket, Key=key, Body=path.read_bytes())
     descriptor["datastore"] = {
         "kind": "s3",
@@ -863,3 +869,24 @@ def test_workspace_lives_through_publication_and_is_cleaned_after_invocation(
             body, context=ArtifactFiles(LocalDatastore(store), tmp_path / "read")
         )
         assert blob.path().read_text() == "workspace artifact"
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_runner_rejects_nonfinite_float_outputs_before_publication(
+    tmp_path: Path, index: int
+) -> None:
+    descriptor_path, descriptor, store = _descriptor(
+        tmp_path,
+        export="nonfinite_output",
+        input_value={"value": index},
+        output_schema={
+            "type": "object",
+            "properties": {"value": {"type": "number"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+    )
+    result = _run(descriptor_path)
+    assert result.returncode == 65, result.stderr
+    assert "output is not canonical JSON" in result.stderr
+    assert not (store / descriptor["output"]["manifestKey"]).exists()

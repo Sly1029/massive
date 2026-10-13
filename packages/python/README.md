@@ -530,35 +530,43 @@ live Python objects are not transported between workers. Python is the
 primary SDK; the artifact manifest protocol is shared with the other Massive
 runtimes.
 
-`canonical-json-v0` deliberately supports integers, but not floating-point
-numbers. Massive emits Pydantic's **validation schema** for workflow and step
-inputs, and its **serialization schema** for workflow and step outputs. This
-matches the runtime boundary: inputs are parsed into Python values with
-`TypeAdapter.validate_python`, while outputs are validated and then converted
-with `dump_python(mode="json")` before publication.
+`canonical-json-v0` supports finite IEEE-754 doubles and safe integers. Number
+encoding follows [RFC 8785 §3.2.2.3](https://www.rfc-editor.org/rfc/rfc8785.html#section-3.2.2.3):
+ECMAScript's shortest round-trip decimal form. Thus `3.0` and `3` both encode as
+`3` and have the same hash; `-0.0` becomes `0`, `1e21` becomes `1e+21`, and
+`1e-7` becomes `1e-7`. NaN and positive/negative infinity are rejected before
+publication. Use Pydantic `FiniteFloat` when you also want validation to reject
+non-finite values earlier; ordinary `float` fields and JSON Schema `number`
+inputs and outputs are supported.
 
-`emit()` still checks the serialization shape for both directions before it
-accepts an input validation schema. That prevents a bare `float` input from
-appearing portable merely because Pydantic can validate it: its serialized
-shape is JSON `number`, which v0 cannot carry. Decimal passes this check because
-its serialized shape is a string.
+Every Python `int` in `[-(2**53 - 1), 2**53 - 1]` is encoded exactly. Larger
+integers are accepted only if `int(float(value)) == value`, then encoded as
+doubles; other integers are rejected. Use strings or `Decimal` for arbitrary
+precision. Go rejects integer JSON tokens whose canonical double text differs
+instead of silently rounding IDs. Fraction/exponent tokens use double rounding;
+canonical byte readers require the source spelling to be canonical.
+Integral doubles above the safe range are supported:
+`float(2**53)` encodes as `9007199254740992`. Python's canonical wire reader
+keeps safe integer tokens as `int` and decodes larger integer tokens as `float`,
+because JCS can write doubles such as `1e20` without a decimal point or exponent.
+A float-typed Pydantic field restores `3` to `3.0` when decoding an input.
+An `int` or `JsonValue` field may restore an integral token as `int`; exactly
+representable values such as `2**53` and `10**20` can be published again.
+Fractional `Field(multiple_of=...)` constraints are rejected during emission
+because their validation differs across runtimes; use integer units instead.
 
-That distinction makes `Decimal` useful without inventing a second wire
-format. Pydantic accepts a Decimal input in its validation schema and serializes
-the output as a JSON string, so an output such as `Decimal("10.5")` is stored as
-`{"value":"10.5"}`. A following Decimal-typed step can validate that string
-again. The published validation schema deliberately retains Pydantic's
-number-or-string input shape; canonical-json-v0 framing is an additional,
-authoritative constraint that rejects a fractional JSON number before schema
-validation. Actual float/`number` output schemas are rejected at `emit()` because
-their serialized values cannot be represented by v0; use `Decimal`, a string,
-or a scaled integer instead.
+Massive emits Pydantic's **validation schema** for workflow and step inputs,
+and its **serialization schema** for outputs. Inputs use
+`TypeAdapter.validate_json`; outputs are validated, then converted with
+`dump_python(mode="json")` before canonical publication. `emit()` checks the
+serialization shape for both directions. Decimal retains its string transport:
+`Decimal("10.5")` publishes as `"10.5"`, and a following Decimal field accepts
+that string. Decimal validation schemas may also accept finite JSON numbers.
 
-`Any` and unconstrained mappings are also rejected at `emit()` in v0. They can
-admit floats that no runtime can encode consistently. Prefer a concrete model,
-`list[int]`, `dict[str, int]`, or another explicit JSON shape.
-Models configured with Pydantic `extra="allow"` are rejected for the same
-reason; prefer the default behavior or `extra="forbid"` for workflow payloads.
+`Any`, unconstrained mappings, and Pydantic `extra="allow"` models remain
+rejected at `emit()`: they can admit values outside the portable field tree.
+Prefer concrete models, `list[float]`, `dict[str, float]`, or another explicit
+JSON shape, with default extra-field behavior or `extra="forbid"`.
 
 Use Massive's recursive `JsonValue` type when a result deliberately carries
 open-ended metadata while retaining the portable wire constraint:
@@ -571,8 +579,8 @@ class Result(BaseModel):
     metadata: dict[str, JsonValue]
 ```
 
-This permits nested strings, safe integers, booleans, nulls, arrays, and
-objects, but keeps floating-point values out of the schema and runtime payload.
+This permits nested strings, safe integers, finite floats, booleans, nulls,
+arrays, and objects. Runtime canonicalization enforces the numeric domain.
 
 These author-time checks intentionally cover the Pydantic-generated schema
 forms Massive emits; they do not attempt to solve arbitrary JSON Schema

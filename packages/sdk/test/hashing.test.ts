@@ -1,6 +1,5 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert";
 import { z } from "zod";
-import { SchemaPortabilityError } from "../src/errors.ts";
 import { lowerPortableSchema } from "../src/schema.ts";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,7 +29,7 @@ Deno.test("canonical hashing golden vector matches stableStringify sha256", asyn
   assertEquals(`sha256:${sha256Text(stableStringify(input))}`, expected);
 });
 
-Deno.test("canonical hashing accepts only safe integer field trees", () => {
+Deno.test("canonical hashing accepts finite doubles and rejects unsupported values", () => {
   assertEquals(
     stableStringify({ zero: -0, nested: [0, 1, 9_007_199_254_740_991] }),
     '{"nested":[0,1,9007199254740991],"zero":0}',
@@ -38,9 +37,9 @@ Deno.test("canonical hashing accepts only safe integer field trees", () => {
 
   for (
     const value of [
-      1.5,
+      Number.NaN,
+      Number.NEGATIVE_INFINITY,
       Number.POSITIVE_INFINITY,
-      9_007_199_254_740_992,
       undefined,
       () => undefined,
       Symbol("not-json"),
@@ -60,41 +59,77 @@ Deno.test("canonical hashing rejects sparse arrays instead of silently serializi
   assertThrows(() => stableStringify(sparse));
 });
 
-Deno.test("v0 schema lowering rejects fractional number schemas and accepts z.int", () => {
-  const error = assertThrows(
-    () => lowerPortableSchema(z.number(), "workflow input"),
-    SchemaPortabilityError,
+Deno.test("v0 schema lowering accepts number schemas, fractional constants, and integers", () => {
+  for (
+    const [schema, type] of [[z.number(), "number"], [z.int(), "integer"], [
+      z.literal(1.5),
+      "number",
+    ], [z.literal(2 ** 53), "number"]] as const
+  ) {
+    assertEquals(
+      (lowerPortableSchema(schema, "workflow input").jsonSchema as {
+        type: string;
+      }).type,
+      type,
+    );
+  }
+});
+
+Deno.test("schema lowering explains why fractional multipleOf is not portable", () => {
+  for (
+    const schema of [
+      z.number().multipleOf(0.1),
+      z.object({ values: z.array(z.number().multipleOf(0.5)) }),
+    ]
+  ) {
+    const error = assertThrows(
+      () => lowerPortableSchema(schema, "workflow input"),
+      Error,
+    );
+    assertEquals(error.message.includes("non-integer multipleOf"), true);
+  }
+});
+
+Deno.test("all runtimes share IEEE-754 double bytes and hashes", async () => {
+  const root = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "../../../conformance/fixtures/canonical-json-v0",
   );
-  assertEquals(
-    error.message,
-    "workflow input uses a non-portable Zod schema: number schemas are not portable in v0; use z.int() so artifacts contain canonical safe integers",
-  );
-  assertEquals(
-    (lowerPortableSchema(z.int(), "workflow input").jsonSchema as {
-      type: string;
-    }).type,
-    "integer",
-  );
-  const literalError = assertThrows(
-    () => lowerPortableSchema(z.literal(1.5), "workflow output"),
-    SchemaPortabilityError,
-  );
-  assertEquals(
-    literalError.message,
-    "workflow output uses a non-portable Zod schema: schema numeric constants and bounds must be canonical safe integers",
-  );
-  const unsafeLiteralError = assertThrows(
-    () =>
-      lowerPortableSchema(
-        z.literal(9_007_199_254_740_992),
-        "workflow output",
-      ),
-    SchemaPortabilityError,
-  );
-  assertEquals(
-    unsafeLiteralError.message,
-    "workflow output uses a non-portable Zod schema: schema numeric constants and bounds must be canonical safe integers",
-  );
+  const vectors = JSON.parse(
+    await Deno.readTextFile(join(root, "numbers.json")),
+  ) as {
+    cases: { bits: string; canonical: string | null; hash: string | null }[];
+    sources: { source: string; canonical: string | null }[];
+  };
+  for (const vector of vectors.cases) {
+    const buffer = new ArrayBuffer(8);
+    const view = new DataView(buffer);
+    view.setBigUint64(0, BigInt(`0x${vector.bits}`));
+    const value = view.getFloat64(0);
+    if (vector.canonical === null) {
+      assertThrows(() => stableStringify(value), CanonicalJsonError);
+      continue;
+    }
+    const encoded = stableStringify(value);
+    assertEquals(encoded, vector.canonical, vector.bits);
+    assertEquals(`sha256:${sha256Text(encoded)}`, vector.hash, vector.bits);
+    assertEquals(parseCanonicalJsonText(encoded), value === 0 ? 0 : value);
+  }
+  for (const vector of vectors.sources) {
+    if (vector.canonical === null || vector.source !== vector.canonical) {
+      assertThrows(
+        () => parseCanonicalJsonText(vector.source),
+        CanonicalJsonError,
+      );
+    }
+    if (vector.canonical !== null) {
+      assertEquals(
+        stableStringify(JSON.parse(vector.source)),
+        vector.canonical,
+      );
+    }
+  }
+  assertEquals(stableStringify(3.0), stableStringify(3));
 });
 
 Deno.test("canonical JSON v0 writes own prototype keys and integer-like keys in UTF-16 order", () => {

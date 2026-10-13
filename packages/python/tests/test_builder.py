@@ -13,7 +13,7 @@ from uuid import UUID
 
 import pytest
 from jsonschema import Draft202012Validator
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from massive import (
     DEFAULT_MAP_CONCURRENCY,
@@ -779,25 +779,24 @@ def test_only_steps_and_calls_accept_edges() -> None:
 
 
 @pytest.mark.parametrize(
-    ("input_type", "output_type", "step", "message"),
+    ("input_type", "output_type", "step"),
     [
-        (Request, NestedDecimalResult, nested_decimal_result, "workflow output schema"),
-        (Request, ReferencedDecimalResult, referenced_decimal_result, "workflow output schema"),
+        (Request, NestedDecimalResult, nested_decimal_result),
+        (Request, ReferencedDecimalResult, referenced_decimal_result),
     ],
 )
-def test_emit_rejects_schemas_that_admit_non_integer_json_numbers(
+def test_emit_accepts_nested_and_referenced_number_schemas(
     input_type: type[BaseModel],
     output_type: type[BaseModel],
     step: Callable[..., Any],
-    message: str,
 ) -> None:
     graph = GraphBuilder(
-        name="integer-only",
+        name="finite-numbers",
         input_type=input_type,
         output_type=output_type,
         defaults=execution(
             environment=container(
-                "example.invalid/integer-only@sha256:"
+                "example.invalid/finite-numbers@sha256:"
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                 platform="linux/amd64",
             )
@@ -806,14 +805,8 @@ def test_emit_rejects_schemas_that_admit_non_integer_json_numbers(
     node = graph.add(step)
     graph.edge_from(graph.start).to(node).to_end(graph.end)
 
-    with pytest.raises(ValueError, match=message + ".*integer-only"):
-        graph.emit(
-            source=source_package(
-                root=Path(__file__).parent,
-                include=[Path(__file__).name],
-                package_id="python-tests",
-            )
-        )
+    specification = _emit(graph)
+    assert specification.spec_hash.startswith("sha256:")
 
 
 def test_emit_uses_validation_schemas_for_inputs_and_serialization_schemas_for_outputs() -> None:
@@ -906,7 +899,7 @@ def test_emit_accepts_nested_decimal_validation_inputs_by_their_serialized_shape
     )
 
 
-def test_emit_rejects_bare_float_workflow_and_registered_step_inputs() -> None:
+def test_emit_accepts_bare_float_workflow_and_registered_step_inputs() -> None:
     workflow_float = GraphBuilder(
         name="float-workflow-input",
         input_type=float,
@@ -918,8 +911,7 @@ def test_emit_rejects_bare_float_workflow_and_registered_step_inputs() -> None:
         workflow_float.end
     )
 
-    with pytest.raises(ValueError, match="workflow input schema.*integer-only"):
-        _emit(workflow_float)
+    assert _emit(workflow_float).spec_hash.startswith("sha256:")
 
     step_float = GraphBuilder(
         name="float-step-input",
@@ -933,8 +925,7 @@ def test_emit_rejects_bare_float_workflow_and_registered_step_inputs() -> None:
     step_float.add(float_input)
     assert step_float.edge_from(step_float.start).to_end(step_float.end) is None
 
-    with pytest.raises(ValueError, match="step 'float_input' input schema.*integer-only"):
-        _emit(step_float)
+    assert _emit(step_float).spec_hash.startswith("sha256:")
 
 
 @pytest.mark.parametrize("identifier", ["a/b", ".", "..", "x" * 129])
@@ -983,7 +974,7 @@ def test_graph_accepts_safe_wire_segment_identifiers(identifier: str) -> None:
         float_enum_result,
     ],
 )
-def test_emit_rejects_step_schemas_with_float_constants_or_enums(
+def test_emit_accepts_step_schemas_with_float_constants_or_enums(
     step: Callable[..., Any],
 ) -> None:
     graph = GraphBuilder(
@@ -995,8 +986,7 @@ def test_emit_rejects_step_schemas_with_float_constants_or_enums(
     node = graph.add(step, id=step.__name__.removesuffix("_result").replace("_", "-"))
     graph.edge_from(graph.start).to(node).to_end(graph.end)
 
-    with pytest.raises(ValueError, match="workflow output schema.*canonical-json-v0"):
-        _emit(graph)
+    assert _emit(graph).spec_hash.startswith("sha256:")
 
 
 @pytest.mark.parametrize(
@@ -1054,16 +1044,51 @@ def test_public_json_value_models_portable_escape_hatches() -> None:
     assert specification.spec_hash.startswith("sha256:")
 
 
-def test_schema_validation_rejects_a_float_constant_with_step_role_diagnostics() -> None:
-    with pytest.raises(ValueError, match="step 'float-constant' output schema.*canonical-json-v0"):
-        _assert_canonical_json_schema({"const": 1.5}, "step 'float-constant' output schema")
+def test_schema_validation_accepts_finite_float_constants_and_bounds() -> None:
+    _assert_canonical_json_schema({"const": 1.5}, "step 'float-constant' output schema")
+    _assert_canonical_json_schema({"minimum": 1.5, "type": "integer"}, "integer bound")
+    _assert_canonical_json_schema({"type": "number", "multipleOf": 2.0}, "integer divisor")
+
+
+def test_emit_rejects_pydantic_fractional_multiple_of() -> None:
+    class FractionalMultiple(BaseModel):
+        value: float = Field(multiple_of=0.1)
+
+    # Demonstrate why accepting this model would fail publication validation.
+    value = FractionalMultiple(value=0.3)
+    assert not Draft202012Validator(FractionalMultiple.model_json_schema()).is_valid(
+        value.model_dump()
+    )
+    graph = GraphBuilder(
+        name="fractional-multiple",
+        input_type=FractionalMultiple,
+        output_type=FractionalMultiple,
+        defaults=_defaults(),
+    )
+    graph.add(identity)
+    graph.edge_from(graph.start).to_end(graph.end)
+    with pytest.raises(ValueError, match=r"non-integer multipleOf.*#/properties/value/multipleOf"):
+        _emit(graph)
 
 
 @pytest.mark.parametrize(
     "schema",
     [
-        {"const": 1 << 53},
-        {"enum": [1, 1 << 53]},
+        {"type": "number", "multipleOf": 0.1},
+        {"$defs": {"measurement": {"type": "number", "multipleOf": 0.5}}},
+        {"type": "array", "items": {"type": "number", "multipleOf": 1.5}},
+    ],
+)
+def test_schema_validation_rejects_fractional_multiple_of(schema: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="non-integer multipleOf"):
+        _assert_canonical_json_schema(schema, "workflow input")
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"const": (1 << 53) + 1},
+        {"enum": [1, (1 << 53) + 1]},
     ],
 )
 def test_schema_validation_rejects_unsafe_integer_constants_and_enums(
@@ -1076,7 +1101,7 @@ def test_schema_validation_rejects_unsafe_integer_constants_and_enums(
 def test_schema_validation_escapes_json_pointer_tokens_in_diagnostics() -> None:
     with pytest.raises(ValueError, match=r"#/properties/name~1with~0tokens"):
         _assert_canonical_json_schema(
-            {"properties": {"name/with~tokens": {"type": "number"}}},
+            {"properties": {"name/with~tokens": True}},
             "step 'pointer' output schema",
         )
 
@@ -1084,8 +1109,8 @@ def test_schema_validation_escapes_json_pointer_tokens_in_diagnostics() -> None:
 @pytest.mark.parametrize(
     "schema",
     [
-        {"minimum": 1.5, "type": "integer"},
-        {"description": "integer", "examples": [1 << 53], "type": "integer"},
+        {"minimum": float("inf"), "type": "number"},
+        {"description": "integer", "examples": [(1 << 53) + 1], "type": "integer"},
     ],
 )
 def test_schema_validation_rejects_noncanonical_metadata_and_bounds(schema: dict[str, Any]) -> None:
@@ -1122,7 +1147,7 @@ def test_schema_validation_keeps_false_and_polarity_sensitive_children_safe(
 def _defaults():
     return execution(
         environment=container(
-            "example.invalid/integer-only@sha256:"
+            "example.invalid/finite-numbers@sha256:"
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             platform="linux/amd64",
         )

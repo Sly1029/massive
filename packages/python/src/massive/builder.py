@@ -1489,7 +1489,7 @@ def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
     except (TypeError, ValueError) as error:
         raise ValueError(
             f"{role} contains a schema value canonical-json-v0 cannot encode; "
-            "use safe integers and strings instead of floats or unsafe integers."
+            "use finite floats, safe integers, and strings."
         ) from error
 
     def pointer(path: str, token: str | int) -> str:
@@ -1523,23 +1523,21 @@ def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
         if value is True:
             raise ValueError(
                 f"{role} is unconstrained at {path}; canonical-json-v0 cannot represent "
-                "an Any value. Use an explicit integer, string, object, or collection schema."
+                "an Any value. Use an explicit number, integer, string, object, or collection schema."
             )
         if not isinstance(value, dict):
             return
+        multiple = value.get("multipleOf")
+        if isinstance(multiple, (int, float)) and multiple % 1 != 0:
+            raise ValueError(
+                f"{role} has non-integer multipleOf at {pointer(path, 'multipleOf')}; "
+                "fractional divisibility is not portable across JSON Schema validators."
+            )
         non_metadata = set(value) - metadata
         if not non_metadata:
             raise ValueError(
                 f"{role} is unconstrained at {path}; canonical-json-v0 cannot represent "
-                "an Any value. Use an explicit integer, string, object, or collection schema."
-            )
-        type_value = value.get("type")
-        if type_value == "number" or (isinstance(type_value, list) and "number" in type_value):
-            raise ValueError(
-                f"{role} uses JSON Schema type 'number' at {path}; "
-                "canonical-json-v0 is integer-only. Use an integer field or "
-                "model fractional values as strings. For JSON escape hatches, "
-                "annotate values with massive.JsonValue."
+                "an Any value. Use an explicit number, integer, string, object, or collection schema."
             )
         for key in mappings:
             child = value.get(key)
@@ -1551,8 +1549,7 @@ def _assert_canonical_json_schema(schema: JsonValue, role: str) -> None:
             child = value.get(key)
             if isinstance(child, (bool, dict)):
                 visit(child, pointer(path, key))
-        # `if` and `not` are polarity-sensitive: a nested number may be
-        # conditionally constrained or forbidden, so neither is traversed here.
+        # `if` and `not` are polarity-sensitive, so neither is traversed here.
         additional_properties = value.get("additionalProperties")
         if additional_properties is True:
             raise ValueError(

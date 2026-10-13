@@ -2,9 +2,11 @@ package graphgen
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/spec"
@@ -41,18 +43,20 @@ func (b Behavior) outType() valueType {
 func (b Behavior) Evaluate(symbol string, input []byte) ([]byte, error) {
 	digest := sha256.Sum256(append([]byte(symbol+"\x00"), input...))
 	text := hex.EncodeToString(digest[:8])
+	// Clear one exponent bit so every generated IEEE double is finite.
+	score := math.Float64frombits(binary.BigEndian.Uint64(digest[:8]) & 0xffefffffffffffff)
 	switch b.Kind {
 	case Classify:
-		return canonical.Marshal(map[string]string{"kind": b.Tags[(int(digest[0])+b.Bias)%len(b.Tags)], "value": text})
+		return canonical.Marshal(map[string]any{"kind": b.Tags[(int(digest[0])+b.Bias)%len(b.Tags)], "score": score, "value": text})
 	case Expand:
-		items := make([]map[string]string, b.Items)
+		items := make([]map[string]any, b.Items)
 		for index := range items {
 			itemDigest := sha256.Sum256(fmt.Appendf(digest[:], "%d", index))
-			items[index] = map[string]string{"kind": "item", "value": hex.EncodeToString(itemDigest[:8])}
+			items[index] = map[string]any{"kind": "item", "score": math.Float64frombits(binary.BigEndian.Uint64(itemDigest[:8]) & 0xffefffffffffffff), "value": hex.EncodeToString(itemDigest[:8])}
 		}
 		return canonical.Marshal(items)
 	default:
-		return canonical.Marshal(map[string]string{"kind": "value", "value": text})
+		return canonical.Marshal(map[string]any{"kind": "value", "score": score, "value": text})
 	}
 }
 

@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 
-type JsonValue = None | bool | int | str | list["JsonValue"] | dict[str, "JsonValue"]
+import rfc8785
+
+type JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
 _MAX_SAFE_INTEGER = (1 << 53) - 1
 
@@ -20,12 +22,24 @@ def canonical_json(value: JsonValue) -> str:
 def parse_canonical_json(body: bytes) -> JsonValue:
     """Decode canonical JSON v0 bytes, rejecting malformed or noncanonical input."""
     try:
-        value = json.loads(body)
+        value = json.loads(body, parse_int=_parse_integer)
         if canonical_json(value).encode() != body:
             raise ValueError("JSON body is not canonical")
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
         raise CanonicalJsonError("JSON body is not canonical") from error
     return value
+
+
+def _parse_integer(text: str) -> int | float:
+    # JCS may print an integral double without a decimal point or exponent.
+    # Retain safe integers; interpret larger wire numbers as IEEE-754 doubles.
+    value = int(text)
+    if -_MAX_SAFE_INTEGER <= value <= _MAX_SAFE_INTEGER:
+        return value
+    double = float(text)
+    if rfc8785.dumps(double).decode() != text:
+        raise ValueError("integer JSON token changes under double serialization")
+    return double
 
 
 def sha256_ref(value: str | bytes) -> str:
@@ -48,10 +62,16 @@ def _encode(value: JsonValue) -> str:
         return "false"
     if isinstance(value, int):
         if not -_MAX_SAFE_INTEGER <= value <= _MAX_SAFE_INTEGER:
-            raise ValueError("canonical JSON integers must be within JavaScript's safe range")
+            try:
+                double = float(value)
+            except OverflowError as error:
+                raise ValueError("canonical JSON integer overflows a finite double") from error
+            if int(double) != value:
+                raise ValueError("canonical JSON integers must be exactly representable as doubles")
+            return rfc8785.dumps(double).decode("utf-8")
         return str(value)
     if isinstance(value, float):
-        raise TypeError("canonical JSON v0 does not support floating-point numbers")
+        return rfc8785.dumps(value).decode("utf-8")
     if isinstance(value, str):
         _assert_well_formed_unicode(value)
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))

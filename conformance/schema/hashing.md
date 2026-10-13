@@ -5,12 +5,11 @@ This document defines the v0 canonical hashing rules for `specHash`,
 The normative implementation baseline is `stableStringify` plus SHA-256 in
 `packages/sdk/src/stable.ts`.
 
-The canonicalization is **RFC 8785 (JSON Canonicalization Scheme, JCS)**, with
-one additional v0 restriction: numbers are limited to canonical safe integers
-(see [Canonicalization details](#canonicalization-details)). Implementations
-in other languages should target RFC 8785 conformance rather than
-reverse-engineering ECMAScript behavior; the rules spelled out below are the
-JCS behaviors most often gotten wrong, and the golden vector exercises them.
+The canonicalization is **RFC 8785 (JSON Canonicalization Scheme, JCS)**,
+including its finite IEEE-754 double number serialization. Safe integers retain
+their exact existing bytes and hashes. The identifier remains
+`canonical-json-v0`: this extends the accepted numeric domain without changing
+any previously valid canonical payload.
 
 ## Value references
 
@@ -62,13 +61,45 @@ must reproduce them byte for byte, and the golden vector exercises each rule.
   safety or JS-source-safety escaping. A canonical document ends at its final
   JSON token; no trailing newline or other whitespace is part of the hashed
   payload. Strings must be well-formed Unicode (no lone surrogates).
-- **Numbers in v0 canonical field trees are restricted to canonical safe
-  integers:** base-10, no leading zeros, no sign on zero, no fraction or
-  exponent, absolute value at most 2^53 − 1. This is a strict subset of RFC
-  8785's number serialization (ECMAScript `Number::toString`). Producers must
-  normalize or reject anything else. Full RFC 8785 number serialization is
-  required of any implementation before non-integer numbers may appear in
-  hashed field trees (owed by the Go compiler workstream, WS-2).
+- **Numbers are finite IEEE-754 doubles**, formatted using ECMAScript's
+  shortest round-trip algorithm ([RFC 8785 §3.2.2.3](https://www.rfc-editor.org/rfc/rfc8785.html#section-3.2.2.3)).
+  Integral floats and integers have the same encoding and identity (`3.0` →
+  `3`); negative zero becomes `0`. Decimal notation applies for magnitudes
+  from `1e-6` inclusive to `1e21` exclusive; otherwise exponent notation uses
+  lowercase `e`, an explicit `+` for positive exponents, and no leading exponent
+  zeros. Examples: `1e21` → `1e+21`, `1e-7` → `1e-7`, smallest positive double
+  → `5e-324`. NaN and infinities (including numeric overflow) are rejected.
+- **Every integer in ±(2^53 − 1) is exact.** Python `int` values outside that
+  range are accepted only when conversion to a finite double is lossless
+  (`int(float(value)) == value`), then serialized as that double. This also
+  supports Pydantic restoring integral doubles in `int` or `JsonValue` fields.
+  Other integers are rejected; use strings/Decimal for arbitrary precision.
+  Go preserves JSON number tokens before converting them to doubles. An
+  integer-lexical token (no fraction or exponent) is rejected if its canonical
+  double text differs, except `-0`, which normalizes to `0`. For example,
+  `12345678901234567` and `9007199254740993` are rejected rather than rounded.
+  Fraction/exponent tokens use rounding to the nearest IEEE-754 double:
+  `9007199254740993.0` becomes `9007199254740992`. Overflow is rejected.
+  Canonical byte readers in all three languages additionally compare the
+  re-encoded bytes and reject any noncanonical source spelling.
+  Large *integral doubles* are valid, including `9007199254740992` and
+  `100000000000000000000`. Python's wire decoder retains safe integer tokens
+  as integers and interprets larger integer tokens as doubles. Schema `number`
+  supports both integral and fractional doubles; schema `integer` still rejects
+  fractional values. Pydantic float fields restore the requested Python type
+  even when canonical text is integral. This is not arbitrary-precision integer
+  transport.
+
+- **Schema `multipleOf` must be a positive integer.** Fractional divisors such
+  as `0.1` disagree across Pydantic, Python jsonschema, and Go validators
+  (`0.3` is one example). Python and TypeScript reject them during emission;
+  Go's spec schema rejects them before compilation. Use integer units with
+  an integer divisor for portable divisibility constraints.
+
+Go delegates numeric formatting to the Apache-2.0 WebPKI JCS implementation;
+Python uses Apache-2.0 `rfc8785`; TypeScript uses `JSON.stringify` after rejecting
+non-finite numbers. Shared bit-pattern, lexical, byte, and hash vectors live in
+`conformance/fixtures/canonical-json-v0`.
 
 Hashes are over canonical field trees, never over JSON source whitespace and
 never over binary wire encodings. Canonical compiled artifacts, bundle

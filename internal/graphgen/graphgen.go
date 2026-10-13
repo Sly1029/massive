@@ -145,11 +145,11 @@ const (
 	listValue
 )
 
-const objectSchemaJSON = `{"type":"object","required":["kind","value"],"properties":{"kind":{"type":"string"},"value":{"type":"string"}},"additionalProperties":false}`
+const objectSchemaJSON = `{"type":"object","required":["kind","score","value"],"properties":{"kind":{"type":"string"},"score":{"type":"number"},"value":{"type":"string"}},"additionalProperties":false}`
 
 func caseSchemaJSON(tag string) string {
 	quoted, _ := json.Marshal(tag)
-	return `{"type":"object","required":["kind","value"],"properties":{"kind":{"const":` + string(quoted) + `},"value":{"type":"string"}},"additionalProperties":false}`
+	return `{"type":"object","required":["kind","score","value"],"properties":{"kind":{"const":` + string(quoted) + `},"score":{"type":"number"},"value":{"type":"string"}},"additionalProperties":false}`
 }
 
 const listSchemaJSON = `{"type":"array","items":` + objectSchemaJSON + `}`
@@ -223,7 +223,7 @@ func Generate(data []byte) (*Workflow, error) {
 		Spec: workflowSpec, JSON: body, SourcePath: sourcePath, Source: source,
 		Behaviors: b.behaviors, Nodes: b.nodes, NodeOrder: b.order, Faults: map[Invocation]Fault{},
 	}
-	workflow.Input, err = canonical.Marshal(map[string]string{"kind": "input", "value": fmt.Sprintf("%02x", c.byte())})
+	workflow.Input, err = canonical.Marshal(map[string]any{"kind": "input", "score": float64(c.byte()) / 10, "value": fmt.Sprintf("%02x", c.byte())})
 	if err != nil {
 		return nil, err
 	}

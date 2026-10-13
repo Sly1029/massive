@@ -188,3 +188,11 @@ def workspace_invalid_output(ctx: StepContext[Request]) -> Blob:
     blob = workspace_file(ctx)
     blob.path().write_text("changed after snapshot")
     return blob
+
+
+class FloatResult(BaseModel):
+    value: float
+
+
+def nonfinite_output(context: StepContext[Request]) -> FloatResult:
+    return FloatResult(value=[float("nan"), float("inf"), -float("inf")][context.inputs.value])

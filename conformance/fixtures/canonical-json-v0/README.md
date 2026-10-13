@@ -2,7 +2,7 @@
 
 Each document under `valid/` is both valid JSON and already in its
 `canonical-json-v0` byte representation. Each document under `invalid/` is
-valid JSON source that must be rejected as a canonical-json-v0 payload: parse
+JSON source (including forbidden non-finite literals) that must be rejected as a canonical-json-v0 payload: parse
 it, canonicalize its field tree, and require byte-for-byte equality with the
 source. The invalid corpus deliberately includes numeric lexical forms which
 lose their spelling during JSON parsing.
@@ -33,3 +33,20 @@ noncanonical JSON spellings (`\\u003c`, escaped non-ASCII scalars and
 surrogate pairs, `\\u2028`, uppercase control escapes, `\\/`, and
 `\\u0041`); a text round trip can accidentally erase the distinction this
 corpus is intended to enforce.
+
+`numbers.json` describes IEEE-754 doubles by their 16-digit hexadecimal bits,
+with expected canonical text and SHA-256, or null expectations for non-finite
+values. All three languages consume it. It includes RFC 8785 Appendix B samples,
+three adjacent doubles at exponent and safe-integer boundaries, and 256
+reproducible bit patterns (first eight bytes of SHA-256 of
+`massive-jcs-double-<index>`, for indices 0–255). Expected text comes from
+Node/V8 `JSON.stringify`, and hashes from Node's crypto SHA-256, independently
+of the Go and Python encoders. `sources` exercises lexical normalization and
+rejection at canonical byte boundaries. Negative zero loses its sign; every
+other finite double round-trips exactly.
+
+The preexisting `fraction.json` and `unsafe-integer.json` documents moved from
+`invalid/` to `valid/` without changing their bytes: `1.5` and the integral
+double `9007199254740992` are now supported. All preexisting valid corpus bytes
+and pinned hashes are unchanged, as are the hashing and value-parameter vectors.
+`1e3`, `-0`, and `1.0` remain noncanonical source spellings.

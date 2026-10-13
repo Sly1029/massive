@@ -33,9 +33,9 @@ hierarchical path segment.
 
 The versioned manifest shape is frozen by
 `conformance/schema/data-artifact-manifest.schema.json`. Its encoding is
-`canonical-json-v0`, the integer-only canonical field-tree format defined in
+`canonical-json-v0`, the finite-double canonical field-tree format defined in
 [`hashing.md`](../../conformance/schema/hashing.md). A future incompatible
-canonicalizer requires a new encoding value and consumer support range.
+canonicalizer requires a new encoding value; obsolete artifacts must be rebuilt.
 
 ## Publication
 
