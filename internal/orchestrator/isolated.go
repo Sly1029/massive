@@ -128,7 +128,9 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 		return nil, err
 	}
 	node := index.nodesByID[config.NodeID]
-	if node == nil || mapItemIndex == nil && node.GetKind() != "step" || mapItemIndex != nil && node.GetKind() != "map" {
+	// An exit hook runs like a static step; the Argo exit handler invokes it.
+	step := node.GetKind() == "step" || node.GetKind() == "exit-hook"
+	if node == nil || mapItemIndex == nil && !step || mapItemIndex != nil && node.GetKind() != "map" {
 		kind := "step"
 		if mapItemIndex != nil {
 			kind = "map"

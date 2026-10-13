@@ -521,6 +521,8 @@ class DecisionConformance(unittest.TestCase):
             fixture_source(Path(__file__).parent / "placement.py"), placement=PLACEMENT
         )
         install_workflow(fixture_source(Path(__file__).parent / "deadline.py"))
+        install_workflow(fixture_source(Path(__file__).parent / "exit_hooks.py"))
+        install_workflow(fixture_source(Path(__file__).parent / "exit_retry.py"))
         large_values = fixture_source(Path(__file__).parent / "large_values.py")
         install_workflow(large_values, selector="#graph")
         install_workflow(large_values, selector="#entry_graph")
@@ -562,6 +564,8 @@ class DecisionConformance(unittest.TestCase):
             "reference-input": REFERENCE_INPUT,
             "placement": 3,
             "deadline": 1,
+            "exit-hook": 21,
+            "exit-retry": 21,
         }.items():
             run = kubectl(
                 "create",
@@ -594,6 +598,8 @@ class DecisionConformance(unittest.TestCase):
                                 "reference-input": "large-values",
                                 "placement": "argo-placement",
                                 "deadline": "argo-deadline",
+                                "exit-hook": "argo-exit-hook",
+                                "exit-retry": "argo-exit-retry",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -929,6 +935,64 @@ class DecisionConformance(unittest.TestCase):
                 for word in ("deadline", "duration")
             ),
             messages,
+        )
+
+    def outcomes(self, run: dict, hook: str) -> list[dict]:
+        """Run outcomes the runtime logged as it invoked the exit hook."""
+        prefix = f"exit hook {hook} outcome "
+        return [
+            json.loads(line.removeprefix(prefix))
+            for line in self.main_log(run).splitlines()
+            if line.startswith(prefix)
+        ]
+
+    def test_exit_hook_runs_after_the_run_deadline(self) -> None:
+        run = self.completed("deadline")
+        self.assertEqual(run["status"]["phase"], "Failed")
+        hooks = self.pods(run, "exit-report")
+        self.assertEqual([node["phase"] for node in hooks], ["Succeeded"], hooks)
+        (outcome,) = self.outcomes(run, "report")
+        self.assertEqual(
+            (outcome["run_id"], outcome["status"], outcome["failed_node"]),
+            (run["metadata"]["uid"], "failed", "stall"),
+        )
+
+    def test_failed_exit_hook_does_not_change_the_run_status(self) -> None:
+        self.successful("exit-hook", 42)
+        run = self.completed("exit-hook")
+        hooks = self.pods(run, "exit-notify")
+        self.assertEqual([node["phase"] for node in hooks], ["Failed"], hooks)
+        (outcome,) = self.outcomes(run, "notify")
+        self.assertEqual(
+            (outcome["status"], outcome["failed_node"]), ("succeeded", None)
+        )
+        self.assertIn(
+            "notification service unavailable for succeeded run", self.main_log(run)
+        )
+
+    def test_exit_hook_attributes_terminal_failure_after_recovered_retry(self) -> None:
+        run = self.completed("exit-retry")
+        self.assertEqual(run["status"]["phase"], "Failed")
+        self.assertEqual(
+            sorted(node["phase"] for node in self.pods(run, "step-recovered")),
+            ["Failed", "Succeeded"],
+        )
+        self.assertEqual(
+            [node["phase"] for node in self.pods(run, "step-terminal")], ["Failed"]
+        )
+        parents = {
+            node["displayName"]: node["phase"]
+            for node in run["status"]["nodes"].values()
+            if node.get("type") == "Retry"
+        }
+        self.assertEqual(parents["recovered"], "Succeeded")
+        self.assertEqual(parents["terminal"], "Failed")
+        self.assertEqual(
+            [node["phase"] for node in self.pods(run, "exit-notify")], ["Succeeded"]
+        )
+        (outcome,) = self.outcomes(run, "notify")
+        self.assertEqual(
+            (outcome["status"], outcome["failed_node"]), ("failed", "terminal")
         )
 
     def pods(self, run: dict, template: str) -> list[dict]:

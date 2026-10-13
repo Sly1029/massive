@@ -613,8 +613,9 @@ publishes to its own attempt slot and keeps the same idempotency key.
 retryable.
 
 A plan's run deadline (`graph.deadlineSeconds`, from the WorkflowSpec's
-`workflow.deadlineSeconds`) is the only `activeDeadlineSeconds` Massive emits,
-on the WorkflowTemplate spec. Argo measures it from the workflow's start, stops
+`workflow.deadlineSeconds`) becomes `activeDeadlineSeconds` on the
+WorkflowTemplate spec. Exit-hook templates carry a separate deadline because
+Argo exempts them from the workflow deadline. Argo measures it from the workflow's start, stops
 running pods, and fails the workflow. It is plan data rather than deployment
 data because it changes what a run means (an unfinished run fails), so it must
 behave the same on the local target, where the orchestrator cancels execution
@@ -701,6 +702,43 @@ The live Argo gate runs a map whose item pods carry a node selector, a
 RuntimeClass, and a patch, and checks that every pod the controller created
 carries the default labels, annotations, tolerations, and an admitted
 PriorityClass, while only the item pods carry the override.
+
+## Exit hooks
+
+A plan's `graph.exitHook` (from `GraphBuilder.on_exit`) is a step-like node
+outside the DAG. Its input is the shared run outcome
+(`conformance/schema/run-outcome.schema.json`, generated from the Python SDK's
+`RunOutcome`), its output is `null`, and its contract must not retry; the
+compiler rejects any other shape. Hooks always have a finite `timeoutSeconds`: the
+Python builder keeps an explicit or inherited timeout, otherwise assigns 300
+seconds, and plan readers reject missing or invalid timeouts.
+
+The WorkflowTemplate sets `onExit: exit-handler`. That DAG runs one task, the
+hook's pod template `exit-<id>`, with `continueOn: {failed: true, error:
+true}`: Argo otherwise turns a failed exit handler into the workflow's own
+failure, and the hook must never change the run's status. The pod runs
+`massive runtime exit-hook` with `{{workflow.status}}`,
+`{{workflow.failures}}`, `{{workflow.creationTimestamp}}`, and
+`{{workflow.uid}}`. Argo v3.7 substitutes `{{workflow.failures}}` as a JSON
+string holding the failed nodes (or `null`), and the runtime decodes exactly
+that form. It maps `Succeeded` to `succeeded` and `Failed` or `Error` to
+`failed`, and names the earliest terminal plan task as `failed_node`. It
+matches generated task names against terminal retry parents and outer map DAG
+boundaries, ignoring failed attempts that may have recovered. If no boundary
+identifies a cause, or the earliest boundaries tie, the node is `null`. It logs
+`exit hook <id> outcome <json>` (the outcome holds no secrets) and then
+invokes the hook through the same isolated path as a step, with its own
+secrets, resources, placement override, and timeout, and no retry strategy.
+Argo exempts exit-handler pods from the workflow's `activeDeadlineSeconds`, so
+a hook still runs after the run deadline. The hook pod template has its own
+`activeDeadlineSeconds`, equal to the hook timeout, to bound preparation and
+execution even after the workflow deadline.
+
+Argo cannot distinguish an operator's `argo stop` from a failure, so the
+outcome is `failed`; `argo terminate` does not run exit handlers. The live
+gate runs a hook after a 30-second run deadline and checks the outcome it
+received, and runs a failing hook on a succeeded workflow that stays
+Succeeded.
 
 ## Application secret bindings
 

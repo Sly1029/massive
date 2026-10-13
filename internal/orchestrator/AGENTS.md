@@ -41,6 +41,11 @@ only while attempts remain. Cancellation, infrastructure errors, and output
 verification failures end the step. Apply `timeoutSeconds` per attempt as an
 invoker deadline that yields a retryable failure, not a run cancellation. The
 backoff wait must observe the run context.
+The exit hook runs from a deferred call registered before terminalization, so
+it sees the durable outcome. It uses a context without the run's cancellation
+(its required finite contract timeout bounds the complete hook lifetime),
+subscribes to fresh SIGINT/SIGTERM cancellation, runs one attempt, and records its
+result in the journal without returning an error or changing the run status.
 The plan's run deadline is a context deadline whose cause is
 `RunDeadlineError`: it stops work like a cancellation but fails the run, and
 its message is the one context cause safe to persist in the journal. Claim the
@@ -62,3 +67,11 @@ Only findings and `environment.ProjectError` become a `PreflightError` (CLI
 exit 68, never retried); return context cancellation and other infrastructure
 errors unchanged so a terminated pod is retried. A
 passing attempt writes `environment.json` beside its output manifest.
+
+A failed exit-hook journal rewrite preserves the settled run result and error;
+report it separately in the run summary. After materialization cancellation,
+prepare the hook's verified source archive under its detached lifetime.
+
+Derive exit-hook failure attribution from terminal executable journal entries
+with dispatched attempts. A deadline during successful settlement or between
+tasks has no failed node; queued nodes and graph markers are not causes.

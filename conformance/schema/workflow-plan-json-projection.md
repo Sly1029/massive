@@ -13,6 +13,7 @@ The artifact body is a deterministic JSON rendering of the typed plan field tree
 - `ArtifactRef` renders as `{ "key", "hash", "contentType" }`,
 - `GraphIR.irVersion` is the explicit semantic graph contract version and is distinct from the enclosing transport `schemaVersion`,
 - `GraphIR.deadlineSeconds` appears only when the workflow sets a run deadline,
+- `GraphIR.exitHook` appears only when the workflow registers an exit hook,
 - `hashing` is required and identifies the exact plan-hash recipe; source
   package references carry their required source-package recipe independently,
 - `specHashing` is required and identifies the recipe for the foreign

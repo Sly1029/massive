@@ -316,8 +316,11 @@ type GraphIR struct {
 	// Wall-clock limit for the whole run, from submission to its last task.
 	// Absent means no run deadline.
 	DeadlineSeconds *uint32 `protobuf:"varint,9,opt,name=deadline_seconds,json=deadlineSeconds,proto3,oneof" json:"deadline_seconds,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Kind "exit-hook": runs once after the run settles, outside the DAG, with
+	// the run-outcome input schema. Its own failure never changes run status.
+	ExitHook      *GraphNode `protobuf:"bytes,10,opt,name=exit_hook,json=exitHook,proto3,oneof" json:"exit_hook,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GraphIR) Reset() {
@@ -411,6 +414,13 @@ func (x *GraphIR) GetDeadlineSeconds() uint32 {
 		return *x.DeadlineSeconds
 	}
 	return 0
+}
+
+func (x *GraphIR) GetExitHook() *GraphNode {
+	if x != nil {
+		return x.ExitHook
+	}
+	return nil
 }
 
 type GraphNode struct {
@@ -1657,7 +1667,7 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\v_provenanceB\n" +
 	"\n" +
 	"\b_hashingB\x0f\n" +
-	"\r_spec_hashing\"\xf6\x03\n" +
+	"\r_spec_hashing\"\xc2\x04\n" +
 	"\aGraphIR\x12(\n" +
 	"\rworkflow_name\x18\x01 \x01(\tH\x00R\fworkflowName\x88\x01\x01\x12&\n" +
 	"\finput_schema\x18\x02 \x01(\tH\x01R\vinputSchema\x88\x01\x01\x12(\n" +
@@ -1669,14 +1679,18 @@ const file_workflow_plan_proto_rawDesc = "" +
 	"\x05edges\x18\a \x03(\v2\x1a.massive.plan.v1.GraphEdgeR\x05edges\x12\"\n" +
 	"\n" +
 	"ir_version\x18\b \x01(\tH\x05R\tirVersion\x88\x01\x01\x12.\n" +
-	"\x10deadline_seconds\x18\t \x01(\rH\x06R\x0fdeadlineSeconds\x88\x01\x01B\x10\n" +
+	"\x10deadline_seconds\x18\t \x01(\rH\x06R\x0fdeadlineSeconds\x88\x01\x01\x12<\n" +
+	"\texit_hook\x18\n" +
+	" \x01(\v2\x1a.massive.plan.v1.GraphNodeH\aR\bexitHook\x88\x01\x01B\x10\n" +
 	"\x0e_workflow_nameB\x0f\n" +
 	"\r_input_schemaB\x10\n" +
 	"\x0e_output_schemaB\r\n" +
 	"\v_start_nodeB\v\n" +
 	"\t_end_nodeB\r\n" +
 	"\v_ir_versionB\x13\n" +
-	"\x11_deadline_seconds\"\xff\x05\n" +
+	"\x11_deadline_secondsB\f\n" +
+	"\n" +
+	"_exit_hook\"\xff\x05\n" +
 	"\tGraphNode\x12\x13\n" +
 	"\x02id\x18\x01 \x01(\tH\x00R\x02id\x88\x01\x01\x12\x17\n" +
 	"\x04kind\x18\x02 \x01(\tH\x01R\x04kind\x88\x01\x01\x12&\n" +
@@ -1885,23 +1899,24 @@ var file_workflow_plan_proto_depIdxs = []int32{
 	1,  // 10: massive.plan.v1.WorkflowPlan.spec_hashing:type_name -> massive.plan.v1.HashingSpec
 	4,  // 11: massive.plan.v1.GraphIR.nodes:type_name -> massive.plan.v1.GraphNode
 	5,  // 12: massive.plan.v1.GraphIR.edges:type_name -> massive.plan.v1.GraphEdge
-	6,  // 13: massive.plan.v1.GraphNode.cases:type_name -> massive.plan.v1.DecisionCase
-	7,  // 14: massive.plan.v1.GraphNode.select_inputs:type_name -> massive.plan.v1.SelectInput
-	0,  // 15: massive.plan.v1.SourcePackageRef.manifest:type_name -> massive.plan.v1.ArtifactRef
-	0,  // 16: massive.plan.v1.SourcePackageRef.source_archive:type_name -> massive.plan.v1.ArtifactRef
-	1,  // 17: massive.plan.v1.SourcePackageRef.hashing:type_name -> massive.plan.v1.HashingSpec
-	12, // 18: massive.plan.v1.EnvironmentRequirement.container:type_name -> massive.plan.v1.ContainerRequirement
-	13, // 19: massive.plan.v1.EnvironmentRequirement.node:type_name -> massive.plan.v1.NodeRequirement
-	16, // 20: massive.plan.v1.ExecutionContract.resources:type_name -> massive.plan.v1.ResourceRequirements
-	17, // 21: massive.plan.v1.ExecutionContract.secrets:type_name -> massive.plan.v1.SecretRef
-	18, // 22: massive.plan.v1.ExecutionContract.network:type_name -> massive.plan.v1.NetworkPolicy
-	15, // 23: massive.plan.v1.ExecutionContract.retry:type_name -> massive.plan.v1.RetryPolicy
-	0,  // 24: massive.plan.v1.TargetPlan.bundle_manifest:type_name -> massive.plan.v1.ArtifactRef
-	25, // [25:25] is the sub-list for method output_type
-	25, // [25:25] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	4,  // 13: massive.plan.v1.GraphIR.exit_hook:type_name -> massive.plan.v1.GraphNode
+	6,  // 14: massive.plan.v1.GraphNode.cases:type_name -> massive.plan.v1.DecisionCase
+	7,  // 15: massive.plan.v1.GraphNode.select_inputs:type_name -> massive.plan.v1.SelectInput
+	0,  // 16: massive.plan.v1.SourcePackageRef.manifest:type_name -> massive.plan.v1.ArtifactRef
+	0,  // 17: massive.plan.v1.SourcePackageRef.source_archive:type_name -> massive.plan.v1.ArtifactRef
+	1,  // 18: massive.plan.v1.SourcePackageRef.hashing:type_name -> massive.plan.v1.HashingSpec
+	12, // 19: massive.plan.v1.EnvironmentRequirement.container:type_name -> massive.plan.v1.ContainerRequirement
+	13, // 20: massive.plan.v1.EnvironmentRequirement.node:type_name -> massive.plan.v1.NodeRequirement
+	16, // 21: massive.plan.v1.ExecutionContract.resources:type_name -> massive.plan.v1.ResourceRequirements
+	17, // 22: massive.plan.v1.ExecutionContract.secrets:type_name -> massive.plan.v1.SecretRef
+	18, // 23: massive.plan.v1.ExecutionContract.network:type_name -> massive.plan.v1.NetworkPolicy
+	15, // 24: massive.plan.v1.ExecutionContract.retry:type_name -> massive.plan.v1.RetryPolicy
+	0,  // 25: massive.plan.v1.TargetPlan.bundle_manifest:type_name -> massive.plan.v1.ArtifactRef
+	26, // [26:26] is the sub-list for method output_type
+	26, // [26:26] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_workflow_plan_proto_init() }

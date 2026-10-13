@@ -46,7 +46,7 @@ func TestInterruptCancelsRunningStepAndJournal(t *testing.T) {
 import time
 from pathlib import Path
 from pydantic import BaseModel
-from massive import GraphBuilder, StepContext, container, execution
+from massive import GraphBuilder, RunOutcome, StepContext, container, execution
 
 class Request(BaseModel):
     ready: str
@@ -56,9 +56,13 @@ def wait(ctx: StepContext[Request]) -> int:
     time.sleep(60)
     return 1
 
+def record(ctx: StepContext[RunOutcome]) -> None:
+    Path(os.environ["OUTCOME_FILE"]).write_text(ctx.inputs.status)
+
 graph = GraphBuilder(name="interrupt", input_type=Request, output_type=int,
     defaults=execution(environment=container("example.invalid/runner@sha256:"+"1"*64)))
 graph.edge_from(graph.start).to(graph.add(wait)).to_end(graph.end)
+graph.on_exit(record)
 `
 	entry := filepath.Join(root, "workflow.py")
 	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
@@ -72,7 +76,8 @@ graph.edge_from(graph.start).to(graph.add(wait)).to_end(graph.end)
 
 	command := exec.Command(binary, "run", entry, "--input", string(input), "--store", store,
 		"--project", "test/interrupt", "--run-id", "interrupted", "--json")
-	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
+	outcome := filepath.Join(root, "outcome")
+	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "OUTCOME_FILE="+outcome)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
@@ -122,5 +127,9 @@ graph.edge_from(graph.start).to(graph.add(wait)).to_end(graph.end)
 	}
 	if !strings.Contains(string(inspected), `"status":"cancelled"`) {
 		t.Fatalf("journal = %s", inspected)
+	}
+	// The exit hook still ran after the interrupt and saw the cancellation.
+	if body, err := os.ReadFile(outcome); err != nil || string(body) != "cancelled" {
+		t.Fatalf("exit hook outcome = %q (%v)", body, err)
 	}
 }

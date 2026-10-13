@@ -75,6 +75,7 @@ type sourcePackageArtifact struct {
 }
 
 func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *RunResult, runErr error) {
+	startedAt := time.Now()
 	if config.Plan == nil {
 		return nil, fmt.Errorf("run config requires a workflow plan")
 	}
@@ -106,9 +107,6 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		return nil, &InvalidRunInputError{Field: "run id", Value: runID, Message: "must be a single safe path segment of at most 128 characters (datastore key segment rules)"}
 	}
 	if err := validatePlanIdentitySegments(config.Plan); err != nil {
-		return nil, err
-	}
-	if err := plan.ValidateExecution(config.Plan); err != nil {
 		return nil, err
 	}
 	// Every source-package hash is interpolated into a snapshot directory name
@@ -166,7 +164,41 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		defer stop()
 	}
 
+	invoker := config.StepInvoker
+	if invoker == nil {
+		invoker = ProcessStepInvoker{
+			CommandTemplate: config.RunnerCommand,
+			WorkingDir:      config.RunnerWorkingDir,
+		}
+	}
+
 	activeNodeID := ""
+	dispatchedNodes := map[string]bool{}
+	// Registered before terminalization so it runs after the outcome is durable.
+	if hook := config.Plan.GetGraph().GetExitHook(); hook != nil {
+		defer func() {
+			outcome := RunOutcome{RunID: runID, Status: manifest.Status, StartedAt: OutcomeTime(startedAt), FinishedAt: OutcomeTime(time.Now())}
+			if manifest.Status == StatusFailed {
+				// Require both a terminal journal entry and a reported dispatch.
+				// A task can settle successfully after cancellation; it and the next queued
+				// task are not the cause of a deadline between tasks.
+				for _, step := range manifest.Steps {
+					if (step.Status == StatusFailed || step.Status == StatusCancelled) && dispatchedNodes[step.NodeID] {
+						outcome.FailedNode = &step.NodeID
+						break
+					}
+				}
+			}
+			record := runExitHook(ctx, store, config, invoker, index, projectKey, runID, hook, outcome)
+			manifest.ExitHook = &record
+			result.ExitHook = &StepSummary{NodeID: record.NodeID, Status: record.Status, Diagnostic: record.Attempts[0].Diagnostic}
+			publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer stop()
+			if err := writeRunManifest(publication, store, manifestKey, manifest); err != nil {
+				result.ExitHookPersistenceDiagnostic = "exit hook record could not be published: " + err.Error()
+			}
+		}()
+	}
 	defer func() {
 		if runErr == nil {
 			return
@@ -210,14 +242,6 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		returned, runErr = result, failure
 	}()
 
-	invoker := config.StepInvoker
-	if invoker == nil {
-		invoker = ProcessStepInvoker{
-			CommandTemplate: config.RunnerCommand,
-			WorkingDir:      config.RunnerWorkingDir,
-		}
-	}
-
 	sourcePackages, err := materializePrerequisites(ctx, store, config)
 	if err != nil {
 		return nil, err
@@ -226,11 +250,12 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 
 	resolution := newExecutionResolver(index, config.Plan.GetGraph(), workflowInput)
 	for _, nodeID := range index.nodeOrder {
-		activeNodeID = nodeID
+		activeNodeID = ""
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		node := index.nodesByID[nodeID]
+		activeNodeID = nodeID
 		reason, err := resolution.activationSkipReason(node)
 		if err != nil {
 			return nil, err
@@ -279,6 +304,14 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			continue
 		case "map":
 			output, err := runMapNode(ctx, store, config, invoker, projectKey, runID, node, resolution, &manifest, manifestKey)
+			if items := findManifestStep(&manifest, nodeID).Items; items != nil {
+				for _, item := range *items {
+					if len(item.Attempts) > 0 {
+						dispatchedNodes[nodeID] = true
+						break
+					}
+				}
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -330,6 +363,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 				}
 				return nil, fmt.Errorf("step invoker returned %d outcomes, want 1", len(outcomes))
 			}
+			dispatchedNodes[nodeID] = true
 			outcome := outcomes[0]
 			if outcome.Status != StatusSucceeded {
 				status, diagnostic := StatusFailed, durableRunnerDiagnostic(outcome)
@@ -1156,12 +1190,16 @@ func mapOutcomesByIndex(mapID string, attempt int, outcomes []StepInvocationOutc
 	return byIndex, nil
 }
 
-// settleInvocation verifies one reported success independently of execution
-// cancellation. Each publication has its own finite budget; a large map does
-// not consume every item's verification time in one shared deadline.
+// settleInvocation gives ordinary tasks a detached verification budget so
+// cancellation preserves completed work. Exit hooks retain their own lifetime
+// across preparation, invocation, and verification.
 func settleInvocation(ctx context.Context, store datastore.Datastore, descriptor StepInvocationDescriptor, index executionIndex, hooks RunHooks) (nodeOutput, error) {
-	settlementContext, stop := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer stop()
+	settlementContext := ctx
+	if index.nodesByID[descriptor.NodeID].GetKind() != "exit-hook" {
+		var stop context.CancelFunc
+		settlementContext, stop = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer stop()
+	}
 	if hooks.AfterStepInvocation != nil {
 		if err := hooks.AfterStepInvocation(settlementContext, descriptor); err != nil {
 			return nodeOutput{}, err
@@ -1220,10 +1258,10 @@ func resultForEnd(ctx context.Context, store datastore.Datastore, projectKey str
 }
 
 func buildExecutionIndex(workflowPlan *planpb.WorkflowPlan) (executionIndex, error) {
-	graph := workflowPlan.GetGraph()
-	if graph == nil {
-		return executionIndex{}, fmt.Errorf("workflow plan is missing graph")
+	if err := plan.ValidateExecution(workflowPlan); err != nil {
+		return executionIndex{}, err
 	}
+	graph := workflowPlan.GetGraph()
 	nodeOrder, err := topologicalPlanOrder(graph)
 	if err != nil {
 		return executionIndex{}, err
@@ -1252,6 +1290,13 @@ func buildExecutionIndex(workflowPlan *planpb.WorkflowPlan) (executionIndex, err
 	for _, node := range graph.GetNodes() {
 		index.nodesByID[node.GetId()] = node
 		index.inboundByTarget[node.GetId()] = nil
+	}
+	// The exit hook is addressable like a step but stays outside the DAG.
+	if hook := graph.GetExitHook(); hook != nil {
+		if index.nodesByID[hook.GetId()] != nil {
+			return executionIndex{}, fmt.Errorf("exit hook id %q is also a graph node id", hook.GetId())
+		}
+		index.nodesByID[hook.GetId()] = hook
 	}
 	for _, edge := range graph.GetEdges() {
 		if index.nodesByID[edge.GetFrom()] == nil {

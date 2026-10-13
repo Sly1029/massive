@@ -18,6 +18,11 @@ running that step or map node's author code, never control pods. Resolve
 placement per template instead of using Argo's workflow-level pod defaults, and
 keep the plan's platform node selector keys owned by the plan.
 
+The exit hook runs from `onExit` through a DAG task with `continueOn`, so its
+failure cannot become the workflow's status. `ExitStatus` recomputes pod
+template names to find the failed node; keep `templateNodes` aligned with the
+names `workflowTemplate` generates.
+
 Inactive branches must not read nonexistent outputs. Select waits for inactive
 or terminal alternatives, requires a successful chosen source, and resolves
 only that source. Map item order follows source indices, including empty maps.
@@ -43,8 +48,10 @@ error, and never preflight a missing body as an empty project.
 Retry strategies belong only on runner templates. Keep the non-retryable exit
 list aligned with the runner exit codes and the runtime's preflight exit (68), pass `{{retries}}` so the runtime
 derives the attempt, and enforce timeouts inside the runtime instead of with
-`activeDeadlineSeconds`. The plan's run deadline is the only
-`activeDeadlineSeconds`, on the workflow spec.
+`activeDeadlineSeconds` on ordinary task templates. The plan's run deadline is
+on the workflow spec. Exit-handler pods are exempt from that deadline, so the
+hook template must carry its own `activeDeadlineSeconds` equal to the required
+finite hook timeout.
 
 For lowering or transport changes, exercise `../../../scripts/test-argo.sh`.
 Schema-valid YAML and isolated runtime tests do not prove live controller behavior.
@@ -58,3 +65,7 @@ with `--workflow-input`, and a decision or map reads them through the
 forward received references and slice referenced lists in item pods. Only map
 collection and the entry task publish values. Bound reads by the reference's
 declared size, and keep maps within the collector's parameter budget.
+
+Exit outcomes use terminal task boundaries: retry parents and outer map DAGs,
+identified by the generated task name and template. Failed attempt pods alone
+do not prove a terminal failure; return an unknown failed node for them.
