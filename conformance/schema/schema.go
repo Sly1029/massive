@@ -69,3 +69,8 @@ var ValueReferenceSchemaJSON []byte
 //
 //go:embed runner-failure.schema.json
 var RunnerFailureSchemaJSON []byte
+
+// MapItemFailureSchemaJSON is the shared closed record for collected item failures.
+//
+//go:embed map-item-failure.schema.json
+var MapItemFailureSchemaJSON []byte

@@ -199,13 +199,13 @@ type envelope struct {
 	Failure    json.RawMessage `json:"failure,omitempty"`
 	FailureRef json.RawMessage `json:"failureRef,omitempty"`
 	Fatal      bool            `json:"fatal,omitempty"`
-	Lost       bool            `json:"lost,omitempty"`
+	Lost       string          `json:"lost,omitempty"`
 }
 
 // outcome reports whether the envelope is one only a collecting map's
 // outcome collector accepts.
 func (fields envelope) outcome() bool {
-	return fields.Failure != nil || fields.FailureRef != nil || fields.Fatal || fields.Lost
+	return fields.Failure != nil || fields.FailureRef != nil || fields.Fatal || fields.Lost != ""
 }
 
 // ExpandItems projects a map input parameter into indexed loop envelopes
@@ -323,9 +323,9 @@ func (codec Codec) CollectResults(ctx context.Context, aggregate []byte) ([]byte
 // Argo's aggregate output. Each item runs inside a DAG that continues past
 // its failed pod, so every item reports exactly one envelope, in source
 // order: a value, a failure, the fatal marker of a failure the map does not
-// keep, or LostItemEnvelope. A fatal marker fails the map; a lost item failed
-// all maxAttempts attempts.
-func (codec Codec) CollectOutcomes(ctx context.Context, aggregate []byte, maxAttempts int) ([]byte, error) {
+// keep, or a missing outcome with its terminal scheduler identity. A fatal
+// marker fails the map; missing outcomes require separately verified evidence.
+func (codec Codec) CollectOutcomes(ctx context.Context, aggregate []byte, maxAttempts int, missingFailures map[string]mapexec.Failure) ([]byte, error) {
 	if maxAttempts < 1 {
 		return nil, contractError("maxAttempts %d must be positive", maxAttempts)
 	}
@@ -336,17 +336,30 @@ func (codec Codec) CollectOutcomes(ctx context.Context, aggregate []byte, maxAtt
 	outcomes := make([]mapexec.Outcome, len(envelopes))
 	for position, fields := range envelopes {
 		outcomes[position].Index = position
-		if fields.Lost {
-			lost := mapexec.NewFailure(mapexec.FailureKilled, maxAttempts, LostItemDiagnostic)
-			outcomes[position].Failure = &lost
+
+		if fields.Fatal {
+			return nil, fmt.Errorf("map item %d failed with a runtime, contract, or infrastructure error; see that item's pod log", position)
+		}
+		if fields.Lost != "" {
+			failure, ok := missingFailures[fields.Lost]
+			if !ok {
+				return nil, contractError("map item %d has no terminal scheduler evidence for %q", position, fields.Lost)
+			}
+			body, err := canonical.Marshal(failure)
+			if err != nil {
+				return nil, err
+			}
+			validated, err := mapexec.ParseFailure(body, maxAttempts)
+			if err != nil {
+				return nil, contractError("map item %d: %v", position, err)
+			}
+			outcomes[position].Failure = &validated
 			continue
 		}
 		if *fields.Index != position {
 			return nil, contractError("map outcome %d reports item index %d", position, *fields.Index)
 		}
 		switch {
-		case fields.Fatal:
-			return nil, fmt.Errorf("map item %d failed with an error that fails the map, such as a schema, dependency preflight, or infrastructure failure; see that item's pod log", position)
 		case fields.Failure != nil || fields.FailureRef != nil:
 			body, err := codec.inlineOrReferenced(ctx, position, fields.Failure, fields.FailureRef)
 			if err != nil {
@@ -452,15 +465,22 @@ func parseEnvelope(body []byte) (envelope, error) {
 	if err := decoder.Decode(&fields); err != nil {
 		return envelope{}, contractError("decode map envelope: %v", err)
 	}
-	if fields.Empty || fields.Lost {
-		if fields.Empty && fields.Lost || fields.Index != nil || fields.Value != nil || fields.Ref != nil || fields.ListRef != nil ||
-			fields.Failure != nil || fields.FailureRef != nil || fields.Fatal {
-			return envelope{}, contractError("empty-map and lost-item markers must contain only their flag")
+
+	if fields.Empty || fields.Lost != "" || fields.Fatal {
+		flags := 0
+		if fields.Empty {
+			flags++
+		}
+		if fields.Lost != "" {
+			flags++
+		}
+		if fields.Fatal {
+			flags++
+		}
+		if flags != 1 || fields.Index != nil || fields.Value != nil || fields.Ref != nil || fields.ListRef != nil || fields.Failure != nil || fields.FailureRef != nil {
+			return envelope{}, contractError("empty, missing-outcome, and fatal markers must contain only their marker")
 		}
 		return fields, nil
-	}
-	if fields.Fatal && (fields.Value != nil || fields.Ref != nil || fields.ListRef != nil || fields.Failure != nil || fields.FailureRef != nil) {
-		return envelope{}, contractError("fatal item marker must contain only its index")
 	}
 	if (fields.Failure != nil || fields.FailureRef != nil) && (fields.Value != nil || fields.Ref != nil || fields.ListRef != nil) {
 		return envelope{}, contractError("map outcome cannot carry both a value and a failure")
@@ -585,15 +605,28 @@ func blobKey(hash string) (datastore.Key, error) {
 	return datastore.BlobKeySHA256Hex(strings.TrimPrefix(hash, "sha256:"))
 }
 
-// LostItemEnvelope is the outcome Argo reports for an item pod that ended
-// without writing one: the container was killed with its runtime, as by an
-// out-of-memory kill under cgroup v2 group kill, evicted, or lost with its
-// node. Argo retries such pods within the attempt budget, so a lost item
-// used every attempt.
-const LostItemEnvelope = `{"lost":true}`
+// LostItemEnvelope carries the terminal pod node ID; absence alone never
+// establishes process death or the number of attempts.
+const LostItemEnvelope = `{"lost":"{{tasks.attempt.id}}"}`
 
-// LostItemDiagnostic describes a lost item in its failure record.
-const LostItemDiagnostic = "item pod ended without reporting an outcome (an out-of-memory kill, eviction, or node loss)"
+// MissingOutcomeNodes returns the scheduler identities needing reconciliation.
+func MissingOutcomeNodes(aggregate []byte) ([]string, error) {
+	envelopes, _, err := aggregateEnvelopes(aggregate)
+	if err != nil {
+		return nil, err
+	}
+	var nodes []string
+	for _, fields := range envelopes {
+		if fields.Fatal {
+			// CollectOutcomes reports the runtime failure without reading the API.
+			return nil, nil
+		}
+		if fields.Lost != "" {
+			nodes = append(nodes, fields.Lost)
+		}
+	}
+	return nodes, nil
+}
 
 // EncodeItemFailure binds a collected item failure to its source index. Like
 // a mapper result, a record above ItemInlineLimit travels by reference.
@@ -615,9 +648,6 @@ func (codec Codec) EncodeItemFailure(ctx context.Context, index int, failure map
 	return canonical.Marshal(map[string]any{"failureRef": ref, "index": index})
 }
 
-// FatalItemEnvelope marks an item whose terminal failure a collecting map
-// does not keep. Argo continues past failed item pods, so the collector
-// fails the map when it reads this marker.
-func FatalItemEnvelope(index int) ([]byte, error) {
-	return canonical.Marshal(map[string]any{"fatal": true, "index": index})
-}
+// FatalItemEnvelope marks any runtime-controlled failure, including errors
+// before item decoding. The collector identifies the item by source position.
+const FatalItemEnvelope = `{"fatal":true}`

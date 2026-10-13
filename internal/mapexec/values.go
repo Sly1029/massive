@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 
+	schemacontract "github.com/Sly1029/massive/conformance/schema"
+	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 )
 
@@ -153,22 +155,16 @@ func ParseFailure(body []byte, maxAttempts int) (Failure, error) {
 	if err != nil || !bytes.Equal(canonicalBody, body) {
 		return Failure{}, fmt.Errorf("failure record must be canonical JSON")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	var failure Failure
-	if err := decoder.Decode(&failure); err != nil {
-		return Failure{}, fmt.Errorf("decode failure record: %w", err)
+
+	if err := artifact.ValidateJSONSchema(schemacontract.MapItemFailureSchemaJSON, body); err != nil {
+		return Failure{}, fmt.Errorf("invalid failure record: %w", err)
 	}
-	switch failure.Kind {
-	case FailureError, FailureKilled, FailureNonRetryable, FailureTimeout:
-	default:
-		return Failure{}, fmt.Errorf("failure kind %q is not a collected kind", failure.Kind)
+	var failure Failure
+	if err := json.Unmarshal(body, &failure); err != nil {
+		return Failure{}, fmt.Errorf("decode failure record: %w", err)
 	}
 	if failure.Attempts < 1 || failure.Attempts > maxAttempts {
 		return Failure{}, fmt.Errorf("failure after %d attempts is outside the %d-attempt budget", failure.Attempts, maxAttempts)
-	}
-	if failure != NewFailure(failure.Kind, failure.Attempts, failure.Diagnostic) {
-		return Failure{}, fmt.Errorf("failure diagnostic must be valid UTF-8 of at most %d code points", DiagnosticLimit)
 	}
 	return failure, nil
 }

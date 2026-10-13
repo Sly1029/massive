@@ -19,6 +19,7 @@ import (
 	"github.com/Sly1029/massive/internal/controlplane"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/environment"
+	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/spec"
@@ -259,6 +260,7 @@ type RuntimeMapItemCommand struct {
 	Project         string `help:"Stable remote project identity." required:""`
 	RunID           string `name:"run-id" help:"Remote workflow run identifier." required:""`
 	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
+	TerminationLog  string `name:"termination-log" help:"Write runtime fatal markers to the Kubernetes termination log." type:"path"`
 	RetryCount      int    `name:"retry-count" help:"Retries already attempted by the target scheduler; the attempt is retry-count + 1." default:"0"`
 }
 
@@ -270,7 +272,9 @@ type RuntimeMapCollectCommand struct {
 
 type RuntimeMapCollectOutcomesCommand struct {
 	Input           string `help:"Aggregated Argo item outcome envelopes, one per item in source order." required:""`
-	MaxAttempts     int    `name:"max-attempts" help:"The map contract's attempt budget, which a lost item used up." required:""`
+	MaxAttempts     int    `name:"max-attempts" help:"The map contract's attempt budget, used to validate reported attempts." required:""`
+	Workflow        string `help:"Argo workflow name for missing-outcome reconciliation."`
+	Namespace       string `help:"Argo workflow namespace for missing-outcome reconciliation."`
 	Output          string `help:"Write the ordered outcome list parameter to this path." required:"" type:"path"`
 	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
 }
@@ -528,7 +532,18 @@ func (command *RuntimeMapExpandCommand) Run(ctx context.Context) error {
 	return writeRuntimeOutput(command.Output, items)
 }
 
-func (command *RuntimeMapItemCommand) Run(ctx context.Context) error {
+func (command *RuntimeMapItemCommand) Run(ctx context.Context) (resultErr error) {
+	// Start reporting before datastore opening, hydration, or plan loading.
+	// A marker needs no decoded item identity; its position identifies it.
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		resultErr = errors.Join(resultErr, writeRuntimeOutput(command.Output, []byte(valueparam.FatalItemEnvelope)))
+		if command.TerminationLog != "" {
+			resultErr = errors.Join(resultErr, os.WriteFile(command.TerminationLog, []byte(valueparam.FatalItemEnvelope), 0o600))
+		}
+	}()
 	codec, descriptor, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
 	if err != nil {
 		return err
@@ -574,13 +589,7 @@ func (command *RuntimeMapItemCommand) reportFailure(ctx context.Context, codec v
 		}
 		return writeRuntimeOutput(command.Output, envelope)
 	}
-	marker, err := valueparam.FatalItemEnvelope(index)
-	if err != nil {
-		return err
-	}
-	if err := writeRuntimeOutput(command.Output, marker); err != nil {
-		return errors.Join(cause, err)
-	}
+
 	return cause
 }
 
@@ -598,7 +607,18 @@ func (command *RuntimeMapCollectOutcomesCommand) Run(ctx context.Context) error 
 	if err != nil {
 		return err
 	}
-	result, err := codec.CollectOutcomes(ctx, []byte(command.Input), command.MaxAttempts)
+	missingNodes, err := valueparam.MissingOutcomeNodes([]byte(command.Input))
+	if err != nil {
+		return err
+	}
+	var missingFailures map[string]mapexec.Failure
+	if len(missingNodes) != 0 {
+		missingFailures, err = argo.ReadMissingItemFailures(ctx, command.Namespace, command.Workflow, missingNodes)
+		if err != nil {
+			return err
+		}
+	}
+	result, err := codec.CollectOutcomes(ctx, []byte(command.Input), command.MaxAttempts, missingFailures)
 	if err != nil {
 		return err
 	}

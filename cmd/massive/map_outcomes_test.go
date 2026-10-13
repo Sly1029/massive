@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/runjournal"
@@ -90,11 +91,47 @@ func TestArgoMapOutcomesMatchLocalExecution(t *testing.T) {
 				break
 			}
 			// Argo's retry expression stops on these exits; the rest retry.
-			if slices.Contains([]int{64, 65, 67, 68}, exitCodeFor(err)) || retries == maxAttempts-1 {
+			if slices.Contains([]int{64, 65, 67, 68, 70}, exitCodeFor(err)) || retries == maxAttempts-1 {
 				t.Fatalf("item %d failed terminally instead of reporting an outcome: %v", index, err)
 			}
 		}
 		outcomes[index] = string(readFile(t, output))
+	}
+
+	// Block the real filesystem datastore's failure-reference metadata path.
+	// This fails publication after the author exception, rather than hydration.
+	var binding struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(readFile(t, datastoreConfig), &binding); err != nil {
+		t.Fatal(err)
+	}
+	failureBody, err := canonical.Marshal(mapexec.NewFailure(mapexec.FailureError, 2, "step-execution-failure (exit 66): raise cannot be parsed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	failureKey := "blobs/sha256/" + strings.TrimPrefix(canonical.DigestBytes(failureBody), "sha256:")
+	metadata := filepath.Join(binding.Path, ".massive-datastore-metadata", strings.TrimPrefix(canonical.DigestBytes([]byte(failureKey)), "sha256:")+".json")
+	if err := os.Remove(metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(metadata, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fatalOutput := filepath.Join(t.TempDir(), "publication.json")
+	err = (&RuntimeMapItemCommand{
+		Plan: filepath.Join(bundle, "massive-plan.json"), RuntimeSources: RuntimeSources{BundleDir: filepath.Join(bundle, "runtime-assets")},
+		Node: "scan", Item: string(items[2]), Output: fatalOutput, Project: "argo/map-outcomes", RunID: "publication-error",
+		DatastoreConfig: datastoreConfig, RetryCount: 1,
+	}).Run(t.Context())
+	if err == nil || string(readFile(t, fatalOutput)) != valueparam.FatalItemEnvelope {
+		t.Fatalf("failure reference publication = %v", err)
+	}
+	if err := os.Remove(metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadata, []byte(`{"contentType":"application/json"}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	collected := filepath.Join(t.TempDir(), "collected.json")
 	if err := (&RuntimeMapCollectOutcomesCommand{
@@ -158,20 +195,23 @@ func TestCollectOutcomesReportsLostAndFatalItems(t *testing.T) {
 	}
 	collected := filepath.Join(t.TempDir(), "collected.json")
 	command := RuntimeMapCollectOutcomesCommand{
-		Input:       `[{"index":0,"value":7},` + string(failure) + `,` + valueparam.LostItemEnvelope + `]`,
+		Input:       `[{"index":0,"value":7},` + string(failure) + `]`,
 		MaxAttempts: 3, Output: collected, DatastoreConfig: datastoreConfig,
 	}
 	if err := command.Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	want := `[{"status":"succeeded","value":7},` +
-		`{"failure":{"attempts":3,"diagnostic":"step-timeout (timed out after 1m0s)","kind":"timeout"},"status":"failed"},` +
-		`{"failure":{"attempts":3,"diagnostic":"` + valueparam.LostItemDiagnostic + `","kind":"killed"},"status":"failed"}]`
+		`{"failure":{"attempts":3,"diagnostic":"step-timeout (timed out after 1m0s)","kind":"timeout"},"status":"failed"}]`
 	if got := string(readFile(t, collected)); got != want {
 		t.Fatalf("collected = %s\nwant %s", got, want)
 	}
 
-	command.Input = `[{"index":0,"value":7},{"fatal":true,"index":1}]`
+	command.Input = `[{"lost":"terminal-pod-id"}]`
+	if err := command.Run(t.Context()); err == nil || !strings.Contains(err.Error(), "require the Argo workflow") {
+		t.Fatalf("missing outcome without scheduler evidence = %v", err)
+	}
+	command.Input = `[{"index":0,"value":7},{"fatal":true}]`
 	if err := command.Run(t.Context()); err == nil || !strings.Contains(err.Error(), "map item 1 failed") {
 		t.Fatalf("fatal marker error = %v", err)
 	}
@@ -181,7 +221,7 @@ func TestCollectOutcomesReportsLostAndFatalItems(t *testing.T) {
 		"attempts beyond budget":   `[{"failure":{"attempts":4,"diagnostic":"","kind":"error"},"index":0}]`,
 		"unknown kind":             `[{"failure":{"attempts":1,"diagnostic":"","kind":"lost"},"index":0}]`,
 		"value and failure":        `[{"failure":{"attempts":1,"diagnostic":"","kind":"error"},"index":0,"value":1}]`,
-		"indexed lost marker":      `[{"index":0,"lost":true}]`,
+		"indexed lost marker":      `[{"index":0,"lost":"terminal-pod-id"}]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			var err error
@@ -199,4 +239,74 @@ func TestCollectOutcomesReportsLostAndFatalItems(t *testing.T) {
 
 func failureRecord(kind string, attempts int, diagnostic string) mapexec.Failure {
 	return mapexec.NewFailure(mapexec.FailureKind(kind), attempts, diagnostic)
+}
+
+func TestMapItemReportsFatalBeforeHydrationAndAfterPublicationErrors(t *testing.T) {
+	for _, mode := range []string{"deleted", "corrupt", "invalid envelope", "unwritable output"} {
+		t.Run(mode, func(t *testing.T) {
+			config := localDatastoreConfig(t)
+			codec, _, err := openRuntimeDatastore(t.Context(), config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := []byte(`[{"name":"` + strings.Repeat("x", 5000) + `"}]`)
+			parameter, err := codec.Encode(t.Context(), body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expanded, err := codec.ExpandItems(t.Context(), parameter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var items []json.RawMessage
+			if err := json.Unmarshal(expanded, &items); err != nil {
+				t.Fatal(err)
+			}
+			var binding struct {
+				Path string `json:"path"`
+			}
+			if err := json.Unmarshal(readFile(t, config), &binding); err != nil {
+				t.Fatal(err)
+			}
+			key := filepath.Join(binding.Path, "blobs", "sha256", strings.TrimPrefix(canonical.DigestBytes(body), "sha256:"))
+			if mode == "deleted" || mode == "unwritable output" {
+				if err := os.Remove(key); err != nil {
+					t.Fatal(err)
+				}
+			} else if mode == "corrupt" {
+				if err := os.WriteFile(key, bytes.Repeat([]byte("x"), len(body)), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				items[0] = json.RawMessage(`{"index":0,"value":null,"extra":true}`)
+			}
+			root := t.TempDir()
+			output := filepath.Join(root, "result.json")
+			if mode == "unwritable output" {
+				if err := os.Mkdir(output, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			termination := filepath.Join(root, "termination.json")
+			err = (&RuntimeMapItemCommand{Item: string(items[0]), Output: output, DatastoreConfig: config, TerminationLog: termination}).Run(t.Context())
+			if err == nil {
+				t.Fatal("runtime accepted damaged input")
+			}
+			if string(readFile(t, termination)) != valueparam.FatalItemEnvelope {
+				t.Fatal("no fatal termination marker")
+			}
+			if mode != "unwritable output" {
+				marker := readFile(t, output)
+				if string(marker) != valueparam.FatalItemEnvelope {
+					t.Fatalf("marker = %s", marker)
+				}
+				if _, err := codec.CollectOutcomes(t.Context(), append(append([]byte("["), marker...), ']'), 3, nil); err == nil {
+					t.Fatal("collector accepted fatal hydration")
+				}
+			}
+			if mode == "corrupt" && exitCodeFor(err) != 64 {
+				t.Fatalf("corruption exit = %d, error = %v", exitCodeFor(err), err)
+			}
+		})
+	}
 }

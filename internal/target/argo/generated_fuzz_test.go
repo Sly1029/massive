@@ -375,6 +375,11 @@ func checkMapItemFailures(t *testing.T, p *planpb.WorkflowPlan, node *planpb.Gra
 			maxAttempts = max(contract.GetRetry().GetMaxAttempts(), 1)
 		}
 	}
+
+	collectTemplate := templates[argoFieldName("map-collect-"+node.GetId())]
+	if collectTemplate["automountServiceAccountToken"] != true || !containsArgs(collectArgs, "--workflow={{workflow.name}}", "--namespace={{workflow.namespace}}") {
+		t.Fatalf("collecting map %s lacks scheduler evidence access: %v", node.GetId(), collectTemplate)
+	}
 	if collectArgs[2] != "collect-outcomes" || !containsArgs(collectArgs, fmt.Sprintf("--max-attempts=%d", maxAttempts)) {
 		t.Fatalf("collecting map %s collects with %v", node.GetId(), collectArgs)
 	}

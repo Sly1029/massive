@@ -622,6 +622,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 		}, sourceArgs, []string{
 			"--node=" + node.GetId(),
 			"--item={{inputs.parameters.input}}",
+			"--termination-log", "/dev/termination-log",
 			"--output", "/tmp/massive/result.json",
 			"--project", "argo/" + workflowName,
 			"--run-id", "{{workflow.uid}}",
@@ -660,12 +661,18 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 		collectArgs = []string{
 			"runtime", "map", "collect-outcomes", "--input={{inputs.parameters.input}}",
 			fmt.Sprintf("--max-attempts=%d", max(contract.GetRetry().GetMaxAttempts(), 1)),
+			"--workflow={{workflow.name}}", "--namespace={{workflow.namespace}}",
 			"--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath,
 		}
 	}
 	collectTemplate, err := runtimePodTemplate(collectName, node.GetId(), env, controlContract, runtimeName, storage, controlPlacement, []string{"input"}, collectArgs)
 	if err != nil {
 		return nil, err
+	}
+
+	if node.GetItemFailures() == spec.MapItemFailuresCollect {
+		// Only this control pod reads terminal Workflow/Pod evidence.
+		collectTemplate["automountServiceAccountToken"] = true
 	}
 
 	mapTemplate := map[string]any{
@@ -1055,7 +1062,7 @@ func boolp(v bool) *bool   { return &v }
 // descriptor and schema failures are deterministic, 67 is the author's explicit
 // opt-out, and 68 is a failed dependency preflight of the image. Timeouts (124),
 // author exceptions (66), and pod errors retry.
-var runnerNonRetryableExitCodes = []string{"64", "65", "67", "68"}
+var runnerNonRetryableExitCodes = []string{"64", "65", "67", "68", "70"}
 
 // retryArgs tells the runtime which attempt Argo is dispatching so descriptors,
 // manifest slots, and step context agree with the scheduler's retry count.

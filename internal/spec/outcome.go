@@ -8,21 +8,27 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Sly1029/massive/internal/mapexec"
+	schemacontract "github.com/Sly1029/massive/conformance/schema"
 )
 
 // mapItemOutcomeSchemaJSON is the item schema of a map that collects item
 // failures. The succeeded variant's value is the map's itemOutputSchema; the
 // failed variant carries the closed failure record that executors build.
-var mapItemOutcomeSchemaJSON = fmt.Sprintf(`{"oneOf":[`+
-	`{"type":"object","properties":{"status":{"const":"succeeded","type":"string"},"value":true},"required":["status","value"],"additionalProperties":false},`+
-	`{"type":"object","properties":{"failure":{"type":"object","properties":{`+
-	`"attempts":{"minimum":1,"type":"integer"},`+
-	`"diagnostic":{"maxLength":%d,"type":"string"},`+
-	`"kind":{"enum":["error","killed","non-retryable","timeout"],"type":"string"}`+
-	`},"required":["attempts","diagnostic","kind"],"additionalProperties":false},`+
-	`"status":{"const":"failed","type":"string"}},"required":["failure","status"],"additionalProperties":false}`+
-	`]}`, mapexec.DiagnosticLimit)
+var mapItemOutcomeSchemaJSON = func() string {
+	var failure map[string]any
+	if err := json.Unmarshal(schemacontract.MapItemFailureSchemaJSON, &failure); err != nil {
+		panic(err)
+	}
+	// The embedded record inherits the surrounding schema's dialect.
+	delete(failure, "$schema")
+	body, err := json.Marshal(failure)
+	if err != nil {
+		panic(err)
+	}
+	return fmt.Sprintf(`{"oneOf":[`+
+		`{"type":"object","properties":{"status":{"const":"succeeded","type":"string"},"value":true},"required":["status","value"],"additionalProperties":false},`+
+		`{"type":"object","properties":{"failure":%s,"status":{"const":"failed","type":"string"}},"required":["failure","status"],"additionalProperties":false}]}`, body)
+}()
 
 // MapOutcomeListSchemaMatches reports whether outputSchema is an array of
 // item outcomes wrapping itemOutputSchema. Frontends may place definitions in

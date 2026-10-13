@@ -69,10 +69,15 @@ declared size, and keep maps within the collector's parameter budget.
 Exit outcomes use terminal task boundaries: retry parents and outer map DAGs,
 identified by the generated task name and template. Failed attempt pods alone
 do not prove a terminal failure; return an unknown failed node for them.
-A map that collects item failures loops over per-item DAGs that continue past
-the item pod and default their result to `{"lost":true}`: Argo aggregates only
-successful loop children, and an OOM-killed container cannot report for itself.
-Keep every non-retried exit path of the item runtime writing an envelope (an
-outcome or the fatal marker), so "lost" can only mean the pod died after its
-last attempt. Only the item runtime classifies failures, through the local
-orchestrator's function, so both targets build identical outcomes.
+
+A collecting map loops over per-item DAGs that continue past the item pod.
+A missing result carries the terminal pod's Argo node ID. Absence alone never
+establishes process death: the collector reads terminal Workflow/Pod status,
+requires main-container OOMKilled or signal evidence, and counts the Retry
+node's actual children. Eviction, missing pods, fatal termination markers,
+and ordinary/executor exits fail the run. Preserve pods through collection.
+Only the collecting-map control pod mounts a Kubernetes API token; its service
+account needs Workflow get and Pod list in the deployment namespace. Application
+pods retain no API token. Runtime errors report an unindexed fatal envelope
+from before datastore opening and decoding; failed result writes also report
+the fatal marker through the Kubernetes termination log.

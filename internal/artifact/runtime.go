@@ -318,7 +318,7 @@ func validateCanonicalJSON(ctx context.Context, store datastore.Datastore, schem
 	if err != nil || !bytes.Equal(canonicalSchema, schemaObject.Body) || canonical.DigestBytes(schemaObject.Body) != schemaRef {
 		return fmt.Errorf("%w: schema %s is not canonical or does not match its digest", ErrValidation, schemaRef)
 	}
-	if err := validateJSONSchema(schemaObject.Body, body); err != nil {
+	if err := ValidateJSONSchema(schemaObject.Body, body); err != nil {
 		return fmt.Errorf("%w: value does not satisfy schema %s: %v", ErrValidation, schemaRef, err)
 	}
 	return nil
@@ -361,7 +361,8 @@ func blobKey(hash string) (datastore.Key, error) {
 	return datastore.BlobKeySHA256Hex(digest)
 }
 
-func validateJSONSchema(schemaBytes, documentBytes []byte) error {
+// ValidateJSONSchema validates an artifact document against its JSON Schema.
+func ValidateJSONSchema(schemaBytes, documentBytes []byte) error {
 	schemaDocument, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaBytes))
 	if err != nil {
 		return fmt.Errorf("decode schema: %w", err)
