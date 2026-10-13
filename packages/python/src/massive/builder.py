@@ -285,11 +285,11 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
     ) -> None:
         """``deadline`` bounds the whole run's wall-clock time on every target."""
         self.name = _WorkflowIdentity(name=name).name
-        if deadline is not None and not whole_seconds(deadline, 1, 604800):
-            raise ValueError("run deadline must be whole seconds from 1 to 604800")
         self.input_type = input_type
         self.output_type = output_type
         self.defaults = defaults
+        self._emitted = False
+        self._called = False
         self.deadline = deadline
         self._graph_token = object()
         self.start = NodeHandle[Never, WorkflowInputT](
@@ -310,10 +310,21 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self._maps: dict[str, _MapDefinition] = {}
         self._calls: dict[str, GraphBuilder[Any, Any]] = {}
         self._merges: dict[str, tuple[str, ...]] = {}
-        self._emitted = False
         self._emitting = False
         self._cached_spec: WorkflowSpec | None = None
         self._cached_source: tuple[str, str] | None = None
+
+    @property
+    def deadline(self) -> timedelta | None:
+        return self._deadline
+
+    @deadline.setter
+    def deadline(self, value: timedelta | None) -> None:
+        if self._emitted or self._called:
+            raise RuntimeError("run deadline is immutable after the graph is emitted or called")
+        if value is not None and not whole_seconds(value, 1, 604800):
+            raise ValueError("run deadline must be whole seconds from 1 to 604800")
+        self._deadline = value
 
     def _check_callable(self) -> None:
         """A run deadline belongs to the outermost workflow."""
@@ -341,6 +352,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
             input_type=graph.input_type,
             output_type=graph.output_type,
         )
+        graph._called = True
         self._calls[node_id] = graph
         self._handles[node_id] = handle
         return handle

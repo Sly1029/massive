@@ -344,7 +344,8 @@ running steps and map items are stopped as on cancellation and the run fails
 with the journal diagnostic `run exceeded its 21600-second deadline at node
 <id>`. On Argo it becomes the workflow's `activeDeadlineSeconds`, measured from
 the workflow's start, and Argo fails the workflow. A graph passed to `call()`
-cannot have its own deadline; set it on the calling graph.
+cannot have its own deadline; set it on the calling graph. The deadline becomes
+immutable when the builder is first emitted or registered with `call()`.
 
 ## Exhaustive decisions
 

@@ -23,6 +23,8 @@ handles (start, map, select, case) are `NodeHandle[Never, Output]`. Keep
 `Output | Awaitable[Output]`. `tests/typecheck/rejected_wiring.py` pins
 rejected wiring for pyright and ty through their unused-ignore rules.
 `GraphBuilder.call()` is statically expanded at emission into scoped node IDs.
+A builder's run deadline freezes when first emitted or registered with `call()`,
+so cached child specs cannot hide a later deadline assignment.
 Require one child entry and one child exit before rewiring the parent's edges.
 The IR gives every graph exactly one start successor and end predecessor, and a
 called child must remain a valid standalone workflow, so child start fan-out is
