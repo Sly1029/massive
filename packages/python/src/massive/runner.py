@@ -25,7 +25,7 @@ from .canonical import (
     parse_canonical_json,
     sha256_ref,
 )
-from .context import InvocationContext, NonRetryableError, StepContext
+from .context import FatalRunError, InvocationContext, NonRetryableError, StepContext
 from .datastore import (
     Datastore,
     DatastoreAccessDeniedError,
@@ -192,9 +192,18 @@ class _ResolvedStep:
                 import asyncio
 
                 output = asyncio.run(_await_output(output))
+        except FatalRunError:
+            raise
         except NonRetryableError as error:
             raise NonRetryableStepError(str(error)) from error
         except ExceptionGroup as group:
+            fatal = group.subgroup(FatalRunError)
+            if fatal is not None:
+                # Preserve one safe cause, never the group's arbitrary text.
+                first: BaseException = fatal
+                while isinstance(first, BaseExceptionGroup):
+                    first = first.exceptions[0]
+                raise first from None
             # asyncio.TaskGroup wraps a failing task's NonRetryableError in a group.
             if group.subgroup(NonRetryableError) is not None:
                 raise NonRetryableStepError(str(group)) from group
@@ -225,11 +234,15 @@ class _ResolvedStep:
 
 
 def run_descriptor_path(path: Path, termination_log: Path | None = None) -> int:
+    category: str | None = None
     try:
         _write_execution_phase(termination_log, "hydrate")
         descriptor = _load_descriptor(path)
         _execute(descriptor, termination_log)
         return 0
+    except FatalRunError as error:
+        label, message, code = "fatal-run-failure", str(error), 69
+        category = error.category
     except DescriptorError as error:
         label, message, code = "descriptor-resolution-failure", str(error), _DESCRIPTOR_EXIT
     except SchemaError as error:
@@ -245,7 +258,14 @@ def run_descriptor_path(path: Path, termination_log: Path | None = None) -> int:
         with TemporaryDirectory(dir=path.parent) as temporary:
             result = Path(temporary) / "failure.json"
             result.write_text(
-                json.dumps({"exitCode": code, "message": message[:1024]}, ensure_ascii=True),
+                json.dumps(
+                    {
+                        "exitCode": code,
+                        "message": message[:1024],
+                        **({"category": category} if code == 69 else {}),
+                    },
+                    ensure_ascii=True,
+                ),
                 encoding="ascii",
             )
             result.replace(Path(str(path) + ".failure.json"))

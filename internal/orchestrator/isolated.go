@@ -89,7 +89,15 @@ type InvocationFailure struct {
 	// ItemFailure is the outcome a map that collects item failures keeps for
 	// this map item once the failure is terminal; nil when such a map would
 	// still fail, or for a static step.
+	Fatal       *runjournal.FatalFailure
 	ItemFailure *mapexec.Failure
+}
+
+func (failure *InvocationFailure) Unwrap() error {
+	if failure.Fatal != nil {
+		return &FatalRunError{Failure: *failure.Fatal}
+	}
+	return nil
 }
 
 func (failure *InvocationFailure) Error() string {
@@ -240,7 +248,8 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 	if phaseErr := executionphase.Write(config.TerminationLog, executionphase.Evidence{Phase: executionphase.Publish}); phaseErr != nil {
 		return nil, errors.Join(err, phaseErr)
 	}
-	if err != nil {
+	var fatal *FatalRunError
+	if err != nil && !errors.As(err, &fatal) {
 		return nil, err
 	}
 	if len(outcomes) != 1 || outcomes[0].Status != StatusSucceeded {
@@ -249,6 +258,7 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 				NodeID: node.GetId(), Attempt: attempt, MaxAttempts: policy.maxAttempts,
 				ExitCode: outcomes[0].ExitCode, TimedOutAfter: outcomes[0].TimedOutAfter,
 				Diagnostic: runnerDiagnostic(outcomes[0]) + attemptSuffix(attempt, policy),
+				Fatal:      outcomes[0].Fatal,
 			}
 			if itemFailure, collected := mapItemFailure(outcomes[0], attempt); mapItemIndex != nil && collected {
 				failure.ItemFailure = &itemFailure

@@ -1036,6 +1036,9 @@
         },
         "exitHook": {
           "$ref": "#/$defs/exitHook"
+        },
+        "failure": {
+          "$ref": "#/$defs/fatalFailure"
         }
       },
       "required": [
@@ -1226,6 +1229,32 @@
         "nodeId",
         "status",
         "attempts"
+      ],
+      "additionalProperties": false
+    },
+    "fatalFailure": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "fatal"
+        },
+        "category": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "nodeId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "category",
+        "message",
+        "nodeId"
       ],
       "additionalProperties": false
     }

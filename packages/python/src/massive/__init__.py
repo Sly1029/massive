@@ -19,7 +19,7 @@ if TYPE_CHECKING:
         WorkflowSpec,
     )
     from .canonical import JsonValue, canonical_json, sha256_ref
-    from .context import InvocationContext, NonRetryableError, StepContext
+    from .context import FatalRunError, InvocationContext, NonRetryableError, StepContext
     from .contracts import (
         Container,
         ExecutionContract,
@@ -43,6 +43,7 @@ __all__ = [
     "DecisionHandle",
     "EdgePath",
     "ExecutionContract",
+    "FatalRunError",
     "GraphBuilder",
     "InvocationContext",
     "JsonValue",
@@ -83,6 +84,7 @@ _EXPORT_MODULES = {
     "InvocationContext": "context",
     "MapItemIdentity": "identity",
     "MapItemScopeFrame": "identity",
+    "FatalRunError": "context",
     "NonRetryableError": "context",
     "StepContext": "context",
     "Container": "contracts",

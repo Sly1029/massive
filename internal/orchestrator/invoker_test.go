@@ -260,7 +260,8 @@ func TestReadRunnerMessageValidatesBoundedStructuredResults(t *testing.T) {
 			if err := os.WriteFile(path+".failure.json", []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			message, err := readRunnerMessage(path, 66)
+			result, err := readRunnerFailure(path, 66)
+			message := result.Message
 			if name == "astral" {
 				if err != nil || message != strings.Repeat("🚀", 1024) {
 					t.Fatalf("astral message length = %d, error = %v", len(message), err)

@@ -7,7 +7,7 @@ import {
   type DatastoreClient,
   DatastoreNotFoundError,
 } from "../datastore/types.ts";
-import { NonRetryableError } from "../errors.ts";
+import { FatalRunError, NonRetryableError } from "../errors.ts";
 import {
   CanonicalJsonError,
   decodeCanonicalUtf8,
@@ -87,7 +87,9 @@ export async function executeStep(
           },
         });
       } catch (error) {
-        if (error instanceof NonRetryableError) throw error;
+        if (
+          error instanceof FatalRunError || error instanceof NonRetryableError
+        ) throw error;
         const message = error instanceof Error ? error.message : String(error);
         throw new StepExecutionError(message);
       } finally {
@@ -126,6 +128,13 @@ export async function executeStep(
     }
     if (error instanceof StepExecutionError) {
       return stepExecutionFailure(error);
+    }
+    if (error instanceof FatalRunError) {
+      return {
+        kind: "fatal-run-failure",
+        exitCode: RUNNER_EXIT_CODES.fatalRunFailure,
+        error,
+      };
     }
     if (error instanceof NonRetryableError) {
       return nonRetryableStepFailure(error);

@@ -179,7 +179,13 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 	if hook := config.Plan.GetGraph().GetExitHook(); hook != nil {
 		defer func() {
 			outcome := RunOutcome{RunID: runID, Status: manifest.Status, StartedAt: OutcomeTime(startedAt), FinishedAt: OutcomeTime(time.Now())}
-			if manifest.Status == StatusFailed {
+			if manifest.Failure != nil {
+				outcome.FailureKind = &manifest.Failure.Kind
+				outcome.Category = &manifest.Failure.Category
+				outcome.Message = &manifest.Failure.Message
+				outcome.FailedNode = &manifest.Failure.NodeID
+			}
+			if manifest.Status == StatusFailed && outcome.FailedNode == nil {
 				// Require both a terminal journal entry and a reported dispatch.
 				// A task can settle successfully after cancellation; it and the next queued
 				// task are not the cause of a deadline between tasks.
@@ -230,6 +236,15 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		}
 		if activeNodeID != "" {
 			durableDiagnostic += " at node " + activeNodeID
+		}
+		var fatal *FatalRunError
+		if errors.As(runErr, &fatal) {
+			status = StatusFailed
+			result.Status = status
+			manifest.Failure = &fatal.Failure
+			result.Failure = &fatal.Failure
+			durableDiagnostic = fatal.Error()
+			failure.StepID = fatal.Failure.NodeID
 		}
 		manifest.Terminate(status, durableDiagnostic)
 		result.Steps = summariesFromManifest(manifest)
@@ -385,6 +400,9 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 					continue
 				}
 				markAttemptTerminal(&manifest, nodeID, status, diagnostic)
+				if outcome.Fatal != nil {
+					return nil, &FatalRunError{Failure: *outcome.Fatal}
+				}
 				if invokeErr != nil {
 					return nil, invokeErr
 				}
@@ -1113,6 +1131,12 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 			}
 			markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
 			results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
+		}
+		for _, outcome := range outcomes {
+			if outcome.Fatal != nil {
+				invokeErr = &FatalRunError{Failure: *outcome.Fatal}
+				break
+			}
 		}
 		if invokeErr != nil {
 			diagnostic := "map invocation infrastructure failed"

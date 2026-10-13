@@ -62,6 +62,7 @@ type RunHooks struct {
 }
 
 type RunResult struct {
+	Failure     *runjournal.FatalFailure
 	RunID       string
 	ProjectKey  string
 	Status      string
@@ -103,6 +104,15 @@ type RunDeadlineError struct {
 
 func (e *RunDeadlineError) Error() string {
 	return fmt.Sprintf("run exceeded its %d-second deadline", e.Seconds)
+}
+
+// FatalRunExitCode distinguishes an author-requested run abort from step failure.
+const FatalRunExitCode = 69
+
+type FatalRunError struct{ Failure runjournal.FatalFailure }
+
+func (e *FatalRunError) Error() string {
+	return "fatal run failure [" + e.Failure.Category + "]: " + e.Failure.Message
 }
 
 type RunError struct {
@@ -148,6 +158,7 @@ type StepInvocationOutcome struct {
 	ExitCode   int
 	Diagnostic string
 	// RunnerMessage comes from the bounded structured result beside the descriptor.
+	Fatal         *runjournal.FatalFailure
 	RunnerMessage string
 	// TimedOutAfter is nonzero when the invoker stopped a failed attempt at its
 	// deadline rather than observing the runner exit on its own.

@@ -1,4 +1,4 @@
-import type { NonRetryableError } from "../errors.ts";
+import type { FatalRunError, NonRetryableError } from "../errors.ts";
 
 export const RUNNER_EXIT_CODES = {
   success: 0,
@@ -6,6 +6,7 @@ export const RUNNER_EXIT_CODES = {
   schemaValidationFailure: 65,
   stepExecutionFailure: 66,
   nonRetryableStepFailure: 67,
+  fatalRunFailure: 69,
 } as const;
 
 export class DescriptorError extends Error {
@@ -86,12 +87,19 @@ export interface NonRetryableStepFailure {
   readonly error: NonRetryableError;
 }
 
+export interface FatalRunFailure {
+  readonly kind: "fatal-run-failure";
+  readonly exitCode: typeof RUNNER_EXIT_CODES.fatalRunFailure;
+  readonly error: FatalRunError;
+}
+
 export type StepOutcome =
   | StepSuccess
   | DescriptorResolutionFailure
   | SchemaValidationFailure
   | StepExecutionFailure
-  | NonRetryableStepFailure;
+  | NonRetryableStepFailure
+  | FatalRunFailure;
 
 export function descriptorResolutionFailure(
   error: DescriptorError | SymbolResolutionError,

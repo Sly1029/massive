@@ -25,6 +25,40 @@
       ],
       "title": "Failed Node"
     },
+    "failure_kind": {
+      "anyOf": [
+        {
+          "const": "fatal",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Failure Kind"
+    },
+    "category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Category"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Message"
+    },
     "started_at": {
       "format": "date-time",
       "title": "Started At",
@@ -40,6 +74,9 @@
     "run_id",
     "status",
     "failed_node",
+    "failure_kind",
+    "category",
+    "message",
     "started_at",
     "finished_at"
   ],

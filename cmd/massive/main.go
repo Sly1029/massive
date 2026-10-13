@@ -741,6 +741,8 @@ func main() {
 // timeout exits 124 like timeout(1), dependency preflight exits 68, and a
 // malformed value parameter exits 64.
 func exitCodeFor(err error) int {
+    var fatal *orchestrator.FatalRunError
+    if errors.As(err, &fatal) { return orchestrator.FatalRunExitCode }
 	var preflight *orchestrator.PreflightError
 	if errors.As(err, &preflight) {
 		return runtimeExitPreflight

@@ -17,11 +17,14 @@ import (
 // RunOutcome is an exit hook's input on every target. Its JSON schema is
 // conformance/schema/run-outcome.schema.json, generated from the Python SDK.
 type RunOutcome struct {
-	RunID      string  `json:"run_id"`
-	Status     string  `json:"status"`
-	FailedNode *string `json:"failed_node"`
-	StartedAt  string  `json:"started_at"`
-	FinishedAt string  `json:"finished_at"`
+	FailureKind *string `json:"failure_kind"`
+	Category    *string `json:"category"`
+	Message     *string `json:"message"`
+	RunID       string  `json:"run_id"`
+	Status      string  `json:"status"`
+	FailedNode  *string `json:"failed_node"`
+	StartedAt   string  `json:"started_at"`
+	FinishedAt  string  `json:"finished_at"`
 }
 
 // OutcomeTime renders an outcome timestamp in the form both targets use.

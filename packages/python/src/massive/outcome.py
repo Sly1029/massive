@@ -19,5 +19,8 @@ class RunOutcome(BaseModel):
     status: Literal["succeeded", "failed", "cancelled"]
     # The node whose failure ended a failed run, when the target knows it.
     failed_node: str | None
+    failure_kind: Literal["fatal"] | None
+    category: str | None
+    message: str | None
     started_at: datetime
     finished_at: datetime

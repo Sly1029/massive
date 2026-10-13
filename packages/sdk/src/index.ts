@@ -63,6 +63,7 @@ export {
 } from "./resolve.ts";
 export {
   DatastoreKeyError,
+  FatalRunError,
   GraphValidationError,
   MassiveError,
   NonRetryableError,
