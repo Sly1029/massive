@@ -407,6 +407,17 @@ func TestRunEventPathsAndProgressModesAreValidated(t *testing.T) {
 	if string(readFile(t, existing)) != "keep me" {
 		t.Fatal("event output overwrote an existing file")
 	}
+	// A literal dash names a new file; it never aliases stdout.
+	command := exec.Command(binary, "run", "absent.py", "--json", "--events", "-")
+	command.Dir = root
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Run(); err == nil || stdout.Len() != 0 {
+		t.Fatal("absent workflow should fail without a stdout result")
+	}
+	if _, err := os.Stat(filepath.Join(root, "-")); err != nil {
+		t.Fatalf("literal dash event file was not created: %v", err)
+	}
 }
 
 func TestRunTerminalEventsIncludeFailureAndExitHook(t *testing.T) {
