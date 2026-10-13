@@ -305,7 +305,7 @@ func assertProgressJSON(t *testing.T, body []byte, runID, status, expectedResult
 	}
 }
 
-func TestRunMapAttemptStartsAreLive(t *testing.T) {
+func TestRunMapAttemptFinishesAreLive(t *testing.T) {
 	binary, python, _ := progressCLI(t)
 	root, store := t.TempDir(), progressStore(t)
 	workflow := filepath.Join(root, "workflow.py")
@@ -356,7 +356,7 @@ graph.edge_from(items).to_end(graph.end)
 		body, _ := os.ReadFile(eventsPath)
 		for _, line := range bytes.Split(body, []byte("\n")) {
 			event, err := runevent.Parse(line)
-			if err == nil && event.Type == "step.attempt.started" && event.ItemIndex != nil && *event.ItemIndex == 1 {
+			if err == nil && event.Type == "step.attempt.finished" && event.ItemIndex != nil && *event.ItemIndex == 0 {
 				observed = true
 			}
 		}
@@ -369,8 +369,10 @@ graph.edge_from(items).to_end(graph.end)
 	if !observed {
 		cancel()
 		_ = command.Wait()
-		t.Fatalf("attempt start did not arrive before releasing sibling:\n%s", logs)
+		t.Fatalf("fast attempt finish did not arrive before releasing sibling:\n%s", logs)
 	}
+	// Hold the sibling long enough to distinguish its measured execution time.
+	time.Sleep(200 * time.Millisecond)
 	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0o600); err != nil {
 		cancel()
 		_ = command.Wait()
@@ -383,13 +385,28 @@ graph.edge_from(items).to_end(graph.end)
 	if total, known := events[0].MapTotals["items"]; !known || total != 2 {
 		t.Fatal("missing known map total at run start")
 	}
+	var fast, slow *runevent.Event
+	for i := range events {
+		event := &events[i]
+		if event.Type == "step.attempt.finished" && event.ItemIndex != nil {
+			if *event.ItemIndex == 0 {
+				fast = event
+			} else {
+				slow = event
+			}
+		}
+	}
+	if fast == nil || slow == nil || fast.Sequence >= slow.Sequence || *slow.DurationMS <= *fast.DurationMS+150 {
+		t.Fatalf("item finishes do not reflect distinct execution times: fast=%+v slow=%+v", fast, slow)
+	}
 	assertProgressJournal(t, store, "test/progress", "live", events)
 	assertProgressJSON(t, stdout.Bytes(), "live", "succeeded", "")
 }
 
 func TestRunEventPathsAndProgressModesAreValidated(t *testing.T) {
-	binary, _, _ := progressCLI(t)
+	binary, python, repository := progressCLI(t)
 	root := t.TempDir()
+	workflow := filepath.Join(repository, "conformance", "workflows", "python-linear", "workflow.py") + "#graph"
 	existing := filepath.Join(root, "existing.ndjson")
 	if err := os.WriteFile(existing, []byte("keep me"), 0o600); err != nil {
 		t.Fatal(err)
@@ -397,7 +414,8 @@ func TestRunEventPathsAndProgressModesAreValidated(t *testing.T) {
 	for _, flags := range [][]string{
 		{"--events", existing}, {"--progress", "invalid"},
 	} {
-		command := exec.Command(binary, append([]string{"run", "absent.py", "--json"}, flags...)...)
+		command := exec.Command(binary, append([]string{"run", workflow, "--input", `{"value":41}`, "--json"}, flags...)...)
+		command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
 		var stdout, stderr bytes.Buffer
 		command.Stdout, command.Stderr = &stdout, &stderr
 		if err := command.Run(); err == nil || stdout.Len() != 0 || stderr.Len() == 0 {
@@ -407,16 +425,31 @@ func TestRunEventPathsAndProgressModesAreValidated(t *testing.T) {
 	if string(readFile(t, existing)) != "keep me" {
 		t.Fatal("event output overwrote an existing file")
 	}
+	for _, test := range []struct{ entry, input string }{
+		{workflow, "invalid-json"}, {"absent.py", `{"value":41}`},
+	} {
+		path := filepath.Join(root, "rejected.ndjson")
+		command := exec.Command(binary, "run", test.entry, "--json", "--input="+test.input, "--events", path)
+		command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
+		if output, err := command.CombinedOutput(); err == nil {
+			t.Fatalf("invalid run succeeded: %s", output)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("rejected run left an events file: %v", err)
+		}
+	}
 	// A literal dash names a new file; it never aliases stdout.
-	command := exec.Command(binary, "run", "absent.py", "--json", "--events", "-")
+	command := exec.Command(binary, "run", workflow, "--project", "test/progress", "--store", progressStore(t), "--run-id", "dash", "--input", `{"value":41}`, "--json", "--events", "-")
 	command.Dir = root
+	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
-	if err := command.Run(); err == nil || stdout.Len() != 0 {
-		t.Fatal("absent workflow should fail without a stdout result")
+	if err := command.Run(); err != nil {
+		t.Fatalf("literal dash run failed: %v\n%s", err, &stderr)
 	}
-	if _, err := os.Stat(filepath.Join(root, "-")); err != nil {
-		t.Fatalf("literal dash event file was not created: %v", err)
+	assertProgressJSON(t, stdout.Bytes(), "dash", "succeeded", `{"value":42}`)
+	if len(readProgressEvents(t, filepath.Join(root, "-"))) == 0 {
+		t.Fatal("literal dash event file was not populated")
 	}
 }
 

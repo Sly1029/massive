@@ -333,6 +333,14 @@ type exitHookOutput struct {
 }
 
 func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedErr error) {
+	input, err := command.input()
+	if err != nil {
+		return err
+	}
+	frontend, err := controlplane.Emit(ctx, command.Entry, environment.Execution)
+	if err != nil {
+		return err
+	}
 	progress, err := newRunProgress(command.Events, command.Progress, os.Stderr)
 	if err != nil {
 		return err
@@ -341,14 +349,6 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedE
 	var hooks orchestrator.RunHooks
 	if progress != nil {
 		hooks.OnRunEvent = progress.event
-	}
-	input, err := command.input()
-	if err != nil {
-		return err
-	}
-	frontend, err := controlplane.Emit(ctx, command.Entry, environment.Execution)
-	if err != nil {
-		return err
 	}
 	result, err := controlplane.RunLocal(ctx, controlplane.LocalRunRequest{
 		Frontend: frontend, Input: input, Store: command.Store,

@@ -105,7 +105,10 @@ context. Guard new invocations before dispatch, and exempt exit hooks.
 Run events are optional observations of dispatch, settlement, and terminal
 transitions. Validate returned map outcomes before journal mutation; reconcile
 all reported dispatches before verification and settle in source-index order.
-Invokers may notify starts concurrently; callbacks only enqueue observations.
+Invokers may notify starts and execution finishes concurrently; callbacks only
+enqueue observations with invoker-measured durations. Attempt finishes describe
+execution, while step finishes describe settlement (including verification).
+Never wait for a map batch to settle before observing completed item processes.
 Keep I/O and verification outside worker locks. Event producers keep only clocks
 and sequence ordering. Events contain safe lifecycle summaries; task logs and
 author messages belong outside the target-neutral event contract. Emit run

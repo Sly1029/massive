@@ -149,9 +149,11 @@ type StepInvoker interface {
 type StepInvocationBatch struct {
 	Steps          []StepInvocation
 	MaxConcurrency int
-	// OnStarted is optional observation only and may run concurrently. It must
-	// enqueue without I/O. Correctness depends solely on returned outcomes.
-	OnStarted func(StepInvocationDescriptor)
+	// Callbacks are optional observations and may run concurrently. They must
+	// only enqueue, without I/O or verification, and run outside invoker locks.
+	// Correctness depends solely on returned outcomes.
+	OnStarted  func(StepInvocationDescriptor)
+	OnFinished func(StepInvocationDescriptor, StepInvocationOutcome)
 }
 
 type StepInvocation struct {
@@ -161,6 +163,8 @@ type StepInvocation struct {
 }
 
 type StepInvocationOutcome struct {
+	// Duration is monotonic execution time measured by the invoker.
+	Duration   time.Duration
 	NodeID     string
 	Attempt    int
 	Scope      *ExecutionScope

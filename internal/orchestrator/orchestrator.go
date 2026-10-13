@@ -279,19 +279,9 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			}
 		}
 		manifest.Terminate(status, durableDiagnostic)
+		events.closeOpenAttempts(status, "")
 		for _, i := range unfinished {
 			step := &manifest.Steps[i]
-			if last := lastAttempt(step.Attempts); last != nil && events.attemptIsOpen(step.NodeID, -1, last.Attempt) {
-				events.attemptFinished(StepInvocationDescriptor{NodeID: step.NodeID, Attempt: last.Attempt}, *last, "")
-			}
-			if step.Items != nil {
-				for _, item := range *step.Items {
-					if last := lastAttempt(item.Attempts); last != nil && events.attemptIsOpen(step.NodeID, item.Index, last.Attempt) {
-						descriptor := StepInvocationDescriptor{NodeID: step.NodeID, Attempt: last.Attempt, Scope: &ExecutionScope{Frames: []MapItemScopeFrame{{Kind: "map-item", MapID: step.NodeID, Index: item.Index}}}}
-						events.attemptFinished(descriptor, *last, "")
-					}
-				}
-			}
 			events.stepFinished(step)
 		}
 		result.Steps = summariesFromManifest(manifest)
@@ -413,7 +403,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 				return nil, err
 			}
 
-			outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, OnStarted: events.startHook()})
+			outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, OnStarted: events.attemptStarted, OnFinished: events.attemptObserved})
 			if len(outcomes) != 1 {
 				if len(outcomes) == 0 && invokeErr != nil {
 					// Drop the undispatched attempt. Earlier failed attempts keep
@@ -430,6 +420,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			}
 			dispatchedNodes[nodeID] = true
 			outcome := outcomes[0]
+			events.attemptObserved(descriptor, outcome)
 			if outcome.Status != StatusSucceeded {
 				status, diagnostic := StatusFailed, durableRunnerDiagnostic(outcome)
 				if outcome.Status == StatusCancelled {
@@ -440,7 +431,6 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 				}
 				if invokeErr == nil && attempt < policy.maxAttempts && retryableOutcome(outcome) {
 					markAttemptRetrying(&manifest, nodeID, diagnostic)
-					events.attemptFinished(descriptor, *lastAttempt(findManifestStep(&manifest, nodeID).Attempts), classifyEventOutcome(outcome))
 					if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
 						return nil, err
 					}
@@ -450,7 +440,6 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 					continue
 				}
 				markAttemptTerminal(&manifest, nodeID, status, diagnostic)
-				events.attemptFinished(descriptor, *lastAttempt(findManifestStep(&manifest, nodeID).Attempts), classifyEventOutcome(outcome))
 				events.stepFinished(findManifestStep(&manifest, nodeID))
 				if outcome.Fatal != nil {
 					return nil, &FatalRunError{Failure: *outcome.Fatal}
@@ -468,13 +457,11 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			output, err := settleInvocation(ctx, store, descriptor, index, config.Hooks)
 			if err != nil {
 				markAttemptTerminal(&manifest, nodeID, StatusFailed, "output verification failed")
-				events.attemptFinished(descriptor, *lastAttempt(findManifestStep(&manifest, nodeID).Attempts), "verification")
 				events.stepFinished(findManifestStep(&manifest, nodeID))
 				return nil, err
 			}
 			resolution.outputs[nodeID] = output
 			markAttemptSucceeded(&manifest, nodeID, output.Published)
-			events.attemptFinished(descriptor, *lastAttempt(findManifestStep(&manifest, nodeID).Attempts), "succeeded")
 			events.stepFinished(findManifestStep(&manifest, nodeID))
 			publicationContext, finishPublication := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			err = writeRunManifest(publicationContext, store, manifestKey, manifest)
@@ -1131,10 +1118,15 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 			}
 			invocations = append(invocations, StepInvocation{Descriptor: descriptor, Timeout: policy.timeout})
 		}
-		outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: invocations, MaxConcurrency: int(node.GetMaxConcurrency()), OnStarted: events.startHook()})
+		outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: invocations, MaxConcurrency: int(node.GetMaxConcurrency()), OnStarted: events.attemptStarted, OnFinished: events.attemptObserved})
 		byIndex, err := mapOutcomesByIndex(node.GetId(), attempt, outcomes, pending, invokeErr == nil)
 		if err != nil {
 			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map invocation protocol failed", err)
+		}
+		for position, itemIndex := range pending {
+			if outcome, reported := byIndex[itemIndex]; reported {
+				events.attemptObserved(invocations[position].Descriptor, outcome)
+			}
 		}
 
 		// Record every reported dispatch before verification can fail. Otherwise a
@@ -1197,19 +1189,6 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 			}
 			markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
 			results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
-		}
-		for position, itemIndex := range pending {
-			outcome, reported := byIndex[itemIndex]
-			if !reported {
-				continue
-			}
-			item := (*findManifestStep(manifest, node.GetId()).Items)[itemIndex]
-			settled := *lastAttempt(item.Attempts)
-			classification := classifyEventOutcome(outcome)
-			if outcome.Status == StatusSucceeded && settled.Status != StatusSucceeded {
-				classification = "verification"
-			}
-			events.attemptFinished(invocations[position].Descriptor, settled, classification)
 		}
 
 		for _, outcome := range outcomes {

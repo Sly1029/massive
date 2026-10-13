@@ -79,9 +79,31 @@ func (events *runEvents) startAttempt(identity eventIdentity, item *int) {
 	events.emit(runevent.Event{Type: "step.attempt.started", NodeID: identity.node, ItemIndex: item, Attempt: identity.attempt})
 }
 
-// attemptFinished runs only after returned outcomes have been validated and
-// settled. Invokers without start notifications still yield complete events.
+// attemptObserved reports execution only. Returned outcomes still drive settlement.
+func (events *runEvents) attemptObserved(descriptor StepInvocationDescriptor, outcome StepInvocationOutcome) {
+	if events == nil {
+		return
+	}
+	status, diagnostic := outcome.Status, ""
+	if status != StatusSucceeded {
+		diagnostic = durableRunnerDiagnostic(outcome)
+	}
+	if status == StatusCancelled {
+		diagnostic = "invocation cancelled"
+	}
+	if status == stepInvocationStatusInfraFailed {
+		status, diagnostic = StatusFailed, "invocation infrastructure failed"
+	}
+	events.finishAttempt(descriptor, status, diagnostic, classifyEventOutcome(outcome), outcome.Duration)
+}
+
+// attemptFinished covers control-plane attempts (map expansion/collection and
+// hook preparation). Process observations take precedence over settlement.
 func (events *runEvents) attemptFinished(descriptor StepInvocationDescriptor, attempt runjournal.Attempt, classification string) {
+	events.finishAttempt(descriptor, attempt.Status, attempt.Diagnostic, classification, -1)
+}
+
+func (events *runEvents) finishAttempt(descriptor StepInvocationDescriptor, status, diagnostic, classification string, measured time.Duration) {
 	if events == nil {
 		return
 	}
@@ -89,21 +111,57 @@ func (events *runEvents) attemptFinished(descriptor StepInvocationDescriptor, at
 	defer events.mu.Unlock()
 	identity, item := invocationEventIdentity(descriptor)
 	events.startAttempt(identity, item)
-	duration := float64(time.Since(events.attemptStarts[identity])) / float64(time.Millisecond)
-	delete(events.attemptStarts, identity)
-	if classification == "" {
-		classification = attempt.Status
-		if classification == StatusFailed {
-			classification = "error"
+	events.finishOpenAttempt(identity, item, status, diagnostic, classification, measured)
+}
+
+// finishOpenAttempt requires mu. A zero clock marks an already closed attempt,
+// preventing returned outcomes from duplicating an earlier observation.
+func (events *runEvents) finishOpenAttempt(identity eventIdentity, item *int, status, diagnostic, classification string, measured time.Duration) {
+	started := events.attemptStarts[identity]
+	if started.IsZero() {
+		return
+	}
+	if measured < 0 {
+		measured = time.Since(started)
+	}
+	duration := float64(measured) / float64(time.Millisecond)
+	events.attemptStarts[identity] = time.Time{}
+	if status == StatusSucceeded {
+		classification = ""
+	} else if classification == "" {
+		classification = "error"
+		if status == StatusCancelled {
+			classification = "cancelled"
 		}
 	}
-	events.emit(runevent.Event{Type: "step.attempt.finished", NodeID: identity.node, ItemIndex: item, Attempt: identity.attempt, DurationMS: &duration, Status: attempt.Status, Classification: classification, Diagnostic: boundedEventText(attempt.Diagnostic)})
+	events.emit(runevent.Event{Type: "step.attempt.finished", NodeID: identity.node, ItemIndex: item, Attempt: identity.attempt, DurationMS: &duration, Status: status, Classification: classification, Diagnostic: boundedEventText(diagnostic)})
+}
+
+// closeOpenAttempts includes observed dispatches rejected before journal mutation.
+func (events *runEvents) closeOpenAttempts(status, node string) {
+	if events == nil {
+		return
+	}
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	for identity, started := range events.attemptStarts {
+		if started.IsZero() || (node != "" && identity.node != node) {
+			continue
+		}
+		var item *int
+		if identity.item >= 0 {
+			index := identity.item
+			item = &index
+		}
+		events.finishOpenAttempt(identity, item, status, "attempt outcome unavailable", "", -1)
+	}
 }
 
 func (events *runEvents) stepFinished(step *runjournal.Step) {
 	if events == nil {
 		return
 	}
+	events.closeOpenAttempts(step.Status, step.NodeID)
 	events.mu.Lock()
 	defer events.mu.Unlock()
 	duration := 0.0
@@ -118,6 +176,7 @@ func (events *runEvents) runFinished(status string) {
 	if events == nil {
 		return
 	}
+	events.closeOpenAttempts(status, "")
 	events.mu.Lock()
 	defer events.mu.Unlock()
 	events.emit(runevent.Event{Type: "run.finished", Status: status})
@@ -126,7 +185,7 @@ func (events *runEvents) runFinished(status string) {
 func classifyEventOutcome(outcome StepInvocationOutcome) string {
 	switch {
 	case outcome.Status == StatusSucceeded:
-		return "succeeded"
+		return ""
 	case outcome.Status == StatusCancelled:
 		return "cancelled"
 	case outcome.Status == stepInvocationStatusInfraFailed:
@@ -150,22 +209,4 @@ func boundedEventText(value string) string {
 		text = append(text[:2047], '…')
 	}
 	return string(text)
-}
-
-// startHook is nil when observation is disabled; invokers need no event path.
-func (events *runEvents) startHook() func(StepInvocationDescriptor) {
-	if events == nil {
-		return nil
-	}
-	return events.attemptStarted
-}
-
-func (events *runEvents) attemptIsOpen(node string, item, attempt int) bool {
-	if events == nil {
-		return false
-	}
-	events.mu.Lock()
-	defer events.mu.Unlock()
-	_, exists := events.attemptStarts[eventIdentity{node, item, attempt}]
-	return exists
 }

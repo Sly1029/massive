@@ -19,6 +19,7 @@ import (
 	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
+	"github.com/Sly1029/massive/internal/runevent"
 	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/spec"
 )
@@ -578,6 +579,7 @@ func TestTamperedOutputManifestFailsIntegrityValidation(t *testing.T) {
 	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
 	invoker := &functionalStepInvoker{storeRoot: storeRoot}
 
+	observations := make(chan runevent.Event, 32)
 	_, err := Run(context.Background(), RunConfig{
 		Plan:              compiled.Plan,
 		DatastoreRoot:     storeRoot,
@@ -587,6 +589,7 @@ func TestTamperedOutputManifestFailsIntegrityValidation(t *testing.T) {
 		SourceManifests:   manifests,
 		StepInvoker:       invoker,
 		Hooks: RunHooks{
+			OnRunEvent: func(event runevent.Event) { observations <- event },
 			AfterStepInvocation: func(_ context.Context, descriptor StepInvocationDescriptor) error {
 				if descriptor.NodeID != "double" {
 					return nil
@@ -608,6 +611,23 @@ func TestTamperedOutputManifestFailsIntegrityValidation(t *testing.T) {
 	if runErr.Result == nil || runErr.Result.Status != StatusFailed {
 		t.Fatalf("result = %#v, want failed result", runErr.Result)
 	}
+	close(observations)
+	attemptSucceeded, stepFailed := false, false
+	for event := range observations {
+		if event.NodeID != "double" {
+			continue
+		}
+		if event.Type == "step.attempt.finished" {
+			attemptSucceeded = event.Status == StatusSucceeded
+		}
+		if event.Type == "step.finished" {
+			stepFailed = event.Status == StatusFailed
+		}
+	}
+	if !attemptSucceeded || !stepFailed {
+		t.Fatal("execution success must precede settled verification failure")
+	}
+
 }
 
 func assertNoCredentialMaterial(t *testing.T, data []byte) {

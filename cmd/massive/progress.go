@@ -152,6 +152,8 @@ func (progress *runProgress) write() {
 	}
 }
 
+// close drains both sinks. A stalled stderr renderer can block it, consistent
+// with the CLI's other synchronous stderr writes.
 func (progress *runProgress) close() error {
 	if progress == nil {
 		return nil
@@ -215,7 +217,10 @@ func (progress *runProgress) renderEvent(event runevent.Event) {
 	case "step.attempt.started":
 		line = fmt.Sprintf("%s attempt %d started", label, event.Attempt)
 	case "step.attempt.finished":
-		line = fmt.Sprintf("%s attempt %d %s (%.2fs) [%s]", label, event.Attempt, event.Status, *event.DurationMS/1000, event.Classification)
+		line = fmt.Sprintf("%s attempt %d %s (%.2fs)", label, event.Attempt, event.Status, *event.DurationMS/1000)
+		if event.Classification != "" {
+			line += " [" + event.Classification + "]"
+		}
 	case "step.finished":
 		line = fmt.Sprintf("%s %s (%.2fs)", label, event.Status, *event.DurationMS/1000)
 	}

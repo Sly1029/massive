@@ -96,11 +96,12 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 	if err != nil {
 		return record("exit hook descriptor could not be built")
 	}
-	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}})
+	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, OnFinished: events.attemptObserved})
 	var fatal *FatalRunError
 	if (err != nil && !errors.As(err, &fatal)) || len(outcomes) != 1 {
 		return record("invocation infrastructure failed")
 	}
+	events.attemptObserved(descriptor, outcomes[0])
 	classification = classifyEventOutcome(outcomes[0])
 	if outcomes[0].Status != StatusSucceeded {
 		return record(durableRunnerDiagnostic(outcomes[0]))

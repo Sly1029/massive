@@ -144,7 +144,6 @@
             },
             "classification": {
               "enum": [
-                "succeeded",
                 "error",
                 "non-retryable",
                 "terminated",
@@ -162,9 +161,20 @@
           },
           "required": [
             "durationMs",
-            "status",
-            "classification"
-          ]
+            "status"
+          ],
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            }
+          },
+          "else": {
+            "required": [
+              "classification"
+            ]
+          }
         }
       ],
       "unevaluatedProperties": false

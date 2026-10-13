@@ -22,26 +22,11 @@ uv run massive run workflow.py --project demo/double --input '{"value": 21}'
 `--project` names the run namespace; inside a GitHub or GitLab checkout it
 defaults to the origin's `owner/repository`.
 
-Local runs report attempts and elapsed durations on stderr. `--progress auto`
-(the default) shows a compact live view on a terminal and only the final step
-summary when redirected. Choose `--progress plain` for event lines, or
-`--progress none` to suppress progress. Safe lifecycle diagnostics accompany
-failed attempts. The final summary includes step durations and total wall time,
-including the exit hook.
-
-Wrappers can tail a versioned, target-neutral NDJSON stream while retaining the
-existing `--json` stdout result:
-
-```sh
-uv run massive run workflow.py --project demo/double --input '{"value": 21}' \
-  --json --progress plain --events run-events.ndjson > run-result.json
-```
-
-`--events` requires a **new file path** and creates it with owner-only permissions.
-Existing paths are rejected; `-` is an ordinary filename. A separate writer
-drains the ordered event queue while human progress uses a best-effort sink.
-See [the event contract](../../docs/run-events.md) for identities, ordering,
-diagnostics, and interruption semantics.
+Local runs show live progress and a final duration summary on stderr. Use
+`--progress plain` for event lines or `--progress none` to suppress rendering.
+Wrappers can use `--events run-events.ndjson` alongside `--json` to consume a
+separate versioned stream. See [run events](../../docs/run-events.md) for modes,
+file creation, identities, ordering, diagnostics, and interruption semantics.
 
 Build a static, container-target workflow for Argo with the same compiled plan:
 

@@ -149,15 +149,9 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 			return outcomes, err
 		}
 		outcomes = append(outcomes, outcome)
-<<<<<<< HEAD
-		if batch.OnFinished != nil {
-			batch.OnFinished(outcome)
-		}
 		if outcome.Fatal != nil {
 			return outcomes, &FatalRunError{Failure: *outcome.Fatal}
 		}
-=======
->>>>>>> d12633c (Keep run events target-neutral and execution-independent)
 	}
 	if interrupt != nil && (interrupt.Kind == graphgen.CancelAfter || interrupt.Kind == graphgen.CancelDuring) {
 		e.fire(interrupt.Kind)

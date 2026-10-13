@@ -7,11 +7,13 @@ TTY and only the final duration summary otherwise. Plain opts into event lines
 and the summary. None disables rendering; with no event path it installs no
 observer at all.
 
-Event files are created exclusively with mode 0600. Existing paths are rejected;
-parent directories must exist. `-` is an ordinary new filename. A single writer
+Event files are created only after input validation and frontend emission succeed,
+exclusively with mode 0600. Existing paths are rejected; parent directories must
+exist. `-` is an ordinary new filename. A single writer
 drains the ordered queue and flushes each batch of complete newline-terminated
-JSON records. Workers only enqueue in memory. Stderr has a separate bounded,
-best-effort channel: slow rendering can drop live lines without losing file
+JSON records. Workers only enqueue in memory. The lossless queue is unbounded
+(bounded by the run's total event count), so it can grow to the run size if the events file
+stalls. Stderr has a separate bounded, best-effort channel: slow rendering can drop live lines without losing file
 events or final summary rows. Normal completion and cancellation drain and close
 the stream. File delivery errors make the CLI exit unsuccessfully while
 preserving the workflow outcome and stdout result.
@@ -21,16 +23,20 @@ defines `schemaVersion: 1`. Every event includes `type`, `sequence`, `projectKey
 `runId`, `time` (UTC RFC 3339), and `elapsedMs`. Sequence starts at one per project
 run. `elapsedMs` is monotonic time since the producer's run start, including
 source preparation and exit-hook execution, excluding frontend emission. Attempt
-and step durations are monotonic milliseconds; settlement includes output
-verification and step duration includes retry backoff.
+and step durations are monotonic milliseconds. Process attempt duration is measured
+by the invoker around process execution, excluding sibling execution and output
+verification. Step duration includes settlement, output verification, and retry
+backoff.
 
 The vocabulary is:
 
 - `run.started`: `planHash`, optional `mapTotals` keyed by node ID when cardinality
-  is already known.
+  is known when the run starts. This describes cardinality, not whether a map
+  will execute; a known map can belong to an inactive branch.
 - `step.attempt.started`: `nodeId`, `attempt`, optional zero-based `itemIndex`.
 - `step.attempt.finished`: the same identity, `durationMs`, `status`,
-  `classification`, optional safe `diagnostic` bounded to 2,048 characters.
+  `classification` required for non-success outcomes, optional safe `diagnostic`
+  bounded to 2,048 characters.
 - `step.finished`: `nodeId`, `status`, `durationMs`.
 - `run.finished`: `status`.
 
@@ -42,14 +48,24 @@ finish with zero duration and no attempts. Graph markers, decisions, and selects
 have no executable step events. Exit hooks use ordinary step/attempt events and
 never change the run outcome.
 
-Local execution emits at dispatch, settlement, and terminal transitions. Map
-correctness uses the invoker's returned outcomes, validated before journal
-mutation. All reported dispatches are reconciled before verification, then item
-settlement and events follow source-index order. Map attempt starts are live;
-settled item events follow the batch return. Callbacks neither verify outputs nor
-mutate journal entries. Events have no independent execution state model.
+Local execution emits at dispatch, observed execution completion, and terminal
+transitions. `step.attempt.finished` reports the attempt's execution outcome;
+`step.finished` reports the settled step outcome. Process success can therefore
+be followed by step failure if output verification or settlement fails. The
+map's unscoped attempt covers expansion and collection; exit-hook preparation
+failures also finish their control-plane attempt.
 
-Classifications are `succeeded`, `error`, `non-retryable`, `terminated`, `timeout`,
+Map correctness uses the invoker's returned outcomes, validated before journal
+mutation. All reported dispatches are reconciled before verification, then item
+settlement follows source-index order. Item attempt finishes are live and ordered
+by observation, without waiting for siblings or batch settlement. Observation-only
+callbacks enqueue measured duration and process outcome; they do no I/O or
+verification, run outside invoker locks, and never mutate journal entries.
+Returned outcomes also supply events for invokers without callbacks. Open attempts
+without a reported outcome are closed before step and run completion. Events have
+no independent execution state model.
+
+Non-success classifications are `error`, `non-retryable`, `terminated`, `timeout`,
 `contract`, `infrastructure`, `cancelled`, and `verification`. Diagnostics contain
 only safe lifecycle summaries. Author messages and logs stay out of this
 contract. Terminal controls are sanitized by the CLI renderer. Production writes

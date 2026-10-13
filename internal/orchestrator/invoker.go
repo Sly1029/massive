@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/internal/artifact"
@@ -146,6 +147,9 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 					}
 					outcome, err := i.invokeOne(batchContext, descriptorDir, batch.Steps[index])
 					outcomes[index] = outcome
+					if batch.OnFinished != nil {
+						batch.OnFinished(batch.Steps[index].Descriptor, outcome)
+					}
 					if outcome.Fatal != nil {
 						err = &FatalRunError{Failure: *outcome.Fatal}
 					}
@@ -187,7 +191,7 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 	return completed, nil
 }
 
-func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string, invocation StepInvocation) (StepInvocationOutcome, error) {
+func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string, invocation StepInvocation) (outcome StepInvocationOutcome, returnedErr error) {
 	descriptor := invocation.Descriptor
 	infrastructureFailure := func(err error) (StepInvocationOutcome, error) {
 		return StepInvocationOutcome{
@@ -234,7 +238,10 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		attemptContext, stop = context.WithTimeout(ctx, invocation.Timeout)
 		defer stop()
 	}
+	started := time.Now()
 	output, err := taskprocess.Run(attemptContext, argv, i.WorkingDir)
+	duration := time.Since(started)
+	defer func() { outcome.Duration = duration }()
 	diagnostic := strings.TrimSpace(output)
 
 	if err == nil {
