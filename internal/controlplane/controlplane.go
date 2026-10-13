@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/deployment"
@@ -247,7 +248,11 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 	if err != nil {
 		return nil, fmt.Errorf("parse result key: %w", err)
 	}
-	body, err := store.Get(ctx, key)
+	// The run is settled. A signal during its detached exit hook must not
+	// cancel delivery of the already-published successful result.
+	resultContext, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer stop()
+	body, err := store.Get(resultContext, key)
 	if err != nil {
 		return nil, fmt.Errorf("read workflow result: %w", err)
 	}

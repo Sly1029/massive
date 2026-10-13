@@ -544,6 +544,9 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		if err != nil {
 			return nil, "", err
 		}
+		// Exit-handler pods are exempt from the workflow deadline. Bound the
+		// complete hook pod lifetime, including preparation, on this template.
+		hookTemplate["activeDeadlineSeconds"] = fmt.Sprint(contract.GetTimeoutSeconds())
 		// continueOn keeps a failed hook from failing the exit handler, which
 		// Argo would otherwise turn into the workflow's own status.
 		templates = append(templates, map[string]any{

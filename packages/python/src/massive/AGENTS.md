@@ -69,3 +69,6 @@ retried: without s3:ListBucket, S3 reports a missing key as AccessDenied.
 
 Keep the extracted source directory importable throughout invocation and output
 serialization; ordinary functions and validators may lazily import sibling modules.
+
+Exit-hook contracts always contain a finite timeout: keep the selected timeout
+or supply five minutes. Strip inherited retries before contract hashing.

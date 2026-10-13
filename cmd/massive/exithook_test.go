@@ -66,6 +66,10 @@ def broken(ctx: StepContext[RunOutcome]) -> None:
     record(ctx)
     raise RuntimeError("notification service unavailable")
 
+def stalled_notification(ctx: StepContext[RunOutcome]) -> None:
+    record(ctx)
+    time.sleep(120)
+
 def unwritable(ctx: StepContext[RunOutcome]) -> None:
     record(ctx)
     # The terminal journal has already been published. Keep its directory
@@ -82,6 +86,10 @@ checked.on_exit(record)
 broken_hook = GraphBuilder(name="broken-hook", input_type=int, output_type=int, defaults=DEFAULTS)
 broken_hook.edge_from(broken_hook.start).to(broken_hook.add(check)).to_end(broken_hook.end)
 broken_hook.on_exit(broken)
+
+timed_hook = GraphBuilder(name="timed-hook", input_type=int, output_type=int, defaults=DEFAULTS)
+timed_hook.edge_from(timed_hook.start).to(timed_hook.add(check)).to_end(timed_hook.end)
+timed_hook.on_exit(stalled_notification, timeout=timedelta(seconds=2))
 
 stalled = GraphBuilder(name="stalled", input_type=int, output_type=int, defaults=DEFAULTS,
     deadline=timedelta(seconds=5))
@@ -107,6 +115,7 @@ unwritable_hook.on_exit(unwritable)
 		{"succeeded", "checked", "2", 0, "succeeded", "succeeded", nil, false},
 		{"failed step", "checked", "-1", 1, "failed", "succeeded", pointer("check"), false},
 		{"failed hook", "broken_hook", "3", 0, "succeeded", "failed", nil, false},
+		{"timed out hook", "timed_hook", "3", 0, "succeeded", "failed", nil, false},
 		{"deadline", "stalled", "4", 1, "failed", "succeeded", pointer("stall"), false},
 		{"hook persistence after success", "unwritable_hook", "5", 0, "succeeded", "succeeded", nil, true},
 		{"hook persistence after failure", "unwritable_hook", "-2", 1, "failed", "succeeded", pointer("check"), true},
@@ -122,7 +131,11 @@ unwritable_hook.on_exit(unwritable)
 			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "OUTCOME_FILE="+outcomeFile, "STORE_ROOT="+store)
 			var stdout, stderr bytes.Buffer
 			command.Stdout, command.Stderr = &stdout, &stderr
+			started := time.Now()
 			err := command.Run()
+			if test.graph == "timed_hook" && time.Since(started) > 20*time.Second {
+				t.Fatal("stalled exit hook did not return within its bounded lifetime")
+			}
 			var exit *exec.ExitError
 			if code := 0; errors.As(err, &exit) {
 				code = exit.ExitCode()
@@ -179,6 +192,9 @@ unwritable_hook.on_exit(unwritable)
 				return
 			}
 			hook := manifest.ExitHook
+			if test.graph == "timed_hook" && (hook == nil || !strings.Contains(hook.Attempts[0].Diagnostic, "2-second timeout")) {
+				t.Fatalf("hook timeout was not recorded: %s", inspected)
+			}
 			if manifest.Status != test.run || hook == nil || hook.Status != test.hook || len(hook.Attempts) != 1 {
 				t.Fatalf("journal = %s", inspected)
 			}

@@ -801,14 +801,17 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
 
         The hook receives a ``RunOutcome`` and returns ``None``. Its failure is
         recorded but never changes the run's status. It runs once: a retry
-        policy in the selected contract does not apply to it.
+        policy in the selected contract does not apply to it. Without a selected
+        timeout, it defaults to five minutes.
         """
         if self._emitted:
             raise RuntimeError("graph has already been emitted")
         if self._exit_hook is not None:
             raise ValueError(f"graph {self.name!r} already has an exit hook")
         base = self._registration_contract(contract, None, timeout) or self.defaults
-        hook = _Step[Any, Any].from_callable(function, contract=replace(base, retry=None))
+        hook = _Step[Any, Any].from_callable(
+            function, contract=replace(base, retry=None, timeout=base.timeout or timedelta(minutes=5))
+        )
         if hook.input_type is not RunOutcome or hook.output_type is not type(None):
             raise TypeError("an exit hook must accept StepContext[RunOutcome] and return None")
         hook_id = SAFE_PATH_SEGMENT.validate_python(id or hook.function.__name__)

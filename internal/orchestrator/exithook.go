@@ -2,6 +2,10 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -28,15 +32,14 @@ func OutcomeTime(at time.Time) string {
 // runExitHook invokes the plan's exit hook once with the settled run's outcome
 // and returns its journal record. The hook's failure is recorded, never
 // returned, so it cannot change the run's status. Cancellation of the run does
-// not stop the hook; only its contract's timeout bounds it.
+// not stop the hook; its finite contract timeout and fresh signal context bound it.
 func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, index executionIndex, projectKey, runID string, hook *planpb.GraphNode, outcome RunOutcome) runjournal.Step {
-	ctx = context.WithoutCancel(ctx)
+	// Subscribe afresh: the CLI's run signal context may already be cancelled.
+	ctx, stopSignals := signal.NotifyContext(context.WithoutCancel(ctx), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	policy := policyForContract(index.contractsByRef[hook.GetContractRef()])
-	if policy.timeout > 0 {
-		var stop context.CancelFunc
-		ctx, stop = context.WithTimeout(ctx, policy.timeout)
-		defer stop()
-	}
+	ctx, stop := context.WithTimeout(ctx, policy.timeout)
+	defer stop()
 	body, encodeErr := canonical.Marshal(outcome)
 	attempt := runjournal.Attempt{
 		Attempt: 1, Status: StatusFailed,
@@ -46,6 +49,12 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 		},
 	}
 	record := func(diagnostic string) runjournal.Step {
+		switch ctx.Err() {
+		case context.DeadlineExceeded:
+			diagnostic = fmt.Sprintf("exit hook exceeded its %d-second timeout", int64(policy.timeout/time.Second))
+		case context.Canceled:
+			diagnostic = "exit hook cancelled"
+		}
 		status := StatusFailed
 		if diagnostic == "" {
 			status = StatusSucceeded

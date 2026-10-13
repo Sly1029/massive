@@ -1143,6 +1143,7 @@ func TestRunDeadlineBoundsTheWholeWorkflowNotEachAttempt(t *testing.T) {
 func exitHookPlan(t *testing.T) *plan.CompileResult {
 	t.Helper()
 	compiled := fixturePlan(t, "python-linear")
+	compiled.Plan.Contracts[0].TimeoutSeconds = proto.Uint32(300)
 	var step *planpb.GraphNode
 	for _, node := range compiled.Plan.Graph.Nodes {
 		if node.GetKind() == "step" {
@@ -1199,7 +1200,7 @@ func TestExitHookRunsFromAnExitHandlerThatCannotFailTheWorkflow(t *testing.T) {
 	if !containsArgs(args, "runtime", "exit-hook") || !containsArgs(args, "--node=notify", "--status={{workflow.status}}", "--failures={{workflow.failures}}", "--started-at={{workflow.creationTimestamp}}") {
 		t.Fatalf("exit hook args = %v", args)
 	}
-	if hook["retryStrategy"] != nil || hook["priorityClassName"] != "notifications" {
+	if hook["retryStrategy"] != nil || hook["priorityClassName"] != "notifications" || hook["activeDeadlineSeconds"] != "300" {
 		t.Fatalf("exit hook template = %v", hook)
 	}
 	// The DAG itself never runs the hook.
@@ -1275,8 +1276,11 @@ func TestRehashedExitHooksAreRejectedAtEveryPlanBoundary(t *testing.T) {
 		"missing contract": func(p *planpb.WorkflowPlan) {
 			p.Graph.ExitHook.ContractRef = pointer("sha256:" + strings.Repeat("f", 64))
 		},
-		"retry":           func(p *planpb.WorkflowPlan) { p.Contracts[0].Retry = &planpb.RetryPolicy{MaxAttempts: u32(2)} },
-		"dangling source": func(p *planpb.WorkflowPlan) { p.Symbols[0].PackageId = pointer("unknown") },
+		"missing timeout":   func(p *planpb.WorkflowPlan) { p.Contracts[0].TimeoutSeconds = nil },
+		"zero timeout":      func(p *planpb.WorkflowPlan) { p.Contracts[0].TimeoutSeconds = proto.Uint32(0) },
+		"excessive timeout": func(p *planpb.WorkflowPlan) { p.Contracts[0].TimeoutSeconds = proto.Uint32(604801) },
+		"retry":             func(p *planpb.WorkflowPlan) { p.Contracts[0].Retry = &planpb.RetryPolicy{MaxAttempts: u32(2)} },
+		"dangling source":   func(p *planpb.WorkflowPlan) { p.Symbols[0].PackageId = pointer("unknown") },
 		"dangling environment": func(p *planpb.WorkflowPlan) {
 			p.Contracts[0].EnvironmentRef = pointer("sha256:" + strings.Repeat("f", 64))
 		},

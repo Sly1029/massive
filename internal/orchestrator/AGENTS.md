@@ -43,7 +43,8 @@ invoker deadline that yields a retryable failure, not a run cancellation. The
 backoff wait must observe the run context.
 The exit hook runs from a deferred call registered before terminalization, so
 it sees the durable outcome. It uses a context without the run's cancellation
-(only its contract timeout bounds it), runs one attempt, and records its
+(its required finite contract timeout bounds the complete hook lifetime),
+subscribes to fresh SIGINT/SIGTERM cancellation, runs one attempt, and records its
 result in the journal without returning an error or changing the run status.
 The plan's run deadline is a context deadline whose cause is
 `RunDeadlineError`: it stops work like a cancellation but fails the run, and
@@ -70,3 +71,7 @@ passing attempt writes `environment.json` beside its output manifest.
 A failed exit-hook journal rewrite preserves the settled run result and error;
 report it separately in the run summary. After materialization cancellation,
 prepare the hook's verified source archive under its detached lifetime.
+
+Derive exit-hook failure attribution from terminal executable journal entries
+with dispatched attempts. A deadline during successful settlement or between
+tasks has no failed node; queued nodes and graph markers are not causes.

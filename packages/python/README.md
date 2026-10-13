@@ -366,7 +366,9 @@ graph.on_exit(notify, timeout=timedelta(minutes=5))
 `cancelled`), `failed_node` (the node whose failure ended a failed run, when
 known), `started_at`, and `finished_at`. The hook is an ordinary top-level
 function with its own contract, secrets, and timeout, and it must return
-`None`. It runs once: registration strips an inherited retry policy, and plan
+`None`. Every hook has a finite timeout: an explicit or inherited timeout is
+used, otherwise registration assigns five minutes. Compiled plans without a
+hook timeout must be rebuilt. It runs once: registration strips an inherited retry policy, and plan
 readers reject a retrying hook contract. Make it idempotent or retry inside it. Its failure is recorded but never changes the
 run's status or the CLI's exit code.
 
@@ -375,7 +377,11 @@ deadline or Ctrl-C, and the journal's `exitHook` entry records its attempt.
 If that later journal rewrite fails, the run keeps its original result and exit
 code; the CLI summary reports `exitHook.persistenceDiagnostic` separately.
 The hook also runs after a deadline during source materialization;
-only the hook's own timeout bounds it. On Argo it runs from the workflow's
+its timeout bounds the complete hook lifetime, and SIGINT or SIGTERM during
+the hook cancels it while preserving the run outcome and recording the hook
+cancellation. A second signal can cancel the hook after the first cancelled
+the run. A deadline between successful tasks yields `failed_node: None`.
+On Argo it runs from the workflow's
 `onExit` handler. Argo reports a stopped workflow (`argo stop`) as `failed`,
 and `argo terminate` skips exit handlers entirely. A graph passed to `call()`
 cannot have an exit hook.

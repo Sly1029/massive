@@ -173,12 +173,21 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 	}
 
 	activeNodeID := ""
+	dispatchedNodes := map[string]bool{}
 	// Registered before terminalization so it runs after the outcome is durable.
 	if hook := config.Plan.GetGraph().GetExitHook(); hook != nil {
 		defer func() {
 			outcome := RunOutcome{RunID: runID, Status: manifest.Status, StartedAt: OutcomeTime(startedAt), FinishedAt: OutcomeTime(time.Now())}
-			if manifest.Status == StatusFailed && activeNodeID != "" {
-				outcome.FailedNode = &activeNodeID
+			if manifest.Status == StatusFailed {
+				// Require both a terminal journal entry and a reported dispatch.
+				// A task can settle successfully after cancellation; it and the next queued
+				// task are not the cause of a deadline between tasks.
+				for _, step := range manifest.Steps {
+					if (step.Status == StatusFailed || step.Status == StatusCancelled) && dispatchedNodes[step.NodeID] {
+						outcome.FailedNode = &step.NodeID
+						break
+					}
+				}
 			}
 			record := runExitHook(ctx, store, config, invoker, index, projectKey, runID, hook, outcome)
 			manifest.ExitHook = &record
@@ -241,11 +250,12 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 
 	resolution := newExecutionResolver(index, config.Plan.GetGraph(), workflowInput)
 	for _, nodeID := range index.nodeOrder {
-		activeNodeID = nodeID
+		activeNodeID = ""
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		node := index.nodesByID[nodeID]
+		activeNodeID = nodeID
 		reason, err := resolution.activationSkipReason(node)
 		if err != nil {
 			return nil, err
@@ -294,6 +304,14 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			continue
 		case "map":
 			output, err := runMapNode(ctx, store, config, invoker, projectKey, runID, node, resolution, &manifest, manifestKey)
+			if items := findManifestStep(&manifest, nodeID).Items; items != nil {
+				for _, item := range *items {
+					if len(item.Attempts) > 0 {
+						dispatchedNodes[nodeID] = true
+						break
+					}
+				}
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -345,6 +363,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 				}
 				return nil, fmt.Errorf("step invoker returned %d outcomes, want 1", len(outcomes))
 			}
+			dispatchedNodes[nodeID] = true
 			outcome := outcomes[0]
 			if outcome.Status != StatusSucceeded {
 				status, diagnostic := StatusFailed, durableRunnerDiagnostic(outcome)

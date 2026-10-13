@@ -590,8 +590,13 @@ func ValidateExitHook(parsed *WorkflowSpec, nodeByID map[string]GraphNode) []Dia
 	contract, exists := parsed.Contracts[hook.ContractRef]
 	if !exists {
 		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook.contractRef", Ref: hook.ContractRef, Message: "contract reference does not exist"})
-	} else if contract.Retry != nil && contract.Retry.MaxAttempts > 1 {
-		diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook.contractRef", Ref: hook.ContractRef, Message: "exit hooks run once; their contract must not retry"})
+	} else {
+		if contract.Retry != nil && contract.Retry.MaxAttempts > 1 {
+			diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook.contractRef", Ref: hook.ContractRef, Message: "exit hooks run once; their contract must not retry"})
+		}
+		if contract.TimeoutSeconds == 0 {
+			diagnostics = append(diagnostics, Diagnostic{Path: "$.graph.exitHook.contractRef", Ref: hook.ContractRef, Message: "exit hooks require a finite timeoutSeconds; rebuild the workflow"})
+		}
 	}
 	return diagnostics
 }

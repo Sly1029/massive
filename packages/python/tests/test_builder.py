@@ -482,6 +482,26 @@ def test_exit_hook_emits_outside_the_dag_and_never_retries() -> None:
     assert "retry" not in contract and contract["timeoutSeconds"] == 300
 
 
+@pytest.mark.parametrize("inherited,selected,expected", [
+    (None, None, 300),
+    (timedelta(seconds=9), None, 9),
+    (timedelta(seconds=9), timedelta(seconds=2), 2),
+])
+def test_exit_hook_always_emits_a_finite_timeout(
+    inherited: timedelta | None, selected: timedelta | None, expected: int
+) -> None:
+    graph = GraphBuilder(
+        name="bounded-hook", input_type=Request, output_type=Result,
+        defaults=replace(_defaults(), timeout=inherited),
+    )
+    graph.edge_from(graph.start).to(graph.add(identity)).to_end(graph.end)
+    graph.on_exit(notify, timeout=selected)
+    spec = _emit(graph).value
+    _validate_workflow_spec(spec)
+    hook = spec["graph"]["exitHook"]
+    assert spec["contracts"][hook["contractRef"]]["timeoutSeconds"] == expected
+
+
 def test_exit_hook_registration_rejects_invalid_hooks() -> None:
     graph = GraphBuilder(
         name="hooked", input_type=Request, output_type=Result, defaults=_defaults()

@@ -25,6 +25,7 @@ func withExitHook(t *testing.T, mutate func(root, hook map[string]any)) []byte {
 			"inputSchema": hashRefForTest("e"), "outputSchema": hashRefForTest("f"),
 			"symbolRef": step["symbolRef"], "contractRef": step["contractRef"],
 		}
+		root["contracts"].(map[string]any)[step["contractRef"].(string)].(map[string]any)["timeoutSeconds"] = 300
 		root["graph"].(map[string]any)["exitHook"] = hook
 		mutate(root, hook)
 	})
@@ -53,6 +54,9 @@ func TestParseRejectsExitHooksOutsideTheirContract(t *testing.T) {
 			hook["outputSchema"] = nodeByID(root, "add_one")["outputSchema"]
 		}, "exit hooks take the run-outcome schema"},
 		"missing symbol": {func(_, hook map[string]any) { hook["symbolRef"] = "python-main:workflow#missing" }, "symbol reference does not exist"},
+		"unbounded": {func(root, hook map[string]any) {
+			delete(root["contracts"].(map[string]any)[hook["contractRef"].(string)].(map[string]any), "timeoutSeconds")
+		}, "exit hooks require a finite timeoutSeconds"},
 		"retry": {func(root, _ map[string]any) {
 			for _, contract := range root["contracts"].(map[string]any) {
 				contract.(map[string]any)["retry"] = map[string]any{"maxAttempts": 2, "delaySeconds": 1, "backoffFactor": 1, "maxDelaySeconds": 1}

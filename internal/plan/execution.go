@@ -76,7 +76,16 @@ func ValidateExecution(p *planpb.WorkflowPlan) error {
 		authored.Symbols[entry.GetSymbolRef()] = spec.Symbol{PackageID: entry.GetPackageId(), Language: entry.GetLanguage(), Module: entry.GetModule(), Export: entry.GetExport()}
 	}
 	for _, entry := range p.GetContracts() {
-		contract := spec.ExecutionContract{EnvironmentRef: entry.GetEnvironmentRef()}
+		contract := spec.ExecutionContract{EnvironmentRef: entry.GetEnvironmentRef(), TimeoutSeconds: entry.GetTimeoutSeconds()}
+		if entry.GetContractRef() == hook.GetContractRef() {
+			timeoutSchema, err := compiler.Compile("workflow-spec.schema.json#/$defs/executionContract/properties/timeoutSeconds")
+			if err != nil {
+				return err
+			}
+			if err := timeoutSchema.Validate(json.Number(fmt.Sprint(entry.GetTimeoutSeconds()))); err != nil {
+				return fmt.Errorf("workflow plan exit hook requires a valid finite timeoutSeconds; rebuild the plan: %w", err)
+			}
+		}
 		if retry := entry.GetRetry(); retry != nil {
 			contract.Retry = &spec.RetryPolicy{MaxAttempts: retry.GetMaxAttempts()}
 		}

@@ -613,8 +613,9 @@ publishes to its own attempt slot and keeps the same idempotency key.
 retryable.
 
 A plan's run deadline (`graph.deadlineSeconds`, from the WorkflowSpec's
-`workflow.deadlineSeconds`) is the only `activeDeadlineSeconds` Massive emits,
-on the WorkflowTemplate spec. Argo measures it from the workflow's start, stops
+`workflow.deadlineSeconds`) becomes `activeDeadlineSeconds` on the
+WorkflowTemplate spec. Exit-hook templates carry a separate deadline because
+Argo exempts them from the workflow deadline. Argo measures it from the workflow's start, stops
 running pods, and fails the workflow. It is plan data rather than deployment
 data because it changes what a run means (an unfinished run fails), so it must
 behave the same on the local target, where the orchestrator cancels execution
@@ -708,7 +709,9 @@ A plan's `graph.exitHook` (from `GraphBuilder.on_exit`) is a step-like node
 outside the DAG. Its input is the shared run outcome
 (`conformance/schema/run-outcome.schema.json`, generated from the Python SDK's
 `RunOutcome`), its output is `null`, and its contract must not retry; the
-compiler rejects any other shape.
+compiler rejects any other shape. Hooks always have a finite `timeoutSeconds`: the
+Python builder keeps an explicit or inherited timeout, otherwise assigns 300
+seconds, and plan readers reject missing or invalid timeouts.
 
 The WorkflowTemplate sets `onExit: exit-handler`. That DAG runs one task, the
 hook's pod template `exit-<id>`, with `continueOn: {failed: true, error:
@@ -727,7 +730,9 @@ identifies a cause, or the earliest boundaries tie, the node is `null`. It logs
 invokes the hook through the same isolated path as a step, with its own
 secrets, resources, placement override, and timeout, and no retry strategy.
 Argo exempts exit-handler pods from the workflow's `activeDeadlineSeconds`, so
-a hook still runs after the run deadline.
+a hook still runs after the run deadline. The hook pod template has its own
+`activeDeadlineSeconds`, equal to the hook timeout, to bound preparation and
+execution even after the workflow deadline.
 
 Argo cannot distinguish an operator's `argo stop` from a failure, so the
 outcome is `failed`; `argo terminate` does not run exit handlers. The live
