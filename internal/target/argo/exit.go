@@ -10,7 +10,8 @@ import (
 // ExitStatus maps the exit handler's {{workflow.status}} and
 // {{workflow.failures}} onto the run outcome's status and failed node. Argo
 // reports a stopped workflow as Failed, so it never yields "cancelled". The
-// failed node is the plan node whose pod failed first.
+// failed node is the earliest terminal task boundary. Failed retry attempts
+// whose parent succeeded are not terminal task failures.
 func ExitStatus(p *planpb.WorkflowPlan, status, failures string) (string, *string, error) {
 	switch status {
 	case "Succeeded":
@@ -24,6 +25,7 @@ func ExitStatus(p *planpb.WorkflowPlan, status, failures string) (string, *strin
 	var text string
 	var failed []struct {
 		TemplateName string `json:"templateName"`
+		DisplayName  string `json:"displayName"`
 		FinishedAt   string `json:"finishedAt"`
 	}
 	if err := json.Unmarshal([]byte(failures), &text); err != nil {
@@ -35,18 +37,31 @@ func ExitStatus(p *planpb.WorkflowPlan, status, failures string) (string, *strin
 	nodes := templateNodes(p)
 	var node *string
 	first := ""
+	ambiguous := false
 	for _, failure := range failed {
 		id, ok := nodes[failure.TemplateName]
 		// RFC 3339 timestamps in one zone order lexically.
-		if ok && (node == nil || failure.FinishedAt < first) {
-			node, first = &id, failure.FinishedAt
+		// The controller names retry attempts task(0), task(1), etc. The
+		// unsuffixed task is the retry parent, or the pod when no retry is
+		// configured. Maps use their outer DAG boundary, not item attempts.
+		if !ok || failure.DisplayName != argoFieldName(id) {
+			continue
 		}
+		if node == nil || failure.FinishedAt < first {
+			node, first = &id, failure.FinishedAt
+			ambiguous = false
+		} else if failure.FinishedAt == first && id != *node {
+			ambiguous = true
+		}
+	}
+	if ambiguous {
+		node = nil
 	}
 	return "failed", node, nil
 }
 
-// templateNodes names the plan node behind each pod template, using the
-// names workflowTemplate generates.
+// templateNodes names the plan node behind its task boundary and pod
+// templates, using the names workflowTemplate generates.
 func templateNodes(p *planpb.WorkflowPlan) map[string]string {
 	nodes := map[string]string{}
 	for _, node := range p.GetGraph().GetNodes() {
@@ -54,7 +69,7 @@ func templateNodes(p *planpb.WorkflowPlan) map[string]string {
 		case "step", "decision", "select":
 			nodes[argoFieldName("step-"+node.GetId())] = node.GetId()
 		case "map":
-			for _, prefix := range []string{"map-expand-", "map-item-", "map-collect-"} {
+			for _, prefix := range []string{"map-", "map-expand-", "map-item-", "map-collect-"} {
 				nodes[argoFieldName(prefix+node.GetId())] = node.GetId()
 			}
 		}

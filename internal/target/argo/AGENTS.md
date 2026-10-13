@@ -63,3 +63,7 @@ with `--workflow-input`, and a decision or map reads them through the
 forward received references and slice referenced lists in item pods. Only map
 collection and the entry task publish values. Bound reads by the reference's
 declared size, and keep maps within the collector's parameter budget.
+
+Exit outcomes use terminal task boundaries: retry parents and outer map DAGs,
+identified by the generated task name and template. Failed attempt pods alone
+do not prove a terminal failure; return an unknown failed node for them.

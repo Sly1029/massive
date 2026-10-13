@@ -277,8 +277,9 @@ type runOutput struct {
 // exitHookOutput reports the exit hook separately: its status never changes
 // the run's status or the CLI's exit code.
 type exitHookOutput struct {
-	NodeID string `json:"nodeId"`
-	Status string `json:"status"`
+	PersistenceDiagnostic string `json:"persistenceDiagnostic,omitempty"`
+	NodeID                string `json:"nodeId"`
+	Status                string `json:"status"`
 }
 
 func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) error {
@@ -331,7 +332,7 @@ func renderRun(writer io.Writer, jsonMode, verbose bool, result *controlplane.Lo
 	}
 	var exitHook *exitHookOutput
 	if result.Run != nil && result.Run.ExitHook != nil {
-		exitHook = &exitHookOutput{NodeID: result.Run.ExitHook.NodeID, Status: result.Run.ExitHook.Status}
+		exitHook = &exitHookOutput{NodeID: result.Run.ExitHook.NodeID, Status: result.Run.ExitHook.Status, PersistenceDiagnostic: result.Run.ExitHookPersistenceDiagnostic}
 	}
 	if jsonMode {
 		output := runOutput{RunID: runID, Status: status, Result: value, ExitHook: exitHook}
@@ -358,6 +359,9 @@ func renderRun(writer io.Writer, jsonMode, verbose bool, result *controlplane.Lo
 			mark = "✗"
 		}
 		fmt.Fprintf(writer, "  exit hook %-6s %s %s\n", exitHook.NodeID, mark, exitHook.Status)
+		if exitHook.PersistenceDiagnostic != "" {
+			fmt.Fprintf(writer, "  warning: %s\n", exitHook.PersistenceDiagnostic)
+		}
 	}
 	if status == orchestrator.StatusSucceeded {
 		fmt.Fprintf(writer, "\n✓ succeeded  run %s\n  result  %s\n", runID, value)

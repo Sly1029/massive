@@ -503,7 +503,7 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 		}
 	}
 
-	diagnostics = append(diagnostics, validateExitHook(parsed, nodeByID)...)
+	diagnostics = append(diagnostics, ValidateExitHook(parsed, nodeByID)...)
 	diagnostics = append(diagnostics, validateMapSemantics(parsed, nodeByID, inbound, outbound)...)
 	diagnostics = append(diagnostics, validateDecisionAndSelectSemantics(parsed, nodeByID, nodeIndexes)...)
 
@@ -555,9 +555,9 @@ func validateSemantics(parsed *WorkflowSpec) []Diagnostic {
 	return diagnostics
 }
 
-// validateExitHook checks the hook's references and its fixed contract: it
+// ValidateExitHook checks the hook's references and its fixed contract: it
 // receives the shared run outcome, returns null, and runs once.
-func validateExitHook(parsed *WorkflowSpec, nodeByID map[string]GraphNode) []Diagnostic {
+func ValidateExitHook(parsed *WorkflowSpec, nodeByID map[string]GraphNode) []Diagnostic {
 	hook := parsed.Graph.ExitHook
 	if hook == nil {
 		return nil

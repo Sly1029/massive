@@ -14,10 +14,12 @@ import (
 	"strings"
 	"testing"
 
+	schemacontract "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/materialization"
+	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/Sly1029/massive/internal/spec"
@@ -1138,7 +1140,8 @@ func TestRunDeadlineBoundsTheWholeWorkflowNotEachAttempt(t *testing.T) {
 	}
 }
 
-func TestExitHookRunsFromAnExitHandlerThatCannotFailTheWorkflow(t *testing.T) {
+func exitHookPlan(t *testing.T) *plan.CompileResult {
+	t.Helper()
 	compiled := fixturePlan(t, "python-linear")
 	var step *planpb.GraphNode
 	for _, node := range compiled.Plan.Graph.Nodes {
@@ -1146,11 +1149,25 @@ func TestExitHookRunsFromAnExitHandlerThatCannotFailTheWorkflow(t *testing.T) {
 			step = node
 		}
 	}
+	input, err := canonical.CanonicalizeJSON(schemacontract.RunOutcomeSchemaJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := []byte(`{"type":"null"}`)
+	inputHash, outputHash := canonical.DigestBytes(input), canonical.DigestBytes(output)
+	compiled.Plan.Schemas = append(compiled.Plan.Schemas,
+		&planpb.SchemaEntry{Hash: pointer(inputHash), CanonicalJson: pointer(string(input))},
+		&planpb.SchemaEntry{Hash: pointer(outputHash), CanonicalJson: pointer(string(output))})
 	compiled.Plan.Graph.ExitHook = &planpb.GraphNode{
 		Id: pointer("notify"), Kind: pointer("exit-hook"),
-		InputSchema: step.InputSchema, OutputSchema: step.OutputSchema,
+		InputSchema: pointer(inputHash), OutputSchema: pointer(outputHash),
 		SymbolRef: step.SymbolRef, ContractRef: step.ContractRef,
 	}
+	return compiled
+}
+
+func TestExitHookRunsFromAnExitHandlerThatCannotFailTheWorkflow(t *testing.T) {
+	compiled := exitHookPlan(t)
 	data, _ := rehashPlan(t, compiled.Plan)
 	binding := deploymentForPlan(t, data)
 	// The hook runs author code, so it accepts a placement override.
@@ -1206,8 +1223,8 @@ func TestExitHookRunsFromAnExitHandlerThatCannotFailTheWorkflow(t *testing.T) {
 		{"Failed", quoted("null"), "failed", nil},
 		{"Error", quoted(`[{"templateName":"workflow-entry","finishedAt":"2026-01-01T00:00:01Z"}]`), "failed", nil},
 		// Argo lists the failed main DAG too, and the hook's own failure is
-		// not the run's failed node; the earliest plan pod is.
-		{"Failed", quoted(`[{"templateName":"main","finishedAt":"2026-01-01T00:00:03Z"},{"templateName":"exit-notify","finishedAt":"2026-01-01T00:00:01Z"},{"templateName":"` + argoFieldName("step-add_one") + `","finishedAt":"2026-01-01T00:00:02Z"}]`), "failed", pointer("add_one")},
+		// not the run's failed node; the earliest terminal plan task is.
+		{"Failed", quoted(`[{"templateName":"main","finishedAt":"2026-01-01T00:00:03Z"},{"templateName":"exit-notify","finishedAt":"2026-01-01T00:00:01Z"},{"displayName":"` + argoFieldName("add_one") + `","templateName":"` + argoFieldName("step-add_one") + `","finishedAt":"2026-01-01T00:00:02Z"}]`), "failed", pointer("add_one")},
 	} {
 		status, node, err := ExitStatus(compiled.Plan, test.status, test.failures)
 		if err != nil || status != test.want || !reflect.DeepEqual(node, test.node) {
@@ -1239,5 +1256,93 @@ func TestEveryNodePodTemplateMapsBackToItsNode(t *testing.T) {
 				t.Fatalf("%s: pod template %v names no plan node", name, template["name"])
 			}
 		}
+	}
+}
+
+func TestRehashedExitHooksAreRejectedAtEveryPlanBoundary(t *testing.T) {
+	tests := map[string]func(*planpb.WorkflowPlan){
+		"path escape":            func(p *planpb.WorkflowPlan) { p.Graph.ExitHook.Id = pointer("../notify") },
+		"reserved path":          func(p *planpb.WorkflowPlan) { p.Graph.ExitHook.Id = pointer("..") },
+		"missing identity":       func(p *planpb.WorkflowPlan) { p.Graph.ExitHook.Id = nil },
+		"node collision":         func(p *planpb.WorkflowPlan) { p.Graph.ExitHook.Id = p.Graph.Nodes[0].Id },
+		"ordinary step kind":     func(p *planpb.WorkflowPlan) { p.Graph.ExitHook.Kind = pointer("step") },
+		"ordinary input schema":  func(p *planpb.WorkflowPlan) { p.Graph.ExitHook.InputSchema = p.Graph.InputSchema },
+		"ordinary output schema": func(p *planpb.WorkflowPlan) { p.Graph.ExitHook.OutputSchema = p.Graph.OutputSchema },
+		"missing schema": func(p *planpb.WorkflowPlan) {
+			p.Graph.ExitHook.InputSchema = pointer("sha256:" + strings.Repeat("f", 64))
+		},
+		"missing symbol": func(p *planpb.WorkflowPlan) { p.Graph.ExitHook.SymbolRef = pointer("unknown") },
+		"missing contract": func(p *planpb.WorkflowPlan) {
+			p.Graph.ExitHook.ContractRef = pointer("sha256:" + strings.Repeat("f", 64))
+		},
+		"retry":           func(p *planpb.WorkflowPlan) { p.Contracts[0].Retry = &planpb.RetryPolicy{MaxAttempts: u32(2)} },
+		"dangling source": func(p *planpb.WorkflowPlan) { p.Symbols[0].PackageId = pointer("unknown") },
+		"dangling environment": func(p *planpb.WorkflowPlan) {
+			p.Contracts[0].EnvironmentRef = pointer("sha256:" + strings.Repeat("f", 64))
+		},
+		"DAG fields": func(p *planpb.WorkflowPlan) { p.Graph.ExitHook.MergeInputs = []string{"add_one"} },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			compiled := exitHookPlan(t)
+			mutate(compiled.Plan)
+			body, hash := rehashPlan(t, compiled.Plan)
+			if _, err := plan.VerifyCanonicalJSON(body, hash); err == nil {
+				t.Fatal("invalid rehashed hook passed plan verification")
+			}
+			if err := plan.ValidateControlFlow(compiled.Plan); err == nil {
+				t.Fatal("invalid typed hook passed graph validation")
+			}
+			storeRoot := t.TempDir()
+			if _, err := orchestrator.Run(t.Context(), orchestrator.RunConfig{Plan: compiled.Plan, DatastoreRoot: storeRoot, ProjectID: "test/invalid-hook", RunID: "invalid", SourcePackageRoot: t.TempDir()}, []byte("20")); err == nil {
+				t.Fatal("invalid hook accepted by local execution")
+			}
+			entries, err := os.ReadDir(storeRoot)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("invalid hook wrote run artifacts: %v %v", entries, err)
+			}
+			// Preserve a valid deployment identity to reach the target's plan boundary.
+			binding, _, err := deployment.New(hash, deployment.Profile{Name: "argo", ArtifactStoreBinding: "artifacts", Target: deployment.Target{Kind: "argo", Namespace: "default", ServiceAccountName: "default", RuntimeTransport: TransportEmbedded}}, hash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Compile(body, binding, RuntimeAssets{}); err == nil {
+				t.Fatal("invalid hook lowered to Argo")
+			}
+		})
+	}
+}
+
+func TestExitStatusIgnoresRecoveredAttemptsAndUsesTerminalBoundaries(t *testing.T) {
+	compiled := fixturePlan(t, "linear-chain")
+	quoted := func(value string) string { body, _ := json.Marshal(value); return string(body) }
+	failures := quoted(`[
+  {"displayName":"double(0)","templateName":"step-double","finishedAt":"2026-01-01T00:00:01Z"},
+  {"displayName":"increment(0)","templateName":"step-increment","finishedAt":"2026-01-01T00:00:03Z"},
+  {"displayName":"increment","templateName":"step-increment","finishedAt":"2026-01-01T00:00:04Z"}
+ ]`)
+	status, node, err := ExitStatus(compiled.Plan, "Failed", failures)
+	if err != nil || status != "failed" || node == nil || *node != "increment" {
+		t.Fatalf("terminal node = %v %v %v", status, node, err)
+	}
+	// An attempt alone says nothing about its parent's terminal outcome.
+	_, node, err = ExitStatus(compiled.Plan, "Failed", quoted(`[{"displayName":"double(0)","templateName":"step-double","finishedAt":"2026-01-01T00:00:01Z"}]`))
+	if err != nil || node != nil {
+		t.Fatalf("ambiguous attempt attributed to %v: %v", node, err)
+	}
+	_, node, err = ExitStatus(compiled.Plan, "Failed", quoted(`[
+	 {"displayName":"double","templateName":"step-double","finishedAt":"2026-01-01T00:00:01Z"},
+	 {"displayName":"increment","templateName":"step-increment","finishedAt":"2026-01-01T00:00:01Z"}
+	]`))
+	if err != nil || node != nil {
+		t.Fatalf("ambiguous terminal failures attributed to %v: %v", node, err)
+	}
+	mapped := fixturePlan(t, "finite-map")
+	_, node, err = ExitStatus(mapped.Plan, "Failed", quoted(`[
+  {"displayName":"invoke(0:...)" ,"templateName":"map-item-map-items","finishedAt":"2026-01-01T00:00:01Z"},
+  {"displayName":"map-items","templateName":"map-map-items","finishedAt":"2026-01-01T00:00:04Z"}
+ ]`))
+	if err != nil || node == nil || *node != "map-items" {
+		t.Fatalf("map boundary = %v: %v", node, err)
 	}
 }

@@ -719,8 +719,10 @@ failure, and the hook must never change the run's status. The pod runs
 `{{workflow.uid}}`. Argo v3.7 substitutes `{{workflow.failures}}` as a JSON
 string holding the failed nodes (or `null`), and the runtime decodes exactly
 that form. It maps `Succeeded` to `succeeded` and `Failed` or `Error` to
-`failed`, and names the plan node of the earliest failed pod as
-`failed_node`, recomputing each pod template's name from the plan. It logs
+`failed`, and names the earliest terminal plan task as `failed_node`. It
+matches generated task names against terminal retry parents and outer map DAG
+boundaries, ignoring failed attempts that may have recovered. If no boundary
+identifies a cause, or the earliest boundaries tie, the node is `null`. It logs
 `exit hook <id> outcome <json>` (the outcome holds no secrets) and then
 invokes the hook through the same isolated path as a step, with its own
 secrets, resources, placement override, and timeout, and no retry strategy.

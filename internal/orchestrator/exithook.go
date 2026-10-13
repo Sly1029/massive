@@ -31,6 +31,12 @@ func OutcomeTime(at time.Time) string {
 // not stop the hook; only its contract's timeout bounds it.
 func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, index executionIndex, projectKey, runID string, hook *planpb.GraphNode, outcome RunOutcome) runjournal.Step {
 	ctx = context.WithoutCancel(ctx)
+	policy := policyForContract(index.contractsByRef[hook.GetContractRef()])
+	if policy.timeout > 0 {
+		var stop context.CancelFunc
+		ctx, stop = context.WithTimeout(ctx, policy.timeout)
+		defer stop()
+	}
 	body, encodeErr := canonical.Marshal(outcome)
 	attempt := runjournal.Attempt{
 		Attempt: 1, Status: StatusFailed,
@@ -50,6 +56,15 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 	if encodeErr != nil {
 		return record("exit hook input could not be encoded")
 	}
+	// A run may expire while preparing its sources. The detached hook still
+	// needs a verified archive; prepare it under the hook's own lifetime.
+	if index.packagesByID == nil {
+		packages, err := materializePrerequisites(ctx, store, config)
+		if err != nil {
+			return record("exit hook source materialization failed")
+		}
+		index.packagesByID = packages
+	}
 	if _, err := store.Put(ctx, datastore.MustKey(attempt.Input.Key), body, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
 		return record("exit hook input could not be written")
 	}
@@ -57,7 +72,6 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 	if err != nil {
 		return record("exit hook descriptor could not be built")
 	}
-	policy := policyForContract(index.contractsByRef[hook.GetContractRef()])
 	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}})
 	if err != nil || len(outcomes) != 1 {
 		return record("invocation infrastructure failed")

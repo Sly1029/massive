@@ -109,9 +109,6 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 	if err := validatePlanIdentitySegments(config.Plan); err != nil {
 		return nil, err
 	}
-	if err := plan.ValidateExecution(config.Plan); err != nil {
-		return nil, err
-	}
 	// Every source-package hash is interpolated into a snapshot directory name
 	// and a datastore key. The spec schema constrains it, but Run also accepts a
 	// plan directly, so validate here — before any materialization touches the
@@ -188,8 +185,8 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			result.ExitHook = &StepSummary{NodeID: record.NodeID, Status: record.Status, Diagnostic: record.Attempts[0].Diagnostic}
 			publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer stop()
-			if err := writeRunManifest(publication, store, manifestKey, manifest); err != nil && runErr == nil {
-				runErr = fmt.Errorf("record exit hook: %w", err)
+			if err := writeRunManifest(publication, store, manifestKey, manifest); err != nil {
+				result.ExitHookPersistenceDiagnostic = "exit hook record could not be published: " + err.Error()
 			}
 		}()
 	}
@@ -1238,10 +1235,10 @@ func resultForEnd(ctx context.Context, store datastore.Datastore, projectKey str
 }
 
 func buildExecutionIndex(workflowPlan *planpb.WorkflowPlan) (executionIndex, error) {
-	graph := workflowPlan.GetGraph()
-	if graph == nil {
-		return executionIndex{}, fmt.Errorf("workflow plan is missing graph")
+	if err := plan.ValidateExecution(workflowPlan); err != nil {
+		return executionIndex{}, err
 	}
+	graph := workflowPlan.GetGraph()
 	nodeOrder, err := topologicalPlanOrder(graph)
 	if err != nil {
 		return executionIndex{}, err

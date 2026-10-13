@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +66,15 @@ def broken(ctx: StepContext[RunOutcome]) -> None:
     record(ctx)
     raise RuntimeError("notification service unavailable")
 
+def unwritable(ctx: StepContext[RunOutcome]) -> None:
+    record(ctx)
+    # The terminal journal has already been published. Keep its directory
+    # readable, but prohibit the subsequent atomic hook-record rewrite.
+    (run_dir,) = Path(os.environ["STORE_ROOT"]).glob(f"projects/*/runs/{ctx.inputs.run_id}")
+    assert '"status":"' + ctx.inputs.status + '"' in (run_dir / "run-manifest.json").read_text()
+    (run_dir / "steps").mkdir(exist_ok=True)
+    run_dir.chmod(0o555)
+
 checked = GraphBuilder(name="checked", input_type=int, output_type=int, defaults=DEFAULTS)
 checked.edge_from(checked.start).to(checked.add(check)).to_end(checked.end)
 checked.on_exit(record)
@@ -76,6 +87,10 @@ stalled = GraphBuilder(name="stalled", input_type=int, output_type=int, defaults
     deadline=timedelta(seconds=5))
 stalled.edge_from(stalled.start).to(stalled.add(stall)).to_end(stalled.end)
 stalled.on_exit(record)
+
+unwritable_hook = GraphBuilder(name="unwritable-hook", input_type=int, output_type=int, defaults=DEFAULTS)
+unwritable_hook.edge_from(unwritable_hook.start).to(unwritable_hook.add(check)).to_end(unwritable_hook.end)
+unwritable_hook.on_exit(unwritable)
 `
 	entry := filepath.Join(root, "workflow.py")
 	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
@@ -87,18 +102,24 @@ stalled.on_exit(record)
 		exitCode           int
 		run, hook          string
 		failedNode         *string
+		persistenceFailure bool
 	}{
-		{"succeeded", "checked", "2", 0, "succeeded", "succeeded", nil},
-		{"failed step", "checked", "-1", 1, "failed", "succeeded", pointer("check")},
-		{"failed hook", "broken_hook", "3", 0, "succeeded", "failed", nil},
-		{"deadline", "stalled", "4", 1, "failed", "succeeded", pointer("stall")},
+		{"succeeded", "checked", "2", 0, "succeeded", "succeeded", nil, false},
+		{"failed step", "checked", "-1", 1, "failed", "succeeded", pointer("check"), false},
+		{"failed hook", "broken_hook", "3", 0, "succeeded", "failed", nil, false},
+		{"deadline", "stalled", "4", 1, "failed", "succeeded", pointer("stall"), false},
+		{"hook persistence after success", "unwritable_hook", "5", 0, "succeeded", "succeeded", nil, true},
+		{"hook persistence after failure", "unwritable_hook", "-2", 1, "failed", "succeeded", pointer("check"), true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			if test.persistenceFailure && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				t.Skip("requires filesystem permission enforcement")
+			}
 			outcomeFile := filepath.Join(t.TempDir(), "outcome.json")
 			runID := "hook-" + test.graph + test.input
 			command := exec.Command(binary, "run", entry+"#"+test.graph, "--input="+test.input, "--store", store,
 				"--project", "test/exit-hooks", "--run-id", runID, "--json")
-			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "OUTCOME_FILE="+outcomeFile)
+			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "OUTCOME_FILE="+outcomeFile, "STORE_ROOT="+store)
 			var stdout, stderr bytes.Buffer
 			command.Stdout, command.Stderr = &stdout, &stderr
 			err := command.Run()
@@ -117,6 +138,10 @@ stalled.on_exit(record)
 			}
 			if output.Status != test.run || output.ExitHook == nil || output.ExitHook.Status != test.hook {
 				t.Fatalf("run output = %s", stdout.String())
+			}
+
+			if test.persistenceFailure != strings.Contains(output.ExitHook.PersistenceDiagnostic, "exit hook record could not be published") {
+				t.Fatalf("hook persistence diagnostic = %q", output.ExitHook.PersistenceDiagnostic)
 			}
 
 			// The hook ran and saw the run's own outcome.
@@ -146,6 +171,12 @@ stalled.on_exit(record)
 			var manifest runjournal.Manifest
 			if err := json.Unmarshal(inspected, &manifest); err != nil {
 				t.Fatal(err)
+			}
+			if test.persistenceFailure {
+				if manifest.Status != test.run || manifest.ExitHook != nil {
+					t.Fatalf("durable run changed after hook persistence failed: %s", inspected)
+				}
+				return
 			}
 			hook := manifest.ExitHook
 			if manifest.Status != test.run || hook == nil || hook.Status != test.hook || len(hook.Attempts) != 1 {

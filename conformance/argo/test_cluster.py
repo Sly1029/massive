@@ -522,6 +522,7 @@ class DecisionConformance(unittest.TestCase):
         )
         install_workflow(fixture_source(Path(__file__).parent / "deadline.py"))
         install_workflow(fixture_source(Path(__file__).parent / "exit_hooks.py"))
+        install_workflow(fixture_source(Path(__file__).parent / "exit_retry.py"))
         large_values = fixture_source(Path(__file__).parent / "large_values.py")
         install_workflow(large_values, selector="#graph")
         install_workflow(large_values, selector="#entry_graph")
@@ -564,6 +565,7 @@ class DecisionConformance(unittest.TestCase):
             "placement": 3,
             "deadline": 1,
             "exit-hook": 21,
+            "exit-retry": 21,
         }.items():
             run = kubectl(
                 "create",
@@ -597,6 +599,7 @@ class DecisionConformance(unittest.TestCase):
                                 "placement": "argo-placement",
                                 "deadline": "argo-deadline",
                                 "exit-hook": "argo-exit-hook",
+                                "exit-retry": "argo-exit-retry",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -965,6 +968,31 @@ class DecisionConformance(unittest.TestCase):
         )
         self.assertIn(
             "notification service unavailable for succeeded run", self.main_log(run)
+        )
+
+    def test_exit_hook_attributes_terminal_failure_after_recovered_retry(self) -> None:
+        run = self.completed("exit-retry")
+        self.assertEqual(run["status"]["phase"], "Failed")
+        self.assertEqual(
+            sorted(node["phase"] for node in self.pods(run, "step-recovered")),
+            ["Failed", "Succeeded"],
+        )
+        self.assertEqual(
+            [node["phase"] for node in self.pods(run, "step-terminal")], ["Failed"]
+        )
+        parents = {
+            node["displayName"]: node["phase"]
+            for node in run["status"]["nodes"].values()
+            if node.get("type") == "Retry"
+        }
+        self.assertEqual(parents["recovered"], "Succeeded")
+        self.assertEqual(parents["terminal"], "Failed")
+        self.assertEqual(
+            [node["phase"] for node in self.pods(run, "exit-notify")], ["Succeeded"]
+        )
+        (outcome,) = self.outcomes(run, "notify")
+        self.assertEqual(
+            (outcome["status"], outcome["failed_node"]), ("failed", "terminal")
         )
 
     def pods(self, run: dict, template: str) -> list[dict]:

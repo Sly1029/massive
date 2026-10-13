@@ -71,6 +71,8 @@ type RunResult struct {
 	// ExitHook is set when the plan has an exit hook; its status never
 	// changes the run's.
 	ExitHook *StepSummary
+	// A hook journal rewrite is a separate publication from the settled run.
+	ExitHookPersistenceDiagnostic string
 }
 
 type StepSummary struct {

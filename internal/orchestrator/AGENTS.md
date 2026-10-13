@@ -66,3 +66,7 @@ Only findings and `environment.ProjectError` become a `PreflightError` (CLI
 exit 68, never retried); return context cancellation and other infrastructure
 errors unchanged so a terminated pod is retried. A
 passing attempt writes `environment.json` beside its output manifest.
+
+A failed exit-hook journal rewrite preserves the settled run result and error;
+report it separately in the run summary. After materialization cancellation,
+prepare the hook's verified source archive under its detached lifetime.
