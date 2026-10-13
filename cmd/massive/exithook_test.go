@@ -47,7 +47,7 @@ func TestExitHookReceivesEveryOutcomeWithoutChangingIt(t *testing.T) {
 import time
 from datetime import timedelta
 from pathlib import Path
-from massive import GraphBuilder, RunOutcome, StepContext, container, execution
+from massive import GraphBuilder, MapItemOutcome, RunOutcome, StepContext, container, execution
 
 DEFAULTS = execution(environment=container("example.invalid/runner@sha256:" + "1" * 64))
 
@@ -79,6 +79,15 @@ def unwritable(ctx: StepContext[RunOutcome]) -> None:
     assert '"status":"' + ctx.inputs.status + '"' in (run_dir / "run-manifest.json").read_text()
     (run_dir / "steps").mkdir(exist_ok=True)
     run_dir.chmod(0o555)
+
+def items(ctx: StepContext[int]) -> list[int]:
+    return [ctx.inputs, -1]
+
+collected = GraphBuilder(name="collected", input_type=int, output_type=list[MapItemOutcome[int]], defaults=DEFAULTS)
+source = collected.add(items)
+collected.edge_from(collected.start).to(source)
+collected.edge_from(collected.map(source, check, id="checked-items", item_failures="collect")).to_end(collected.end)
+collected.on_exit(record)
 
 checked = GraphBuilder(name="checked", input_type=int, output_type=int, defaults=DEFAULTS)
 checked.edge_from(checked.start).to(checked.add(check)).to_end(checked.end)
@@ -113,6 +122,7 @@ unwritable_hook.on_exit(unwritable)
 		failedNode         *string
 		persistenceFailure bool
 	}{
+		{"collected failures", "collected", "2", 0, "succeeded", "succeeded", nil, false},
 		{"succeeded", "checked", "2", 0, "succeeded", "succeeded", nil, false},
 		{"failed step", "checked", "-1", 1, "failed", "succeeded", pointer("check"), false},
 		{"failed hook", "broken_hook", "3", 0, "succeeded", "failed", nil, false},
@@ -194,6 +204,20 @@ unwritable_hook.on_exit(unwritable)
 				}
 				return
 			}
+			if test.graph == "collected" {
+				found := false
+				for _, step := range manifest.Steps {
+					if step.ItemFailures == "collect" {
+						found = true
+						if step.Status != "succeeded" || step.Items == nil || len(*step.Items) != 2 || (*step.Items)[1].Status != "failed" {
+							t.Fatalf("collected map lost its failed item: %s", inspected)
+						}
+					}
+				}
+				if !found {
+					t.Fatalf("collected map missing from journal: %s", inspected)
+				}
+			}
 			hook := manifest.ExitHook
 			if manifest.Status != test.run || hook == nil || hook.Status != test.hook || len(hook.Attempts) != 1 {
 				t.Fatalf("journal = %s", inspected)
@@ -228,7 +252,7 @@ func TestRuntimeExitHookMapsArgoVariablesOntoTheOutcome(t *testing.T) {
 	}
 	source := `import os
 from pathlib import Path
-from massive import GraphBuilder, RunOutcome, StepContext, container, execution
+from massive import GraphBuilder, MapItemOutcome, RunOutcome, StepContext, container, execution
 
 def check(ctx: StepContext[int]) -> int:
     return ctx.inputs
