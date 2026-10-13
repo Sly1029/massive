@@ -78,7 +78,7 @@ func TestRunProgressEventsMatchRealPythonJournals(t *testing.T) {
 			sequence := readProgressEvents(t, events)
 			journal := assertProgressJournal(t, store, "test/progress", "observed", sequence)
 			assertProgressJSON(t, stdout.Bytes(), "observed", "succeeded", test.expected)
-			for _, line := range []string{"run observed started (", " attempt 1/", " succeeded (", "STEP                     STATUS          DURATION", "run observed succeeded; total wall time "} {
+			for _, line := range []string{"run observed started", " attempt 1 started", " succeeded (", "STEP                     STATUS          DURATION", "run observed succeeded; total wall time "} {
 				if !strings.Contains(stderr.String(), line) {
 					t.Fatalf("plain stderr missing %q:\n%s", line, &stderr)
 				}
@@ -87,24 +87,20 @@ func TestRunProgressEventsMatchRealPythonJournals(t *testing.T) {
 				t.Fatalf("plain mode used terminal control sequences: %q", stderr.String())
 			}
 			if test.name == "collected failures" {
-				var last *runevent.Event
 				retry := false
 				for i := range sequence {
 					event := &sequence[i]
-					if event.Type == "map.progress" {
-						last = event
-					}
 					if event.Type == "step.attempt.started" && event.NodeID == "scan" && event.Attempt == 2 {
 						retry = true
 					}
 				}
-				if !retry || last == nil || *last.Completed != 4 || *last.Total != 4 || *last.Failed != 2 {
-					t.Fatalf("missing retries or final map counts: %+v", last)
+				if !retry {
+					t.Fatal("missing retry attempt")
 				}
-				if !strings.Contains(stderr.String(), "scan map 4/4 completed, 2 failed") || !strings.Contains(stderr.String(), "diagnostic: step-execution-failure") {
+				if !strings.Contains(stderr.String(), "diagnostic: step-execution-failure") {
 					t.Fatalf("missing failure progress: %s", &stderr)
 				}
-				// Failure detail belongs only to the local event/log stream.
+				// Journals and events carry only safe lifecycle diagnostics.
 				for _, step := range journal.Steps {
 					if step.Items != nil {
 						for _, item := range *step.Items {
@@ -180,18 +176,16 @@ func assertProgressJournal(t *testing.T, store, project, runID string, events []
 		t.Fatal("run events are not bracketed by started/finished")
 	}
 	first, last := events[0], events[len(events)-1]
-	if first.PlanHash != journal.PlanHash || *first.NodeCount != len(journal.Steps) || last.Status != journal.Status {
+	if first.PlanHash != journal.PlanHash || last.Status != journal.Status {
 		t.Fatal("run events disagree with journal")
 	}
 	steps := map[string]string{}
-	starts := map[string]bool{}
 	attempts := map[progressAttempt]string{}
 	attemptStarts := map[progressAttempt]bool{}
 	latest := map[progressAttempt]int{}
-	maps := map[string]runevent.Event{}
 	elapsed := 0.0
 	for index, event := range events {
-		if event.Sequence != index+1 || event.RunID != runID || event.ElapsedMS < elapsed {
+		if event.Sequence != index+1 || event.RunID != runID || event.ProjectKey != journal.ProjectKey || event.ElapsedMS < elapsed {
 			t.Fatalf("non-monotonic event: %+v", event)
 		}
 		if _, err := time.Parse(time.RFC3339Nano, event.Time); err != nil {
@@ -204,17 +198,9 @@ func assertProgressJournal(t *testing.T, store, project, runID string, events []
 		}
 		identity := progressAttempt{event.NodeID, item, event.Attempt}
 		switch event.Type {
-		case "step.started":
-			if starts[event.NodeID] {
-				t.Fatal("duplicate step start")
-			}
-			starts[event.NodeID] = true
 		case "step.attempt.started":
-			if !starts[event.NodeID] {
-				t.Fatalf("attempt preceded step start: %+v", event)
-			}
 			owner := progressAttempt{event.NodeID, item, 0}
-			if event.Attempt != latest[owner]+1 || event.Attempt > event.MaxAttempts {
+			if event.Attempt != latest[owner]+1 {
 				t.Fatalf("non-dense attempt: %+v", event)
 			}
 			if event.Attempt > 1 && attempts[progressAttempt{event.NodeID, item, event.Attempt - 1}] != "failed" {
@@ -228,21 +214,11 @@ func assertProgressJournal(t *testing.T, store, project, runID string, events []
 			}
 			attempts[identity] = event.Status
 		case "step.finished":
-			if event.Status != "not-started" && event.Status != "skipped" && !starts[event.NodeID] {
-				t.Fatalf("step finished without starting: %+v", event)
-			}
 			if _, exists := steps[event.NodeID]; exists {
 				t.Fatal("duplicate step finish")
 			}
 			steps[event.NodeID] = event.Status
-		case "map.progress":
-			if previous, exists := maps[event.NodeID]; exists && (*event.Completed < *previous.Completed || *event.Failed < *previous.Failed || *event.Total != *previous.Total) {
-				t.Fatal("map progress moved backwards")
-			}
-			if *event.Completed > *event.Total || *event.Failed > *event.Completed {
-				t.Fatal("invalid map counts")
-			}
-			maps[event.NodeID] = event
+
 		}
 	}
 	expectedAttempts := map[progressAttempt]string{}
@@ -254,21 +230,15 @@ func assertProgressJournal(t *testing.T, store, project, runID string, events []
 			expectedAttempts[progressAttempt{step.NodeID, -1, attempt.Attempt}] = attempt.Status
 		}
 		if step.Items != nil {
-			failed := 0
 			for _, item := range *step.Items {
-				if item.Status == "failed" {
-					failed++
-				}
 				for _, attempt := range item.Attempts {
 					expectedAttempts[progressAttempt{step.NodeID, item.Index, attempt.Attempt}] = attempt.Status
 				}
 			}
-			if len(step.Attempts) > 0 {
-				progress, ok := maps[step.NodeID]
-				if !ok || *progress.Total != len(*step.Items) || *progress.Completed != len(*step.Items) || *progress.Failed != failed {
-					t.Fatalf("map %s final progress disagrees with journal: %+v", step.NodeID, progress)
-				}
+			if total, known := first.MapTotals[step.NodeID]; known && total != len(*step.Items) {
+				t.Fatal("startup map total disagrees with journal")
 			}
+
 		}
 	}
 	for _, step := range journal.Steps {
@@ -276,9 +246,7 @@ func assertProgressJournal(t *testing.T, store, project, runID string, events []
 	}
 	if journal.ExitHook != nil {
 		checkStep(*journal.ExitHook)
-		if last.ExitHook == nil || last.ExitHook.NodeID != journal.ExitHook.NodeID || last.ExitHook.Status != journal.ExitHook.Status {
-			t.Fatal("exit hook event disagrees with journal")
-		}
+
 	}
 	if !reflect.DeepEqual(attempts, expectedAttempts) {
 		t.Fatalf("attempt events disagree with journal:\n%v\n%v", attempts, expectedAttempts)
@@ -322,7 +290,7 @@ func assertProgressJSON(t *testing.T, body []byte, runID, status, expectedResult
 	}
 }
 
-func TestRunMapProgressAndFailureTailAreLive(t *testing.T) {
+func TestRunMapAttemptStartsAreLive(t *testing.T) {
 	binary, python, _ := progressCLI(t)
 	root, store := t.TempDir(), progressStore(t)
 	workflow := filepath.Join(root, "workflow.py")
@@ -340,8 +308,6 @@ def task(ctx: StepContext[int]) -> int:
         return 42
     while not (root / "ready").exists():
         time.sleep(0.02)
-    print("discarded-prefix\n" + "x" * (2 * 1024 * 1024), flush=True)
-    print("failure-tail-sentinel", flush=True)
     raise NonRetryableError("failure-diagnostic-sentinel")
 
 graph = GraphBuilder(name="live-progress", input_type=list[int], output_type=list[MapItemOutcome[int]],
@@ -375,24 +341,20 @@ graph.edge_from(items).to_end(graph.end)
 		body, _ := os.ReadFile(eventsPath)
 		for _, line := range bytes.Split(body, []byte("\n")) {
 			event, err := runevent.Parse(line)
-			if err == nil && event.Type == "map.progress" && *event.Completed == 1 && *event.Total == 2 && *event.Failed == 1 {
+			if err == nil && event.Type == "step.attempt.started" && event.ItemIndex != nil && *event.ItemIndex == 1 {
 				observed = true
 			}
 		}
-		logs, _ := os.ReadFile(stderrPath)
-		if observed && bytes.Contains(logs, []byte("failure-tail-sentinel")) && bytes.Contains(logs, []byte("failure-diagnostic-sentinel")) {
+		if observed {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	logs, _ := os.ReadFile(stderrPath)
-	if !observed || !bytes.Contains(logs, []byte("failure-tail-sentinel")) || !bytes.Contains(logs, []byte("failure-diagnostic-sentinel")) {
+	if !observed {
 		cancel()
 		_ = command.Wait()
-		t.Fatalf("failure/progress did not arrive before releasing sibling:\n%s", logs)
-	}
-	if bytes.Contains(logs, []byte("discarded-prefix")) {
-		t.Fatal("failure tail retained the discarded log prefix")
+		t.Fatalf("attempt start did not arrive before releasing sibling:\n%s", logs)
 	}
 	if err := os.WriteFile(filepath.Join(root, "release"), nil, 0o600); err != nil {
 		cancel()
@@ -415,7 +377,7 @@ func TestRunEventPathsAndProgressModesAreValidated(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, flags := range [][]string{
-		{"--events", "-"}, {"--events", existing}, {"--progress", "invalid"},
+		{"--events", existing}, {"--progress", "invalid"},
 	} {
 		command := exec.Command(binary, append([]string{"run", "absent.py", "--json"}, flags...)...)
 		var stdout, stderr bytes.Buffer
@@ -435,6 +397,8 @@ func TestRunTerminalEventsIncludeFailureAndExitHook(t *testing.T) {
 	workflow := filepath.Join(root, "workflow.py")
 	source := `from datetime import timedelta
 import time
+import os
+import signal
 from massive import GraphBuilder, StepContext, RunOutcome, NonRetryableError, container, execution
 
 DEFAULTS = execution(environment=container("example.invalid/runner@sha256:" + "0" * 64))
@@ -442,6 +406,8 @@ def task(ctx: StepContext[int]) -> int:
     if ctx.inputs == -1:
         print("terminal-log-sentinel", flush=True)
         raise NonRetryableError("terminal-diagnostic-sentinel")
+    if ctx.inputs == -3:
+        os.kill(os.getpid(), signal.SIGKILL)
     if ctx.inputs == -2:
         time.sleep(30)
     return ctx.inputs
@@ -469,11 +435,12 @@ failed_map.on_exit(hook)
 	if err := os.WriteFile(workflow, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, test := range []struct{ name, graph, input, status, hook, failedNode string }{
-		{"failed task", "graph", "-1", "failed", "succeeded", "task"},
-		{"failed map", "failed_map", "[-1,1]", "failed", "succeeded", "tasks"},
-		{"failed hook", "graph", "1", "succeeded", "failed", ""},
-		{"deadline", "graph", "-2", "failed", "succeeded", "task"},
+	for _, test := range []struct{ name, graph, input, status, hook string }{
+		{"failed task", "graph", "-1", "failed", "succeeded"},
+		{"failed map", "failed_map", "[-1,1]", "failed", "succeeded"},
+		{"failed hook", "graph", "1", "succeeded", "failed"},
+		{"deadline", "graph", "-2", "failed", "succeeded"},
+		{"terminated", "graph", "-3", "failed", "succeeded"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, eventsPath := progressStore(t), filepath.Join(t.TempDir(), "events.ndjson")
@@ -488,20 +455,16 @@ failed_map.on_exit(hook)
 			events := readProgressEvents(t, eventsPath)
 			journal := assertProgressJournal(t, store, "test/progress", "terminal", events)
 			assertProgressJSON(t, stdout.Bytes(), "terminal", test.status, "")
-			last := events[len(events)-1]
-			if last.ExitHook == nil || last.ExitHook.Status != test.hook {
-				t.Fatalf("exit hook missing from completion: %+v", last)
+			if journal.ExitHook == nil || journal.ExitHook.Status != test.hook {
+				t.Fatal("exit hook did not settle")
 			}
-			if test.status == "failed" {
-				if last.FailedNode == nil || *last.FailedNode != test.failedNode {
-					t.Fatalf("failed node = %+v", last.FailedNode)
-				}
-				if journal.Steps[1].Status != "not-started" {
-					t.Fatal("queued task was incorrectly dispatched")
-				}
+			if test.status == "failed" && journal.Steps[1].Status != "not-started" {
+				t.Fatal("queued task was incorrectly dispatched")
 			}
-			if (test.name == "failed task" || test.name == "failed map") && (!strings.Contains(stderr.String(), "terminal-log-sentinel") || !strings.Contains(stderr.String(), "terminal-diagnostic-sentinel")) {
-				t.Fatalf("missing failure context: %s", &stderr)
+			for _, event := range events {
+				if strings.Contains(event.Diagnostic, "sentinel") {
+					t.Fatal("author diagnostic leaked into events")
+				}
 			}
 			if test.name == "failed map" {
 				collectionFailure := false
@@ -517,6 +480,17 @@ failed_map.on_exit(hook)
 					t.Fatal("missing map collection failure")
 				}
 			}
+			if test.name == "terminated" {
+				terminated := false
+				for _, event := range events {
+					if event.NodeID == "task" && event.Type == "step.attempt.finished" && event.Classification == "terminated" {
+						terminated = true
+					}
+				}
+				if !terminated {
+					t.Fatal("missing target-neutral termination classification")
+				}
+			}
 			// Validate strict consumer behavior using a real event as the base record.
 			line, err := json.Marshal(events[0])
 			if err != nil {
@@ -526,7 +500,7 @@ failed_map.on_exit(hook)
 			if err := json.Unmarshal(line, &record); err != nil {
 				t.Fatal(err)
 			}
-			for _, mutation := range []string{"version", "unknown field", "missing time"} {
+			for _, mutation := range []string{"version", "unknown field", "missing time", "missing project", "log tail", "map progress"} {
 				altered := make(map[string]any, len(record))
 				for key, value := range record {
 					altered[key] = value
@@ -536,6 +510,12 @@ failed_map.on_exit(hook)
 					altered["schemaVersion"] = 0
 				case "unknown field":
 					altered["unexpected"] = true
+				case "missing project":
+					delete(altered, "projectKey")
+				case "log tail":
+					altered["logTail"] = "unsafe"
+				case "map progress":
+					altered["type"] = "map.progress"
 				case "missing time":
 					delete(altered, "time")
 				}
@@ -548,5 +528,23 @@ failed_map.on_exit(hook)
 				}
 			}
 		})
+	}
+}
+
+func TestRunAutoProgressIsSummaryOnlyWhenRedirected(t *testing.T) {
+	binary, python, repository := progressCLI(t)
+	command := exec.Command(binary, "run", filepath.Join(repository, "conformance", "workflows", "python-linear", "workflow.py"), "--project", "test/progress", "--store", progressStore(t), "--run-id", "summary", "--input", `{"value":32}`, "--json")
+	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("summary run: %v\n%s", err, &stderr)
+	}
+	assertProgressJSON(t, stdout.Bytes(), "summary", "succeeded", `{"value":33}`)
+	if strings.Contains(stderr.String(), "started") || strings.Contains(stderr.String(), "attempt") || strings.ContainsAny(stderr.String(), "\r\x1b") {
+		t.Fatalf("auto emitted live event lines when redirected: %s", &stderr)
+	}
+	if !strings.Contains(stderr.String(), "STEP                     STATUS          DURATION") || !strings.Contains(stderr.String(), "run summary succeeded; total wall time") {
+		t.Fatalf("missing final summary: %s", &stderr)
 	}
 }

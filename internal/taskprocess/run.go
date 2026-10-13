@@ -2,6 +2,7 @@
 package taskprocess
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -63,39 +64,22 @@ func RunTo(ctx context.Context, argv []string, directory string, environment []s
 	return err
 }
 
-// boundedOutput is a ring containing the most recent output, so failures
-// retain their final diagnostic even after very noisy author logs.
 type boundedOutput struct {
-	buffer    []byte
-	offset    int
+	buffer    bytes.Buffer
 	truncated bool
 }
 
 func (output *boundedOutput) Write(data []byte) (int, error) {
-	length := len(data)
-	if len(data) >= outputLimit {
-		output.truncated = output.truncated || len(output.buffer)+len(data) > outputLimit
-		output.buffer = append(output.buffer[:0], data[len(data)-outputLimit:]...)
-		output.offset = 0
-		return length, nil
-	}
-	if len(output.buffer) < outputLimit {
-		kept := min(len(data), outputLimit-len(output.buffer))
-		output.buffer = append(output.buffer, data[:kept]...)
-		data = data[kept:]
-	}
-	if len(data) > 0 {
-		output.truncated = true
-		copied := copy(output.buffer[output.offset:], data)
-		copy(output.buffer, data[copied:])
-		output.offset = (output.offset + len(data)) % outputLimit
-	}
-	return length, nil
+	remaining := outputLimit - output.buffer.Len()
+	kept := min(len(data), remaining)
+	_, _ = output.buffer.Write(data[:kept])
+	output.truncated = output.truncated || kept < len(data)
+	return len(data), nil
 }
 
 func (output *boundedOutput) String() string {
 	if output.truncated {
-		return fmt.Sprintf("[task output truncated; showing last %d bytes]\n", outputLimit) + string(output.buffer[output.offset:]) + string(output.buffer[:output.offset])
+		return output.buffer.String() + fmt.Sprintf("\n[task output truncated at %d bytes]\n", outputLimit)
 	}
-	return string(output.buffer)
+	return output.buffer.String()
 }

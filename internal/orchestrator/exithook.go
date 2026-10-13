@@ -56,17 +56,15 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 			Hash: canonical.DigestBytes(body), ContentType: jsonContentType, Schema: hook.GetInputSchema(),
 		},
 	}
-	journal := localJournal{events: events}
-	step := runjournal.Step{NodeID: hook.GetId(), Status: StatusRunning}
-	attempt.Status = StatusRunning
-	step.Attempts = []runjournal.Attempt{attempt}
-	events.policies[hook.GetId()] = 1
-	journal.observe(&step, nil)
+	events.attemptStarted(StepInvocationDescriptor{NodeID: hook.GetId(), Attempt: 1})
+	classification := "infrastructure"
 	record := func(diagnostic string) runjournal.Step {
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
+			classification = "timeout"
 			diagnostic = fmt.Sprintf("exit hook exceeded its %d-second timeout", int64(policy.timeout/time.Second))
 		case context.Canceled:
+			classification = "cancelled"
 			diagnostic = "exit hook cancelled"
 		}
 		status := StatusFailed
@@ -74,8 +72,9 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 			status = StatusSucceeded
 		}
 		attempt.Status, attempt.Diagnostic = status, diagnostic
-		step.Status, step.Attempts = status, []runjournal.Attempt{attempt}
-		journal.observe(&step, nil)
+		step := runjournal.Step{NodeID: hook.GetId(), Status: status, Attempts: []runjournal.Attempt{attempt}}
+		events.attemptFinished(StepInvocationDescriptor{NodeID: hook.GetId(), Attempt: 1}, attempt, classification)
+		events.stepFinished(&step)
 		return step
 	}
 	if encodeErr != nil {
@@ -98,18 +97,17 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 		return record("exit hook descriptor could not be built")
 	}
 	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}})
-	if len(outcomes) == 1 {
-		events.outcome(outcomes[0])
-	}
 	var fatal *FatalRunError
 	if (err != nil && !errors.As(err, &fatal)) || len(outcomes) != 1 {
 		return record("invocation infrastructure failed")
 	}
+	classification = classifyEventOutcome(outcomes[0])
 	if outcomes[0].Status != StatusSucceeded {
 		return record(durableRunnerDiagnostic(outcomes[0]))
 	}
 	output, err := settleInvocation(ctx, store, descriptor, index, config.Hooks)
 	if err != nil {
+		classification = "verification"
 		return record("output verification failed")
 	}
 	attempt.Output = &output.Published

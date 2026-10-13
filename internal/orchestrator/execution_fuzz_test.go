@@ -127,26 +127,17 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 	outcomes := make([]StepInvocationOutcome, 0, len(batch.Steps))
 	for position, step := range batch.Steps {
 		descriptor := step.Descriptor
-		if batch.OnStarted != nil {
-			batch.OnStarted(descriptor)
-		}
 		if interrupt != nil && interrupt.Position == position {
 			switch interrupt.Kind {
 			case graphgen.CancelDuring:
 				e.fire(interrupt.Kind)
 				outcomes = append(outcomes, StepInvocationOutcome{NodeID: descriptor.NodeID, Attempt: descriptor.Attempt, Scope: descriptor.Scope, Status: StatusCancelled, ExitCode: -1})
-				if batch.OnFinished != nil {
-					batch.OnFinished(outcomes[len(outcomes)-1])
-				}
 				return outcomes, ctx.Err()
 			case graphgen.InfrastructureFailure:
 				e.mu.Lock()
 				e.fired = &interrupt.Kind
 				e.mu.Unlock()
 				outcomes = append(outcomes, StepInvocationOutcome{NodeID: descriptor.NodeID, Attempt: descriptor.Attempt, Scope: descriptor.Scope, Status: stepInvocationStatusInfraFailed, ExitCode: 1})
-				if batch.OnFinished != nil {
-					batch.OnFinished(outcomes[len(outcomes)-1])
-				}
 				return outcomes, errInfrastructure
 			}
 		}
@@ -158,12 +149,15 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 			return outcomes, err
 		}
 		outcomes = append(outcomes, outcome)
+<<<<<<< HEAD
 		if batch.OnFinished != nil {
 			batch.OnFinished(outcome)
 		}
 		if outcome.Fatal != nil {
 			return outcomes, &FatalRunError{Failure: *outcome.Fatal}
 		}
+=======
+>>>>>>> d12633c (Keep run events target-neutral and execution-independent)
 	}
 	if interrupt != nil && (interrupt.Kind == graphgen.CancelAfter || interrupt.Kind == graphgen.CancelDuring) {
 		e.fire(interrupt.Kind)

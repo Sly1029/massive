@@ -101,10 +101,12 @@ Remote invocations poll the run-scoped marker with jitter. Read errors back off
 and retry without cancelling; a schema-valid cause cancels the isolated runner's
 context. Guard new invocations before dispatch, and exempt exit hooks.
 
-Local run events observe journal transitions through `localJournal`. Invokers
-serialize `StepInvocationBatch` callbacks across workers: start once per dispatch,
-finish once per reported outcome, before returning. Map completion callbacks
-verify and reconcile each item immediately; publish the item journal once per
-round. Reconcile events for bulk terminalization and emit `run.finished` after
-terminal publication and the exit hook's record publication. Keep author diagnostics/log tails only in
-local events and stderr; root journals retain safe lifecycle summaries.
+
+Run events are optional observations of dispatch, settlement, and terminal
+transitions. Validate returned map outcomes before journal mutation; reconcile
+all reported dispatches before verification and settle in source-index order.
+Invokers may notify starts concurrently; callbacks only enqueue observations.
+Keep I/O and verification outside worker locks. Event producers keep only clocks
+and sequence ordering. Events contain safe lifecycle summaries; task logs and
+author messages belong outside the target-neutral event contract. Emit run
+completion after the terminal journal and exit-hook publication attempt.

@@ -59,7 +59,7 @@ func TestRunAutoProgressUsesARealTTY(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TTY run: %v\n%s", err, &stderr)
 	}
-	if !strings.Contains(stderr.String(), "\x1b[2K") || !strings.Contains(stderr.String(), "add_one attempt 1/1") || !strings.Contains(stderr.String(), "total wall time") {
+	if !strings.Contains(stderr.String(), "\x1b[2K") || !strings.Contains(stderr.String(), "add_one attempt 1") || !strings.Contains(stderr.String(), "total wall time") {
 		t.Fatalf("missing compact terminal progress: %q", stderr.String())
 	}
 	assertProgressJSON(t, stdout.Bytes(), "tty", "succeeded", `{"value":2}`)

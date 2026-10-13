@@ -123,7 +123,6 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 	started := make([]bool, len(batch.Steps))
 	jobs := make(chan int)
 	var group sync.WaitGroup
-	var callbacks sync.Mutex
 	var firstError error
 	var firstErrorOnce sync.Once
 	for range maxConcurrency {
@@ -142,11 +141,9 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 						return
 					}
 					started[index] = true
-					callbacks.Lock()
 					if batch.OnStarted != nil {
 						batch.OnStarted(batch.Steps[index].Descriptor)
 					}
-					callbacks.Unlock()
 					outcome, err := i.invokeOne(batchContext, descriptorDir, batch.Steps[index])
 					outcomes[index] = outcome
 					if outcome.Fatal != nil {
@@ -158,11 +155,6 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 							cancel()
 						})
 					}
-					callbacks.Lock()
-					if batch.OnFinished != nil {
-						batch.OnFinished(outcome)
-					}
-					callbacks.Unlock()
 				}
 			}
 		}()

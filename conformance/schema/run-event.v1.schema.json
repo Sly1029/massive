@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://massive.dev/schema/run-event.v1.schema.json",
+  "title": "Run Event v1",
+  "description": "One event per NDJSON line. Identity and sequence are scoped to a project run. elapsedMs is monotonic time since the producer started the run; time is UTC. Map totals are optional and include only maps whose cardinality is known at run start. Diagnostics contain bounded safe lifecycle summaries, never task logs.",
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "type",
+        "sequence",
+        "projectKey",
+        "runId",
+        "time",
+        "elapsedMs"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "type": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "projectKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "elapsedMs": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "attempt": {
+      "required": [
+        "nodeId",
+        "attempt"
+      ],
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "itemIndex": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "run.started"
+            },
+            "planHash": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "mapTotals": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "minLength": 1
+              },
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "required": [
+            "planHash"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "$ref": "#/$defs/attempt"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "step.attempt.started"
+            }
+          },
+          "required": []
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "$ref": "#/$defs/attempt"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "step.attempt.finished"
+            },
+            "durationMs": {
+              "type": "number",
+              "minimum": 0
+            },
+            "status": {
+              "enum": [
+                "succeeded",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "classification": {
+              "enum": [
+                "succeeded",
+                "error",
+                "non-retryable",
+                "terminated",
+                "timeout",
+                "contract",
+                "infrastructure",
+                "cancelled",
+                "verification"
+              ]
+            },
+            "diagnostic": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          },
+          "required": [
+            "durationMs",
+            "status",
+            "classification"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "step.finished"
+            },
+            "nodeId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "durationMs": {
+              "type": "number",
+              "minimum": 0
+            },
+            "status": {
+              "enum": [
+                "succeeded",
+                "failed",
+                "cancelled",
+                "skipped",
+                "not-started"
+              ]
+            }
+          },
+          "required": [
+            "nodeId",
+            "durationMs",
+            "status"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/envelope"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "run.finished"
+            },
+            "status": {
+              "enum": [
+                "succeeded",
+                "failed",
+                "cancelled"
+              ]
+            }
+          },
+          "required": [
+            "status"
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  ]
+}

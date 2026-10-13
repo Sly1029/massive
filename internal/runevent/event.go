@@ -1,4 +1,4 @@
-// Package runevent defines the local, versioned NDJSON observation contract.
+// Package runevent defines the target-neutral, versioned NDJSON observation contract.
 package runevent
 
 import (
@@ -17,34 +17,22 @@ const Version = 1
 // monotonic clock. Sequence numbers order concurrent item notifications.
 // ItemIndex is the stable, zero-based source identity, never an author value.
 type Event struct {
-	SchemaVersion  int       `json:"schemaVersion"`
-	Type           string    `json:"type"`
-	Sequence       int       `json:"sequence"`
-	RunID          string    `json:"runId"`
-	Time           string    `json:"time"`
-	ElapsedMS      float64   `json:"elapsedMs"`
-	PlanHash       string    `json:"planHash,omitempty"`
-	NodeCount      *int      `json:"nodeCount,omitempty"`
-	NodeID         string    `json:"nodeId,omitempty"`
-	ItemIndex      *int      `json:"itemIndex,omitempty"`
-	Attempt        int       `json:"attempt,omitempty"`
-	MaxAttempts    int       `json:"maxAttempts,omitempty"`
-	DurationMS     *float64  `json:"durationMs,omitempty"`
-	Status         string    `json:"status,omitempty"`
-	Classification string    `json:"classification,omitempty"`
-	Diagnostic     string    `json:"diagnostic,omitempty"`
-	LogTail        string    `json:"logTail,omitempty"`
-	Completed      *int      `json:"completed,omitempty"`
-	Failed         *int      `json:"failed,omitempty"`
-	Total          *int      `json:"total,omitempty"`
-	FailedNode     *string   `json:"failedNode,omitempty"`
-	ExitHook       *ExitHook `json:"exitHook,omitempty"`
-}
-
-type ExitHook struct {
-	NodeID                string `json:"nodeId"`
-	Status                string `json:"status"`
-	PersistenceDiagnostic string `json:"persistenceDiagnostic,omitempty"`
+	SchemaVersion  int            `json:"schemaVersion"`
+	Type           string         `json:"type"`
+	Sequence       int            `json:"sequence"`
+	ProjectKey     string         `json:"projectKey"`
+	RunID          string         `json:"runId"`
+	Time           string         `json:"time"`
+	ElapsedMS      float64        `json:"elapsedMs"`
+	PlanHash       string         `json:"planHash,omitempty"`
+	MapTotals      map[string]int `json:"mapTotals,omitempty"`
+	NodeID         string         `json:"nodeId,omitempty"`
+	ItemIndex      *int           `json:"itemIndex,omitempty"`
+	Attempt        int            `json:"attempt,omitempty"`
+	DurationMS     *float64       `json:"durationMs,omitempty"`
+	Status         string         `json:"status,omitempty"`
+	Classification string         `json:"classification,omitempty"`
+	Diagnostic     string         `json:"diagnostic,omitempty"`
 }
 
 var eventSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {

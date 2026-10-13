@@ -59,8 +59,8 @@ type SourcePackageFile struct {
 }
 
 type RunHooks struct {
-	// OnRunEvent observes journal transitions synchronously. It must not mutate
-	// execution state. Observers own delivery errors; they cannot change outcomes.
+	// OnRunEvent only enqueues observations. It must not do I/O, block on sinks,
+	// or mutate execution state. Delivery errors cannot change execution outcomes.
 	OnRunEvent          func(runevent.Event)
 	AfterStepInvocation func(context.Context, StepInvocationDescriptor) error
 }
@@ -149,10 +149,9 @@ type StepInvoker interface {
 type StepInvocationBatch struct {
 	Steps          []StepInvocation
 	MaxConcurrency int
-	// Invokers call these callbacks once per dispatched invocation, serializing
-	// callbacks across workers. Finished runs before InvokeSteps returns.
-	OnStarted  func(StepInvocationDescriptor)
-	OnFinished func(StepInvocationOutcome)
+	// OnStarted is optional observation only and may run concurrently. It must
+	// enqueue without I/O. Correctness depends solely on returned outcomes.
+	OnStarted func(StepInvocationDescriptor)
 }
 
 type StepInvocation struct {

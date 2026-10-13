@@ -1,69 +1,64 @@
-# Local run events
+# Run events v1
 
-`massive run --json --events run-events.ndjson` keeps the existing single stdout
-result and writes a live, versioned event stream to a separate new file. Progress
-uses stderr: `--progress auto|plain|none`, default `auto`. Auto updates one compact
-line on a TTY and emits plain lines otherwise. Plain and auto finish with step
-durations and total wall time. None retains the previous summary behavior.
+`massive run --json --events run-events.ndjson` preserves the single stdout result
+and writes versioned NDJSON to a separate new file. Progress uses stderr:
+`--progress auto|plain|none`, default `auto`. Auto shows a compact live view on a
+TTY and only the final duration summary otherwise. Plain opts into event lines
+and the summary. None disables rendering; with no event path it installs no
+observer at all.
 
-An event file is created exclusively, with owner-only permissions. Existing
-paths, special descriptors, and `--events -` are rejected. Parent directories must
-exist. Each complete JSON object and newline is written immediately without an
-application buffer; per-line fsync is unnecessary. A wrapper may tail the file
-while the run is active. Delivery errors make the CLI exit unsuccessfully while
-preserving the actual workflow status and stdout result. Progress can be disabled
-independently of events.
+Event files are created exclusively with mode 0600. Existing paths are rejected;
+parent directories must exist. `-` is an ordinary new filename. A single writer
+drains the ordered queue and flushes each batch of complete newline-terminated
+JSON records. Workers only enqueue in memory. Stderr has a separate bounded,
+best-effort channel: slow rendering can drop live lines without losing file
+events or final summary rows. Normal completion and cancellation drain and close
+the stream. File delivery errors make the CLI exit unsuccessfully while
+preserving the workflow outcome and stdout result.
 
-The [JSON Schema](../conformance/schema/run-event.schema.json) defines the only
-accepted version (`schemaVersion: 1`). Every event has `type`, `sequence`, `runId`,
-`time` (UTC RFC 3339), and `elapsedMs` from the run's monotonic clock. Sequence
-numbers start at one and increase across concurrent item callbacks. Durations
-are monotonic milliseconds and include output verification; step durations also
-include retry backoff. Total wall time begins when the orchestrator enters the
-run, includes source preparation and the exit hook, and excludes frontend emission.
+The [target-neutral JSON Schema](../conformance/schema/run-event.v1.schema.json)
+defines `schemaVersion: 1`. Every event includes `type`, `sequence`, `projectKey`,
+`runId`, `time` (UTC RFC 3339), and `elapsedMs`. Sequence starts at one per project
+run. `elapsedMs` is monotonic time since the producer's run start, including
+source preparation and exit-hook execution, excluding frontend emission. Attempt
+and step durations are monotonic milliseconds; settlement includes output
+verification and step duration includes retry backoff.
 
-| Event | Additional fields |
-| --- | --- |
-| `run.started` | `planHash`, `nodeCount` (planned graph steps/maps, excluding exit hook) |
-| `step.started` | `nodeId` |
-| `step.attempt.started` | `nodeId`, optional `itemIndex`, `attempt`, `maxAttempts` |
-| `step.attempt.finished` | Same identity, `durationMs`, `status`, `classification`, optional `diagnostic`, `logTail` |
-| `map.progress` | `nodeId`, `completed`, `failed`, `total` |
-| `step.finished` | `nodeId`, `status`, `durationMs`, optional `diagnostic` |
-| `run.finished` | `status`, `durationMs`, optional `failedNode`, `diagnostic`, `exitHook` |
+The vocabulary is:
 
-An item's identity is `(runId, nodeId, itemIndex)`: the index is zero-based and
-stable in source order. Author item values are never serialized as identities.
-Attempts are dense and one-based per step/item. A failed attempt finishes before
-its retry starts; retries append journal attempts. The map's unscoped attempt
-represents collection and always has `maxAttempts: 1`; scoped item attempts use
-the map's retry policy. The exit hook uses ordinary step/attempt events and its
-settled status is repeated in `run.finished.exitHook`; hook failure leaves the
-run's status unchanged. `persistenceDiagnostic` reports a failed hook journal
-rewrite separately.
+- `run.started`: `planHash`, optional `mapTotals` keyed by node ID when cardinality
+  is already known.
+- `step.attempt.started`: `nodeId`, `attempt`, optional zero-based `itemIndex`.
+- `step.attempt.finished`: the same identity, `durationMs`, `status`,
+  `classification`, optional safe `diagnostic` bounded to 2,048 characters.
+- `step.finished`: `nodeId`, `status`, `durationMs`.
+- `run.finished`: `status`.
 
-Events observe the same records that are published to the journal. Live map
-callbacks reconcile verified results as workers finish, without waiting for the
-whole batch or rewriting all item records per completion. `completed` counts
-resolved terminal items, including cancelled and undispatched items when a map
-ends early; `failed` counts items with journal status `failed`. Collected failures
-increase the failure count while the map and run may succeed. An expanded empty
-map emits `0/0`. Skipped and undispatched steps emit `step.finished` with zero
-duration and no start/attempt events. Decisions, selects, and graph markers have
-no executable step events.
+An item identity is `(projectKey, runId, nodeId, itemIndex)`, using stable source
+order rather than author values. Attempts are dense and one-based. An attempt
+finishes before its retry starts. The map's unscoped attempt represents expansion
+and collection; item attempts are scoped by index. Skipped and undispatched steps
+finish with zero duration and no attempts. Graph markers, decisions, and selects
+have no executable step events. Exit hooks use ordinary step/attempt events and
+never change the run outcome.
 
-Failure classifications distinguish author error, non-retryable error, signal
-termination, timeout, contract error, infrastructure error, cancellation, and
-output verification failure. Diagnostics are bounded to 2,048 characters. Log
-tails retain the last 20 lines, bounded to 8,192 characters. These local files
-can contain author output; the durable root journal retains safe lifecycle
-summaries. Stderr replaces control characters to keep author output from
-controlling the terminal.
+Local execution emits at dispatch, settlement, and terminal transitions. Map
+correctness uses the invoker's returned outcomes, validated before journal
+mutation. All reported dispatches are reconciled before verification, then item
+settlement and events follow source-index order. Map attempt starts are live;
+settled item events follow the batch return. Callbacks neither verify outputs nor
+mutate journal entries. Events have no independent execution state model.
 
-Ordinary failures, deadlines, and interrupts close dispatched attempts and emit
-`run.finished` after the durable outcome and exit hook. Abrupt process death
-(such as SIGKILL), event-file delivery failure, or an app restart can leave an
-incomplete stream. Treat a missing terminal event or an incomplete final line as
-interruption; inspect the journal for durable state. A run rejected before its
-journal is claimed has no `run.started` event. Consumers validate each line
-against the schema and reject obsolete versions instead of inferring a migration.
+Classifications are `succeeded`, `error`, `non-retryable`, `terminated`, `timeout`,
+`contract`, `infrastructure`, `cancelled`, and `verification`. Diagnostics contain
+only safe lifecycle summaries. Author messages and logs stay out of this
+contract. Terminal controls are sanitized by the CLI renderer. Production writes
+events without validating itself; functional tests and consumers validate the
+versioned schema.
+
+`run.finished` follows terminal journal publication and the exit hook's record
+publication attempt. Abrupt process death or event-file failure can leave an
+incomplete stream. Treat a missing terminal event or incomplete final line as
+interruption and inspect the journal for durable state. Runs rejected before
+claiming their journal emit no `run.started`. Consumers reject obsolete versions
+rather than inferring a migration.

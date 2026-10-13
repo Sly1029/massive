@@ -2,179 +2,125 @@ package orchestrator
 
 import (
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Sly1029/massive/internal/runevent"
 	"github.com/Sly1029/massive/internal/runjournal"
 )
 
-// localJournal observes the very records used for durable publication. Item
-// callbacks are serialized by the invoker; publication stays once per round.
-type localJournal struct {
-	runjournal.Manifest
-	events *runEvents
-}
-
 type eventIdentity struct {
 	node    string
 	item    int
 	attempt int
 }
-type observedEntry struct {
-	started    time.Time
-	finished   bool
-	attempts   map[int]string
-	itemStatus string
-}
-type mapProgress struct{ completed, failed, total int }
+
+// runEvents holds only monotonic clocks and event ordering. Execution state and
+// outcomes belong to the journal and the orchestrator, never to observers.
 type runEvents struct {
-	hook     func(runevent.Event)
-	runID    string
-	started  time.Time
-	sequence int
-	entries  map[eventIdentity]*observedEntry
-	outcomes map[eventIdentity]StepInvocationOutcome
-	policies map[string]int
-	maps     map[string]*mapProgress
+	mu                sync.Mutex
+	hook              func(runevent.Event)
+	projectKey, runID string
+	started           time.Time
+	sequence          int
+	attemptStarts     map[eventIdentity]time.Time
+	stepStarts        map[string]time.Time
 }
 
-func (events *runEvents) emit(event runevent.Event) {
-	if events.hook == nil {
-		return
+func newRunEvents(config RunConfig, projectKey, runID string, started time.Time, totals map[string]int) *runEvents {
+	if config.Hooks.OnRunEvent == nil {
+		return nil
 	}
+	events := &runEvents{hook: config.Hooks.OnRunEvent, projectKey: projectKey, runID: runID, started: started, attemptStarts: make(map[eventIdentity]time.Time), stepStarts: make(map[string]time.Time)}
+	events.emit(runevent.Event{Type: "run.started", PlanHash: config.Plan.GetPlanHash(), MapTotals: totals})
+	return events
+}
+
+// emit is called with mu held after run.started. Hooks only enqueue; they must
+// never do I/O or mutate execution state.
+func (events *runEvents) emit(event runevent.Event) {
 	events.sequence++
-	event.SchemaVersion, event.Sequence, event.RunID = runevent.Version, events.sequence, events.runID
+	event.SchemaVersion, event.Sequence = runevent.Version, events.sequence
+	event.ProjectKey, event.RunID = events.projectKey, events.runID
 	event.Time = time.Now().UTC().Format(time.RFC3339Nano)
 	event.ElapsedMS = float64(time.Since(events.started)) / float64(time.Millisecond)
 	events.hook(event)
 }
 
-func (events *runEvents) outcome(outcome StepInvocationOutcome) {
-	if events.hook == nil {
-		return
+func invocationEventIdentity(descriptor StepInvocationDescriptor) (eventIdentity, *int) {
+	identity := eventIdentity{node: descriptor.NodeID, item: -1, attempt: descriptor.Attempt}
+	var item *int
+	if descriptor.Scope != nil {
+		index := descriptor.Scope.Frames[0].Index
+		identity.item, item = index, &index
 	}
-	item := -1
-	if outcome.Scope != nil {
-		item = outcome.Scope.Frames[0].Index
-	}
-	events.outcomes[eventIdentity{outcome.NodeID, item, outcome.Attempt}] = outcome
+	return identity, item
 }
 
-func (journal *localJournal) observe(step *runjournal.Step, itemIndex *int) {
-	events := journal.events
-	if events.hook == nil {
+func (events *runEvents) attemptStarted(descriptor StepInvocationDescriptor) {
+	if events == nil {
 		return
 	}
-	identity := eventIdentity{node: step.NodeID, item: -1}
-	status, attempts := step.Status, step.Attempts
-	if itemIndex != nil {
-		identity.item = *itemIndex
-		item := (*step.Items)[*itemIndex]
-		status, attempts = item.Status, item.Attempts
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	identity, item := invocationEventIdentity(descriptor)
+	events.startAttempt(identity, item)
+}
+
+func (events *runEvents) startAttempt(identity eventIdentity, item *int) {
+	if _, exists := events.attemptStarts[identity]; exists {
+		return
 	}
-	entry := events.entries[identity]
-	if entry == nil {
-		entry = &observedEntry{attempts: make(map[int]string)}
-		events.entries[identity] = entry
+	now := time.Now()
+	events.attemptStarts[identity] = now
+	if _, exists := events.stepStarts[identity.node]; !exists {
+		events.stepStarts[identity.node] = now
 	}
-	if entry.started.IsZero() && status == StatusRunning {
-		entry.started = time.Now()
-		if itemIndex == nil {
-			events.emit(runevent.Event{Type: "step.started", NodeID: step.NodeID})
-		}
+	events.emit(runevent.Event{Type: "step.attempt.started", NodeID: identity.node, ItemIndex: item, Attempt: identity.attempt})
+}
+
+// attemptFinished runs only after returned outcomes have been validated and
+// settled. Invokers without start notifications still yield complete events.
+func (events *runEvents) attemptFinished(descriptor StepInvocationDescriptor, attempt runjournal.Attempt, classification string) {
+	if events == nil {
+		return
 	}
-	maxAttempts := events.policies[step.NodeID]
-	if step.Items != nil && itemIndex == nil {
-		maxAttempts = 1
-	}
-	for _, attempt := range attempts {
-		previous := entry.attempts[attempt.Attempt]
-		if previous == attempt.Status {
-			continue
-		}
-		attemptIdentity := identity
-		attemptIdentity.attempt = attempt.Attempt
-		// Each start has its own monotonic clock, including after retry backoff.
-		clock := events.entries[attemptIdentity]
-		if previous == "" {
-			clock = &observedEntry{started: time.Now()}
-			events.entries[attemptIdentity] = clock
-			events.emit(runevent.Event{Type: "step.attempt.started", NodeID: step.NodeID, ItemIndex: itemIndex, Attempt: attempt.Attempt, MaxAttempts: maxAttempts})
-		}
-		entry.attempts[attempt.Attempt] = attempt.Status
-		if attempt.Status == StatusRunning {
-			continue
-		}
-		duration := float64(time.Since(clock.started)) / float64(time.Millisecond)
-		classification, diagnostic, tail := attempt.Status, attempt.Diagnostic, ""
-		if outcome, ok := events.outcomes[attemptIdentity]; ok {
-			classification = classifyEventOutcome(outcome)
-			if outcome.Status == StatusSucceeded && attempt.Status == StatusFailed {
-				classification = "verification"
-			}
-			if outcome.Status != StatusSucceeded {
-				diagnostic = withRunnerMessage(runnerFailureSummary(outcome, "runner failed"), outcome.RunnerMessage)
-				if outcome.Status == StatusCancelled || outcome.Status == stepInvocationStatusInfraFailed {
-					diagnostic = attempt.Diagnostic
-				}
-				tail = boundedLogTail(outcome.Diagnostic)
-			}
-			delete(events.outcomes, attemptIdentity)
-		} else if attempt.Status == StatusFailed {
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	identity, item := invocationEventIdentity(descriptor)
+	events.startAttempt(identity, item)
+	duration := float64(time.Since(events.attemptStarts[identity])) / float64(time.Millisecond)
+	delete(events.attemptStarts, identity)
+	if classification == "" {
+		classification = attempt.Status
+		if classification == StatusFailed {
 			classification = "error"
 		}
-		events.emit(runevent.Event{Type: "step.attempt.finished", NodeID: step.NodeID, ItemIndex: itemIndex, Attempt: attempt.Attempt, MaxAttempts: maxAttempts, DurationMS: &duration, Status: attempt.Status, Classification: classification, Diagnostic: boundedEventText(diagnostic, 2048), LogTail: tail})
 	}
-	terminal := status != StatusPending && status != StatusRunning
-	if itemIndex != nil {
-		if terminal && entry.itemStatus != status {
-			progress := events.maps[step.NodeID]
-			if entry.itemStatus == "" || entry.itemStatus == StatusRunning {
-				progress.completed++
-			}
-			if status == StatusFailed && entry.itemStatus != StatusFailed {
-				progress.failed++
-			}
-			entry.itemStatus = status
-			events.progress(step.NodeID)
-		}
-		return
-	}
-	if terminal && !entry.finished {
-		entry.finished = true
-		duration := 0.0
-		if !entry.started.IsZero() {
-			duration = float64(time.Since(entry.started)) / float64(time.Millisecond)
-		}
-		diagnostic := ""
-		if last := lastAttempt(attempts); last != nil {
-			diagnostic = last.Diagnostic
-		}
-		events.emit(runevent.Event{Type: "step.finished", NodeID: step.NodeID, Status: status, DurationMS: &duration, Diagnostic: boundedEventText(diagnostic, 2048)})
-	}
+	events.emit(runevent.Event{Type: "step.attempt.finished", NodeID: identity.node, ItemIndex: item, Attempt: identity.attempt, DurationMS: &duration, Status: attempt.Status, Classification: classification, Diagnostic: boundedEventText(attempt.Diagnostic)})
 }
 
-func (events *runEvents) progress(nodeID string) {
-	if events.hook == nil {
+func (events *runEvents) stepFinished(step *runjournal.Step) {
+	if events == nil {
 		return
 	}
-	progress := events.maps[nodeID]
-	completed, failed, total := progress.completed, progress.failed, progress.total
-	events.emit(runevent.Event{Type: "map.progress", NodeID: nodeID, Completed: &completed, Failed: &failed, Total: &total})
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	duration := 0.0
+	if started, exists := events.stepStarts[step.NodeID]; exists {
+		duration = float64(time.Since(started)) / float64(time.Millisecond)
+	}
+	delete(events.stepStarts, step.NodeID)
+	events.emit(runevent.Event{Type: "step.finished", NodeID: step.NodeID, Status: step.Status, DurationMS: &duration})
 }
 
-// Reconcile bulk terminalization, including queued nodes and items that never
-// dispatched. These events carry no attempt for undispatched map items.
-func (journal *localJournal) observeTerminal() {
-	for index := range journal.Steps {
-		step := &journal.Steps[index]
-		if step.Items != nil {
-			for itemIndex := range *step.Items {
-				journal.observe(step, &itemIndex)
-			}
-		}
-		journal.observe(step, nil)
+func (events *runEvents) runFinished(status string) {
+	if events == nil {
+		return
 	}
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	events.emit(runevent.Event{Type: "run.finished", Status: status})
 }
 
 func classifyEventOutcome(outcome StepInvocationOutcome) string {
@@ -192,60 +138,34 @@ func classifyEventOutcome(outcome StepInvocationOutcome) string {
 	case outcome.ExitCode == runnerExitNonRetryable:
 		return "non-retryable"
 	case outcome.ExitCode < 0:
-		return "killed"
+		return "terminated"
 	default:
 		return "error"
 	}
 }
 
-func boundedEventText(value string, limit int) string {
+func boundedEventText(value string) string {
 	text := []rune(strings.ToValidUTF8(value, "�"))
-	if len(text) > limit {
-		text = append(text[:limit-1], '…')
+	if len(text) > 2048 {
+		text = append(text[:2047], '…')
 	}
 	return string(text)
 }
 
-func boundedLogTail(value string) string {
-	lines := strings.Split(strings.TrimSpace(value), "\n")
-	if len(lines) > 20 {
-		lines = lines[len(lines)-20:]
+// startHook is nil when observation is disabled; invokers need no event path.
+func (events *runEvents) startHook() func(StepInvocationDescriptor) {
+	if events == nil {
+		return nil
 	}
-	text := []rune(strings.ToValidUTF8(strings.Join(lines, "\n"), "�"))
-	if len(text) > 8192 {
-		text = text[len(text)-8192:]
-	}
-	return string(text)
+	return events.attemptStarted
 }
 
-func newRunEvents(config RunConfig, index executionIndex, runID string, started time.Time) *runEvents {
-	events := &runEvents{hook: config.Hooks.OnRunEvent, runID: runID, started: started, entries: make(map[eventIdentity]*observedEntry), outcomes: make(map[eventIdentity]StepInvocationOutcome), policies: make(map[string]int), maps: make(map[string]*mapProgress)}
-	for id, node := range index.nodesByID {
-		events.policies[id] = policyForContract(index.contractsByRef[node.GetContractRef()]).maxAttempts
+func (events *runEvents) attemptIsOpen(node string, item, attempt int) bool {
+	if events == nil {
+		return false
 	}
-	count := len(index.stepOrder)
-	events.emit(runevent.Event{Type: "run.started", PlanHash: config.Plan.GetPlanHash(), NodeCount: &count})
-	return events
-}
-
-func (journal *localJournal) finishEvents(result *RunResult) {
-	journal.observeTerminal()
-	duration := float64(time.Since(journal.events.started)) / float64(time.Millisecond)
-	event := runevent.Event{Type: "run.finished", Status: journal.Status, DurationMS: &duration, Diagnostic: boundedEventText(journal.Diagnostic, 2048)}
-	var failed string
-	for _, step := range journal.Steps {
-		if step.Status == StatusFailed || step.Status == StatusCancelled {
-			if len(step.Attempts) > 0 {
-				failed = step.NodeID
-				break
-			}
-		}
-	}
-	if failed != "" {
-		event.FailedNode = &failed
-	}
-	if result.ExitHook != nil {
-		event.ExitHook = &runevent.ExitHook{NodeID: result.ExitHook.NodeID, Status: result.ExitHook.Status, PersistenceDiagnostic: boundedEventText(result.ExitHookPersistenceDiagnostic, 2048)}
-	}
-	journal.events.emit(event)
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	_, exists := events.attemptStarts[eventIdentity{node, item, attempt}]
+	return exists
 }

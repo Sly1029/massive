@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/Sly1029/massive/internal/runevent"
+	"golang.org/x/term"
 )
 
 type progressStep struct {
@@ -20,87 +22,187 @@ type progressStep struct {
 	started  time.Time
 	detail   string
 }
+
+type progressModel struct {
+	steps map[string]*progressStep
+	order []string
+	last  runevent.Event
+}
+
+func (model *progressModel) observe(event runevent.Event) {
+	model.last = event
+	if event.NodeID == "" {
+		return
+	}
+	step := model.steps[event.NodeID]
+	if step == nil {
+		step = &progressStep{status: "running", started: time.Now()}
+		model.steps[event.NodeID] = step
+		model.order = append(model.order, event.NodeID)
+	}
+	switch event.Type {
+	case "step.attempt.started":
+		step.detail = fmt.Sprintf("attempt %d", event.Attempt)
+		if event.ItemIndex != nil {
+			step.detail = fmt.Sprintf("item %d attempt %d", *event.ItemIndex, event.Attempt)
+		}
+	case "step.finished":
+		step.status, step.duration = event.Status, *event.DurationMS
+	}
+}
+
 type runProgress struct {
-	mu       sync.Mutex
-	writer   io.Writer
-	events   *os.File
-	eventErr error
-	mode     string
-	tty      bool
-	active   bool
-	steps    map[string]*progressStep
-	order    []string
-	stop     chan struct{}
-	done     chan struct{}
+	// The ordered queue absorbs bursts without blocking workers on either
+	// output. A buffered wake channel transfers ownership to the sole file
+	// writer. Its renderer channel is independent and best-effort.
+	mu          sync.Mutex
+	queue       []runevent.Event
+	closing     bool
+	wake        chan struct{}
+	done        chan struct{}
+	live        chan runevent.Event
+	complete    chan progressModel
+	renderDone  chan struct{}
+	writer      io.Writer
+	events      *os.File
+	eventErr    error
+	mode        string
+	tty, active bool
 }
 
 func newRunProgress(path, mode string, stderr *os.File) (*runProgress, error) {
-	progress := &runProgress{writer: stderr, mode: mode, steps: make(map[string]*progressStep)}
+	if path == "" && mode == "none" {
+		return nil, nil
+	}
+	progress := &runProgress{writer: stderr, mode: mode, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	if path != "" {
-		// A new regular file keeps events away from stdout, existing journals, and
-		// special descriptors. Direct writes flush each complete NDJSON record.
 		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			return nil, fmt.Errorf("create run events file: %w", err)
 		}
 		progress.events = file
 	}
-	progress.tty = mode == "auto" && progressTerminal(stderr)
-	if progress.tty {
-		progress.stop, progress.done = make(chan struct{}), make(chan struct{})
-		go func() {
-			defer close(progress.done)
-			ticker := time.NewTicker(250 * time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-progress.stop:
-					return
-				case <-ticker.C:
-					progress.mu.Lock()
-					progress.compact()
-					progress.mu.Unlock()
-				}
-			}
-		}()
+	progress.tty = mode == "auto" && term.IsTerminal(int(stderr.Fd()))
+	if mode != "none" {
+		progress.live = make(chan runevent.Event, 128)
+		progress.complete = make(chan progressModel, 1)
+		progress.renderDone = make(chan struct{})
+		go progress.render()
 	}
+	go progress.write()
 	return progress, nil
-}
-
-func (progress *runProgress) close() error {
-	if progress.stop != nil {
-		close(progress.stop)
-		<-progress.done
-	}
-	progress.mu.Lock()
-	defer progress.mu.Unlock()
-	progress.clear()
-	if progress.events != nil {
-		if err := progress.events.Close(); progress.eventErr == nil {
-			progress.eventErr = err
-		}
-	}
-	return progress.eventErr
 }
 
 func (progress *runProgress) event(event runevent.Event) {
 	progress.mu.Lock()
-	defer progress.mu.Unlock()
-	if progress.events != nil && progress.eventErr == nil {
-		body, err := json.Marshal(event)
-		if err == nil {
-			_, err = runevent.Parse(body)
+	progress.queue = append(progress.queue, event)
+	progress.mu.Unlock()
+	select {
+	case progress.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (progress *runProgress) write() {
+	defer close(progress.done)
+	model := progressModel{steps: make(map[string]*progressStep)}
+	var buffer *bufio.Writer
+	var encoder *json.Encoder
+	if progress.events != nil {
+		buffer = bufio.NewWriter(progress.events)
+		encoder = json.NewEncoder(buffer)
+	}
+	for {
+		<-progress.wake
+		progress.mu.Lock()
+		batch, closing := progress.queue, progress.closing
+		progress.queue = nil
+		progress.mu.Unlock()
+		for _, event := range batch {
+			if encoder != nil && progress.eventErr == nil {
+				progress.eventErr = encoder.Encode(event)
+			}
+			if progress.live != nil {
+				model.observe(event)
+				select {
+				case progress.live <- event:
+				default:
+				}
+			}
 		}
-		if err == nil {
-			_, err = progress.events.Write(append(body, '\n'))
+		if buffer != nil && progress.eventErr == nil {
+			progress.eventErr = buffer.Flush()
 		}
-		if err != nil {
-			progress.eventErr = fmt.Errorf("write run event stream: %w", err)
+		if closing {
+			break
 		}
 	}
-	if progress.mode == "none" || progress.mode == "" {
-		return
+	if progress.events != nil {
+		if err := progress.events.Close(); progress.eventErr == nil {
+			progress.eventErr = err
+		}
+		if progress.eventErr != nil {
+			progress.eventErr = fmt.Errorf("write run event stream: %w", progress.eventErr)
+		}
 	}
+	if progress.live != nil {
+		// Summary state sees every event even when live rendering drops lines.
+		progress.complete <- model
+		close(progress.live)
+	}
+}
+
+func (progress *runProgress) close() error {
+	if progress == nil {
+		return nil
+	}
+	progress.mu.Lock()
+	progress.closing = true
+	progress.mu.Unlock()
+	select {
+	case progress.wake <- struct{}{}:
+	default:
+	}
+	<-progress.done
+	if progress.renderDone != nil {
+		<-progress.renderDone
+	}
+	return progress.eventErr
+}
+
+func (progress *runProgress) render() {
+	defer close(progress.renderDone)
+	model := progressModel{steps: make(map[string]*progressStep)}
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case event, ok := <-progress.live:
+			if !ok {
+				progress.clear()
+				complete := <-progress.complete
+				if complete.last.Type == "run.finished" {
+					fmt.Fprintln(progress.writer, "\nSTEP                     STATUS          DURATION")
+					for _, id := range complete.order {
+						step := complete.steps[id]
+						fmt.Fprintf(progress.writer, "%-24s %-15s %.2fs\n", safeProgressText(id), step.status, step.duration/1000)
+					}
+					fmt.Fprintf(progress.writer, "run %s %s; total wall time %.2fs\n", safeProgressText(complete.last.RunID), complete.last.Status, complete.last.ElapsedMS/1000)
+				}
+				return
+			}
+			model.observe(event)
+			if progress.mode == "plain" || progress.tty {
+				progress.renderEvent(event)
+			}
+			progress.compact(model)
+		case <-ticker.C:
+			progress.compact(model)
+		}
+	}
+}
+
+func (progress *runProgress) renderEvent(event runevent.Event) {
 	progress.clear()
 	label := event.NodeID
 	if event.ItemIndex != nil {
@@ -109,57 +211,20 @@ func (progress *runProgress) event(event runevent.Event) {
 	line := ""
 	switch event.Type {
 	case "run.started":
-		line = fmt.Sprintf("run %s started (%d steps)", event.RunID, *event.NodeCount)
-	case "step.started":
-		progress.steps[event.NodeID] = &progressStep{status: "running", started: time.Now()}
-		progress.order = append(progress.order, event.NodeID)
-		line = label + " started"
+		line = fmt.Sprintf("run %s started", event.RunID)
 	case "step.attempt.started":
-		line = fmt.Sprintf("%s attempt %d/%d started", label, event.Attempt, event.MaxAttempts)
-		if step := progress.steps[event.NodeID]; step != nil {
-			step.detail = fmt.Sprintf("attempt %d/%d", event.Attempt, event.MaxAttempts)
-		}
+		line = fmt.Sprintf("%s attempt %d started", label, event.Attempt)
 	case "step.attempt.finished":
-		line = fmt.Sprintf("%s attempt %d/%d %s (%.2fs) [%s]", label, event.Attempt, event.MaxAttempts, event.Status, *event.DurationMS/1000, event.Classification)
-	case "map.progress":
-		line = fmt.Sprintf("%s map %d/%d completed, %d failed", label, *event.Completed, *event.Total, *event.Failed)
-		if step := progress.steps[event.NodeID]; step != nil {
-			step.detail = fmt.Sprintf("%d/%d, %d failed", *event.Completed, *event.Total, *event.Failed)
-		}
+		line = fmt.Sprintf("%s attempt %d %s (%.2fs) [%s]", label, event.Attempt, event.Status, *event.DurationMS/1000, event.Classification)
 	case "step.finished":
-		step := progress.steps[event.NodeID]
-		if step == nil {
-			step = &progressStep{}
-			progress.steps[event.NodeID] = step
-			progress.order = append(progress.order, event.NodeID)
-		}
-		step.status, step.duration = event.Status, *event.DurationMS
 		line = fmt.Sprintf("%s %s (%.2fs)", label, event.Status, *event.DurationMS/1000)
-	case "run.finished":
-		fmt.Fprintln(progress.writer, "\nSTEP                     STATUS          DURATION")
-		for _, id := range progress.order {
-			step := progress.steps[id]
-			fmt.Fprintf(progress.writer, "%-24s %-15s %.2fs\n", safeProgressText(id), step.status, step.duration/1000)
-		}
-		fmt.Fprintf(progress.writer, "run %s %s; total wall time %.2fs\n", event.RunID, event.Status, *event.DurationMS/1000)
-		if event.ExitHook != nil {
-			fmt.Fprintf(progress.writer, "exit hook %s %s\n", event.ExitHook.NodeID, event.ExitHook.Status)
-		}
 	}
-	// Compact terminals retain finished lines and immediate failure context;
-	// transient starts and map counts live on the single updating status line.
 	if line != "" && (!progress.tty || event.Type == "run.started" || event.Type == "step.finished" || (event.Type == "step.attempt.finished" && event.Status != "succeeded")) {
 		fmt.Fprintln(progress.writer, safeProgressText(line))
 	}
-	if event.Type == "step.attempt.finished" && event.Status != "succeeded" {
-		if event.Diagnostic != "" {
-			fmt.Fprintf(progress.writer, "  diagnostic: %s\n", safeProgressText(event.Diagnostic))
-		}
-		if event.LogTail != "" {
-			fmt.Fprintf(progress.writer, "  log tail (%s):\n%s\n", safeProgressText(label), safeProgressText(event.LogTail))
-		}
+	if event.Type == "step.attempt.finished" && event.Status != "succeeded" && event.Diagnostic != "" {
+		fmt.Fprintf(progress.writer, "  diagnostic: %s\n", safeProgressText(event.Diagnostic))
 	}
-	progress.compact()
 }
 
 func (progress *runProgress) clear() {
@@ -169,12 +234,12 @@ func (progress *runProgress) clear() {
 	}
 }
 
-func (progress *runProgress) compact() {
+func (progress *runProgress) compact(model progressModel) {
 	if !progress.tty {
 		return
 	}
 	var active []string
-	for id, step := range progress.steps {
+	for id, step := range model.steps {
 		if step.status == "running" {
 			active = append(active, fmt.Sprintf("%s %s %.1fs", safeProgressText(id), step.detail, time.Since(step.started).Seconds()))
 		}
@@ -184,7 +249,6 @@ func (progress *runProgress) compact() {
 	}
 	sort.Strings(active)
 	text := strings.Join(active, " | ")
-	// Keep the compact view to one line even on small terminals.
 	if len([]rune(text)) > 72 {
 		text = string([]rune(text)[:71]) + "…"
 	}
