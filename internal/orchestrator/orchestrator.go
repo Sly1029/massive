@@ -1071,67 +1071,72 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 			}
 			invocations = append(invocations, StepInvocation{Descriptor: descriptor, Timeout: policy.timeout})
 		}
+		outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: invocations, MaxConcurrency: int(node.GetMaxConcurrency())})
+		byIndex, err := mapOutcomesByIndex(node.GetId(), attempt, outcomes, pending, invokeErr == nil)
+		if err != nil {
+			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map invocation protocol failed", err)
+		}
+
+		// Record every reported dispatch before verification can fail. Otherwise a
+		// publication error on an early item would mislabel later started items as
+		// never dispatched when the root journal is terminalized.
+		for _, itemIndex := range pending {
+			outcome, started := byIndex[itemIndex]
+			if !started {
+				continue
+			}
+			manifest.events.outcome(outcome)
+			markMapItemRunning(manifest, node.GetId(), itemIndex, attempt, itemInputs[itemIndex])
+			if outcome.Status == StatusCancelled {
+				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusCancelled, "invocation cancelled")
+			}
+			if outcome.Status == stepInvocationStatusInfraFailed {
+				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "invocation infrastructure failed")
+			}
+		}
 		retry := make([]int, 0, len(pending))
 		retryDiagnostics := make(map[int]string, len(pending))
 		terminalFailure := false
-		descriptors := make(map[int]StepInvocationDescriptor, len(invocations))
 		for position, itemIndex := range pending {
-			descriptors[itemIndex] = invocations[position].Descriptor
-		}
-		outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{
-			Steps: invocations, MaxConcurrency: int(node.GetMaxConcurrency()),
-			OnStarted: func(descriptor StepInvocationDescriptor) {
-				itemIndex := descriptor.Scope.Frames[0].Index
-				markMapItemRunning(manifest, node.GetId(), itemIndex, attempt, itemInputs[itemIndex])
-			},
-			OnFinished: func(outcome StepInvocationOutcome) {
-				itemIndex := outcome.Scope.Frames[0].Index
-				manifest.events.outcome(outcome)
-				if outcome.Status == StatusCancelled {
-					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusCancelled, "invocation cancelled")
-					return
+			outcome, started := byIndex[itemIndex]
+			if !started {
+				continue
+			}
+			if outcome.Status != StatusSucceeded {
+				if outcome.Status == StatusCancelled || outcome.Status == stepInvocationStatusInfraFailed {
+					continue
 				}
-				if outcome.Status == stepInvocationStatusInfraFailed {
-					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "invocation infrastructure failed")
-					return
+				diagnostic := durableRunnerDiagnostic(outcome)
+				if attempt < policy.maxAttempts && retryableOutcome(outcome) {
+					markMapItemRetrying(manifest, node.GetId(), itemIndex, diagnostic)
+					retry = append(retry, itemIndex)
+					retryDiagnostics[itemIndex] = diagnostic
+					continue
 				}
-				if outcome.Status != StatusSucceeded {
-					diagnostic := durableRunnerDiagnostic(outcome)
-					if attempt < policy.maxAttempts && retryableOutcome(outcome) {
-						markMapItemRetrying(manifest, node.GetId(), itemIndex, diagnostic)
-						retry = append(retry, itemIndex)
-						retryDiagnostics[itemIndex] = diagnostic
-						return
-					}
-					if failure, collected := mapItemFailure(outcome, attempt); collectFailures && collected {
-						failures[itemIndex] = failure
-					} else {
-						terminalFailure = true
-						if firstRunnerFailure == "" {
-							firstRunnerFailure = runnerDiagnostic(outcome) + attemptSuffix(attempt, policy)
-						}
-					}
+				if failure, collected := mapItemFailure(outcome, attempt); collectFailures && collected {
+					failures[itemIndex] = failure
 					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, diagnostic)
-					return
+					continue
 				}
-				output, err := settleInvocation(ctx, store, descriptors[itemIndex], resolution.index, config.Hooks)
-				if err != nil {
-					terminalFailure = true
-					if firstRunnerFailure == "" {
-						firstRunnerFailure = err.Error()
-					}
-					markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "map item output verification failed")
-					return
+				terminalFailure = true
+				if firstRunnerFailure == "" {
+					firstRunnerFailure = runnerDiagnostic(outcome) + attemptSuffix(attempt, policy)
 				}
-				markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
-				results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
-			},
-		})
-		if _, err := mapOutcomesByIndex(node.GetId(), attempt, outcomes, pending, invokeErr == nil); err != nil {
-			return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map invocation protocol failed", err)
+				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, diagnostic)
+				continue
+			}
+			output, err := settleInvocation(ctx, store, invocations[position].Descriptor, resolution.index, config.Hooks)
+			if err != nil {
+				terminalFailure = true
+				if firstRunnerFailure == "" {
+					firstRunnerFailure = err.Error()
+				}
+				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, "map item output verification failed")
+				continue
+			}
+			markMapItemSucceeded(manifest, node.GetId(), itemIndex, output.Published)
+			results = append(results, mapexec.Result{Index: itemIndex, Body: output.Body})
 		}
-		sort.Ints(retry)
-
 		for _, outcome := range outcomes {
 			if outcome.Fatal != nil {
 				invokeErr = &FatalRunError{Failure: *outcome.Fatal}
