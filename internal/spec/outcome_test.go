@@ -2,8 +2,10 @@ package spec
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -70,15 +72,19 @@ func TestParseRelatesMapOutputToItemFailurePolicy(t *testing.T) {
 		name, fixture string
 		policy        any
 		want          string
+		wantPath      string
 	}{
 		{name: "outcomes without the policy", fixture: "python-map-outcomes", want: "items exactly equal itemOutputSchema"},
 		{name: "items with the policy", fixture: "finite-map", policy: "collect", want: "array of item outcomes wrapping itemOutputSchema"},
-		{name: "explicit default", fixture: "python-map-outcomes", policy: "fail", want: "validation failed"},
+		{name: "explicit default", fixture: "python-map-outcomes", policy: "fail", want: "collect", wantPath: "/itemFailures"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := Parse(setPolicy(test.fixture, test.policy))
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Parse error = %v, want %q", err, test.want)
+			var diagnostics *DiagnosticsError
+			if !errors.As(err, &diagnostics) || !slices.ContainsFunc(diagnostics.Diagnostics, func(diagnostic Diagnostic) bool {
+				return strings.Contains(diagnostic.Message, test.want) && strings.HasSuffix(diagnostic.Path, test.wantPath)
+			}) {
+				t.Fatalf("Parse error = %v, want diagnostic %q at %q", err, test.want, test.wantPath)
 			}
 		})
 	}
