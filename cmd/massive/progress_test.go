@@ -288,6 +288,9 @@ func assertProgressJSON(t *testing.T, body []byte, runID, status, expectedResult
 	if output["exitHook"] != nil {
 		expectedFields++
 	}
+	if output["failure"] != nil {
+		expectedFields++
+	}
 	if len(output) != expectedFields {
 		t.Fatalf("stdout contract changed: %s", body)
 	}
@@ -461,13 +464,15 @@ func TestRunTerminalEventsIncludeFailureAndExitHook(t *testing.T) {
 import time
 import os
 import signal
-from massive import GraphBuilder, StepContext, RunOutcome, NonRetryableError, container, execution
+from massive import GraphBuilder, StepContext, RunOutcome, NonRetryableError, FatalRunError, container, execution
 
 DEFAULTS = execution(environment=container("example.invalid/runner@sha256:" + "0" * 64))
 def task(ctx: StepContext[int]) -> int:
     if ctx.inputs == -1:
         print("terminal-log-sentinel", flush=True)
         raise NonRetryableError("terminal-diagnostic-sentinel")
+    if ctx.inputs == -4:
+        raise FatalRunError("Safe fatal cause", type="input.invalid")
     if ctx.inputs == -3:
         os.kill(os.getpid(), signal.SIGKILL)
     if ctx.inputs == -2:
@@ -500,6 +505,7 @@ failed_map.on_exit(hook)
 	for _, test := range []struct{ name, graph, input, status, hook string }{
 		{"failed task", "graph", "-1", "failed", "succeeded"},
 		{"failed map", "failed_map", "[-1,1]", "failed", "succeeded"},
+		{"fatal map", "failed_map", "[-4,1]", "failed", "succeeded"},
 		{"failed hook", "graph", "1", "succeeded", "failed"},
 		{"deadline", "graph", "-2", "failed", "succeeded"},
 		{"terminated", "graph", "-3", "failed", "succeeded"},
@@ -526,6 +532,23 @@ failed_map.on_exit(hook)
 			for _, event := range events {
 				if strings.Contains(event.Diagnostic, "sentinel") {
 					t.Fatal("author diagnostic leaked into events")
+				}
+			}
+			if test.name == "fatal map" {
+				fatal := false
+				for _, event := range events {
+					if event.Type == "step.attempt.finished" && event.NodeID == "tasks" && event.ItemIndex != nil && *event.ItemIndex == 0 {
+						if event.Classification != "fatal" || event.Status != "failed" || event.Attempt != 1 {
+							t.Fatalf("fatal attempt mislabeled: %+v", event)
+						}
+						fatal = true
+					}
+				}
+				if !fatal || journal.Failure == nil || journal.Failure.Message != "Safe fatal cause" {
+					t.Fatal("missing fatal attempt or settled cause")
+				}
+				if !strings.Contains(stderr.String(), "\nfatal run failure [input.invalid]: Safe fatal cause\n") {
+					t.Fatalf("missing human fatal cause: %s", &stderr)
 				}
 			}
 			if test.name == "failed map" {

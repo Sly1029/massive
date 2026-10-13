@@ -199,6 +199,8 @@ func classifyEventOutcome(outcome StepInvocationOutcome) string {
 		return "timeout"
 	case outcome.ExitCode == runnerExitDescriptorResolution || outcome.ExitCode == runnerExitSchemaValidation:
 		return "contract"
+	case outcome.ExitCode == FatalRunExitCode:
+		return "fatal"
 	case outcome.ExitCode == runnerExitNonRetryable:
 		return "non-retryable"
 	case outcome.ExitCode < 0:
