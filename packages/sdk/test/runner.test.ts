@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertThrows,
 } from "jsr:@std/assert";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ import {
   type StepInvocationDescriptor,
 } from "../src/runner/descriptor.ts";
 import { executeStep } from "../src/runner/execute.ts";
-import { NonRetryableError } from "../src/errors.ts";
+import { FatalRunError, NonRetryableError } from "../src/errors.ts";
 import { runStep } from "../src/runner/main.ts";
 import {
   DescriptorError,
@@ -87,14 +88,21 @@ Deno.test("runner descriptor parser rejects malformed descriptors with a precise
 });
 
 Deno.test("runner rejects obsolete descriptors and removed channel fields", async () => {
-  const fixture = JSON.parse(await Deno.readTextFile(new URL(
-    "../../../conformance/fixtures/descriptors/linear-chain/descriptor.json", import.meta.url,
-  )));
-  for (const removed of [
-    { schemaVersion: 2, encoding: "json-v2" },
-    { channelReads: [] },
-    { channelWrites: [] },
-  ]) {
+  const fixture = JSON.parse(
+    await Deno.readTextFile(
+      new URL(
+        "../../../conformance/fixtures/descriptors/linear-chain/descriptor.json",
+        import.meta.url,
+      ),
+    ),
+  );
+  for (
+    const removed of [
+      { schemaVersion: 2, encoding: "json-v2" },
+      { channelReads: [] },
+      { channelWrites: [] },
+    ]
+  ) {
     await assertRejects(
       () => parseStepInvocationDescriptor({ ...fixture, ...removed }),
       DescriptorError,
@@ -408,6 +416,54 @@ Deno.test("runner reports NonRetryableError subclasses with exit 67", async () =
   );
 });
 
+Deno.test("fatal signals validate safe cause and propagate through a real runner process", async () => {
+  for (
+    const category of [
+      "",
+      "Budget",
+      "policy violation",
+      "a".repeat(65),
+      "secret\n",
+    ]
+  ) {
+    assertThrows(() => new FatalRunError(category, "Safe message"));
+  }
+  assertThrows(() => new FatalRunError("budget.exhausted", "a".repeat(1025)));
+  assertEquals(
+    new FatalRunError("budget.exhausted", "🚀".repeat(1024)).message,
+    "🚀".repeat(1024),
+  );
+  await withRunnerFixture(
+    { input: { value: 1 }, stepExport: "abortRun" },
+    async ({ descriptorPath }) => {
+      const child = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--config",
+          "deno.json",
+          "--allow-read",
+          "--allow-write",
+          "--allow-env",
+          "--allow-net",
+          "packages/sdk/src/runner/main.ts",
+          descriptorPath,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(child.code, 69);
+      const failure = JSON.parse(
+        await Deno.readTextFile(descriptorPath + ".failure.json"),
+      );
+      assertEquals(failure, {
+        exitCode: 69,
+        category: "retention.refused",
+        message: "Retention policy refused processing",
+      });
+    },
+  );
+});
+
 Deno.test("runner process exits 67 with a non-retryable diagnostic", async () => {
   await withRunnerFixture(
     { input: { value: 1 }, stepExport: "rejectPermanently" },
@@ -487,7 +543,10 @@ Deno.test("runner rejects descriptors without maxAttempts", async () => {
 
 for (
   const [label, source] of [
-    ["a missing import", 'import "./missing-helper.ts";\nexport const double = () => ({ value: 1 });\n'],
+    [
+      "a missing import",
+      'import "./missing-helper.ts";\nexport const double = () => ({ value: 1 });\n',
+    ],
     ["a top-level throw", 'throw new Error("import-time failure");\n'],
     ["a syntax error", "export const double = (;\n"],
   ] as const
@@ -514,7 +573,11 @@ for (
 for (
   const [label, call, code] of [
     ["Deno.exit(0)", "Deno.exit(0);", 0],
-    ["process.exit(67)", 'const { default: process } = await import("node:process");\n    process.exit(67);', 67],
+    [
+      "process.exit(67)",
+      'const { default: process } = await import("node:process");\n    process.exit(67);',
+      67,
+    ],
   ] as const
 ) {
   Deno.test(`runner reports a step calling ${label} as a step-execution failure`, async () => {
@@ -544,7 +607,11 @@ for (
         }).output();
         const stderr = new TextDecoder().decode(child.stderr);
 
-        assertEquals(child.code, RUNNER_EXIT_CODES.stepExecutionFailure, stderr);
+        assertEquals(
+          child.code,
+          RUNNER_EXIT_CODES.stepExecutionFailure,
+          stderr,
+        );
         assert(stderr.includes(`step called exit(${code})`), stderr);
         await assertRejects(() => store.get(outputManifestKey()));
       },

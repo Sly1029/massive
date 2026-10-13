@@ -1,4 +1,4 @@
-import { NonRetryableError } from "@massive/sdk";
+import { FatalRunError, NonRetryableError } from "@massive/sdk";
 import type { StepRun } from "../../src/workflow.ts";
 
 interface ValueInput {
@@ -82,5 +82,14 @@ export const assertNestedMappedIdentity = {
       ],
     })) throw new Error("unexpected nested item identity");
     return { value: input.value * 2 };
+  }) satisfies StepRun<ValueInput, ValueOutput>,
+};
+
+export const abortRun = {
+  run: (() => {
+    throw new FatalRunError(
+      "retention.refused",
+      "Retention policy refused processing",
+    );
   }) satisfies StepRun<ValueInput, ValueOutput>,
 };

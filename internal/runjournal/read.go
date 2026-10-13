@@ -10,22 +10,29 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-var manifestSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
+type journalValidators struct{ manifest, fatal *jsonschema.Schema }
+
+var journalSchemas = sync.OnceValues(func() (journalValidators, error) {
 	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(contract.RunManifestSchemaJSON))
 	if err != nil {
-		return nil, err
+		return journalValidators{}, err
 	}
 	compiler := jsonschema.NewCompiler()
 	if err := compiler.AddResource("run-manifest.json", document); err != nil {
-		return nil, err
+		return journalValidators{}, err
 	}
-	return compiler.Compile("run-manifest.json")
+	manifest, err := compiler.Compile("run-manifest.json")
+	if err != nil {
+		return journalValidators{}, err
+	}
+	fatal, err := compiler.Compile("run-manifest.json#/$defs/fatalFailure")
+	return journalValidators{manifest: manifest, fatal: fatal}, err
 })
 
 // Parse reads only the current journal. Historical transports require a new run,
 // never an inferred migration or a partially decoded view.
 func Parse(data []byte) (*Manifest, error) {
-	schema, err := manifestSchema()
+	schemas, err := journalSchemas()
 	if err != nil {
 		return nil, err
 	}
@@ -33,12 +40,33 @@ func Parse(data []byte) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid run journal JSON: %w", err)
 	}
-	if err := schema.Validate(value); err != nil {
+	if err := schemas.manifest.Validate(value); err != nil {
 		return nil, fmt.Errorf("unsupported or malformed run journal; create a new run with the current SDK: %w", err)
 	}
 	var manifest Manifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, err
+	}
+	if manifest.Failure != nil {
+		found := false
+		for _, step := range manifest.Steps {
+			if step.NodeID != manifest.Failure.NodeID || step.Status != "failed" || len(step.Attempts) == 0 {
+				continue
+			}
+			if step.Items == nil {
+				found = true
+				break
+			}
+			for _, item := range *step.Items {
+				if item.Status == "failed" && len(item.Attempts) > 0 {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("fatal cause does not name a failed dispatched step")
+		}
 	}
 	for _, step := range manifest.Steps {
 		if manifest.Status != "running" && (step.Status == "pending" || step.Status == "running") {
@@ -103,4 +131,24 @@ func validateAttempts(attempts []Attempt, status string) error {
 		return fmt.Errorf("last attempt status differs from entry status")
 	}
 	return nil
+}
+
+// ParseFatalFailure uses the journal's cause schema for remote run markers too.
+func ParseFatalFailure(data []byte) (*FatalFailure, error) {
+	schemas, err := journalSchemas()
+	if err != nil {
+		return nil, err
+	}
+	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if err := schemas.fatal.Validate(value); err != nil {
+		return nil, fmt.Errorf("invalid fatal cause: %w", err)
+	}
+	var failure FatalFailure
+	if err := json.Unmarshal(data, &failure); err != nil {
+		return nil, err
+	}
+	return &failure, nil
 }

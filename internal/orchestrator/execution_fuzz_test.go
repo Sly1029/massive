@@ -149,6 +149,9 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 			return outcomes, err
 		}
 		outcomes = append(outcomes, outcome)
+		if outcome.Fatal != nil {
+			return outcomes, &FatalRunError{Failure: *outcome.Fatal}
+		}
 	}
 	if interrupt != nil && (interrupt.Kind == graphgen.CancelAfter || interrupt.Kind == graphgen.CancelDuring) {
 		e.fire(interrupt.Kind)
@@ -253,6 +256,9 @@ func (e *generatedExecutor) invoke(ctx context.Context, step StepInvocation, max
 		outcome.ExitCode = graphgen.ExitStepExecution
 	case graphgen.Crash:
 		outcome.ExitCode = graphgen.ExitKilled
+	case graphgen.FailFatal:
+		outcome.ExitCode = graphgen.ExitFatal
+		outcome.Fatal = &runjournal.FatalFailure{Kind: "fatal", Category: "policy.limit", Message: "Run limit reached", NodeID: node.ID}
 	case graphgen.FailNonRetryable:
 		outcome.ExitCode = graphgen.ExitNonRetryable
 	case graphgen.FailSchema:
@@ -312,6 +318,10 @@ func (o *executionOracle) checkTerminalStatus(runErr error) {
 	fired := o.executor.fired
 	var runError *RunError
 	switch {
+	case o.journal.Failure != nil:
+		if o.journal.Status != StatusFailed || !errors.As(runErr, &runError) {
+			t.Fatalf("fatal run status %s error %v", o.journal.Status, runErr)
+		}
 	case fired != nil && *fired != graphgen.InfrastructureFailure:
 		// Settling a success reported as cancellation arrived can still
 		// expose a genuine failure, such as a missing output.
@@ -344,6 +354,13 @@ func (o *executionOracle) checkTerminalStatus(runErr error) {
 		if len(failed) != 1 || runError.StepID != failed[0] || o.prediction.Nodes[failed[0]].Status != graphgen.Failed {
 			t.Fatalf("failed steps %v attributed to %q", failed, runError.StepID)
 		}
+	}
+	if o.journal.Failure != nil {
+		var fatal *FatalRunError
+		if !errors.As(runErr, &fatal) || *o.journal.Failure != fatal.Failure || o.journal.Status != StatusFailed {
+			t.Fatalf("fatal cause not preserved: %+v, %v", o.journal.Failure, runErr)
+		}
+		return
 	}
 	if !strings.HasPrefix(o.journal.Diagnostic, "run "+o.journal.Status) {
 		t.Fatalf("root diagnostic %q", o.journal.Diagnostic)
@@ -435,6 +452,8 @@ func expectedDiagnostic(fault graphgen.Fault, timeoutSeconds uint32, item bool) 
 		return "step-execution-failure (exit 66)"
 	case graphgen.Crash:
 		return "runner-failure (exit 137)"
+	case graphgen.FailFatal:
+		return "fatal-run-failure (exit 69)"
 	case graphgen.FailNonRetryable:
 		return "non-retryable-step-failure (exit 67)"
 	case graphgen.FailSchema:
@@ -490,6 +509,9 @@ func (o *executionOracle) checkMap(step runjournal.Step, node *graphgen.Node, pr
 			wantStatus := StatusSucceeded
 			if want.Status == graphgen.Failed {
 				wantStatus = StatusFailed
+			}
+			if want.Status == graphgen.Blocked {
+				wantStatus = StatusNotStarted
 			}
 			if item.Status != wantStatus {
 				t.Fatalf("item %s is %s, want %s", id, item.Status, wantStatus)

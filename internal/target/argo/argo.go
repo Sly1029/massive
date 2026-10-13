@@ -350,7 +350,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 	controlPlacement := podPlacement(placement, "")
 	sort.Slice(executableNodes, func(i, j int) bool { return executableNodes[i].GetId() < executableNodes[j].GetId() })
 	taskNames := make(map[string]string, len(executableNodes))
-	occupiedNames := map[string]bool{entryTaskName: true}
+	occupiedNames := map[string]bool{entryTaskName: true, fatalWatcherName: true}
 	for _, node := range executableNodes {
 		name := argoFieldName(node.GetId())
 		if occupiedNames[name] {
@@ -493,7 +493,7 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 			slices.Concat([]string{
 				"runtime", "step",
 				"--plan", "/var/run/massive/massive-plan.json",
-			}, sourceArgs, []string{"--node=" + node.GetId()}, stepInputArgs(inputParameters), []string{
+			}, sourceArgs, []string{"--node=" + node.GetId(), "--termination-log", "/dev/termination-log"}, stepInputArgs(inputParameters), []string{
 				"--output", "/tmp/massive/result.json",
 				"--project", "argo/" + name,
 				"--run-id", "{{workflow.uid}}",
@@ -503,8 +503,41 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 		if err != nil {
 			return nil, "", err
 		}
+		stepTemplate["container"].(map[string]any)["terminationMessagePath"] = "/dev/termination-log"
+		stepTemplate["container"].(map[string]any)["terminationMessagePolicy"] = "File"
 		applyRetryStrategy(stepTemplate, contract)
 		templates = append(templates, stepTemplate)
+	}
+	var watcherContract *planpb.ExecutionContract
+	for _, node := range executableNodes {
+		if contract := contracts[node.GetContractRef()]; contract != nil {
+			watcherContract = contract
+			break
+		}
+	}
+	if watcherContract != nil {
+		contract := watcherContract
+		watcher, err := runtimePodTemplate(fatalWatcherName, "", envs[contract.GetEnvironmentRef()], &planpb.ExecutionContract{EnvironmentRef: contract.EnvironmentRef}, runtimeName, &d.Profile.Target, controlPlacement, nil,
+			[]string{"runtime", "watch-fatal", "--workflow={{workflow.name}}", "--namespace={{workflow.namespace}}", "--project", "argo/" + name, "--run-id={{workflow.uid}}", "--ready-file", "/tmp/massive-fatal-ready", "--datastore-config", datastoreConfigPath})
+		if err != nil {
+			return nil, "", err
+		}
+		watcher["daemon"] = true
+		watcher["automountServiceAccountToken"] = true
+		delete(watcher, "outputs")
+		container := watcher["container"].(map[string]any)
+		probe := slices.Concat(container["command"].([]string), container["args"].([]string), []string{"--probe"})
+		container["readinessProbe"] = map[string]any{"exec": map[string]any{"command": probe}, "periodSeconds": 1}
+		for _, entry := range tasks {
+			task := entry.(map[string]any)
+			if depends, ok := task["depends"]; ok {
+				task["depends"] = "(" + depends.(string) + ") && " + fatalWatcherName + ".Daemoned"
+			} else {
+				task["depends"] = fatalWatcherName + ".Daemoned"
+			}
+		}
+		tasks = append(tasks, map[string]any{"name": fatalWatcherName, "template": fatalWatcherName})
+		templates = append(templates, watcher)
 	}
 	endInbound := inbound[g.GetEndNode()]
 	if len(endInbound) != 1 {
@@ -601,6 +634,8 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 
 // Argo returns valueFrom.default literally. Evaluate the fallback in scope so
 // the lost envelope carries the actual last retry child's pod node ID.
+const fatalWatcherName = "massive-fatal-watcher"
+
 const mapItemOutcomeExpression = "tasks.attempt.outputs?.parameters?.result ?? toJSON({lost: tasks.attempt.id})"
 
 func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target, controlPlacement, itemPlacement deployment.PodPlacement, sourceArgs []string) ([]any, error) {
@@ -1067,7 +1102,7 @@ func boolp(v bool) *bool   { return &v }
 // descriptor and schema failures are deterministic, 67 is the author's explicit
 // opt-out, and 68 is a failed dependency preflight of the image. Timeouts (124),
 // author exceptions (66), and pod errors retry.
-var runnerNonRetryableExitCodes = []string{"64", "65", "67", "68", "70"}
+var runnerNonRetryableExitCodes = []string{"64", "65", "67", "68", "69", "70"}
 
 // retryArgs tells the runtime which attempt Argo is dispatching so descriptors,
 // manifest slots, and step context agree with the scheduler's retry count.

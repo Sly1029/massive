@@ -650,8 +650,8 @@ credentials. Credential acquisition failures stop invocation before artifact IO.
 A contract's `retry` lowers to a `retryStrategy` on runner templates only
 (static steps and map items); decision, expansion, and collection control pods
 never retry. The strategy uses `limit: maxAttempts - 1`, `retryPolicy: Always`,
-and `expression: "!(lastRetry.exitCode in ['64', '65', '67', '68', '70'])"`, so descriptor,
-schema, author non-retryable, dependency preflight (68), and runner-result
+and `expression: "!(lastRetry.exitCode in ['64', '65', '67', '68', '69', '70'])"`, so descriptor,
+schema, author non-retryable, dependency preflight (68), fatal run (69), and runner-result
 publication (70) failures stop
 immediately. Before each Python attempt, `massive runtime step` and
 `runtime map item` extract the verified source archive and run dependency
@@ -832,3 +832,24 @@ the caller's environment without selective binding or secret preflight. There
 is no `.env` loader, secret-manager lookup, optional-secret fallback, or secret
 value serialization. The live Argo gate checks a real Secret through a mapped
 invocation and verifies that other pods never receive its environment entry.
+
+### Fatal run cancellation
+
+Author `FatalRunError(category, message)` exits 69, bypassing retries and map
+outcome collection. The runtime publishes a schema-validated `fatal.json` under
+the run namespace with first-writer ownership. A control-only daemon checks
+Workflow patch permission with a dry-run before becoming ready, then polls the
+marker and requests `spec.shutdown: Stop`. Author templates gate dispatch on the
+daemon and check the marker before invoking a runner. Only the daemon and
+collecting-map reader mount Kubernetes API tokens; the daemon needs Workflow
+`patch` in the execution namespace. The exit runtime reads the durable marker
+for its safe cause and originating node, including when sibling cancellation
+changes the controller's failure attribution.
+
+In [Argo v3.7.16 execution control](https://github.com/argoproj/argo-workflows/blob/v3.7.16/workflow/controller/exec_control.go),
+Stop terminates running non-exit containers, and
+[shutdown scheduling](https://github.com/argoproj/argo-workflows/blob/v3.7.16/pkg/apis/workflow/v1alpha1/workflow_types.go)
+permits only exit-handler pods. Terminate would skip the hook; DAG failFast
+alone would wait for in-flight children. Stop therefore preserves cleanup while
+cancelling work. This is asynchronous controller cancellation, not transactional
+rollback of external effects or instant prevention of every pod creation.

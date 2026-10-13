@@ -83,10 +83,18 @@ item's outcome only when `mapItemFailure` classifies it (exceptions,
 stop sibling retries. Both targets must build identical records, so the Argo
 item runtime classifies through the same function. The record's message comes
 only from the bounded, schema-validated `.failure.json` beside the invocation
-descriptor, consumed only for diagnostic exits 64–67 matching the process result.
+descriptor, consumed only for diagnostic exits 64–67 and 69 matching the process result.
 Signal termination supersedes any failure file published during shutdown.
 Write failure files atomically as ASCII JSON; bound readers for twelve escaped
 bytes per code point plus the object overhead. Never scrape author
 logs for messages, and keep exception messages out of the journal. Only negative
 process exit codes establish signal termination; positive exits are ordinary
 errors. Failure-result publication errors (exit 70) fail the run.
+
+Fatal runner exit 69 requires a schema-valid category and safe message. Preserve
+its typed cause while cancelling sibling invocations through the batch context;
+sibling context errors cannot reclassify the root as cancellation or infrastructure
+failure. Reconcile dispatched outcomes before terminalization. The terminal v5
+journal's optional `failure` is additive; populate it only for fatal runs, and
+forward it to run JSON and the detached exit hook. An exit hook's own fatal error
+stays a hook failure and never changes the run cause.

@@ -34,7 +34,10 @@ export class FatalRunError extends Error {
   readonly category: string;
 
   constructor(category: string, message: string) {
-    super(z.string().max(1024).parse(message));
+    super(
+      z.string().transform((value) => Array.from(value))
+        .pipe(z.array(z.string()).max(1024)).parse(message).join(""),
+    );
     this.category = z.string().regex(/^[a-z][a-z0-9_.-]{0,63}$/).parse(
       category,
     );

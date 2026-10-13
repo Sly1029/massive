@@ -1247,7 +1247,16 @@
           "maxLength": 1024
         },
         "nodeId": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.@:#-]+$",
+          "minLength": 1,
+          "maxLength": 128,
+          "not": {
+            "enum": [
+              ".",
+              ".."
+            ]
+          }
         }
       },
       "required": [

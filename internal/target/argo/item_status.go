@@ -46,34 +46,17 @@ func ReadMissingItemFailures(ctx context.Context, namespace, workflow string, no
 	if namespace == "" || workflow == "" {
 		return nil, fmt.Errorf("missing item outcomes require the Argo workflow and namespace")
 	}
-	const credentials = "/var/run/secrets/kubernetes.io/serviceaccount/"
-	token, err := os.ReadFile(credentials + "token")
+	client, endpoint, token, err := schedulerClient()
 	if err != nil {
-		return nil, fmt.Errorf("read scheduler token: %w", err)
+		return nil, err
 	}
-	ca, err := os.ReadFile(credentials + "ca.crt")
-	if err != nil {
-		return nil, fmt.Errorf("read scheduler CA: %w", err)
-	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(ca) {
-		return nil, fmt.Errorf("invalid scheduler CA")
-	}
-	host := os.Getenv("KUBERNETES_SERVICE_HOST")
-	port := os.Getenv("KUBERNETES_SERVICE_PORT_HTTPS")
-	if host == "" || port == "" {
-		return nil, fmt.Errorf("missing Kubernetes API service address")
-	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
-	endpoint := "https://" + net.JoinHostPort(host, port)
+	defer client.CloseIdleConnections()
 	read := func(path string, document any) error {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+path, nil)
 		if err != nil {
 			return err
 		}
-		request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+		request.Header.Set("Authorization", "Bearer "+token)
 		response, err := client.Do(request)
 		if err != nil {
 			return fmt.Errorf("read terminal scheduler state: %w", err)
@@ -202,4 +185,31 @@ func missingItemFailure(workflow itemSchedulerWorkflow, pods []corev1.Pod, id st
 		return mapexec.NewFailure(mapexec.FailureKilled, attempts, "runner-killed (signal; Argo author-phase reconciliation)"), nil
 	}
 	return failed("main container status is unavailable")
+}
+
+// schedulerClient owns the API transport for control pods only.
+func schedulerClient() (*http.Client, string, string, error) {
+	const credentials = "/var/run/secrets/kubernetes.io/serviceaccount/"
+	token, err := os.ReadFile(credentials + "token")
+	if err != nil {
+		return nil, "", "", fmt.Errorf("read scheduler token: %w", err)
+	}
+	ca, err := os.ReadFile(credentials + "ca.crt")
+	if err != nil {
+		return nil, "", "", fmt.Errorf("read scheduler CA: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca) {
+		return nil, "", "", fmt.Errorf("invalid scheduler CA")
+	}
+	host := os.Getenv("KUBERNETES_SERVICE_HOST")
+	port := os.Getenv("KUBERNETES_SERVICE_PORT_HTTPS")
+	if host == "" || port == "" {
+		return nil, "", "", fmt.Errorf("missing Kubernetes API service address")
+	}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
+	client := &http.Client{Transport: transport, Timeout: 15 * time.Second}
+	endpoint := "https://" + net.JoinHostPort(host, port)
+
+	return client, endpoint, strings.TrimSpace(string(token)), nil
 }

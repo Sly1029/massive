@@ -415,7 +415,11 @@ branches, and source-indexed finite-map items. A map that collects item
 failures records `itemFailures: "collect"` on its step; only such a successful
 map may contain `failed` items, whose attempts carry durable runner summaries
 without exception messages. Failed and cancelled runs have
-a root diagnostic and terminal steps; completed artifacts survive cancellation,
+a root diagnostic and terminal steps. Fatal author signals additionally carry an
+optional `failure` object with `kind: "fatal"`, a bounded category and explicitly
+safe message, and the failed dispatched node ID. This additive field stays in
+v5; remote `fatal.json` markers use the same cause schema. Exit hooks receive
+`failure_kind`, `category`, and `message` (null for other outcomes). Completed artifacts survive cancellation,
 while undispatched work has no attempts. Attempts are dense and 1-based; every
 attempt before the last failed, and the last attempt carries the entry status.
 There is no compatibility reader

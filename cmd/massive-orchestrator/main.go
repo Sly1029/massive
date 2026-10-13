@@ -17,6 +17,7 @@ import (
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/spec"
 )
 
@@ -35,6 +36,10 @@ func main() {
 			printStepSummaries(runErr.Result)
 		}
 		fmt.Fprintf(os.Stderr, "massive-orchestrator: %v\n", runErr)
+		var fatal *orchestrator.FatalRunError
+		if errors.As(runErr, &fatal) {
+			os.Exit(orchestrator.FatalRunExitCode)
+		}
 		os.Exit(1)
 	}
 	var diagnostics *spec.DiagnosticsError
@@ -235,10 +240,11 @@ type jsonRunStep struct {
 }
 
 type jsonRun struct {
-	RunID     string        `json:"runId"`
-	Status    string        `json:"status"`
-	ResultKey string        `json:"resultKey,omitempty"`
-	Steps     []jsonRunStep `json:"steps"`
+	Failure   *runjournal.FatalFailure `json:"failure,omitempty"`
+	RunID     string                   `json:"runId"`
+	Status    string                   `json:"status"`
+	ResultKey string                   `json:"resultKey,omitempty"`
+	Steps     []jsonRunStep            `json:"steps"`
 }
 
 func emitRunJSON(w io.Writer, result *orchestrator.RunResult) error {
@@ -248,6 +254,7 @@ func emitRunJSON(w io.Writer, result *orchestrator.RunResult) error {
 	}
 	encoder := json.NewEncoder(w)
 	return encoder.Encode(jsonRun{
+		Failure:   result.Failure,
 		RunID:     result.RunID,
 		Status:    result.Status,
 		ResultKey: result.ResultKey,

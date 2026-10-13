@@ -79,7 +79,7 @@ matches the node-id annotation (not a label), requires main-container OOMKilled
 or signal evidence plus schema-valid last phase `author`, and counts the Retry
 node's actual children. Eviction, missing pods, fatal termination markers,
 and ordinary/executor exits fail the run. Preserve pods through collection.
-Only the collecting-map control pod mounts a Kubernetes API token; its service
+The collecting-map control pod mounts a Kubernetes API token; its service
 account needs Workflow get and Pod list in the deployment namespace. Application
 pods retain no API token. Runtime errors report an unindexed fatal envelope
 from before datastore opening and decoding; failed result writes also report
@@ -90,3 +90,14 @@ Use File termination policy and fixed-size, single-write updates of the
 kubelet-mounted inode; rename cannot replace that mount. Missing or non-author
 phase evidence fails the run. Preserve the reconciliation diagnostic so live
 OOM conformance proves it exercised a missing envelope.
+
+Fatal author failures publish the first bounded, schema-validated run-scoped
+cause before pod exit 69; retries and outcome collection reject that exit.
+The control-only daemon checks Workflow patch permission before readiness,
+then polls the datastore marker and patches `shutdown: Stop`. Argo v3.7.16
+execution control cancels non-exit pods and prevents new dispatch under Stop,
+while permitting onExit. Keep API tokens off author pods. Gate new invocations
+on the durable marker, and read it for exit-hook attribution rather than using
+cancelled sibling status. The hook may execute despite that marker; its own
+failure cannot publish a new run cause. Preserve this behavior with live S3
+handshake cases, since failFast alone waits for running loop children.

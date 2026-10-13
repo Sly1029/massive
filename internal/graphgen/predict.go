@@ -286,13 +286,29 @@ func (in *interpreter) mapOutcome(node *Node, input []byte) (*Outcome, error) {
 		pending[index] = index
 		outcome.Items[index].Input = item
 	}
+rounds:
 	for attempt := 1; len(pending) > 0; attempt++ {
 		var retry []int
 		terminal := false
-		for _, index := range pending {
+		for position, index := range pending {
 			item := &outcome.Items[index]
 			fault := in.workflow.Fault(Invocation{NodeID: node.ID, Item: index, Attempt: attempt})
 			item.Attempts = append(item.Attempts, fault)
+			if fault == FailFatal {
+				item.Status = Failed
+				outcome.Status = Failed
+				for _, queued := range pending[position+1:] {
+					if len(outcome.Items[queued].Attempts) == 0 {
+						outcome.Items[queued].Status = Blocked
+					} else {
+						outcome.Items[queued].Status = Failed
+					}
+				}
+				for _, queued := range retry {
+					outcome.Items[queued].Status = Failed
+				}
+				break rounds
+			}
 			switch {
 			case fault == Succeed:
 				value, err := behavior.Evaluate(node.Symbol, item.Input)

@@ -1693,6 +1693,8 @@ func runnerFailureSummary(outcome StepInvocationOutcome, fallback string) string
 		label = "schema-validation-failure"
 	case runnerExitStepExecution:
 		label = "step-execution-failure"
+	case FatalRunExitCode:
+        label = "fatal-run-failure"
 	case runnerExitNonRetryable:
 		label = "non-retryable-step-failure"
 	}

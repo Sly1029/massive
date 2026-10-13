@@ -59,3 +59,25 @@ func TestCollectingMapPreservesPlacementDeadlineAndExitHook(t *testing.T) {
 		t.Fatalf("collected failures changed hook outcome: %s %v %v", status, node, err)
 	}
 }
+
+func TestFatalWatcherUsesOnlyControlCredentialsAndGatesDispatch(t *testing.T) {
+	compiled := exitHookPlan(t, "python-map-outcomes")
+	templates := compiledTemplates(t, compiled.Plan)
+	watcher := templateByName(t, templates, fatalWatcherName)
+	if watcher["daemon"] != true || watcher["automountServiceAccountToken"] != true || watcher["outputs"] != nil || watcher["retryStrategy"] != nil {
+		t.Fatalf("fatal watcher lifecycle: %v", watcher)
+	}
+	container := watcher["container"].(map[string]any)
+	if container["readinessProbe"] == nil || container["resources"] != nil {
+		t.Fatalf("fatal watcher author resources or missing readiness: %v", container)
+	}
+	if args := container["args"].([]any); !containsArgs(args, "watch-fatal") || !containsArgs(args, "--run-id={{workflow.uid}}") {
+		t.Fatalf("fatal watcher identity: %v", args)
+	}
+	for _, name := range []string{"map-item-scan", "step-plan", "exit-notify"} {
+		pod := templateByName(t, templates, name)
+		if pod["automountServiceAccountToken"] == true {
+			t.Fatalf("author pod received API token: %s", name)
+		}
+	}
+}

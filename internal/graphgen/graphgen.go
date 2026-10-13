@@ -23,6 +23,7 @@ const (
 	ExitSchemaValidation = 65
 	ExitStepExecution    = 66
 	ExitNonRetryable     = 67
+	ExitFatal            = 69
 	ExitKilled           = 137
 )
 
@@ -47,6 +48,9 @@ const (
 	// MissingOutput reports success without publishing anything.
 	MissingOutput
 	faultCount
+	// FailFatal is scripted after the existing fault and collection bytes,
+	// so adding it preserves prior seeds. It aborts collecting maps too.
+	FailFatal
 )
 
 // Retryable reports whether another attempt may fix the failure.
@@ -204,6 +208,7 @@ func Generate(data []byte) (*Workflow, error) {
 		}
 	}
 	if len(collect) == 0 {
+		scriptFatal(c, workflow)
 		return workflow, nil
 	}
 	_, collecting, err := emitWorkflow(main, style, collect)
@@ -211,6 +216,7 @@ func Generate(data []byte) (*Workflow, error) {
 		return nil, err
 	}
 	collecting.Input, collecting.Faults, collecting.Interrupt = workflow.Input, workflow.Faults, workflow.Interrupt
+	scriptFatal(c, collecting)
 	return collecting, nil
 }
 
@@ -329,6 +335,28 @@ func scriptFaults(c *choices, w *Workflow) {
 	if c.chance(1, 4) {
 		w.Interrupt = &Interrupt{Batch: c.intn(12), Position: c.intn(maxMapItems + 2), Kind: InterruptKind(c.intn(int(interruptCount)))}
 	}
+}
+
+// scriptFatal extends the byte contract after the ordinary faults and policies.
+func scriptFatal(c *choices, w *Workflow) {
+	if !c.chance(1, 4) {
+		return
+	}
+	var executable []string
+	for _, id := range w.NodeOrder {
+		if kind := w.Nodes[id].Kind; kind == spec.NodeKindStep || kind == spec.NodeKindMap {
+			executable = append(executable, id)
+		}
+	}
+	if len(executable) == 0 {
+		return
+	}
+	node := w.Nodes[executable[c.intn(len(executable))]]
+	item := -1
+	if node.Kind == spec.NodeKindMap {
+		item = c.intn(maxMapItems + 1)
+	}
+	w.Faults[Invocation{NodeID: node.ID, Item: item, Attempt: 1}] = FailFatal
 }
 
 // choices reads fuzz bytes as bounded decisions. Exhausted input reads as

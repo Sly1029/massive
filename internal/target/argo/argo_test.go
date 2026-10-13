@@ -75,7 +75,7 @@ func TestStaticDAGBundleIsDeterministicAndCredentialFree(t *testing.T) {
 	tasks := main["dag"].(map[string]any)["tasks"].([]any)
 	merge := taskByName(t, tasks, "merge")
 	deps := merge["depends"]
-	if deps != "left.Succeeded && right.Succeeded" {
+	if deps != "(left.Succeeded && right.Succeeded) && "+fatalWatcherName+".Daemoned" {
 		t.Fatalf("merge readiness dependencies=%v", deps)
 	}
 	stepTemplate := templateByName(t, specValue["templates"].([]any), "step-merge")
@@ -387,7 +387,7 @@ func TestDecisionBranchesWaitForSuccessAndSelectOnlyOneOutput(t *testing.T) {
 	templates := template["spec"].(map[string]any)["templates"].([]any)
 	tasks := templates[0].(map[string]any)["dag"].(map[string]any)["tasks"].([]any)
 	accept := taskByName(t, tasks, "accept")
-	if accept["depends"] != "route.Succeeded" {
+	if accept["depends"] != "(route.Succeeded) && "+fatalWatcherName+".Daemoned" {
 		t.Fatalf("branch readiness: %v", accept)
 	}
 	if !strings.Contains(accept["when"].(string), "selection") || strings.Contains(accept["when"].(string), "accepted") {
@@ -986,7 +986,7 @@ func TestWorkflowInputsEnterThroughOneNormalizingTask(t *testing.T) {
 		t.Fatalf("entry input = %v", value)
 	}
 	mapTask := taskByName(t, tasks, "map-items")
-	if mapTask["depends"] != entryTaskName+".Succeeded" {
+	if mapTask["depends"] != "("+entryTaskName+".Succeeded) && "+fatalWatcherName+".Daemoned" {
 		t.Fatalf("map readiness = %v", mapTask["depends"])
 	}
 	if value := mapTask["arguments"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["value"]; value != "{{tasks.workflow-entry.outputs.parameters.result}}" {
@@ -1259,7 +1259,7 @@ func TestEveryNodePodTemplateMapsBackToItsNode(t *testing.T) {
 		nodes := templateNodes(compiled.Plan)
 		for _, item := range compiledTemplates(t, compiled.Plan) {
 			template := item.(map[string]any)
-			if template["container"] == nil || template["name"] == entryTaskName {
+			if template["container"] == nil || template["name"] == entryTaskName || template["name"] == fatalWatcherName {
 				continue
 			}
 			if _, ok := nodes[template["name"].(string)]; !ok {

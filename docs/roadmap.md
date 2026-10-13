@@ -81,6 +81,10 @@ for what works today.
   failing the map, so siblings' results survive and a downstream step decides.
   The local executor journals each failed item; Argo builds the same outcomes,
   including for a real out-of-memory kill of the item pod.
+- `FatalRunError(category, message)` bypasses retries and collecting maps,
+  stops dispatch, cancels in-flight siblings, and supplies an explicitly safe
+  typed cause to the terminal journal, run JSON, and exit hook. Argo uses a
+  control daemon and workflow `Stop` to preserve `onExit` while cancelling pods.
 - Persist bounded task logs and structured lifecycle events. Inspection is available
   in the shipped Go CLI; the Deno CLI has been removed.
 - Treat external side effects separately from immutable artifact publication:

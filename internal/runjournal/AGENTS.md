@@ -23,3 +23,7 @@ termination must be idempotent, and successful artifact references must survive.
 A map step that collects item failures carries `itemFailures: "collect"`;
 only such a successful map may contain `failed` items. Keep the field on every
 map-step status variant of the schema.
+
+Only failed runs may carry the optional typed `failure` cause. A fatal cause's
+node must name a failed dispatched step or map; preserve its safe message and
+category independently of sibling cancellation diagnostics.

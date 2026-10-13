@@ -282,6 +282,34 @@ succeed. A step calling `sys.exit()` is an ordinary, retried step failure. `ctx.
 current attempt, while `ctx.invocation.idempotency_key` stays the same across
 attempts so a retry can recognize side effects an earlier attempt committed.
 
+Raise `FatalRunError(category, message)` when a policy must stop the entire run,
+for example an exhausted spend budget, a refused retention gate, or a revoked
+credential:
+
+```python
+from massive import FatalRunError
+
+if budget.exhausted:
+    raise FatalRunError("budget.exhausted", "Spend limit reached")
+```
+
+The category is a stable identifier matching `[a-z][a-z0-9_.-]{0,63}`; the
+explicit message is limited to 1,024 Unicode characters. Both must be safe to
+persist. Chained exceptions and exception-group text are omitted; to include
+exception details, explicitly put safe details in the message. A fatal signal
+is never retried or collected by `item_failures="collect"`. Local execution
+stops dispatch and cancels running sibling process groups, retaining verified
+completed outputs. The failed run journal and `massive run --json` carry a typed
+`failure` with `kind="fatal"`, category, message, and node ID; the CLI exits 69.
+
+On Argo, each author invocation checks a run-scoped fatal marker before running.
+A control-only daemon polls that marker and requests workflow `shutdown: Stop`,
+which cancels sibling pods and preserves `onExit`. Cancellation takes effect
+as the controller reconciles the workflow. Its service account needs Workflow
+`patch` permission in addition to the collecting-map reader permissions; the
+daemon checks permission before author dispatch. Author pods receive no API
+token. Exit hooks receive the same safe fatal cause on both targets.
+
 ### Step hooks
 
 Pre- and post-step behavior such as tracing, cost budgets, or output redaction
@@ -364,7 +392,9 @@ graph.on_exit(notify, timeout=timedelta(minutes=5))
 
 `RunOutcome` carries `run_id`, `status` (`succeeded`, `failed`, or
 `cancelled`), `failed_node` (the node whose failure ended a failed run, when
-known), `started_at`, and `finished_at`. The hook is an ordinary top-level
+known), `started_at`, and `finished_at`. It also carries `failure_kind`,
+`category`, and `message`: all are null for other outcomes; fatal outcomes have
+`failure_kind="fatal"` and the author-supplied safe cause. The hook is an ordinary top-level
 function with its own contract, secrets, and timeout, and it must return
 `None`. Every hook has a finite timeout: an explicit or inherited timeout is
 used, otherwise registration assigns five minutes. Compiled plans without a
@@ -564,7 +594,7 @@ no other task output is copied into it.
 
 Only failures of the item's own code are collected, and only after its retries
 are exhausted. Schema violations, a broken environment, output verification,
-infrastructure errors, and cancellation still fail the map. The type checker
+infrastructure errors, cancellation, and `FatalRunError` still fail the map. The type checker
 and the Go compiler both require the consumer to accept
 `list[MapItemOutcome[Result]]`, and the run journal marks each failed item.
 The map has no failure threshold; raise `NonRetryableError` downstream, as
@@ -604,7 +634,7 @@ The important runtime categories are:
 At the command boundary, descriptor errors exit 64, schema/artifact failures
 exit 65, a user-step exception exits 66, and a `NonRetryableError` exits 67 so
 the orchestrator does not retry it. On Argo, a failed dependency preflight of
-the image exits 68 and is not retried either. Datastore outages are deliberately
+the image exits 68 and is not retried either. `FatalRunError` exits 69 and stops the whole run, including collecting maps. Datastore outages are deliberately
 not rewritten as artifact conflicts so retry policy can recognize them as
 transient infrastructure failures.
 

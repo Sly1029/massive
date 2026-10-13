@@ -276,3 +276,33 @@ func TestReadRunnerMessageValidatesBoundedStructuredResults(t *testing.T) {
 		})
 	}
 }
+
+func TestFatalRunnerRecordIsRequiredAndValidated(t *testing.T) {
+	for name, body := range map[string]string{
+		"valid":            `{"exitCode":69,"category":"budget.exhausted","message":"Safe cause"}`,
+		"missing":          "",
+		"no category":      `{"exitCode":69,"message":"Safe cause"}`,
+		"invalid category": `{"exitCode":69,"category":"Secret value","message":"Safe cause"}`,
+		"long category":    `{"exitCode":69,"category":"` + strings.Repeat("a", 65) + `","message":"Safe cause"}`,
+		"long message":     `{"exitCode":69,"category":"policy","message":"` + strings.Repeat("a", 1025) + `"}`,
+		"wrong exit":       `{"exitCode":67,"message":"Safe cause"}`,
+		"extra exception":  `{"exitCode":69,"category":"policy","message":"Safe cause","exception":"SECRET"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "descriptor.json")
+			if body != "" {
+				if err := os.WriteFile(path+".failure.json", []byte(body), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := readRunnerFailure(path, FatalRunExitCode)
+			if name == "valid" {
+				if err != nil || result.Category != "budget.exhausted" || result.Message != "Safe cause" {
+					t.Fatalf("fatal record: %+v %v", result, err)
+				}
+			} else if err == nil {
+				t.Fatal("invalid fatal record accepted")
+			}
+		})
+	}
+}
