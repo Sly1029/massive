@@ -676,7 +676,14 @@ templates have no `runtimeClassName` field; it is lowered into the template's
 pod spec, limited to `securityContext`, `dnsPolicy`, `dnsConfig`,
 `hostAliases`, `imagePullSecrets`, `schedulerName`,
 `terminationGracePeriodSeconds`, and one `containers` entry named `main` that
-may set `securityContext` and extended `resources` such as GPUs. Identity,
+may set hardening fields in `securityContext` and extended `resources` such as GPUs.
+Security patches allow non-root user/group IDs, `runAsNonRoot: true`,
+`RuntimeDefault`/`Localhost` seccomp and AppArmor profiles; containers also allow
+`readOnlyRootFilesystem: true`, dropping capabilities, `privileged: false`, and
+`allowPrivilegeEscalation: false`. Privilege-granting fields are rejected.
+Extended resource quantities use Kubernetes parsing, must be nonnegative whole
+numbers, and requests must equal limits (limits alone use Kubernetes defaulting).
+Identity,
 volumes, the main container's image, command, and environment, plan-owned CPU
 and memory, and every field with a typed setting are not patchable; patch
 directives such as `$patch` are unknown fields.

@@ -1,0 +1,18 @@
+{
+  "defaults": {
+    "podSpecPatch": {
+      "containers": [
+        {
+          "name": "main",
+          "securityContext": {
+            "capabilities": {
+              "add": [
+                "SYS_ADMIN"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

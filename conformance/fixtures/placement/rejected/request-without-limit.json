@@ -1,0 +1,16 @@
+{
+  "defaults": {
+    "podSpecPatch": {
+      "containers": [
+        {
+          "name": "main",
+          "resources": {
+            "requests": {
+              "nvidia.com/gpu": "1"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

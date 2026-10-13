@@ -1,0 +1,9 @@
+{
+  "defaults": {
+    "podSpecPatch": {
+      "securityContext": {
+        "runAsUser": 0
+      }
+    }
+  }
+}

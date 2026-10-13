@@ -467,3 +467,44 @@ func TestPlacementValidatesKubernetesFieldsStrictly(t *testing.T) {
 		})
 	}
 }
+
+func TestPlacementRejectsPrivilegeAndInvalidResourceFixtures(t *testing.T) {
+	fixtures, err := filepath.Glob("../../conformance/fixtures/placement/rejected/*.json")
+	if err != nil || len(fixtures) == 0 {
+		t.Fatalf("read rejection fixtures: %v", err)
+	}
+	for _, fixture := range fixtures {
+		t.Run(filepath.Base(fixture), func(t *testing.T) {
+			body, err := os.ReadFile(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ParsePlacement(body); err == nil {
+				t.Fatal("invalid placement accepted")
+			}
+			// The persisted deployment reader must enforce the same boundary,
+			// even when an invalid deployment has a correct content hash.
+			var placement Placement
+			if err := json.Unmarshal(body, &placement); err != nil {
+				t.Fatal(err)
+			}
+			profile := Profile{Name: "argo", ArtifactStoreBinding: "artifacts", Target: Target{
+				Kind: "argo", Namespace: "default", ServiceAccountName: "default", RuntimeTransport: "embedded-v0", Placement: &placement,
+			}}
+			if _, _, err := New(testPlanHash, profile, testPlanHash); err == nil {
+				t.Fatal("invalid deployment accepted")
+			}
+		})
+	}
+}
+
+func TestPlacementAcceptsHardeningAndEquivalentWholeQuantities(t *testing.T) {
+	_, err := ParsePlacement([]byte(`{"defaults":{"podSpecPatch":{
+		"securityContext":{"runAsNonRoot":true,"runAsUser":1000,"runAsGroup":1000,"seccompProfile":{"type":"RuntimeDefault"}},
+		"containers":[{"name":"main","securityContext":{"readOnlyRootFilesystem":true,"allowPrivilegeEscalation":false,"privileged":false,"capabilities":{"drop":["ALL"]},"appArmorProfile":{"type":"Localhost","localhostProfile":"restricted"}},
+		"resources":{"requests":{"example.com/device":"3000m"},"limits":{"example.com/device":"3"}}}]
+	}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+}

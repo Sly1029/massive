@@ -15,6 +15,7 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 type Spec struct {
@@ -169,6 +170,9 @@ func Parse(data []byte) (*Spec, error) {
 			Message: fmt.Sprintf("does not match canonical deployment content; expected %s", hash),
 		}}}
 	}
+	if err := validatePlacementResources(parsed.Profile.Target.Placement); err != nil {
+		return nil, err
+	}
 	return &parsed, nil
 }
 
@@ -196,7 +200,66 @@ func ParsePlacement(data []byte) (*Placement, error) {
 	if err := decoder.Decode(&placement); err != nil {
 		return nil, err
 	}
+	if err := validatePlacementResources(&placement); err != nil {
+		return nil, err
+	}
 	return &placement, nil
+}
+
+// Kubernetes quantities have semantics beyond the CRD's string schema. Only
+// extended resources are patchable, so every amount is integral and a request
+// cannot overcommit its limit. Limits alone use Kubernetes' request defaulting.
+func validatePlacementResources(placement *Placement) error {
+	if placement == nil {
+		return nil
+	}
+	settings := make(map[string]PodPlacement, len(placement.Nodes)+1)
+	if placement.Defaults != nil {
+		settings["defaults"] = *placement.Defaults
+	}
+	for id, setting := range placement.Nodes {
+		settings["nodes/"+id] = setting
+	}
+	for path, setting := range settings {
+		if len(setting.PodSpecPatch) == 0 {
+			continue
+		}
+		var patch struct {
+			Containers []struct {
+				Resources map[string]map[string]string `json:"resources"`
+			} `json:"containers"`
+		}
+		if err := json.Unmarshal(setting.PodSpecPatch, &patch); err != nil {
+			return err
+		}
+		for _, container := range patch.Containers {
+			parsed := map[string]map[string]resource.Quantity{}
+			for field, values := range container.Resources {
+				parsed[field] = map[string]resource.Quantity{}
+				for name, value := range values {
+					quantity, err := resource.ParseQuantity(value)
+					_, integral := quantity.AsScale(0)
+					if err != nil || quantity.Sign() < 0 || !integral {
+						return &DiagnosticsError{Diagnostics: []Diagnostic{{
+							Path: path + "/podSpecPatch/containers/0/resources/" + field,
+							Ref:  name, Message: "extended resource quantity must be a valid nonnegative whole number",
+						}}}
+					}
+					parsed[field][name] = quantity
+				}
+			}
+			for name, request := range parsed["requests"] {
+				limit, present := parsed["limits"][name]
+				if !present || request.Cmp(limit) != 0 {
+					return &DiagnosticsError{Diagnostics: []Diagnostic{{
+						Path: path + "/podSpecPatch/containers/0/resources/requests", Ref: name,
+						Message: "extended resource request must equal its limit",
+					}}}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func RecomputedHash(data []byte) (string, error) {

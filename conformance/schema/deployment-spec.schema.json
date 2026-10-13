@@ -177,7 +177,7 @@
       "minProperties": 1,
       "properties": {
         "containers": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "$ref": "#/$defs/mainContainerPatch" } },
-        "securityContext": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.PodSecurityContext" },
+        "securityContext": { "$ref": "#/$defs/podHardening" },
         "dnsPolicy": { "enum": ["ClusterFirst", "ClusterFirstWithHostNet", "Default", "None"] },
         "dnsConfig": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.PodDNSConfig" },
         "hostAliases": { "type": "array", "minItems": 1, "items": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.HostAlias" } },
@@ -199,16 +199,129 @@
           "minProperties": 1,
           "properties": { "requests": { "$ref": "#/$defs/extendedResources" }, "limits": { "$ref": "#/$defs/extendedResources" } }
         },
-        "securityContext": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.api.core.v1.SecurityContext" }
+        "securityContext": { "$ref": "#/$defs/containerHardening" }
       }
     },
     "extendedResources": {
       "description": "Extended resources such as GPUs. CPU and memory are execution requirements in the plan.",
       "type": "object",
       "minProperties": 1,
-      "propertyNames": { "$ref": "#/$defs/labelKey" },
+      "propertyNames": { "allOf": [{ "$ref": "#/$defs/labelKey" }, { "pattern": "/" }, { "not": { "pattern": "(^|\\.)(kubernetes\\.io|k8s\\.io)/" } }] },
       "properties": { "cpu": false, "memory": false },
       "additionalProperties": { "$ref": "https://raw.githubusercontent.com/argoproj/argo-workflows/HEAD/api/jsonschema/schema.json#/definitions/io.k8s.apimachinery.pkg.api.resource.Quantity" }
+    },
+    "hardeningProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "RuntimeDefault",
+            "Localhost"
+          ]
+        },
+        "localhostProfile": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "const": "Localhost"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "localhostProfile"
+        ]
+      },
+      "else": {
+        "properties": {
+          "localhostProfile": false
+        }
+      }
+    },
+    "podHardening": {
+      "description": "Hardening only; placement cannot grant pod privileges.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "runAsNonRoot": {
+          "const": true
+        },
+        "runAsUser": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runAsGroup": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "seccompProfile": {
+          "$ref": "#/$defs/hardeningProfile"
+        },
+        "appArmorProfile": {
+          "$ref": "#/$defs/hardeningProfile"
+        }
+      }
+    },
+    "containerHardening": {
+      "description": "Hardening only; placement cannot grant container privileges.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "runAsNonRoot": {
+          "const": true
+        },
+        "runAsUser": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runAsGroup": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "seccompProfile": {
+          "$ref": "#/$defs/hardeningProfile"
+        },
+        "appArmorProfile": {
+          "$ref": "#/$defs/hardeningProfile"
+        },
+        "privileged": {
+          "const": false
+        },
+        "allowPrivilegeEscalation": {
+          "const": false
+        },
+        "readOnlyRootFilesystem": {
+          "const": true
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "drop"
+          ],
+          "properties": {
+            "drop": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

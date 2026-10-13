@@ -1,0 +1,11 @@
+{
+  "defaults": {
+    "podSpecPatch": {
+      "securityContext": {
+        "seccompProfile": {
+          "type": "Unconfined"
+        }
+      }
+    }
+  }
+}

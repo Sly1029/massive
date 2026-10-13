@@ -13,3 +13,7 @@ diagnostics name the offending key.
 Bindings contain Secret names and keys, never credential values. The Argo target
 owns environment-variable restrictions and injects only refs declared by a user
 invocation; Kubernetes resolves their values in the deployment namespace.
+
+Placement security contexts allow hardening only. Validate extended resource
+quantities with the Kubernetes parser at both placement and DeploymentSpec
+read boundaries; whole-number requests must equal their limits.
