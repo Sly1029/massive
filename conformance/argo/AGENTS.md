@@ -13,3 +13,7 @@ Gate scripts run in the released runner image, whose S3 dependency is botocore;
 boto3 belongs to the SDK's development test environment. Exercise gates against
 real S3 before using them to control a live workflow. Fail early when a gated
 workflow terminalizes before reaching its handshake.
+
+A failed pod may retain an output parameter's `valueFrom` declaration after
+Argo cannot read its file. Require a `value` to establish result publication;
+an unpopulated declaration still represents a missing item envelope.

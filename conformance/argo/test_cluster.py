@@ -1370,9 +1370,11 @@ class DecisionConformance(unittest.TestCase):
             self.assertEqual(main_spec["terminationMessagePolicy"], "File")
             node_id = pod["metadata"]["annotations"]["workflows.argoproj.io/node-id"]
             node = run["status"]["nodes"][node_id]
+            # Argo may retain the declared valueFrom path when reading the
+            # killed pod's result file fails. Only a value proves publication.
             self.assertFalse(
                 any(
-                    parameter["name"] == "result"
+                    parameter["name"] == "result" and "value" in parameter
                     for parameter in node.get("outputs", {}).get("parameters", [])
                 )
             )
