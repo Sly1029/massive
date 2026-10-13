@@ -8,7 +8,7 @@ import {
   NODE_ID_PATTERN,
   START_NODE,
   type StepRun,
-  type WorkflowBuilder,
+  type WorkflowDefinition,
 } from "./workflow.ts";
 
 // A step of the emitted graph. Steps expanded from a call keep their own export
@@ -36,8 +36,8 @@ export interface FlatGraph {
  * entry or exit. The result is the graph a hand-inlined workflow would emit.
  */
 export function flattenWorkflow(
-  builder: WorkflowBuilder<unknown, never>,
-  active: ReadonlySet<WorkflowBuilder<unknown, never>> = new Set(),
+  builder: WorkflowDefinition,
+  active: ReadonlySet<WorkflowDefinition> = new Set(),
 ): FlatGraph {
   if (active.has(builder)) {
     throw new GraphValidationError(
@@ -142,7 +142,7 @@ export function flattenWorkflow(
   return { steps, edges };
 }
 
-function validateCallEdges(builder: WorkflowBuilder<unknown, never>): void {
+function validateCallEdges(builder: WorkflowDefinition): void {
   for (const call of builder.callNodes.values()) {
     const inbound = builder.graph.inboundNeighbors(call.id);
     if (inbound.length === 0) {

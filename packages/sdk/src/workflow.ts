@@ -59,9 +59,28 @@ export interface StepNode {
 export interface CallNode {
   readonly id: string;
   readonly kind: "call";
-  readonly child: WorkflowBuilder<unknown, never>;
+  readonly child: WorkflowDefinition;
   mergeInputs?: string[];
 }
+
+// Internal consumers need runtime state and graph operations, not the invariant
+// authoring types tied to a workflow's input and output schemas.
+export interface WorkflowDefinition extends Pick<
+  WorkflowBuilder<never, never>,
+  | "name"
+  | "input"
+  | "output"
+  | "defaults"
+  | "graph"
+  | "stepNodes"
+  | "callNodes"
+  | "runtimeRegistry"
+  | "addStep"
+  | "valueSchema"
+  | "addEdge"
+  | "addMergeEdges"
+  | "freeze"
+> {}
 
 // Handles consume values, so their input slot is contravariant: an edge accepts
 // a producer whose output is assignable to the consumer's input, never a wider one.
@@ -80,7 +99,7 @@ export class EndHandle<Output> {
 
 export class PathBuilder<Current> {
   constructor(
-    private readonly builder: WorkflowBuilder<unknown, never>,
+    private readonly builder: WorkflowDefinition,
     private readonly currentNodeId: string
   ) {}
 
@@ -114,7 +133,7 @@ export class PathBuilder<Current> {
 
 export class MergeBuilder<Current> {
   constructor(
-    private readonly builder: WorkflowBuilder<unknown, never>,
+    private readonly builder: WorkflowDefinition,
     private readonly sourceNodeIds: readonly string[]
   ) {}
 
@@ -125,6 +144,11 @@ export class MergeBuilder<Current> {
 }
 
 export class WorkflowBuilder<Input, Output> {
+  // The runtime schemas stay fixed even when a builder is passed to call().
+  // Function properties make both authoring type parameters invariant.
+  declare private readonly inputType: (input: Input) => Input;
+  declare private readonly outputType: (output: Output) => Output;
+
   readonly graph = new DirectedGraph();
   readonly stepNodes = new Map<string, StepNode>();
   readonly callNodes = new Map<string, CallNode>();

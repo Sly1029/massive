@@ -1,4 +1,5 @@
 import {
+  assert,
   assertEquals,
   assertRejects,
   assertThrows,
@@ -7,10 +8,14 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   emitWorkflowSpec,
+  env,
   GraphValidationError,
   MassiveError,
   resolveWorkflowEntrypoint,
+  retry,
+  secret,
   workflow,
+  type ContractSpec,
   type WorkflowBuilder,
   type WorkflowSpec,
 } from "../src/index.ts";
@@ -27,7 +32,7 @@ const sum = ({ input }: { readonly input: readonly number[] }) =>
   input.reduce((total, value) => total + value, 0);
 const show = ({ input }: { readonly input: number }) => `value:${input}`;
 
-function emit(builder: WorkflowBuilder<number, never>): Promise<WorkflowSpec> {
+function emit<Input, Output>(builder: WorkflowBuilder<Input, Output>): Promise<WorkflowSpec> {
   return emitWorkflowSpec(builder, { source });
 }
 
@@ -124,6 +129,119 @@ for (
     );
   });
 }
+
+Deno.test("nested calls keep their workflow defaults and step contract overrides", async () => {
+  const parentDefaults = {
+    env: env.container({ image: `example.com/parent@sha256:${"1".repeat(64)}` }),
+    retry: retry({ attempts: 2, delaySeconds: 1 }),
+    timeoutSeconds: 10,
+    secrets: [secret.ref("CONFIG", "parent-config")],
+  } satisfies ContractSpec;
+  const childDefaults = {
+    env: env.container({ image: `example.com/child@sha256:${"2".repeat(64)}` }),
+    retry: retry({ attempts: 3, delaySeconds: 2 }),
+    timeoutSeconds: 20,
+    secrets: [secret.ref("CHILD_ONLY"), secret.ref("CONFIG", "child-config")],
+  } satisfies ContractSpec;
+  const nestedDefaults = {
+    env: env.container({ image: `example.com/nested@sha256:${"3".repeat(64)}` }),
+    retry: retry({ attempts: 4, delaySeconds: 3 }),
+    timeoutSeconds: 30,
+    secrets: [secret.ref("CONFIG", "nested-config"), secret.ref("NESTED_ONLY")],
+  } satisfies ContractSpec;
+  const stepOverride = {
+    timeoutSeconds: 40,
+    secrets: [secret.ref("CONFIG", "step-config"), secret.ref("STEP_ONLY")],
+  } satisfies ContractSpec;
+  // Hand-resolve the override independently of the SDK's contract merger. The
+  // step keeps the nested retry/environment and replaces the same-named secret.
+  const overriddenDefaults = {
+    ...nestedDefaults,
+    timeoutSeconds: 40,
+    secrets: [
+      secret.ref("CONFIG", "step-config"),
+      secret.ref("NESTED_ONLY"),
+      secret.ref("STEP_ONLY"),
+    ],
+  } satisfies ContractSpec;
+
+  const build = (inline: boolean) => {
+    const g = workflow({
+      name: "contracts",
+      input: z.int(),
+      output: z.int(),
+      defaults: parentDefaults,
+    });
+    const before = g.step("before", { input: z.int(), output: z.int(), run: increment });
+    const after = g.step("after", { input: z.int(), output: z.int(), run: increment });
+    if (inline) {
+      g.start().to(before)
+        .to(g.step("child--before", {
+          input: z.int(), output: z.int(), run: increment, export: "increment",
+          contract: childDefaults,
+        }))
+        .to(g.step("child--deep--default", {
+          input: z.int(), output: z.int(), run: increment, export: "increment",
+          contract: nestedDefaults,
+        }))
+        .to(g.step("child--deep--override", {
+          input: z.int(), output: z.int(), run: increment, export: "increment",
+          contract: overriddenDefaults,
+        }))
+        .to(g.step("child--after", {
+          input: z.int(), output: z.int(), run: increment, export: "increment",
+          contract: childDefaults,
+        }))
+        .to(after).to(g.end());
+    } else {
+      const nested = workflow({
+        name: "nested", input: z.int(), output: z.int(), defaults: nestedDefaults,
+      });
+      nested.start()
+        .to(nested.step("default", {
+          input: z.int(), output: z.int(), run: increment, export: "increment",
+        }))
+        .to(nested.step("override", {
+          input: z.int(), output: z.int(), run: increment, export: "increment",
+          contract: stepOverride,
+        }))
+        .to(nested.end());
+      const child = workflow({
+        name: "child", input: z.int(), output: z.int(), defaults: childDefaults,
+      });
+      child.start()
+        .to(child.step("before", {
+          input: z.int(), output: z.int(), run: increment, export: "increment",
+        }))
+        .to(child.call("deep", nested))
+        .to(child.step("after", {
+          input: z.int(), output: z.int(), run: increment, export: "increment",
+        }))
+        .to(child.end());
+      g.start().to(before).to(g.call("child", child)).to(after).to(g.end());
+    }
+    return g;
+  };
+
+  const composed = await emit(build(false));
+  const expected = {
+    before: parentDefaults,
+    after: parentDefaults,
+    "child--before": childDefaults,
+    "child--after": childDefaults,
+    "child--deep--default": nestedDefaults,
+    "child--deep--override": overriddenDefaults,
+  };
+  for (const [id, defaults] of Object.entries(expected)) {
+    const node = composed.graph.nodes.find((node) => node.id === id);
+    assert(node?.kind === "step");
+    const { environmentRef, ...policy } = composed.contracts[node.contractRef]!;
+    const { env: environment, ...expectedPolicy } = defaults;
+    assertEquals(policy, { ...expectedPolicy, network: { egress: "none" } });
+    assertEquals(composed.environments[environmentRef], environment);
+  }
+  assertEquals(stableStringify(composed), stableStringify(await emit(build(true))));
+});
 
 Deno.test("transform emits a named step whose input schema is its producer's output", async () => {
   const build = (transform: boolean) => {

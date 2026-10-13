@@ -15,14 +15,14 @@ import { defineWorkflowPackage } from "./config.ts";
 import { MassiveError } from "./errors.ts";
 import { compareCodeUnits } from "./stable.ts";
 import type { EmitSourceSpec } from "./emit.ts";
-import { WorkflowBuilder } from "./workflow.ts";
+import { WorkflowBuilder, type WorkflowDefinition } from "./workflow.ts";
 
 export interface ResolveWorkflowEntrypointOptions {
   readonly target?: DeploymentTarget["kind"];
 }
 
 export interface ResolvedWorkflowEntrypoint {
-  readonly workflow: WorkflowBuilder<unknown, never>;
+  readonly workflow: WorkflowDefinition;
   readonly selectedExport: string;
   readonly packageRoot: string;
   readonly package: WorkflowPackageConfig;
@@ -169,7 +169,7 @@ async function selectWorkflowExport(
   filePath: string,
   requestedExport: string | undefined,
 ): Promise<{
-  readonly workflow: WorkflowBuilder<unknown, never>;
+  readonly workflow: WorkflowDefinition;
   readonly exportName: string;
 }> {
   const module = await import(pathToFileURL(filePath).href);
@@ -192,7 +192,7 @@ function selectExportedWorkflow(
   filePath: string,
   requestedExport: string | undefined,
 ): {
-  readonly workflow: WorkflowBuilder<unknown, never>;
+  readonly workflow: WorkflowDefinition;
   readonly exportName: string;
 } {
   if (requestedExport !== undefined) {
@@ -210,7 +210,7 @@ function selectExportedWorkflow(
   }
 
   const candidates = Object.entries(module)
-    .filter((entry): entry is [string, WorkflowBuilder<unknown, never>] =>
+    .filter((entry): entry is [string, WorkflowDefinition] =>
       entry[1] instanceof WorkflowBuilder
     )
     .sort(([left], [right]) => compareCodeUnits(left, right));

@@ -28,7 +28,7 @@ import {
   sha256RefText,
   stableStringify,
 } from "./stable.ts";
-import { END_NODE, START_NODE, type WorkflowBuilder } from "./workflow.ts";
+import { END_NODE, START_NODE, type WorkflowDefinition } from "./workflow.ts";
 
 export interface EmitSourceSpec extends SourceSpec {
   readonly packageId?: string;
@@ -152,8 +152,8 @@ const DEFAULT_CONTRACT = contract({
   network: net.denyAll(),
 });
 
-export async function emitWorkflowSpec<Input, Output>(
-  builder: WorkflowBuilder<Input, Output>,
+export async function emitWorkflowSpec(
+  builder: WorkflowDefinition,
   options: EmitWorkflowSpecOptions,
 ): Promise<WorkflowSpec> {
   const graph = flattenWorkflow(builder);

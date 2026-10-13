@@ -18,6 +18,10 @@ keep their export and their own workflow's contract defaults.
 `conformance/fixtures/composition` and `internal/controlplane`'s composition
 test pin both SDKs to the same graph and result.
 
+`WorkflowBuilder` input and output types are invariant because calls retain the
+child's runtime schemas. Use `WorkflowDefinition` for internal graph operations
+that erase authoring types; keep edge handles contravariant in their inputs.
+
 Both frontends write the canonical spec only to the file named by
 `emit --output <path>`; Go reads it from there, and frontend stdout and stderr
 are author diagnostics. The wrapper grants Deno write access to that path alone.
