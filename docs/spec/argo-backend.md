@@ -288,6 +288,57 @@ Argo `withParam`, and collects indexed outputs in source order. Template
 empty list through Argo's loop-output aggregation without invoking user code;
 the collector publishes canonical `[]`.
 
+**Maps that collect item failures.** Argo aggregates loop outputs only from
+successful children, so such a map loops over a per-item DAG (`map-outcome-*`)
+instead of the item pod. Its one task runs the item pod template, retry
+strategy included, with `continueOn: {failed: true, error: true}`, and the DAG's
+`result` output is a `valueFrom.expression` that forwards the pod's `result`
+parameter or JSON-encodes `{"lost": <terminal pod node ID>}` in task scope.
+Argo returns `valueFrom.default` literally, so a dynamic task reference cannot
+be placed there. Each item therefore reports an envelope in
+source order. Template `parallelism` still bounds the running item DAGs. The
+item runtime reports a mapper result (`value`/`ref`) or a terminal collected
+failure (`failure`/`failureRef`, above 100 bytes), and exits 0 for either.
+Retryable failures exit normally for Argo to retry. Every runtime-controlled
+error reports `{"fatal":true}`, starting before datastore opening, item
+hydration, and plan loading. Failure-reference publication and result-write
+errors fail the run too; the runtime also writes a fatal marker to the
+Kubernetes termination file before any further result I/O. The runtime and
+Python runner record `{"phase":"hydrate"}`, `{"phase":"author"}`, and
+`{"phase":"publish"}` before each phase. Author evidence brackets only the
+function call and its awaited work; validation, serialization, verification,
+and publication are runtime work. Records follow
+`conformance/schema/execution-evidence.schema.json`, padded to 32 bytes and
+written in one fixed-size overwrite of the kubelet-mounted inode (which cannot
+be replaced by rename). Item containers explicitly use
+`terminationMessagePolicy: File` with `/dev/termination-log`, so author logs
+cannot supply evidence.
+
+`runtime map collect-outcomes --max-attempts=<n> --workflow=<name>
+--namespace=<namespace>` rejects fatal markers. A missing outcome requires
+terminal scheduler evidence: the collector reads the Workflow and Pod API,
+matches Argo's `workflows.argoproj.io/node-id` annotation, verifies workflow
+ownership, requires main-container `OOMKilled` or a recorded termination signal
+and schema-valid last-phase evidence of `author`, and counts the actual children
+of the terminal Retry node. Ordinary positive exits, executor output-extraction failures, evictions, node loss, unavailable
+pods, fatal markers, and absent, unparseable, or non-author phase evidence fail
+the run. A Python runner killed during hydration or publication also fails the
+run even when the Go runtime survives. The contract's attempt budget validates
+the count; it never supplies an assumed count. A reconciled kill uses
+`runner-killed (signal; Argo author-phase reconciliation)` so live conformance
+can prove the missing-envelope path. Runner-reported kills retain the local
+`runner-killed (signal)` diagnostic. Failure records are validated against the
+shared JSON Schema
+before decoding, including required non-null diagnostics.
+
+Only collecting-map control pods mount a Kubernetes API token. Their service
+account needs namespace-scoped `get` on `argoproj.io/workflows` and `list` on
+core `pods`, in addition to the executor permissions. Keep item pods until
+collection completes. Inline and compressed Workflow node status are supported;
+missing evidence or offloaded node status produces a run error. Failure and
+missing-result envelopes fit the existing 128-byte budget, retaining the
+341-item limit.
+
 The compiler does not emit a one-off `Workflow`. Apply the source ConfigMap, datastore ConfigMap, and WorkflowTemplate, then submit it with
 `argo submit --from workflowtemplate/<name> -p 'input=<json>'`.
 
@@ -438,7 +489,8 @@ turning into successful empty results. The Argo node outputs persist the route
 index; Argo currently owns the execution journal rather than emitting the local
 `RunManifest` format.
 
-The main container does not automount the Kubernetes API token. The explicit
+Author main containers do not automount the Kubernetes API token. Collecting-map
+control pods mount it only to read terminal scheduler evidence as described above. The explicit
 `executor.serviceAccountName` supplies the Argo executor's identity; configure
 that account as described in Argo's service-account documentation, including the
 executor token and workflow-task-result permissions.
@@ -447,7 +499,9 @@ executor token and workflow-task-result permissions.
 
 `./scripts/test-argo.sh` builds the current wheel and a non-root runner image,
 creates a disposable kind cluster, installs Argo **v3.7.16**, and runs nested
-branches, arbitrary string tags, empty maps, and selected-item failures. It also
+branches, arbitrary string tags, empty maps, selected-item failures, and a map
+that collects an exception, a `NonRetryableError`, a segmentation fault, a
+timeout, and a real out-of-memory kill and must equal a local run. It also
 builds a generated source package of more than 2,000 files and 2 MiB with
 `object-store-v0`, publishes it through a port-forward to the cluster's MinIO,
 and requires the Argo result to equal a local run of the same workflow. It
@@ -532,7 +586,7 @@ credentials. The minimum S3 permissions each template needs are:
 | step, map item (author code) | run inputs, schemas, source archives, Blob/Tree bodies, `blobs/sha256/*` | run inputs and output manifests, `blobs/sha256/*`, file artifacts |
 | decision, select | `blobs/sha256/*` (referenced inputs) | none |
 | map expand | `blobs/sha256/*` (referenced list) | none |
-| map collect | `blobs/sha256/*` (referenced results) | `blobs/sha256/*` (collected list) |
+| map collect | `blobs/sha256/*` (referenced results and failure records) | `blobs/sha256/*` (collected list) |
 | `workflow-entry` (only before a decision or map) | none | `blobs/sha256/*` (normalized input) |
 
 Control tasks never receive application secrets, resources, or an author
@@ -596,8 +650,9 @@ credentials. Credential acquisition failures stop invocation before artifact IO.
 A contract's `retry` lowers to a `retryStrategy` on runner templates only
 (static steps and map items); decision, expansion, and collection control pods
 never retry. The strategy uses `limit: maxAttempts - 1`, `retryPolicy: Always`,
-and `expression: "!(lastRetry.exitCode in ['64', '65', '67', '68'])"`, so descriptor,
-schema, author non-retryable, and dependency preflight (68) failures stop
+and `expression: "!(lastRetry.exitCode in ['64', '65', '67', '68', '70'])"`, so descriptor,
+schema, author non-retryable, dependency preflight (68), and runner-result
+publication (70) failures stop
 immediately. Before each Python attempt, `massive runtime step` and
 `runtime map item` extract the verified source archive and run dependency
 preflight with the image's interpreter. An attempt that passes writes
@@ -620,8 +675,10 @@ running pods, and fails the workflow. It is plan data rather than deployment
 data because it changes what a run means (an unfinished run fails), so it must
 behave the same on the local target, where the orchestrator cancels execution
 through its ordinary cancellation path and records a failed journal naming the
-deadline. The live Argo gate stops a 600-second step with a 30-second deadline. Argo retries map items independently; the local orchestrator stops
-scheduling retries once any item fails terminally.
+deadline. The live Argo gate stops a 600-second step with a 30-second deadline.
+Argo retries map items independently; the local orchestrator stops scheduling
+retries once any item fails terminally, unless the map collects item failures
+and the failure is one it collects.
 
 
 ## Pod placement

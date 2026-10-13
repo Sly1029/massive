@@ -439,7 +439,11 @@ func TestFiniteMapLowersToBoundedIndexedArgoFanoutAndCollection(t *testing.T) {
 	}
 
 	itemTemplate := templateByName(t, templates, "map-item-map-items")
-	args := itemTemplate["container"].(map[string]any)["args"].([]any)
+	itemContainer := itemTemplate["container"].(map[string]any)
+	if itemContainer["terminationMessagePath"] != "/dev/termination-log" || itemContainer["terminationMessagePolicy"] != "File" {
+		t.Fatalf("map item lacks file-only termination evidence: %v", itemContainer)
+	}
+	args := itemContainer["args"].([]any)
 	if !containsArgs(args, "runtime", "map", "item") || !containsArgs(args, "--node=map-items") {
 		t.Fatalf("mapped runtime command = %v", args)
 	}
@@ -1140,14 +1144,19 @@ func TestRunDeadlineBoundsTheWholeWorkflowNotEachAttempt(t *testing.T) {
 	}
 }
 
-func exitHookPlan(t *testing.T) *plan.CompileResult {
+func exitHookPlan(t *testing.T, fixture string) *plan.CompileResult {
 	t.Helper()
-	compiled := fixturePlan(t, "python-linear")
-	compiled.Plan.Contracts[0].TimeoutSeconds = proto.Uint32(300)
+	compiled := fixturePlan(t, fixture)
 	var step *planpb.GraphNode
 	for _, node := range compiled.Plan.Graph.Nodes {
 		if node.GetKind() == "step" {
 			step = node
+		}
+	}
+	for _, contract := range compiled.Plan.Contracts {
+		if contract.GetContractRef() == step.GetContractRef() {
+			contract.TimeoutSeconds = proto.Uint32(300)
+			contract.Retry = nil
 		}
 	}
 	input, err := canonical.CanonicalizeJSON(schemacontract.RunOutcomeSchemaJSON)
@@ -1168,7 +1177,7 @@ func exitHookPlan(t *testing.T) *plan.CompileResult {
 }
 
 func TestExitHookRunsFromAnExitHandlerThatCannotFailTheWorkflow(t *testing.T) {
-	compiled := exitHookPlan(t)
+	compiled := exitHookPlan(t, "python-linear")
 	data, _ := rehashPlan(t, compiled.Plan)
 	binding := deploymentForPlan(t, data)
 	// The hook runs author code, so it accepts a placement override.
@@ -1288,7 +1297,7 @@ func TestRehashedExitHooksAreRejectedAtEveryPlanBoundary(t *testing.T) {
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
-			compiled := exitHookPlan(t)
+			compiled := exitHookPlan(t, "python-linear")
 			mutate(compiled.Plan)
 			body, hash := rehashPlan(t, compiled.Plan)
 			if _, err := plan.VerifyCanonicalJSON(body, hash); err == nil {

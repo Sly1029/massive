@@ -33,6 +33,10 @@ ENTRY_RECORDS = [
 ]
 # Submitters may not point pods at bodies in the shared store.
 REFERENCE_INPUT = '@{"hash":"sha256:' + "0" * 64 + '","size":5000}'
+MAP_OUTCOME_TASKS = [
+    {"name": name, "behavior": name}
+    for name in ("ok", "flaky", "raise", "refuse", "segfault", "hang", "oom")
+]
 DATASTORE = {
     "kind": "s3",
     "bucket": "my-bucket",
@@ -523,6 +527,14 @@ class DecisionConformance(unittest.TestCase):
         install_workflow(fixture_source(Path(__file__).parent / "deadline.py"))
         install_workflow(fixture_source(Path(__file__).parent / "exit_hooks.py"))
         install_workflow(fixture_source(Path(__file__).parent / "exit_retry.py"))
+        map_outcomes = fixture_source(Path(__file__).parent / "map_outcomes.py")
+        install_workflow(map_outcomes, selector="#graph")
+        # Locally nothing limits memory, so the local run omits the OOM item.
+        cls.local_outcomes = run_locally(
+            map_outcomes,
+            [task for task in MAP_OUTCOME_TASKS if task["behavior"] != "oom"],
+            selector="#graph",
+        )
         large_values = fixture_source(Path(__file__).parent / "large_values.py")
         install_workflow(large_values, selector="#graph")
         install_workflow(large_values, selector="#entry_graph")
@@ -566,6 +578,7 @@ class DecisionConformance(unittest.TestCase):
             "deadline": 1,
             "exit-hook": 21,
             "exit-retry": 21,
+            "map-outcomes": MAP_OUTCOME_TASKS,
         }.items():
             run = kubectl(
                 "create",
@@ -600,6 +613,7 @@ class DecisionConformance(unittest.TestCase):
                                 "deadline": "argo-deadline",
                                 "exit-hook": "argo-exit-hook",
                                 "exit-retry": "argo-exit-retry",
+                                "map-outcomes": "argo-map-outcomes",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -1069,6 +1083,306 @@ class DecisionConformance(unittest.TestCase):
         pods = self.pods(run, "step-double")
         self.assertEqual([node["phase"] for node in pods], ["Failed"])
         self.assertIn("exit code 68", pods[0].get("message", ""))
+
+    def test_referenced_map_input_damage_after_expansion_fails_the_run(self) -> None:
+        for mode in ("deleted", "corrupt"):
+            with self.subTest(mode=mode):
+                template_name = f"argo-map-damaged-{mode}"
+                source = (
+                    fixture_source(Path(__file__).parent / "map_outcomes.py")
+                    .replace('name="argo-map-outcomes"', f'name="{template_name}"')
+                    .replace(
+                        "task, attempt = context.inputs, context.invocation.attempt",
+                        'print("AUTHOR_STARTED", flush=True)\n'
+                        "    task, attempt = context.inputs, context.invocation.attempt",
+                    )
+                )
+                install_workflow(source, selector="#graph")
+                template = kubectl(
+                    "get", "workflowtemplate", template_name, "-o", "json"
+                )
+                item_template = next(
+                    item
+                    for item in template["spec"]["templates"]
+                    if item["name"] == "map-item-scan"
+                )
+                gate = DATASTORE["prefix"] + "/gates/{{workflow.uid}}"
+                # Gate the first attempt before hydration. Releasing its object
+                # also releases subsequent retries, without a timing assumption.
+                gate_script = (Path(__file__).parent / "reference_gate.py").read_text()
+                item_template["initContainers"] = [
+                    {
+                        "name": "reference-gate",
+                        "image": item_template["container"]["image"],
+                        "command": [
+                            "python",
+                            "-c",
+                            gate_script,
+                            DATASTORE["bucket"],
+                            gate,
+                            "http://minio:9000",
+                        ],
+                        "env": item_template["container"]["env"],
+                    }
+                ]
+                for key in (
+                    "resourceVersion",
+                    "uid",
+                    "creationTimestamp",
+                    "managedFields",
+                ):
+                    template["metadata"].pop(key, None)
+                kubectl("apply", "-f", "-", document=template)
+                run = kubectl(
+                    "create",
+                    "-f",
+                    "-",
+                    "-o",
+                    "json",
+                    document={
+                        "apiVersion": "argoproj.io/v1alpha1",
+                        "kind": "Workflow",
+                        "metadata": {"generateName": f"map-damaged-{mode}-"},
+                        "spec": {
+                            "workflowTemplateRef": {"name": template_name},
+                            "arguments": {
+                                "parameters": [
+                                    {
+                                        "name": "input",
+                                        "value": json.dumps(
+                                            [
+                                                {
+                                                    "name": secrets.token_hex(8)
+                                                    + "x" * 5000,
+                                                    "behavior": "ok",
+                                                }
+                                            ]
+                                        ),
+                                    }
+                                ]
+                            },
+                        },
+                    },
+                )
+                name, uid = run["metadata"]["name"], run["metadata"]["uid"]
+                deadline = time.monotonic() + 120
+                while time.monotonic() < deadline:
+                    run = kubectl("get", "workflow", name, "-o", "json")
+                    expanded = [
+                        node
+                        for node in run.get("status", {}).get("nodes", {}).values()
+                        if node.get("type") == "Pod"
+                        and node.get("templateName") == "map-expand-scan"
+                        and node.get("phase") == "Succeeded"
+                    ]
+                    pods = kubectl(
+                        "get",
+                        "pods",
+                        "-l",
+                        f"workflows.argoproj.io/workflow={name}",
+                        "-o",
+                        "json",
+                    )["items"]
+                    gated = [
+                        pod
+                        for pod in pods
+                        if any(
+                            status["name"] == "reference-gate"
+                            and "running" in status.get("state", {})
+                            for status in pod.get("status", {}).get(
+                                "initContainerStatuses", []
+                            )
+                        )
+                    ]
+                    if expanded and gated:
+                        gate_logs = subprocess.run(
+                            [
+                                os.environ.get("KUBECTL", "kubectl"),
+                                "-n",
+                                "argo",
+                                "logs",
+                                gated[0]["metadata"]["name"],
+                                "-c",
+                                "reference-gate",
+                            ],
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        if "REFERENCE_GATE_WAITING" in gate_logs.stdout:
+                            break
+                    if run.get("status", {}).get("phase") in ("Failed", "Error"):
+                        self.fail(
+                            f"{name} failed before reaching the expansion gate: {run['status']}"
+                        )
+                    time.sleep(0.5)
+                else:
+                    self.fail(f"{name} did not reach the expansion gate")
+                ref = json.loads(expanded[0]["outputs"]["parameters"][0]["value"])[0][
+                    "listRef"
+                ]
+                key = (
+                    DATASTORE["prefix"]
+                    + "/blobs/sha256/"
+                    + ref["hash"].removeprefix("sha256:")
+                )
+                operation = (
+                    f"s.delete_object(Bucket={DATASTORE['bucket']!r},Key={key!r})"
+                    if mode == "deleted"
+                    else f"s.put_object(Bucket={DATASTORE['bucket']!r},Key={key!r},Body=b'x'*{ref['size']},ContentType='application/json')"
+                )
+                mutate = (
+                    "import botocore.session; "
+                    "s=botocore.session.get_session().create_client('s3',endpoint_url='http://minio:9000',region_name='us-east-1'); "
+                    + operation
+                    + "; "
+                    + f"s.put_object(Bucket={DATASTORE['bucket']!r},Key={DATASTORE['prefix'] + '/gates/' + uid!r},Body=b'go')"
+                )
+                kubectl(
+                    "exec",
+                    gated[0]["metadata"]["name"],
+                    "-c",
+                    "reference-gate",
+                    "--",
+                    "python",
+                    "-c",
+                    mutate,
+                )
+                deadline = time.monotonic() + 180
+                while time.monotonic() < deadline:
+                    run = kubectl("get", "workflow", name, "-o", "json")
+                    if run.get("status", {}).get("phase") in (
+                        "Succeeded",
+                        "Failed",
+                        "Error",
+                    ):
+                        break
+                    time.sleep(0.5)
+                self.assertIn(
+                    run["status"]["phase"], ("Failed", "Error"), run["status"]
+                )
+                attempts = [
+                    node
+                    for node in run["status"]["nodes"].values()
+                    if node.get("type") == "Pod"
+                    and node.get("templateName") == "map-item-scan"
+                ]
+                self.assertEqual(len(attempts), 1 if mode == "corrupt" else 2)
+                pods = kubectl(
+                    "get",
+                    "pods",
+                    "-l",
+                    f"workflows.argoproj.io/workflow={name}",
+                    "-o",
+                    "json",
+                )["items"]
+                for pod in pods:
+                    if any(
+                        container["name"] == "reference-gate"
+                        for container in pod["spec"].get("initContainers", [])
+                    ):
+                        logs = subprocess.run(
+                            [
+                                os.environ.get("KUBECTL", "kubectl"),
+                                "-n",
+                                "argo",
+                                "logs",
+                                pod["metadata"]["name"],
+                                "-c",
+                                "main",
+                            ],
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        ).stdout
+                        self.assertNotIn("AUTHOR_STARTED", logs)
+                        termination = next(
+                            status
+                            for status in pod["status"]["containerStatuses"]
+                            if status["name"] == "main"
+                        )["state"]["terminated"]
+                        self.assertEqual(
+                            json.loads(termination["message"]), {"fatal": True}
+                        )
+
+    def test_collected_item_failures_match_local_and_survive_an_oom_kill(self) -> None:
+        run = self.completed("map-outcomes")
+        self.assertEqual(
+            run["status"]["phase"],
+            "Succeeded",
+            str(
+                [
+                    (node["displayName"], node["phase"], node.get("message"))
+                    for node in run["status"].get("nodes", {}).values()
+                ]
+            ),
+        )
+        root = run["status"]["nodes"][run["metadata"]["name"]]
+        outcomes = json.loads(root["outputs"]["parameters"][0]["value"])
+        oom = [task["behavior"] for task in MAP_OUTCOME_TASKS].index("oom")
+        killed = outcomes.pop(oom)
+        # Every item but the OOM kill equals the local run byte for byte.
+        self.assertEqual(outcomes, self.local_outcomes)
+        self.assertEqual(
+            [outcome["status"] for outcome in outcomes],
+            ["succeeded", "succeeded", "failed", "failed", "failed", "failed"],
+        )
+        # Require cgroup OOM death of the main container and missing-envelope
+        # reconciliation; a surviving runtime publishing a kill is insufficient.
+        self.assertEqual(killed["status"], "failed")
+        self.assertEqual(killed["failure"]["kind"], "killed")
+        self.assertEqual(killed["failure"]["attempts"], 2)
+        self.assertEqual(
+            killed["failure"]["diagnostic"],
+            "runner-killed (signal; Argo author-phase reconciliation)",
+        )
+        terminal_oom_pods = []
+        for pod in kubectl(
+            "get",
+            "pods",
+            "-l",
+            f"workflows.argoproj.io/workflow={run['metadata']['name']}",
+            "-o",
+            "json",
+        )["items"]:
+            main = next(
+                (
+                    status
+                    for status in pod["status"].get("containerStatuses", [])
+                    if status["name"] == "main"
+                ),
+                None,
+            )
+            termination = (
+                {} if main is None else main.get("state", {}).get("terminated", {})
+            )
+            if termination.get("reason") != "OOMKilled":
+                continue
+            terminal_oom_pods.append(pod)
+            self.assertEqual(json.loads(termination["message"]), {"phase": "author"})
+            main_spec = next(
+                container
+                for container in pod["spec"]["containers"]
+                if container["name"] == "main"
+            )
+            self.assertEqual(main_spec["terminationMessagePolicy"], "File")
+            node_id = pod["metadata"]["annotations"]["workflows.argoproj.io/node-id"]
+            node = run["status"]["nodes"][node_id]
+            # Argo may retain the declared valueFrom path when reading the
+            # killed pod's result file fails. Only a value proves publication.
+            self.assertFalse(
+                any(
+                    parameter["name"] == "result" and "value" in parameter
+                    for parameter in node.get("outputs", {}).get("parameters", [])
+                )
+            )
+        self.assertEqual(len(terminal_oom_pods), 2)
+        # Failed item pods did not fail the DAG.
+        pods = self.pods(run, "map-item-scan")
+        self.assertTrue(pods)
+        self.assertIn("Failed", {node["phase"] for node in pods})
 
     def test_selected_item_failure_cannot_produce_success(self) -> None:
         run = self.completed("failure")

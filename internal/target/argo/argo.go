@@ -21,6 +21,7 @@ import (
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/materialization"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/spec"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"google.golang.org/protobuf/encoding/protojson"
 	"sigs.k8s.io/yaml"
@@ -598,10 +599,11 @@ func workflowTemplate(p *planpb.WorkflowPlan, d *deployment.Spec, sourceArgs []s
 	}, runtimeName, nil
 }
 
+// Argo returns valueFrom.default literally. Evaluate the fallback in scope so
+// the lost envelope carries the actual last retry child's pod node ID.
+const mapItemOutcomeExpression = "tasks.attempt.outputs?.parameters?.result ?? toJSON({lost: tasks.attempt.id})"
+
 func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement, contract *planpb.ExecutionContract, runtimeName, workflowName string, storage *deployment.Target, controlPlacement, itemPlacement deployment.PodPlacement, sourceArgs []string) ([]any, error) {
-	if node.GetItemFailures() != "" {
-		return nil, fmt.Errorf("argo target: map %q collects item failures, which the Argo target does not lower yet; run it with the local target", node.GetId())
-	}
 	expandName := argoFieldName("map-expand-" + node.GetId())
 	itemName := argoFieldName("map-item-" + node.GetId())
 	collectName := argoFieldName("map-collect-" + node.GetId())
@@ -623,6 +625,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 		}, sourceArgs, []string{
 			"--node=" + node.GetId(),
 			"--item={{inputs.parameters.input}}",
+			"--termination-log", "/dev/termination-log",
 			"--output", "/tmp/massive/result.json",
 			"--project", "argo/" + workflowName,
 			"--run-id", "{{workflow.uid}}",
@@ -632,13 +635,49 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 	if err != nil {
 		return nil, err
 	}
+	itemContainer := itemTemplate["container"].(map[string]any)
+	itemContainer["terminationMessagePath"] = "/dev/termination-log"
+	itemContainer["terminationMessagePolicy"] = "File"
 	applyRetryStrategy(itemTemplate, contract)
-	collectTemplate, err := runtimePodTemplate(
-		collectName, node.GetId(), env, controlContract, runtimeName, storage, controlPlacement, []string{"input"},
-		[]string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath},
-	)
+	collectArgs := []string{"runtime", "map", "collect", "--input={{inputs.parameters.input}}", "--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath}
+	invokeName := itemName
+	var outcomeTemplate map[string]any
+	if node.GetItemFailures() == spec.MapItemFailuresCollect {
+		// Each item runs in its own DAG that continues past the item pod's
+		// failure, so the item still reports exactly one outcome: the runtime's
+		// envelope, or the lost marker when the pod ended without writing one.
+		// Argo aggregates only successful loop children, so the loop runs over
+		// these DAGs rather than over the pods.
+		invokeName = argoFieldName("map-outcome-" + node.GetId())
+		outcomeTemplate = map[string]any{
+			"name":   invokeName,
+			"inputs": map[string]any{"parameters": []any{map[string]any{"name": "input"}}},
+			"outputs": map[string]any{"parameters": []any{map[string]any{
+				"name": "result", "valueFrom": map[string]any{
+					"expression": mapItemOutcomeExpression,
+				},
+			}}},
+			"dag": map[string]any{"tasks": []any{map[string]any{
+				"name": "attempt", "template": itemName,
+				"continueOn": map[string]any{"failed": true, "error": true},
+				"arguments":  map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{inputs.parameters.input}}"}}},
+			}}},
+		}
+		collectArgs = []string{
+			"runtime", "map", "collect-outcomes", "--input={{inputs.parameters.input}}",
+			fmt.Sprintf("--max-attempts=%d", max(contract.GetRetry().GetMaxAttempts(), 1)),
+			"--workflow={{workflow.name}}", "--namespace={{workflow.namespace}}",
+			"--output", "/tmp/massive/result.json", "--datastore-config", datastoreConfigPath,
+		}
+	}
+	collectTemplate, err := runtimePodTemplate(collectName, node.GetId(), env, controlContract, runtimeName, storage, controlPlacement, []string{"input"}, collectArgs)
 	if err != nil {
 		return nil, err
+	}
+
+	if node.GetItemFailures() == spec.MapItemFailuresCollect {
+		// Only this control pod reads terminal Workflow/Pod evidence.
+		collectTemplate["automountServiceAccountToken"] = true
 	}
 
 	mapTemplate := map[string]any{
@@ -654,7 +693,7 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{inputs.parameters.input}}"}}},
 			},
 			map[string]any{
-				"name": "invoke", "template": itemName, "dependencies": []any{"expand"},
+				"name": "invoke", "template": invokeName, "dependencies": []any{"expand"},
 				"withParam": "{{tasks.expand.outputs.parameters.result}}",
 				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{item}}"}}},
 			},
@@ -663,6 +702,9 @@ func argoMapTemplates(node *planpb.GraphNode, env *planpb.EnvironmentRequirement
 				"arguments": map[string]any{"parameters": []any{map[string]any{"name": "input", "value": "{{tasks.invoke.outputs.parameters.result}}"}}},
 			},
 		}},
+	}
+	if outcomeTemplate != nil {
+		return []any{mapTemplate, expandTemplate, outcomeTemplate, itemTemplate, collectTemplate}, nil
 	}
 	return []any{mapTemplate, expandTemplate, itemTemplate, collectTemplate}, nil
 }
@@ -1025,7 +1067,7 @@ func boolp(v bool) *bool   { return &v }
 // descriptor and schema failures are deterministic, 67 is the author's explicit
 // opt-out, and 68 is a failed dependency preflight of the image. Timeouts (124),
 // author exceptions (66), and pod errors retry.
-var runnerNonRetryableExitCodes = []string{"64", "65", "67", "68"}
+var runnerNonRetryableExitCodes = []string{"64", "65", "67", "68", "70"}
 
 // retryArgs tells the runtime which attempt Argo is dispatching so descriptors,
 // manifest slots, and step context agree with the scheduler's retry count.

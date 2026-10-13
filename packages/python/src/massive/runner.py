@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib
 import importlib.resources
 import inspect
 import json
+import os
 import re
 import shutil
 import sys
@@ -146,6 +148,7 @@ class _ResolvedStep:
         input_body: bytes,
         files: ArtifactFiles,
         workspace: Path,
+        termination_log: Path | None = None,
     ) -> bytes:
         from pydantic import ValidationError as PydanticValidationError
         from pydantic_core import PydanticSerializationError
@@ -175,6 +178,7 @@ class _ResolvedStep:
                 max_attempts=descriptor["maxAttempts"],
             ),
         )
+        _write_execution_phase(termination_log, "author")
         try:
             output = self.function(context)
             if inspect.isawaitable(output):
@@ -194,6 +198,8 @@ class _ResolvedStep:
             # The runner owns the process status; a step must not end it as success
             # or impersonate a protocol exit code.
             raise StepError(f"step called sys.exit({error.code!r})") from error
+        finally:
+            _write_execution_phase(termination_log, "publish")
 
         try:
             validated_output = self.output_adapter.validate_python(output)
@@ -211,10 +217,11 @@ class _ResolvedStep:
             raise SchemaError(f"output is not canonical JSON: {error}") from error
 
 
-def run_descriptor_path(path: Path) -> int:
+def run_descriptor_path(path: Path, termination_log: Path | None = None) -> int:
     try:
+        _write_execution_phase(termination_log, "hydrate")
         descriptor = _load_descriptor(path)
-        _execute(descriptor)
+        _execute(descriptor, termination_log)
         return 0
     except DescriptorError as error:
         label, message, code = "descriptor-resolution-failure", str(error), _DESCRIPTOR_EXIT
@@ -284,7 +291,7 @@ def _load_descriptor(path: Path) -> StepInvocationDescriptor:
     return cast(StepInvocationDescriptor, descriptor)
 
 
-def _execute(descriptor: StepInvocationDescriptor) -> None:
+def _execute(descriptor: StepInvocationDescriptor, termination_log: Path | None = None) -> None:
     from pydantic import ValidationError as PydanticValidationError
 
     from .artifact import ArtifactError, ArtifactRuntime
@@ -310,7 +317,11 @@ def _execute(descriptor: StepInvocationDescriptor) -> None:
         workspace = Path(scratch) / "workspace"
         workspace.mkdir()
         output_body = step.invoke(
-            descriptor, input_body, ArtifactFiles(datastore, Path(scratch) / "files"), workspace
+            descriptor,
+            input_body,
+            ArtifactFiles(datastore, Path(scratch) / "files"),
+            workspace,
+            termination_log,
         )
     try:
         ArtifactRuntime(datastore).publish_json(destination, producer, output_body)
@@ -548,11 +559,28 @@ def _safe_archive_path(path: str) -> bool:
     )
 
 
+def _write_execution_phase(
+    path: Path | None, phase: Literal["hydrate", "author", "publish"]
+) -> None:
+    if path is None:
+        return
+    # execution-evidence.schema.json is shared with the Go collector. Kubelet
+    # mounts this inode, so keep it intact and overwrite 32 bytes in one write.
+    body = json.dumps({"phase": phase}, separators=(",", ":")).ljust(32).encode("ascii")
+    try:
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT, 0o600), "wb", buffering=0) as file:
+            if file.write(body) != len(body):
+                raise OSError("short execution-evidence write")
+    except OSError as error:
+        raise DescriptorError(f"cannot record execution phase: {error}") from error
+
+
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("descriptor-resolution-failure: expected descriptor path", file=sys.stderr)
-        return _DESCRIPTOR_EXIT
-    return run_descriptor_path(Path(sys.argv[1]))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("descriptor", type=Path)
+    parser.add_argument("--termination-log", type=Path)
+    args = parser.parse_args()
+    return run_descriptor_path(args.descriptor, args.termination_log)
 
 
 if __name__ == "__main__":

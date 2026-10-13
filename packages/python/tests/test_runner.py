@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import signal
 import subprocess
 import sys
 import tarfile
@@ -16,6 +17,7 @@ from typing import Any, cast
 
 import boto3
 import pytest
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from massive import canonical_json, sha256_ref
@@ -908,3 +910,39 @@ def test_runner_rejects_nonfinite_float_outputs_before_publication(
     assert result.returncode == 65, result.stderr
     assert "output is not canonical JSON" in result.stderr
     assert not (store / descriptor["output"]["manifestKey"]).exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX SIGKILL")
+@pytest.mark.parametrize("phase", ["hydrate", "author", "publish"])
+def test_killed_runner_preserves_evidence_of_the_actual_execution_phase(
+    tmp_path: Path, phase: str
+) -> None:
+    export = {"hydrate": "hydration", "author": "author", "publish": "publication"}[phase]
+    descriptor, _, _ = _descriptor(tmp_path, export=f"killed_during_{export}")
+    termination = tmp_path / "termination-log"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "massive.runner",
+            str(descriptor),
+            "--termination-log",
+            str(termination),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == -signal.SIGKILL, result.stderr
+    record = termination.read_bytes()
+    assert len(record) == 32
+    evidence = json.loads(record)
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parents[3]
+            / "conformance/schema/execution-evidence.schema.json"
+        ).read_text()
+    )
+    Draft202012Validator(schema).validate(evidence)
+    assert evidence == {"phase": phase}
+    assert not Path(str(descriptor) + ".failure.json").exists()

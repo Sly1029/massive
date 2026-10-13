@@ -59,9 +59,6 @@ func FuzzGeneratedPlanLowering(f *testing.F) {
 			if collision != "" && strings.Contains(err.Error(), "collides") {
 				return
 			}
-			if collectsItemFailures(compiled.Plan) && strings.Contains(err.Error(), "collects item failures") {
-				return
-			}
 			t.Fatalf("valid plan was not lowered: %v", err)
 		}
 		if collision != "" {
@@ -263,6 +260,7 @@ func checkLoweredDAG(t *testing.T, p *planpb.WorkflowPlan, templates []any) {
 			if parallelism, _ := mapTemplate["parallelism"].(float64); parallelism != float64(node.GetMaxConcurrency()) {
 				t.Fatalf("map %s parallelism = %v, want %d", name, mapTemplate["parallelism"], node.GetMaxConcurrency())
 			}
+			checkMapItemFailures(t, p, node, mapTemplate, templateByName)
 		}
 		if node.GetKind() == "step" {
 			checkRetry(t, p, node, templateByName[argoFieldName("step-"+node.GetId())])
@@ -339,11 +337,49 @@ func checkRetry(t *testing.T, p *planpb.WorkflowPlan, node *planpb.GraphNode, te
 	}
 }
 
-func collectsItemFailures(p *planpb.WorkflowPlan) bool {
-	for _, node := range p.Graph.Nodes {
-		if node.GetItemFailures() != "" {
-			return true
+// checkMapItemFailures requires a failing map to loop over item pods, and a
+// collecting map to loop over per-item DAGs that continue past the item pod
+// and report the lost marker when it wrote no outcome.
+func checkMapItemFailures(t *testing.T, p *planpb.WorkflowPlan, node *planpb.GraphNode, mapTemplate map[string]any, templates map[string]map[string]any) {
+	t.Helper()
+	tasks := map[string]map[string]any{}
+	for _, value := range mapTemplate["dag"].(map[string]any)["tasks"].([]any) {
+		task := value.(map[string]any)
+		tasks[task["name"].(string)] = task
+	}
+	itemName := argoFieldName("map-item-" + node.GetId())
+	collectArgs := templates[argoFieldName("map-collect-"+node.GetId())]["container"].(map[string]any)["args"].([]any)
+	if node.GetItemFailures() == "" {
+		if tasks["invoke"]["template"] != itemName || collectArgs[2] != "collect" {
+			t.Fatalf("failing map %s invokes %v and collects with %v", node.GetId(), tasks["invoke"]["template"], collectArgs)
+		}
+		return
+	}
+	outcome := templates[tasks["invoke"]["template"].(string)]
+	if outcome == nil || outcome["dag"] == nil {
+		t.Fatalf("collecting map %s does not loop over item DAGs: %v", node.GetId(), tasks["invoke"])
+	}
+	attempt := outcome["dag"].(map[string]any)["tasks"].([]any)[0].(map[string]any)
+	continueOn, _ := attempt["continueOn"].(map[string]any)
+	if attempt["template"] != itemName || continueOn["failed"] != true || continueOn["error"] != true {
+		t.Fatalf("collecting map %s item DAG attempt = %v", node.GetId(), attempt)
+	}
+	result := outcome["outputs"].(map[string]any)["parameters"].([]any)[0].(map[string]any)["valueFrom"].(map[string]any)
+	if result["expression"] != mapItemOutcomeExpression || result["default"] != nil || result["parameter"] != nil {
+		t.Fatalf("collecting map %s item outcome = %v", node.GetId(), result)
+	}
+	maxAttempts := uint32(1)
+	for _, contract := range p.GetContracts() {
+		if contract.GetContractRef() == node.GetContractRef() {
+			maxAttempts = max(contract.GetRetry().GetMaxAttempts(), 1)
 		}
 	}
-	return false
+
+	collectTemplate := templates[argoFieldName("map-collect-"+node.GetId())]
+	if collectTemplate["automountServiceAccountToken"] != true || !containsArgs(collectArgs, "--workflow={{workflow.name}}", "--namespace={{workflow.namespace}}") {
+		t.Fatalf("collecting map %s lacks scheduler evidence access: %v", node.GetId(), collectTemplate)
+	}
+	if collectArgs[2] != "collect-outcomes" || !containsArgs(collectArgs, fmt.Sprintf("--max-attempts=%d", maxAttempts)) {
+		t.Fatalf("collecting map %s collects with %v", node.GetId(), collectArgs)
+	}
 }

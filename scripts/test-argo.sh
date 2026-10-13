@@ -64,6 +64,32 @@ grep -q '^    failed: 100$' "$scratch/install.yaml"
 sed -i "s|quay.io/minio/minio:[^[:space:]]*|$minio_reference|g" "$scratch/install.yaml"
 "$KUBECTL" create namespace argo
 "$KUBECTL" apply -n argo -f "$scratch/install.yaml"
+# Collecting-map control pods reconcile missing results against terminal status.
+"$KUBECTL" apply -n argo -f - <<'YAML'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: massive-outcome-reader
+rules:
+- apiGroups: ["argoproj.io"]
+  resources: ["workflows"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: massive-outcome-reader
+subjects:
+- kind: ServiceAccount
+  name: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: massive-outcome-reader
+YAML
 "$KUBECTL" rollout status -n argo deployment/workflow-controller --timeout=120s
 "$KUBECTL" rollout status -n argo deployment/minio --timeout=120s
 "$MASSIVE_PYTHON" conformance/argo/test_cluster.py

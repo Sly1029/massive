@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","oneOf":[{"type":"object","properties":{"phase":{"enum":["hydrate","author","publish"]}},"required":["phase"],"additionalProperties":false},{"type":"object","properties":{"fatal":{"const":true}},"required":["fatal"],"additionalProperties":false}]}

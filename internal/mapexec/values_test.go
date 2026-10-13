@@ -104,3 +104,14 @@ func TestCollectRejectsAResultSetShorterThanTheExpandedInput(t *testing.T) {
 		t.Fatal("expected collection error for a missing tail result")
 	}
 }
+
+func TestParseFailureRequiresAStringDiagnostic(t *testing.T) {
+	for _, body := range []string{
+		`{"attempts":1,"kind":"error"}`,
+		`{"attempts":1,"diagnostic":null,"kind":"error"}`,
+	} {
+		if _, err := mapexec.ParseFailure([]byte(body), 3); err == nil {
+			t.Fatalf("accepted invalid failure %s", body)
+		}
+	}
+}

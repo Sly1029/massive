@@ -19,8 +19,11 @@ import (
 	"github.com/Sly1029/massive/internal/controlplane"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/environment"
+	"github.com/Sly1029/massive/internal/executionphase"
+	"github.com/Sly1029/massive/internal/mapexec"
 	"github.com/Sly1029/massive/internal/orchestrator"
 	"github.com/Sly1029/massive/internal/plan"
+	"github.com/Sly1029/massive/internal/spec"
 	"github.com/Sly1029/massive/internal/target/argo"
 	"github.com/Sly1029/massive/internal/valueparam"
 	"github.com/alecthomas/kong"
@@ -181,7 +184,7 @@ func (command *RuntimeExitHookCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, 0, nil)
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, 0, nil, "")
 	if err != nil {
 		return err
 	}
@@ -196,6 +199,8 @@ type RuntimeMapCommand struct {
 	Expand  RuntimeMapExpandCommand  `cmd:"" help:"Expand a crystallized list into indexed Argo loop items."`
 	Item    RuntimeMapItemCommand    `cmd:"" help:"Execute one indexed map item in a remote executor."`
 	Collect RuntimeMapCollectCommand `cmd:"" help:"Collect indexed Argo loop results in source order."`
+	// The outcome collector of a map that collects item failures.
+	CollectOutcomes RuntimeMapCollectOutcomesCommand `cmd:"" name:"collect-outcomes" help:"Collect a map's item outcomes, including failed items, in source order."`
 }
 
 type RuntimeStepCommand struct {
@@ -256,12 +261,22 @@ type RuntimeMapItemCommand struct {
 	Project         string `help:"Stable remote project identity." required:""`
 	RunID           string `name:"run-id" help:"Remote workflow run identifier." required:""`
 	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
+	TerminationLog  string `name:"termination-log" help:"Record execution phases and fatal errors in the Kubernetes termination file." type:"path"`
 	RetryCount      int    `name:"retry-count" help:"Retries already attempted by the target scheduler; the attempt is retry-count + 1." default:"0"`
 }
 
 type RuntimeMapCollectCommand struct {
 	Input           string `help:"Aggregated indexed Argo map results." required:""`
 	Output          string `help:"Write the ordered result list parameter to this path." required:"" type:"path"`
+	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
+}
+
+type RuntimeMapCollectOutcomesCommand struct {
+	Input           string `help:"Aggregated Argo item outcome envelopes, one per item in source order." required:""`
+	MaxAttempts     int    `name:"max-attempts" help:"The map contract's attempt budget, used to validate reported attempts." required:""`
+	Workflow        string `help:"Argo workflow name for missing-outcome reconciliation."`
+	Namespace       string `help:"Argo workflow namespace for missing-outcome reconciliation."`
+	Output          string `help:"Write the ordered outcome list parameter to this path." required:"" type:"path"`
 	DatastoreConfig string `name:"datastore-config" help:"Credential-free datastore descriptor JSON file." required:"" type:"existingfile"`
 }
 
@@ -474,7 +489,7 @@ func (command *RuntimeStepCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, command.RetryCount, nil)
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, command.RetryCount, nil, "")
 	if err != nil {
 		return err
 	}
@@ -518,7 +533,20 @@ func (command *RuntimeMapExpandCommand) Run(ctx context.Context) error {
 	return writeRuntimeOutput(command.Output, items)
 }
 
-func (command *RuntimeMapItemCommand) Run(ctx context.Context) error {
+func (command *RuntimeMapItemCommand) Run(ctx context.Context) (resultErr error) {
+	// Start reporting before datastore opening, hydration, or plan loading.
+	// A marker needs no decoded item identity; its position identifies it.
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		// Preserve fatal evidence before any further result I/O can fail or die.
+		resultErr = errors.Join(resultErr, executionphase.Write(command.TerminationLog, executionphase.Evidence{Fatal: true}))
+		resultErr = errors.Join(resultErr, writeRuntimeOutput(command.Output, []byte(valueparam.FatalItemEnvelope)))
+	}()
+	if err := executionphase.Write(command.TerminationLog, executionphase.Evidence{Phase: executionphase.Hydrate}); err != nil {
+		return err
+	}
 	codec, descriptor, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
 	if err != nil {
 		return err
@@ -528,21 +556,79 @@ func (command *RuntimeMapItemCommand) Run(ctx context.Context) error {
 		return err
 	}
 	if empty {
+		if err := executionphase.Write(command.TerminationLog, executionphase.Evidence{Phase: executionphase.Publish}); err != nil {
+			return err
+		}
 		return writeRuntimeOutput(command.Output, []byte(`{"empty":true}`))
 	}
 	workflowPlan, err := readRuntimePlan(command.Plan)
 	if err != nil {
 		return err
 	}
-	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, item.Body, command.Project, command.RunID, descriptor, command.RetryCount, &item.Index)
+	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, item.Body, command.Project, command.RunID, descriptor, command.RetryCount, &item.Index, command.TerminationLog)
 	if err != nil {
-		return err
+		if !collectsItemFailures(workflowPlan, command.Node) {
+			return err
+		}
+		return command.reportFailure(ctx, codec, item.Index, err)
 	}
 	envelope, err := valueparam.EncodePublishedItemResult(item.Index, result)
 	if err != nil {
 		return err
 	}
 	return writeRuntimeOutput(command.Output, envelope)
+}
+
+// reportFailure turns a terminal failure that a collecting map keeps into a
+// successful item outcome. Argo continues past failed item pods in such a
+// map, so any other error leaves a fatal marker for the collector; a failure
+// Argo will retry needs no marker, since the next attempt reports instead.
+func (command *RuntimeMapItemCommand) reportFailure(ctx context.Context, codec valueparam.Codec, index int, cause error) error {
+	var failure *orchestrator.InvocationFailure
+	if errors.As(cause, &failure) && failure.Retryable() {
+		return cause
+	}
+	if failure != nil && failure.ItemFailure != nil {
+		envelope, err := codec.EncodeItemFailure(ctx, index, *failure.ItemFailure)
+		if err != nil {
+			return err
+		}
+		return writeRuntimeOutput(command.Output, envelope)
+	}
+
+	return cause
+}
+
+func collectsItemFailures(workflowPlan *planpb.WorkflowPlan, nodeID string) bool {
+	for _, node := range workflowPlan.GetGraph().GetNodes() {
+		if node.GetId() == nodeID {
+			return node.GetItemFailures() == spec.MapItemFailuresCollect
+		}
+	}
+	return false
+}
+
+func (command *RuntimeMapCollectOutcomesCommand) Run(ctx context.Context) error {
+	codec, _, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
+	if err != nil {
+		return err
+	}
+	missingNodes, err := valueparam.MissingOutcomeNodes([]byte(command.Input))
+	if err != nil {
+		return err
+	}
+	var missingFailures map[string]mapexec.Failure
+	if len(missingNodes) != 0 {
+		missingFailures, err = argo.ReadMissingItemFailures(ctx, command.Namespace, command.Workflow, missingNodes)
+		if err != nil {
+			return err
+		}
+	}
+	result, err := codec.CollectOutcomes(ctx, []byte(command.Input), command.MaxAttempts, missingFailures)
+	if err != nil {
+		return err
+	}
+	return writeRuntimeOutput(command.Output, result)
 }
 
 func (command *RuntimeMapCollectCommand) Run(ctx context.Context) error {
@@ -585,7 +671,7 @@ func openRuntimeDatastore(ctx context.Context, path string) (valueparam.Codec, o
 	return valueparam.Codec{Store: store}, descriptor, nil
 }
 
-func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan, runtimeSources RuntimeSources, nodeID string, input []byte, project, runID string, descriptor orchestrator.DatastoreDescriptor, retryCount int, mapItemIndex *int) ([]byte, error) {
+func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan, runtimeSources RuntimeSources, nodeID string, input []byte, project, runID string, descriptor orchestrator.DatastoreDescriptor, retryCount int, mapItemIndex *int, terminationLog string) ([]byte, error) {
 	if retryCount < 0 {
 		return nil, fmt.Errorf("retry count %d must be nonnegative", retryCount)
 	}
@@ -601,7 +687,7 @@ func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan
 		Environment: pythonEnvironment,
 		Plan:        workflowPlan, NodeID: nodeID, Datastore: descriptor,
 		ProjectID: project, RunID: runID,
-		SourceArchives: sources, Attempt: retryCount + 1,
+		SourceArchives: sources, Attempt: retryCount + 1, TerminationLog: terminationLog,
 	}
 	if mapItemIndex != nil {
 		return orchestrator.RunIsolatedMapItem(ctx, config, input, *mapItemIndex)

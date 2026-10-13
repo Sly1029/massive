@@ -69,3 +69,24 @@ declared size, and keep maps within the collector's parameter budget.
 Exit outcomes use terminal task boundaries: retry parents and outer map DAGs,
 identified by the generated task name and template. Failed attempt pods alone
 do not prove a terminal failure; return an unknown failed node for them.
+
+A collecting map loops over per-item DAGs that continue past the item pod.
+A missing result carries the terminal pod's Argo node ID through a
+`valueFrom.expression`: Argo returns `valueFrom.default` literally and does not
+expand task references inside it. Absence alone never
+establishes process death: the collector reads terminal Workflow/Pod status,
+matches the node-id annotation (not a label), requires main-container OOMKilled
+or signal evidence plus schema-valid last phase `author`, and counts the Retry
+node's actual children. Eviction, missing pods, fatal termination markers,
+and ordinary/executor exits fail the run. Preserve pods through collection.
+Only the collecting-map control pod mounts a Kubernetes API token; its service
+account needs Workflow get and Pod list in the deployment namespace. Application
+pods retain no API token. Runtime errors report an unindexed fatal envelope
+from before datastore opening and decoding; failed result writes also report
+the fatal marker before further result I/O. Phase/fatal records follow
+`conformance/schema/execution-evidence.schema.json`; record hydration before
+setup and bracket the Python function call with author/publish transitions.
+Use File termination policy and fixed-size, single-write updates of the
+kubelet-mounted inode; rename cannot replace that mount. Missing or non-author
+phase evidence fails the run. Preserve the reconciliation diagnostic so live
+OOM conformance proves it exercised a missing envelope.
