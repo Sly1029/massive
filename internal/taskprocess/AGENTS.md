@@ -20,3 +20,7 @@ Exercise real descendants that retain stdout after their parent exits and after
 cancellation. The socket fixture supplies both liveness evidence and cleanup for
 regressions. Changes to ownership need the Linux, macOS, and Windows CI matrix;
 cross-compilation alone does not validate native process lifetime behavior.
+
+Combined task output retains the last bounded bytes in a ring, so noisy logs
+cannot evict the final failure context. Frontend output still uses the caller's
+separate unbounded protocol streams.

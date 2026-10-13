@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 
 func runFixture(mode, ready string) {
 	if mode == "output" {
-		fmt.Print(strings.Repeat("x", outputLimit*2))
+		fmt.Print("discarded-prefix\n" + strings.Repeat("x", outputLimit*2) + "final-tail\n")
 		return
 	}
 	if mode == "chunked-output" {
@@ -163,7 +163,7 @@ func TestRunBoundsOutputAndPreservesAuthorExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(output, "x") != outputLimit || !strings.HasSuffix(output, "[task output truncated at 1048576 bytes]\n") {
+	if !strings.HasPrefix(output, "[task output truncated; showing last 1048576 bytes]\n") || !strings.HasSuffix(output, "final-tail\n") || strings.Contains(output, "discarded-prefix") || len(output) > outputLimit+100 {
 		t.Fatalf("output was not bounded and marked: length %d", len(output))
 	}
 	output, err = Run(t.Context(), []string{executable, "process-fixture", "failure", "unused"}, "")
@@ -197,7 +197,7 @@ func TestRunToPreservesProtocolOutputAndSeparateDiagnostics(t *testing.T) {
 	if err := RunTo(t.Context(), []string{executable, "process-fixture", "output", "unused"}, "", nil, &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	if stdout.String() != strings.Repeat("x", outputLimit*2) || stderr.Len() != 0 {
+	if stdout.String() != "discarded-prefix\n"+strings.Repeat("x", outputLimit*2)+"final-tail\n" || stderr.Len() != 0 {
 		t.Fatalf("protocol output truncated or mixed: stdout=%d stderr=%d", stdout.Len(), stderr.Len())
 	}
 	stdout.Reset()
