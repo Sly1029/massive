@@ -41,7 +41,7 @@ func OutcomeTime(at time.Time) string {
 // and returns its journal record. The hook's failure is recorded, never
 // returned, so it cannot change the run's status. Cancellation of the run does
 // not stop the hook; its finite contract timeout and fresh signal context bound it.
-func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, index executionIndex, projectKey, runID string, hook *planpb.GraphNode, outcome RunOutcome) runjournal.Step {
+func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, index executionIndex, projectKey, runID string, hook *planpb.GraphNode, outcome RunOutcome, events *runEvents) runjournal.Step {
 	// Subscribe afresh: the CLI's run signal context may already be cancelled.
 	ctx, stopSignals := signal.NotifyContext(context.WithoutCancel(ctx), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -56,11 +56,15 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 			Hash: canonical.DigestBytes(body), ContentType: jsonContentType, Schema: hook.GetInputSchema(),
 		},
 	}
+	events.attemptStarted(StepInvocationDescriptor{NodeID: hook.GetId(), Attempt: 1})
+	classification := "infrastructure"
 	record := func(diagnostic string) runjournal.Step {
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
+			classification = "timeout"
 			diagnostic = fmt.Sprintf("exit hook exceeded its %d-second timeout", int64(policy.timeout/time.Second))
 		case context.Canceled:
+			classification = "cancelled"
 			diagnostic = "exit hook cancelled"
 		}
 		status := StatusFailed
@@ -68,7 +72,10 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 			status = StatusSucceeded
 		}
 		attempt.Status, attempt.Diagnostic = status, diagnostic
-		return runjournal.Step{NodeID: hook.GetId(), Status: status, Attempts: []runjournal.Attempt{attempt}}
+		step := runjournal.Step{NodeID: hook.GetId(), Status: status, Attempts: []runjournal.Attempt{attempt}}
+		events.attemptFinished(StepInvocationDescriptor{NodeID: hook.GetId(), Attempt: 1}, attempt, classification)
+		events.stepFinished(&step)
+		return step
 	}
 	if encodeErr != nil {
 		return record("exit hook input could not be encoded")
@@ -89,16 +96,19 @@ func runExitHook(ctx context.Context, store datastore.Datastore, config RunConfi
 	if err != nil {
 		return record("exit hook descriptor could not be built")
 	}
-	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}})
+	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, OnFinished: events.attemptObserved})
 	var fatal *FatalRunError
 	if (err != nil && !errors.As(err, &fatal)) || len(outcomes) != 1 {
 		return record("invocation infrastructure failed")
 	}
+	events.attemptObserved(descriptor, outcomes[0])
+	classification = classifyEventOutcome(outcomes[0])
 	if outcomes[0].Status != StatusSucceeded {
 		return record(durableRunnerDiagnostic(outcomes[0]))
 	}
 	output, err := settleInvocation(ctx, store, descriptor, index, config.Hooks)
 	if err != nil {
+		classification = "verification"
 		return record("output verification failed")
 	}
 	attempt.Output = &output.Published

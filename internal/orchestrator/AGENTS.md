@@ -100,3 +100,16 @@ message and optional type. An exit hook's own fatal stays a hook failure.
 Remote invocations poll the run-scoped marker with jitter. Read errors back off
 and retry without cancelling; a schema-valid cause cancels the isolated runner's
 context. Guard new invocations before dispatch, and exempt exit hooks.
+
+
+Run events are optional observations of dispatch, settlement, and terminal
+transitions. Validate returned map outcomes before journal mutation; reconcile
+all reported dispatches before verification and settle in source-index order.
+Invokers may notify starts and execution finishes concurrently; callbacks only
+enqueue observations with invoker-measured durations. Attempt finishes describe
+execution, while step finishes describe settlement (including verification).
+Never wait for a map batch to settle before observing completed item processes.
+Keep I/O and verification outside worker locks. Event producers keep only clocks
+and sequence ordering. Events contain safe lifecycle summaries; task logs and
+author messages belong outside the target-neutral event contract. Emit run
+completion after the terminal journal and exit-hook publication attempt.

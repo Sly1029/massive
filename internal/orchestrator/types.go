@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/runevent"
 	"github.com/Sly1029/massive/internal/runjournal"
 )
 
@@ -58,6 +59,9 @@ type SourcePackageFile struct {
 }
 
 type RunHooks struct {
+	// OnRunEvent only enqueues observations. It must not do I/O, block on sinks,
+	// or mutate execution state. Delivery errors cannot change execution outcomes.
+	OnRunEvent          func(runevent.Event)
 	AfterStepInvocation func(context.Context, StepInvocationDescriptor) error
 }
 
@@ -145,6 +149,11 @@ type StepInvoker interface {
 type StepInvocationBatch struct {
 	Steps          []StepInvocation
 	MaxConcurrency int
+	// Callbacks are optional observations and may run concurrently. They must
+	// only enqueue, without I/O or verification, and run outside invoker locks.
+	// Correctness depends solely on returned outcomes.
+	OnStarted  func(StepInvocationDescriptor)
+	OnFinished func(StepInvocationDescriptor, StepInvocationOutcome)
 }
 
 type StepInvocation struct {
@@ -154,6 +163,8 @@ type StepInvocation struct {
 }
 
 type StepInvocationOutcome struct {
+	// Duration is monotonic execution time measured by the invoker.
+	Duration   time.Duration
 	NodeID     string
 	Attempt    int
 	Scope      *ExecutionScope

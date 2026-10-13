@@ -22,6 +22,12 @@ uv run massive run workflow.py --project demo/double --input '{"value": 21}'
 `--project` names the run namespace; inside a GitHub or GitLab checkout it
 defaults to the origin's `owner/repository`.
 
+Local runs show live progress and a final duration summary on stderr. Use
+`--progress plain` for event lines or `--progress none` to suppress rendering.
+Wrappers can use `--events run-events.ndjson` alongside `--json` to consume a
+separate versioned stream. See [run events](../../docs/run-events.md) for modes,
+file creation, identities, ordering, diagnostics, and interruption semantics.
+
 Build a static, container-target workflow for Argo with the same compiled plan:
 
 ```sh

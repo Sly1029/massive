@@ -42,6 +42,8 @@ type CLI struct {
 }
 
 type RunCommand struct {
+	Events    string `help:"Write live NDJSON events to a new file."`
+	Progress  string `help:"Stderr progress: auto shows a live TTY view or a final summary; plain shows event lines." enum:"auto,plain,none" default:"auto"`
 	Entry     string `arg:"" name:"entry" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
 	Input     string `help:"Workflow input as JSON; defaults to null." xor:"input-source"`
 	InputFile string `name:"input-file" help:"Read workflow input JSON from this file." type:"existingfile" xor:"input-source"`
@@ -330,7 +332,7 @@ type exitHookOutput struct {
 	Status                string `json:"status"`
 }
 
-func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) error {
+func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedErr error) {
 	input, err := command.input()
 	if err != nil {
 		return err
@@ -339,9 +341,19 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	progress, err := newRunProgress(command.Events, command.Progress, os.Stderr)
+	if err != nil {
+		return err
+	}
+	defer func() { returnedErr = errors.Join(returnedErr, progress.close()) }()
+	var hooks orchestrator.RunHooks
+	if progress != nil {
+		hooks.OnRunEvent = progress.event
+	}
 	result, err := controlplane.RunLocal(ctx, controlplane.LocalRunRequest{
 		Frontend: frontend, Input: input, Store: command.Store,
 		Project: command.Project, RunID: command.RunID,
+		Hooks: hooks,
 	})
 	if err != nil {
 		if result != nil && result.Run != nil {
