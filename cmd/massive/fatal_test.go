@@ -8,13 +8,57 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Sly1029/massive/internal/artifact"
+	"github.com/Sly1029/massive/internal/canonical"
+	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/executionphase"
 	"github.com/Sly1029/massive/internal/orchestrator"
+	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/valueparam"
 )
+
+func TestRuntimeSettlementPreservesPublishedSuccessAfterFatalCancellation(t *testing.T) {
+	_, store := localDatastore(t)
+	project, runID := "fatal-settlement", "run"
+	key, err := orchestrator.FatalRunKey(project, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := []byte(`{"type":"integer"}`)
+	schemaHash := canonical.DigestBytes(schema)
+	if _, err := store.Put(t.Context(), datastore.MustKey("blobs/sha256/"+strings.TrimPrefix(schemaHash, "sha256:")), schema, datastore.PutOptions{ContentType: artifact.JSONContentType}); err != nil {
+		t.Fatal(err)
+	}
+	producer := artifact.Producer{ProjectKey: orchestrator.NormalizeProjectKey(project), RunID: runID, NodeID: "completed", Attempt: 1, PlanHash: "sha256:" + strings.Repeat("a", 64)}
+	destination := artifact.Destination{ManifestKey: datastore.MustKey("projects/" + producer.ProjectKey + "/runs/" + runID + "/steps/completed/1/output-manifest.json"), Schema: schemaHash}
+	if _, err := artifact.PublishJSON(t.Context(), store, destination, producer, []byte("42")); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := artifact.ResolveJSON(t.Context(), store, destination, producer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cause := &orchestrator.FatalRunError{Failure: runjournal.FatalFailure{Message: "Sibling failed", NodeID: "sibling"}}
+	if err := orchestrator.PublishFatalRun(t.Context(), store, key, cause.Failure); err != nil {
+		t.Fatal(err)
+	}
+	cancel(cause)
+	got, err := settleRuntimeInvocation(ctx, store, key, false, result, nil)
+	if err != nil || string(got) != "42" {
+		t.Fatalf("published success discarded after sibling fatal: %s %v", got, err)
+	}
+	// Failed invocations still inherit the sibling's safe cause and exit 69.
+	got, err = settleRuntimeInvocation(ctx, store, key, false, nil, context.Canceled)
+	var fatal *orchestrator.FatalRunError
+	if got != nil || !errors.As(err, &fatal) || fatal.Failure != cause.Failure || exitCodeFor(err) != 69 {
+		t.Fatalf("failed invocation lost fatal cause: %s %v", got, err)
+	}
+}
 
 func TestArgoFatalRuntimePublishesSafeCauseGuardsDispatchAndInvokesHook(t *testing.T) {
 	repository, err := filepath.Abs(filepath.Join("..", ".."))

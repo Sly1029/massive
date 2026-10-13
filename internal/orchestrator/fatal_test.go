@@ -57,14 +57,14 @@ func TestFatalPollingRetriesInvalidStoreReadsWithoutCancelling(t *testing.T) {
 	if _, err := store.Put(t.Context(), key, []byte("invalid JSON"), datastore.PutOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	parent, end := context.WithTimeout(t.Context(), 15*time.Second)
+	parent, end := context.WithTimeout(t.Context(), 20*time.Second)
 	defer end()
 	ctx, stop := WithFatalRunCancellation(parent, store, key)
 	defer stop()
 	select {
 	case <-ctx.Done():
 		t.Fatalf("read failure cancelled invocation: %v", context.Cause(ctx))
-	case <-time.After(2100 * time.Millisecond):
+	case <-time.After(5100 * time.Millisecond):
 	}
 	failure := runjournal.FatalFailure{Message: "Upstream source unavailable", NodeID: "stop"}
 	body := []byte(`{"message":"Upstream source unavailable","nodeId":"stop"}`)

@@ -241,6 +241,7 @@ Templates:
 
 ```text
 projects/<project-key>/runs/<run-id>/run-manifest.json
+projects/<project-key>/runs/<run-id>/fatal.json
 projects/<project-key>/runs/<run-id>/inputs/<step-id>.json
 projects/<project-key>/runs/<run-id>/steps/<step-id>/<attempt>/output-manifest.json
 projects/<project-key>/runs/<run-id>/result.json

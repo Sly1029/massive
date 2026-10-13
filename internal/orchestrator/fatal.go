@@ -70,9 +70,10 @@ func WithFatalRunCancellation(parent context.Context, store datastore.Datastore,
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		backoff := time.Second
+		backoff := 5 * time.Second
 		for {
-			timer := time.NewTimer(time.Second + time.Duration(rand.Int64N(int64(backoff))))
+			// Jitter below the cap so even long-running siblings stay spread out.
+			timer := time.NewTimer(backoff - backoff/5 + time.Duration(rand.Int64N(int64(backoff/5))))
 			select {
 			case <-ctx.Done():
 				timer.Stop()
@@ -82,15 +83,11 @@ func WithFatalRunCancellation(parent context.Context, store datastore.Datastore,
 			readCtx, stop := context.WithTimeout(ctx, 5*time.Second)
 			fatal, err := ReadFatalRun(readCtx, store, key)
 			stop()
-			if err != nil {
-				backoff = min(4*time.Second, 2*backoff)
-				continue
-			}
-			backoff = time.Second
-			if fatal != nil {
+			if err == nil && fatal != nil {
 				cancel(&FatalRunError{Failure: *fatal})
 				return
 			}
+			backoff = min(30*time.Second, 2*backoff)
 		}
 	}()
 	return ctx, func() {

@@ -17,6 +17,7 @@ import (
 	"github.com/Sly1029/massive/conformance/schema/planpb"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/controlplane"
+	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/deployment"
 	"github.com/Sly1029/massive/internal/environment"
 	"github.com/Sly1029/massive/internal/executionphase"
@@ -176,7 +177,7 @@ func (command *RuntimeExitHookCommand) Run(ctx context.Context) error {
 		RunID: command.RunID, Status: status, FailedNode: failedNode,
 		StartedAt: orchestrator.OutcomeTime(started), FinishedAt: orchestrator.OutcomeTime(time.Now()),
 	}
-	codec, _, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
+	codec, descriptor, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
 	if err != nil {
 		return err
 	}
@@ -184,9 +185,25 @@ func (command *RuntimeExitHookCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	fatal, err := orchestrator.ReadFatalRun(ctx, codec.Store, key)
-	if err != nil {
-		return err
+	var fatal *runjournal.FatalFailure
+	for attempt := range 3 {
+		readCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+		fatal, err = orchestrator.ReadFatalRun(readCtx, codec.Store, key)
+		stop()
+		if err == nil {
+			break
+		}
+		if attempt == 2 {
+			fmt.Fprintf(os.Stderr, "exit hook %s: fatal marker unavailable after 3 reads; proceeding with fatal=null: %v\n", command.Node, err)
+			break
+		}
+		timer := time.NewTimer(250 * time.Millisecond * time.Duration(1<<attempt))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 	if fatal != nil {
 		outcome.Status = "failed"
@@ -199,10 +216,6 @@ func (command *RuntimeExitHookCommand) Run(ctx context.Context) error {
 	}
 	// The outcome holds no secrets; logging it shows operators what the hook saw.
 	fmt.Printf("exit hook %s outcome %s\n", command.Node, input)
-	_, descriptor, err := openRuntimeDatastore(ctx, command.DatastoreConfig)
-	if err != nil {
-		return err
-	}
 	result, err := runRuntimeInvocation(ctx, workflowPlan, command.RuntimeSources, command.Node, input, command.Project, command.RunID, descriptor, 0, nil, "")
 	if err != nil {
 		return err
@@ -739,15 +752,21 @@ func runRuntimeInvocation(ctx context.Context, workflowPlan *planpb.WorkflowPlan
 	} else {
 		result, err = orchestrator.RunIsolatedStep(ctx, config, input)
 	}
+	return settleRuntimeInvocation(ctx, store, key, isHook, result, err)
+}
+
+// Settle a completed invocation before stopping its fatal poller. A late sibling
+// fatal must not discard output that the invocation successfully published.
+func settleRuntimeInvocation(ctx context.Context, store datastore.Datastore, key datastore.Key, isHook bool, result []byte, err error) ([]byte, error) {
 	var fatal *orchestrator.FatalRunError
-	if !errors.As(err, &fatal) && errors.As(context.Cause(ctx), &fatal) {
+	if err != nil && !errors.As(err, &fatal) && errors.As(context.Cause(ctx), &fatal) {
 		result, err = nil, fatal
 	}
 	if !isHook && errors.As(err, &fatal) {
 		// The safe cause survives sibling termination and cancels sibling invocations and reaches the exit hook.
 		publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer stop()
-		err = errors.Join(err, executionphase.Write(terminationLog, executionphase.Evidence{Fatal: true}), orchestrator.PublishFatalRun(publication, store, key, fatal.Failure))
+		err = errors.Join(err, orchestrator.PublishFatalRun(publication, store, key, fatal.Failure))
 	}
 	return result, err
 }
