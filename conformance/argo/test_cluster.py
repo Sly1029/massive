@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -519,6 +520,7 @@ class DecisionConformance(unittest.TestCase):
         install_workflow(
             fixture_source(Path(__file__).parent / "placement.py"), placement=PLACEMENT
         )
+        install_workflow(fixture_source(Path(__file__).parent / "deadline.py"))
         large_values = fixture_source(Path(__file__).parent / "large_values.py")
         install_workflow(large_values, selector="#graph")
         install_workflow(large_values, selector="#entry_graph")
@@ -559,6 +561,7 @@ class DecisionConformance(unittest.TestCase):
             "entry-values": ENTRY_RECORDS,
             "reference-input": REFERENCE_INPUT,
             "placement": 3,
+            "deadline": 1,
         }.items():
             run = kubectl(
                 "create",
@@ -590,6 +593,7 @@ class DecisionConformance(unittest.TestCase):
                                 "entry-values": "large-values-entry",
                                 "reference-input": "large-values",
                                 "placement": "argo-placement",
+                                "deadline": "argo-deadline",
                             }.get(label, "argo-decisions")
                         },
                         "arguments": {
@@ -900,6 +904,32 @@ class DecisionConformance(unittest.TestCase):
                 main.get("securityContext", {}).get("allowPrivilegeEscalation"),
                 False if item else None,
             )
+
+    def test_run_deadline_fails_a_stalled_workflow(self) -> None:
+        run = self.completed("deadline")
+        status = run["status"]
+        self.assertEqual(status["phase"], "Failed", str(status.get("message")))
+        # The 600-second step was stopped by the 30-second run deadline.
+        started, finished = (
+            datetime.fromisoformat(status[field].replace("Z", "+00:00"))
+            for field in ("startedAt", "finishedAt")
+        )
+        self.assertLess((finished - started).total_seconds(), 120)
+        stalled = self.pods(run, "step-stall")
+        self.assertEqual([node["phase"] for node in stalled], ["Failed"], stalled)
+        messages = [status.get("message", "")] + [
+            node.get("message", "") for node in stalled
+        ]
+        # Argo reports the expired workflow deadline on the workflow or the
+        # stopped pod, depending on which observes it first.
+        self.assertTrue(
+            any(
+                word in message.lower()
+                for message in messages
+                for word in ("deadline", "duration")
+            ),
+            messages,
+        )
 
     def pods(self, run: dict, template: str) -> list[dict]:
         return [

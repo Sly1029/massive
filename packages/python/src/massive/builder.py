@@ -35,7 +35,7 @@ from typing_extensions import TypeForm
 from ._step import StepDefinition as _Step
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import InputT, StepContext
-from .contracts import ExecutionContract, Retry
+from .contracts import SECOND, ExecutionContract, Retry, whole_seconds
 from .hashing import SOURCE_PACKAGE_HASHING, WORKFLOW_SPEC_HASHING
 from .identity import SAFE_PATH_SEGMENT, SafePathSegment
 from .source_package import SourcePackage
@@ -281,11 +281,16 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         input_type: type[WorkflowInputT],
         output_type: type[WorkflowOutputT],
         defaults: ExecutionContract,
+        deadline: timedelta | None = None,
     ) -> None:
+        """``deadline`` bounds the whole run's wall-clock time on every target."""
         self.name = _WorkflowIdentity(name=name).name
         self.input_type = input_type
         self.output_type = output_type
         self.defaults = defaults
+        self._emitted = False
+        self._called = False
+        self.deadline = deadline
         self._graph_token = object()
         self.start = NodeHandle[Never, WorkflowInputT](
             graph_token=self._graph_token,
@@ -305,10 +310,29 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self._maps: dict[str, _MapDefinition] = {}
         self._calls: dict[str, GraphBuilder[Any, Any]] = {}
         self._merges: dict[str, tuple[str, ...]] = {}
-        self._emitted = False
         self._emitting = False
         self._cached_spec: WorkflowSpec | None = None
         self._cached_source: tuple[str, str] | None = None
+
+    @property
+    def deadline(self) -> timedelta | None:
+        return self._deadline
+
+    @deadline.setter
+    def deadline(self, value: timedelta | None) -> None:
+        if self._emitted or self._called:
+            raise RuntimeError("run deadline is immutable after the graph is emitted or called")
+        if value is not None and not whole_seconds(value, 1, 604800):
+            raise ValueError("run deadline must be whole seconds from 1 to 604800")
+        self._deadline = value
+
+    def _check_callable(self) -> None:
+        """A run deadline belongs to the outermost workflow."""
+        if self.deadline is not None:
+            raise ValueError(
+                f"called graph {self.name!r} has a run deadline, which bounds only a whole run;"
+                " set the deadline on the calling graph"
+            )
 
     def call(
         self,
@@ -321,12 +345,14 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         node_id = SAFE_PATH_SEGMENT.validate_python(id)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved call id {node_id!r}")
+        graph._check_callable()
         handle = NodeHandle[InputT, OutputT](
             graph_token=self._graph_token,
             node_id=node_id,
             input_type=graph.input_type,
             output_type=graph.output_type,
         )
+        graph._called = True
         self._calls[node_id] = graph
         self._handles[node_id] = handle
         return handle
@@ -1118,6 +1144,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         for call_id, child in sorted(
             self._calls.items(), key=lambda item: _canonical_sort_key(item[0])
         ):
+            child._check_callable()
             if child._emitting:
                 raise ValueError(f"recursive workflow call at {call_id!r}")
             if child._cached_spec is None:
@@ -1250,6 +1277,11 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
                     "name": self.name,
                     "inputSchema": input_schema,
                     "outputSchema": output_schema,
+                    **(
+                        {}
+                        if self.deadline is None
+                        else {"deadlineSeconds": self.deadline // SECOND}
+                    ),
                 },
                 "graph": {
                     "irVersion": GRAPH_IR_VERSION,

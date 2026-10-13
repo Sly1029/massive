@@ -11,6 +11,9 @@ import (
 // rules to compiled plans as to authoring specs. Hash validity alone is not
 // semantic validity for callers that supply their own canonical plan.
 func ValidateControlFlow(p *planpb.WorkflowPlan) error {
+	if err := ValidateExecution(p); err != nil {
+		return err
+	}
 	g := p.GetGraph()
 	graph := spec.Graph{IRVersion: g.GetIrVersion(), Start: g.GetStartNode(), End: g.GetEndNode()}
 	for _, n := range g.GetNodes() {

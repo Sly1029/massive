@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
 	"github.com/Sly1029/massive/internal/mapexec"
+	"github.com/Sly1029/massive/internal/plan"
 	"github.com/Sly1029/massive/internal/runjournal"
 	"github.com/Sly1029/massive/internal/sourceidentity"
 	"github.com/google/uuid"
@@ -106,6 +108,9 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 	if err := validatePlanIdentitySegments(config.Plan); err != nil {
 		return nil, err
 	}
+	if err := plan.ValidateExecution(config.Plan); err != nil {
+		return nil, err
+	}
 	// Every source-package hash is interpolated into a snapshot directory name
 	// and a datastore key. The spec schema constrains it, but Run also accepts a
 	// plan directly, so validate here — before any materialization touches the
@@ -124,11 +129,6 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 	if err != nil {
 		return nil, err
 	}
-	sourcePackages, err := materializePrerequisites(ctx, store, config)
-	if err != nil {
-		return nil, err
-	}
-	index.packagesByID = sourcePackages
 
 	workflowInput, err := canonical.CanonicalizeJSON(inputJSON)
 	if err != nil {
@@ -158,6 +158,14 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		Steps:       summariesFromManifest(manifest),
 	}
 
+	// The deadline covers everything the run does, including materialization,
+	// and stops it through the same path as an operator's cancellation.
+	if seconds := config.Plan.GetGraph().GetDeadlineSeconds(); seconds > 0 {
+		var stop context.CancelFunc
+		ctx, stop = context.WithTimeoutCause(ctx, time.Duration(seconds)*time.Second, &RunDeadlineError{Seconds: seconds})
+		defer stop()
+	}
+
 	activeNodeID := ""
 	defer func() {
 		if runErr == nil {
@@ -166,18 +174,27 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		status := StatusFailed
 		cause := runErr
 		diagnostic := runErr.Error()
+		var deadline *RunDeadlineError
 		if ctx.Err() != nil && errors.Is(runErr, ctx.Err()) {
 			status = StatusCancelled
 			if reason := context.Cause(ctx); reason != nil {
 				diagnostic = reason.Error()
 				cause = errors.Join(cause, reason)
 			}
+			// The plan's own deadline fails the run, as it does on Argo.
+			if errors.As(context.Cause(ctx), &deadline) {
+				status = StatusFailed
+			}
 		}
 		result.Status = status
 		failure := &RunError{StepID: activeNodeID, Diagnostic: diagnostic, Cause: cause, Result: result}
 		// Runner output and cancellation causes belong to the caller diagnostic,
-		// never the shared journal: author code may print credentials.
+		// never the shared journal: author code may print credentials. The
+		// plan's deadline is a safe cause.
 		durableDiagnostic := "run " + status
+		if deadline != nil {
+			durableDiagnostic = deadline.Error()
+		}
 		if activeNodeID != "" {
 			durableDiagnostic += " at node " + activeNodeID
 		}
@@ -200,6 +217,12 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			WorkingDir:      config.RunnerWorkingDir,
 		}
 	}
+
+	sourcePackages, err := materializePrerequisites(ctx, store, config)
+	if err != nil {
+		return nil, err
+	}
+	index.packagesByID = sourcePackages
 
 	resolution := newExecutionResolver(index, config.Plan.GetGraph(), workflowInput)
 	for _, nodeID := range index.nodeOrder {
@@ -459,11 +482,11 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 		// Snapshot verified source locally before packaging it. The snapshot is an
 		// implementation detail: runners receive only the portable archive.
 		snapshotDir := sourceSnapshotDir(config.DatastoreRoot, planPackageHash)
-		if err := ensureSourceSnapshot(config.DatastoreRoot, sourceRoot, snapshotDir, manifest.Files); err != nil {
+		if err := ensureSourceSnapshot(ctx, config.DatastoreRoot, sourceRoot, snapshotDir, manifest.Files); err != nil {
 			return nil, err
 		}
 
-		archive, err := deterministicSourceArchive(snapshotDir, manifest.Files)
+		archive, err := deterministicSourceArchive(ctx, snapshotDir, manifest.Files)
 		if err != nil {
 			return nil, fmt.Errorf("package source archive for %q: %w", packageID, err)
 		}
@@ -492,12 +515,15 @@ func materializePrerequisites(ctx context.Context, store datastore.Datastore, co
 // lexicographic file order. The source manifest has already authenticated each
 // snapshot file; this function rejects any non-regular or unsafe entry before
 // emitting it so a runner can hydrate the artifact without host paths.
-func deterministicSourceArchive(snapshotDir string, files []SourcePackageFile) ([]byte, error) {
+func deterministicSourceArchive(ctx context.Context, snapshotDir string, files []SourcePackageFile) ([]byte, error) {
 	ordered := append([]SourcePackageFile(nil), files...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
 	var body bytes.Buffer
 	writer := tar.NewWriter(&body)
 	for _, file := range ordered {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !safeArchivePath(file.Path) {
 			return nil, fmt.Errorf("unsafe source archive path %q", file.Path)
 		}
@@ -509,7 +535,7 @@ func deterministicSourceArchive(snapshotDir string, files []SourcePackageFile) (
 		if !info.Mode().IsRegular() {
 			return nil, fmt.Errorf("source snapshot file %q is not regular", file.Path)
 		}
-		content, err := os.ReadFile(path)
+		content, err := readSourceFile(ctx, path)
 		if err != nil {
 			return nil, fmt.Errorf("read source snapshot file %q: %w", file.Path, err)
 		}
@@ -548,7 +574,7 @@ func BuildSourceArchive(sourceRoot string, files []SourcePackageFile) ([]byte, e
 			return nil, fmt.Errorf("source file %q resolves outside the source package root", file.Path)
 		}
 	}
-	return deterministicSourceArchive(root, files)
+	return deterministicSourceArchive(context.Background(), root, files)
 }
 
 // SourceArchiveBundleName is the portable filename used to mount one verified
@@ -588,7 +614,7 @@ func sourceSnapshotDir(storeRoot string, planPackageHash string) string {
 // atomically renamed into place (mirroring the local datastore's temp+rename
 // idiom), so a concurrent run either wins the rename or converges on the
 // identical bytes.
-func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir string, files []SourcePackageFile) error {
+func ensureSourceSnapshot(ctx context.Context, storeRoot string, sourceRoot string, snapshotDir string, files []SourcePackageFile) error {
 	contained, err := pathWithin(storeRoot, snapshotDir)
 	if err != nil {
 		return fmt.Errorf("verify source snapshot %q is inside the datastore: %w", snapshotDir, err)
@@ -597,10 +623,13 @@ func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir strin
 		return fmt.Errorf("refusing source snapshot %q: outside datastore root %q", snapshotDir, storeRoot)
 	}
 
-	if snapshotMatchesManifest(snapshotDir, files) {
+	if snapshotMatchesManifest(ctx, snapshotDir, files) {
 		return nil
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	parent := filepath.Dir(snapshotDir)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return fmt.Errorf("create snapshot root %q: %w", parent, err)
@@ -616,7 +645,7 @@ func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir strin
 		}
 	}()
 
-	if err := populateSnapshot(sourceRoot, staging, files); err != nil {
+	if err := populateSnapshot(ctx, sourceRoot, staging, files); err != nil {
 		return err
 	}
 	// macOS requires a directory to be writable when renaming it, even when
@@ -628,7 +657,7 @@ func ensureSourceSnapshot(storeRoot string, sourceRoot string, snapshotDir strin
 	if err := os.Rename(staging, snapshotDir); err != nil {
 		// A concurrent run may have installed an identical snapshot, or a stale
 		// partial one may be blocking the move.
-		if snapshotMatchesManifest(snapshotDir, files) {
+		if snapshotMatchesManifest(ctx, snapshotDir, files) {
 			return nil
 		}
 		// Recheck before deletion: staging may have taken time, and the
@@ -705,8 +734,11 @@ func resolveExistingPath(path string) (string, error) {
 // (0444), preserving relative paths, then locks the directory tree to 0555. On
 // the first hash mismatch it fails loudly, naming the file and explaining the
 // drift.
-func populateSnapshot(sourceRoot string, dir string, files []SourcePackageFile) error {
+func populateSnapshot(ctx context.Context, sourceRoot string, dir string, files []SourcePackageFile) error {
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		relPath := filepath.FromSlash(file.Path)
 		absPath := filepath.Join(sourceRoot, relPath)
 		// Symlink-safe containment: reject not only lexical "../" escapes but a
@@ -720,13 +752,16 @@ func populateSnapshot(sourceRoot string, dir string, files []SourcePackageFile) 
 		if !contained {
 			return fmt.Errorf("source file %q resolves outside the source package root", file.Path)
 		}
-		content, err := os.ReadFile(absPath)
+		content, err := readSourceFile(ctx, absPath)
 		if err != nil {
 			return fmt.Errorf("source file %q could not be read for integrity verification: %w", file.Path, err)
 		}
 		actual := canonical.DigestBytes(content)
 		if actual != file.Hash {
 			return fmt.Errorf("source package drifted since compile: file %q hashes to %s but the compiled manifest recorded %s; recompile the workflow or run the plan against the source it was compiled from", file.Path, actual, file.Hash)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		dest := filepath.Join(dir, relPath)
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -745,14 +780,14 @@ func populateSnapshot(sourceRoot string, dir string, files []SourcePackageFile) 
 
 // snapshotMatchesManifest reports whether every manifest file is present under
 // dir with content that hashes to its recorded digest.
-func snapshotMatchesManifest(dir string, files []SourcePackageFile) bool {
+func snapshotMatchesManifest(ctx context.Context, dir string, files []SourcePackageFile) bool {
 	for _, file := range files {
 		candidate := filepath.Join(dir, filepath.FromSlash(file.Path))
 		contained, err := pathWithin(dir, candidate)
 		if err != nil || !contained {
 			return false
 		}
-		content, err := os.ReadFile(candidate)
+		content, err := readSourceFile(ctx, candidate)
 		if err != nil {
 			return false
 		}
@@ -761,6 +796,31 @@ func snapshotMatchesManifest(dir string, files []SourcePackageFile) bool {
 		}
 	}
 	return true
+}
+
+// readSourceFile checks the run lifetime on every chunk, including when a
+// source package consists of one large file rather than many small files.
+func readSourceFile(ctx context.Context, path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var body bytes.Buffer
+	_, err = io.Copy(&body, sourceReader{ctx: ctx, reader: file})
+	return body.Bytes(), err
+}
+
+type sourceReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader sourceReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
 }
 
 // lockSnapshotDirs makes every directory under root read-and-execute only so

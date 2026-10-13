@@ -971,7 +971,7 @@ func TestPopulateSnapshotRejectsSymlinkEscape(t *testing.T) {
 	}
 	files := []SourcePackageFile{{Path: "workflow.ts", Hash: canonical.DigestBytes(content)}}
 
-	err = populateSnapshot(sourceDir, t.TempDir(), files)
+	err = populateSnapshot(t.Context(), sourceDir, t.TempDir(), files)
 	if err == nil {
 		t.Fatal("populateSnapshot followed a symlink outside the source root")
 	}
@@ -1010,10 +1010,10 @@ func TestEnsureSourceSnapshotInstallsReadOnlyTree(t *testing.T) {
 	files := []SourcePackageFile{{Path: "workflow.ts", Hash: canonical.DigestBytes(content)}}
 	snapshotDir := sourceSnapshotDir(storeRoot, canonical.DigestBytes(content))
 	t.Cleanup(func() { _ = forceRemoveAll(snapshotDir) })
-	if err := ensureSourceSnapshot(storeRoot, sourceRoot, snapshotDir, files); err != nil {
+	if err := ensureSourceSnapshot(t.Context(), storeRoot, sourceRoot, snapshotDir, files); err != nil {
 		t.Fatal(err)
 	}
-	if !snapshotMatchesManifest(snapshotDir, files) {
+	if !snapshotMatchesManifest(t.Context(), snapshotDir, files) {
 		t.Fatal("installed snapshot does not match its source manifest")
 	}
 	if runtime.GOOS != "windows" {
@@ -1073,7 +1073,7 @@ func TestSnapshotManifestCannotReadOutsideSnapshotRoot(t *testing.T) {
 		Path: "../outside-source.py",
 		Hash: canonical.DigestBytes([]byte("secret")),
 	}}
-	if snapshotMatchesManifest(root, files) {
+	if snapshotMatchesManifest(t.Context(), root, files) {
 		t.Fatal("snapshot manifest accepted an out-of-root file")
 	}
 }
@@ -1288,7 +1288,7 @@ func TestRunRejectsEscapingSnapshotParentBeforeInstallation(t *testing.T) {
 	}
 	sourceRoot := filepath.Join(repoRootForTest(t), "internal", "orchestrator", "testdata", "linear-chain")
 	compiled, manifests := compileConsistentFixture(t, "linear-chain", sourceRoot)
-	_, err := Run(t.Context(), RunConfig{
+	result, err := Run(t.Context(), RunConfig{
 		Plan: compiled.Plan, DatastoreRoot: storeRoot,
 		ProjectID: "test/snapshot", RunID: "escaping-snapshot",
 		SourcePackageRoot: sourceRoot, SourceManifests: manifests,
@@ -1306,8 +1306,12 @@ func TestRunRejectsEscapingSnapshotParentBeforeInstallation(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("source materialization wrote outside the datastore: %v", entries)
 	}
-	if _, err := os.Stat(filepath.Join(storeRoot, "projects")); !os.IsNotExist(err) {
-		t.Fatalf("rejected snapshot started a run: %v", err)
+	if result == nil || result.Status != StatusFailed {
+		t.Fatalf("materialization failure lost its claimed run: %#v", result)
+	}
+	manifest := readRunManifest(t, storeRoot, result.ProjectKey, result.RunID)
+	if manifest.Status != StatusFailed {
+		t.Fatalf("materialization failure was not terminalized: %#v", manifest)
 	}
 }
 

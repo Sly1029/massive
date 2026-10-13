@@ -61,6 +61,9 @@ message GraphIR {
   // Semantic Graph IR version, deliberately distinct from the enclosing plan
   // transport schema_version.
   optional string ir_version = 8;
+  // Wall-clock limit for the whole run, from submission to its last task.
+  // Absent means no run deadline.
+  optional uint32 deadline_seconds = 9;
 }
 
 message GraphNode {
