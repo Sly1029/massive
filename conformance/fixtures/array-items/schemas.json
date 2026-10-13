@@ -1,0 +1,841 @@
+{
+  "cases": [
+    {
+      "name": "model-list",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Report"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "model-tuple",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Report"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "nested-model-list",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Detail": {
+            "properties": {
+              "report": {
+                "$ref": "#/$defs/Report"
+              }
+            },
+            "required": [
+              "report"
+            ],
+            "title": "Detail",
+            "type": "object"
+          },
+          "Nested": {
+            "properties": {
+              "detail": {
+                "$ref": "#/$defs/Detail"
+              }
+            },
+            "required": [
+              "detail"
+            ],
+            "title": "Nested",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Nested"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Detail": {
+            "properties": {
+              "report": {
+                "$ref": "#/$defs/Report"
+              }
+            },
+            "required": [
+              "report"
+            ],
+            "title": "Detail",
+            "type": "object"
+          },
+          "Nested": {
+            "properties": {
+              "detail": {
+                "$ref": "#/$defs/Detail"
+              }
+            },
+            "required": [
+              "detail"
+            ],
+            "title": "Nested",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Nested"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "recursive-model-list",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Recursive": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              },
+              "children": {
+                "items": {
+                  "$ref": "#/$defs/Recursive"
+                },
+                "title": "Children",
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "children"
+            ],
+            "title": "Recursive",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Recursive"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Recursive": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              },
+              "children": {
+                "items": {
+                  "$ref": "#/$defs/Recursive"
+                },
+                "title": "Children",
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "children"
+            ],
+            "title": "Recursive",
+            "type": "object"
+          }
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Recursive"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "nullable-model-list",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/Report"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "arraySchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Report"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "fixed-model-tuple",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Detail": {
+            "properties": {
+              "report": {
+                "$ref": "#/$defs/Report"
+              }
+            },
+            "required": [
+              "report"
+            ],
+            "title": "Detail",
+            "type": "object"
+          },
+          "Nested": {
+            "properties": {
+              "detail": {
+                "$ref": "#/$defs/Detail"
+              }
+            },
+            "required": [
+              "detail"
+            ],
+            "title": "Nested",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
+          {
+            "$ref": "#/$defs/Report"
+          },
+          {
+            "$ref": "#/$defs/Nested"
+          }
+        ],
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Detail": {
+            "properties": {
+              "report": {
+                "$ref": "#/$defs/Report"
+              }
+            },
+            "required": [
+              "report"
+            ],
+            "title": "Detail",
+            "type": "object"
+          },
+          "Nested": {
+            "properties": {
+              "detail": {
+                "$ref": "#/$defs/Detail"
+              }
+            },
+            "required": [
+              "detail"
+            ],
+            "title": "Nested",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/Report"
+            },
+            {
+              "$ref": "#/$defs/Nested"
+            }
+          ],
+          "type": "array"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "model-dict",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "additionalProperties": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "object"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Report"
+          },
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "unrelated-definitions-excluded",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Detail": {
+            "properties": {
+              "report": {
+                "$ref": "#/$defs/Report"
+              }
+            },
+            "required": [
+              "report"
+            ],
+            "title": "Detail",
+            "type": "object"
+          },
+          "Nested": {
+            "properties": {
+              "detail": {
+                "$ref": "#/$defs/Detail"
+              }
+            },
+            "required": [
+              "detail"
+            ],
+            "title": "Nested",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Nested"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Detail": {
+            "properties": {
+              "report": {
+                "$ref": "#/$defs/Report"
+              }
+            },
+            "required": [
+              "report"
+            ],
+            "title": "Detail",
+            "type": "object"
+          },
+          "Nested": {
+            "properties": {
+              "detail": {
+                "$ref": "#/$defs/Detail"
+              }
+            },
+            "required": [
+              "detail"
+            ],
+            "title": "Nested",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          },
+          "Unused": {
+            "type": "boolean"
+          }
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Nested"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "referenced-inline-container",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          },
+          "Container": {
+            "items": {
+              "$ref": "#/$defs/Report"
+            },
+            "type": "array"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Container"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "pointer-to-inline-container",
+      "accepted": true,
+      "itemSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/container"
+        },
+        "type": "array",
+        "container": {
+          "items": {
+            "$ref": "#/$defs/Report"
+          },
+          "type": "array"
+        }
+      }
+    },
+    {
+      "name": "different-nested-field-type",
+      "accepted": false,
+      "itemSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Report"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "different-nested-model-title",
+      "accepted": false,
+      "itemSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "OtherReport",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Report"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "extra-standalone-definition",
+      "accepted": false,
+      "itemSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          },
+          "Unused": {
+            "type": "boolean"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "array"
+      },
+      "arraySchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/Report"
+          },
+          "type": "array"
+        },
+        "type": "array"
+      }
+    }
+  ]
+}

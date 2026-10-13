@@ -1308,6 +1308,618 @@
           }
         ]
       }
+    },
+    {
+      "name": "pydantic-model-list",
+      "accepted": true,
+      "itemOutputSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "array"
+      },
+      "outputSchema": {
+        "$defs": {
+          "MapItemFailed": {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "$ref": "#/$defs/MapItemFailure"
+              },
+              "status": {
+                "const": "failed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "status"
+            ],
+            "title": "MapItemFailed",
+            "type": "object"
+          },
+          "MapItemFailure": {
+            "additionalProperties": false,
+            "properties": {
+              "attempts": {
+                "minimum": 1,
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "diagnostic": {
+                "maxLength": 1024,
+                "title": "Diagnostic",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "error",
+                  "killed",
+                  "non-retryable",
+                  "timeout"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "attempts",
+              "diagnostic",
+              "kind"
+            ],
+            "title": "MapItemFailure",
+            "type": "object"
+          },
+          "MapItemOutcome_list_Report__": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/$defs/MapItemFailed",
+                "succeeded": "#/$defs/MapItemSucceeded_list_Report__"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MapItemSucceeded_list_Report__"
+              },
+              {
+                "$ref": "#/$defs/MapItemFailed"
+              }
+            ]
+          },
+          "MapItemSucceeded_list_Report__": {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "succeeded",
+                "title": "Status",
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "$ref": "#/$defs/Report"
+                },
+                "title": "Value",
+                "type": "array"
+              }
+            },
+            "required": [
+              "status",
+              "value"
+            ],
+            "title": "MapItemSucceeded[list[Report]]",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/MapItemOutcome_list_Report__"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "different-nested-outcome-field-type",
+      "accepted": false,
+      "itemOutputSchema": {
+        "$defs": {
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Report"
+        },
+        "type": "array"
+      },
+      "outputSchema": {
+        "$defs": {
+          "MapItemFailed": {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "$ref": "#/$defs/MapItemFailure"
+              },
+              "status": {
+                "const": "failed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "status"
+            ],
+            "title": "MapItemFailed",
+            "type": "object"
+          },
+          "MapItemFailure": {
+            "additionalProperties": false,
+            "properties": {
+              "attempts": {
+                "minimum": 1,
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "diagnostic": {
+                "maxLength": 1024,
+                "title": "Diagnostic",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "error",
+                  "killed",
+                  "non-retryable",
+                  "timeout"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "attempts",
+              "diagnostic",
+              "kind"
+            ],
+            "title": "MapItemFailure",
+            "type": "object"
+          },
+          "MapItemOutcome_list_Report__": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/$defs/MapItemFailed",
+                "succeeded": "#/$defs/MapItemSucceeded_list_Report__"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MapItemSucceeded_list_Report__"
+              },
+              {
+                "$ref": "#/$defs/MapItemFailed"
+              }
+            ]
+          },
+          "MapItemSucceeded_list_Report__": {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "succeeded",
+                "title": "Status",
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "$ref": "#/$defs/Report"
+                },
+                "title": "Value",
+                "type": "array"
+              }
+            },
+            "required": [
+              "status",
+              "value"
+            ],
+            "title": "MapItemSucceeded[list[Report]]",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/MapItemOutcome_list_Report__"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "pydantic-nested-model-list",
+      "accepted": true,
+      "itemOutputSchema": {
+        "$defs": {
+          "Detail": {
+            "properties": {
+              "report": {
+                "$ref": "#/$defs/Report"
+              }
+            },
+            "required": [
+              "report"
+            ],
+            "title": "Detail",
+            "type": "object"
+          },
+          "Nested": {
+            "properties": {
+              "detail": {
+                "$ref": "#/$defs/Detail"
+              }
+            },
+            "required": [
+              "detail"
+            ],
+            "title": "Nested",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Nested"
+        },
+        "type": "array"
+      },
+      "outputSchema": {
+        "$defs": {
+          "Detail": {
+            "properties": {
+              "report": {
+                "$ref": "#/$defs/Report"
+              }
+            },
+            "required": [
+              "report"
+            ],
+            "title": "Detail",
+            "type": "object"
+          },
+          "MapItemFailed": {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "$ref": "#/$defs/MapItemFailure"
+              },
+              "status": {
+                "const": "failed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "status"
+            ],
+            "title": "MapItemFailed",
+            "type": "object"
+          },
+          "MapItemFailure": {
+            "additionalProperties": false,
+            "properties": {
+              "attempts": {
+                "minimum": 1,
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "diagnostic": {
+                "maxLength": 1024,
+                "title": "Diagnostic",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "error",
+                  "killed",
+                  "non-retryable",
+                  "timeout"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "attempts",
+              "diagnostic",
+              "kind"
+            ],
+            "title": "MapItemFailure",
+            "type": "object"
+          },
+          "MapItemOutcome_list_Nested__": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/$defs/MapItemFailed",
+                "succeeded": "#/$defs/MapItemSucceeded_list_Nested__"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MapItemSucceeded_list_Nested__"
+              },
+              {
+                "$ref": "#/$defs/MapItemFailed"
+              }
+            ]
+          },
+          "MapItemSucceeded_list_Nested__": {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "succeeded",
+                "title": "Status",
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "$ref": "#/$defs/Nested"
+                },
+                "title": "Value",
+                "type": "array"
+              }
+            },
+            "required": [
+              "status",
+              "value"
+            ],
+            "title": "MapItemSucceeded[list[Nested]]",
+            "type": "object"
+          },
+          "Nested": {
+            "properties": {
+              "detail": {
+                "$ref": "#/$defs/Detail"
+              }
+            },
+            "required": [
+              "detail"
+            ],
+            "title": "Nested",
+            "type": "object"
+          },
+          "Report": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "title": "Report",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/MapItemOutcome_list_Nested__"
+        },
+        "type": "array"
+      }
+    },
+    {
+      "name": "pydantic-recursive-model-list",
+      "accepted": true,
+      "itemOutputSchema": {
+        "$defs": {
+          "Recursive": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              },
+              "children": {
+                "items": {
+                  "$ref": "#/$defs/Recursive"
+                },
+                "title": "Children",
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "children"
+            ],
+            "title": "Recursive",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/Recursive"
+        },
+        "type": "array"
+      },
+      "outputSchema": {
+        "$defs": {
+          "MapItemFailed": {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "$ref": "#/$defs/MapItemFailure"
+              },
+              "status": {
+                "const": "failed",
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "failure",
+              "status"
+            ],
+            "title": "MapItemFailed",
+            "type": "object"
+          },
+          "MapItemFailure": {
+            "additionalProperties": false,
+            "properties": {
+              "attempts": {
+                "minimum": 1,
+                "title": "Attempts",
+                "type": "integer"
+              },
+              "diagnostic": {
+                "maxLength": 1024,
+                "title": "Diagnostic",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "error",
+                  "killed",
+                  "non-retryable",
+                  "timeout"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "attempts",
+              "diagnostic",
+              "kind"
+            ],
+            "title": "MapItemFailure",
+            "type": "object"
+          },
+          "MapItemOutcome_list_Recursive__": {
+            "discriminator": {
+              "mapping": {
+                "failed": "#/$defs/MapItemFailed",
+                "succeeded": "#/$defs/MapItemSucceeded_list_Recursive__"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/MapItemSucceeded_list_Recursive__"
+              },
+              {
+                "$ref": "#/$defs/MapItemFailed"
+              }
+            ]
+          },
+          "MapItemSucceeded_list_Recursive__": {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "succeeded",
+                "title": "Status",
+                "type": "string"
+              },
+              "value": {
+                "items": {
+                  "$ref": "#/$defs/Recursive"
+                },
+                "title": "Value",
+                "type": "array"
+              }
+            },
+            "required": [
+              "status",
+              "value"
+            ],
+            "title": "MapItemSucceeded[list[Recursive]]",
+            "type": "object"
+          },
+          "Recursive": {
+            "properties": {
+              "value": {
+                "title": "Value",
+                "type": "string"
+              },
+              "children": {
+                "items": {
+                  "$ref": "#/$defs/Recursive"
+                },
+                "title": "Children",
+                "type": "array"
+              }
+            },
+            "required": [
+              "value",
+              "children"
+            ],
+            "title": "Recursive",
+            "type": "object"
+          }
+        },
+        "items": {
+          "$ref": "#/$defs/MapItemOutcome_list_Recursive__"
+        },
+        "type": "array"
+      }
     }
   ]
 }

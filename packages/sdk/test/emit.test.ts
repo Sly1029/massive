@@ -74,6 +74,78 @@ Deno.test("WorkflowSpec emission is deterministic", async () => {
   });
 });
 
+Deno.test("nested model arrays survive emission and Go compilation through a merge", async () => {
+  await withSourcePackage(async (root) => {
+    const report = z.object({ value: z.string() });
+    const reports = z.array(report);
+    const nested = z.array(reports);
+    const g = workflow({
+      name: "nested-models",
+      input: reports,
+      output: nested,
+    });
+    const split = g.step("split", {
+      input: reports,
+      output: reports,
+      run: ({ input }) => input,
+    });
+    const left = g.step("left", {
+      input: reports,
+      output: reports,
+      run: ({ input }) => input,
+    });
+    const right = g.step("right", {
+      input: reports,
+      output: reports,
+      run: ({ input }) => input,
+    });
+    const collect = g.step("collect", {
+      input: nested,
+      output: nested,
+      run: ({ input }) => input,
+    });
+    g.start().to(split).to(left);
+    g.from(split).to(right);
+    g.merge([left, right]).to(collect).to(g.end());
+
+    const spec = await emitWorkflowSpec(g, {
+      source: { root, include: ["workflow.ts"] },
+    });
+    const collectNode = spec.graph.nodes.find((node) => node.id === "collect");
+    assert(collectNode?.kind === "step");
+    const schema = spec.schemas[collectNode.inputSchema];
+    assertEquals<unknown>(schema, z.toJSONSchema(nested));
+    assertEquals(collectNode.mergeInputs, ["left", "right"]);
+    const specPath = join(root, "workflow-spec.json");
+    await Deno.writeTextFile(specPath, stableStringify(spec));
+    const compiled = await new Deno.Command("go", {
+      args: [
+        "run",
+        "./cmd/massive-compiler",
+        "compile",
+        "--spec",
+        specPath,
+        "--out",
+        join(root, "compiled"),
+      ],
+      cwd: new URL("../../../", import.meta.url).pathname,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(compiled.code, 0, new TextDecoder().decode(compiled.stderr));
+    const plan = JSON.parse(
+      await Deno.readTextFile(join(root, "compiled/workflow-plan.json")),
+    );
+    const planned = plan.graph.nodes.find((node: { id: string }) =>
+      node.id === "collect"
+    );
+    const plannedSchema = plan.schemas.find((entry: { hash: string }) =>
+      entry.hash === planned.inputSchema
+    );
+    assertEquals(JSON.parse(plannedSchema.canonicalJson), schema);
+  });
+});
+
 Deno.test("WorkflowSpec and source identities declare their hash recipes", async () => {
   await withSourcePackage(async (root) => {
     const spec = await emitWorkflowSpec(graphCases[1]!.build(), {

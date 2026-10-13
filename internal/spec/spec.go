@@ -961,27 +961,31 @@ func arraySchemaItemsExactlyMatch(arraySchema, itemSchema json.RawMessage) bool 
 }
 
 // standaloneArrayItemSchema compares Pydantic's list[T] schema with its
-// separately emitted T schema in one definition scope. For non-recursive
+// separately emitted T schema in one definition scope, including inline
+// containers whose nested schemas reference definitions. For non-recursive
 // models Pydantic inlines T at the standalone root and carries only T's
 // transitive dependencies in $defs. Recursive models retain a root $ref and
 // include T itself. Reconstruct exactly that document shape; do not attempt
 // general JSON Schema equivalence.
 func standaloneArrayItemSchema(document, items json.RawMessage) (json.RawMessage, bool) {
 	var referenceOnly map[string]json.RawMessage
-	if err := json.Unmarshal(items, &referenceOnly); err != nil || len(referenceOnly) != 1 {
+	if err := json.Unmarshal(items, &referenceOnly); err != nil {
 		return items, true
 	}
-	referenceJSON, hasReference := referenceOnly["$ref"]
-	if !hasReference {
-		return items, true
-	}
-	var reference string
-	if err := json.Unmarshal(referenceJSON, &reference); err != nil {
-		return nil, false
-	}
-	rootName, ok := localDefinitionName(reference, true)
-	if !ok {
-		return resolveLocalJSONReference(document, items)
+	rootName, reference := "", ""
+	if referenceJSON, hasReference := referenceOnly["$ref"]; hasReference && len(referenceOnly) == 1 {
+		if err := json.Unmarshal(referenceJSON, &reference); err != nil {
+			return nil, false
+		}
+		var ok bool
+		rootName, ok = localDefinitionName(reference, true)
+		if !ok {
+			resolved, ok := resolveLocalJSONReference(document, items)
+			if !ok {
+				return nil, false
+			}
+			return standaloneArrayItemSchema(document, resolved)
+		}
 	}
 
 	var root map[string]json.RawMessage
@@ -989,12 +993,18 @@ func standaloneArrayItemSchema(document, items json.RawMessage) (json.RawMessage
 		return nil, false
 	}
 	var definitions map[string]json.RawMessage
-	if err := json.Unmarshal(root["$defs"], &definitions); err != nil {
-		return nil, false
+	if definitionsJSON, exists := root["$defs"]; exists {
+		if err := json.Unmarshal(definitionsJSON, &definitions); err != nil {
+			return nil, false
+		}
 	}
-	rootSchema, exists := definitions[rootName]
-	if !exists {
-		return nil, false
+	rootSchema := items
+	if rootName != "" {
+		var exists bool
+		rootSchema, exists = definitions[rootName]
+		if !exists {
+			return nil, false
+		}
 	}
 	closure, recursive, ok := localDefinitionClosure(rootName, rootSchema, definitions)
 	if !ok {
