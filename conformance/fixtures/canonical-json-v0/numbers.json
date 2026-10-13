@@ -1,0 +1,1606 @@
+{
+  "cases": [
+    {
+      "bits": "0000000000000000",
+      "canonical": "0",
+      "hash": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "bits": "8000000000000000",
+      "canonical": "0",
+      "hash": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "bits": "0000000000000001",
+      "canonical": "5e-324",
+      "hash": "sha256:c46e7ca1be4c8734f373a56530787288fa2058d73d07855e9247e949f811a42a"
+    },
+    {
+      "bits": "8000000000000001",
+      "canonical": "-5e-324",
+      "hash": "sha256:046f4049d09944fcb2efbf2ddb0ea8f05e0204591d6d02c9106efc88190fa7f9"
+    },
+    {
+      "bits": "7fefffffffffffff",
+      "canonical": "1.7976931348623157e+308",
+      "hash": "sha256:c2784e1abd6317452708f3fbf9641c16b959561bc621a1d408c23a20aa2cb585"
+    },
+    {
+      "bits": "ffefffffffffffff",
+      "canonical": "-1.7976931348623157e+308",
+      "hash": "sha256:f0347276b171ff0c36491c912285a2833de7313d1a103a4b1be0274bfe7c021f"
+    },
+    {
+      "bits": "4340000000000000",
+      "canonical": "9007199254740992",
+      "hash": "sha256:c681da39d7273a6a24c15c9cac3a75526ff2ecf8ba4ee60346a0c70c8163bdb2"
+    },
+    {
+      "bits": "c340000000000000",
+      "canonical": "-9007199254740992",
+      "hash": "sha256:83e109bfd7fb4984b47a46f363627c18dbbd7e57e36b05a04cd162d304df72e9"
+    },
+    {
+      "bits": "4430000000000000",
+      "canonical": "295147905179352830000",
+      "hash": "sha256:7933ef1b34c194c7a327ef424e54282dd2872bc7bda27812f9edf7882ca340c0"
+    },
+    {
+      "bits": "7fffffffffffffff",
+      "canonical": null,
+      "hash": null
+    },
+    {
+      "bits": "7ff0000000000000",
+      "canonical": null,
+      "hash": null
+    },
+    {
+      "bits": "fff0000000000000",
+      "canonical": null,
+      "hash": null
+    },
+    {
+      "bits": "7ff8000000000000",
+      "canonical": null,
+      "hash": null
+    },
+    {
+      "bits": "44b52d02c7e14af5",
+      "canonical": "9.999999999999997e+22",
+      "hash": "sha256:143eadc1fc2fe10a563df313c717399d1835652d710fa189119ff2e1d5cde33d"
+    },
+    {
+      "bits": "44b52d02c7e14af6",
+      "canonical": "1e+23",
+      "hash": "sha256:0b1af6b73e932475817f8eb620deecf21ad7570df3400a23db5c79a9001597f7"
+    },
+    {
+      "bits": "44b52d02c7e14af7",
+      "canonical": "1.0000000000000001e+23",
+      "hash": "sha256:de7cb5db5ee06bf7ef5b74ebcf94cd9d7efda28125905f7ff590724953173c7b"
+    },
+    {
+      "bits": "444b1ae4d6e2ef4e",
+      "canonical": "999999999999999700000",
+      "hash": "sha256:dcabf7269f6bb6ec5ba8b9530825cd7ffe215d4dd26e0a237f9d753513792c07"
+    },
+    {
+      "bits": "444b1ae4d6e2ef4f",
+      "canonical": "999999999999999900000",
+      "hash": "sha256:914b4f8b4bbe2f6e7c36ad7791fc842a7516d149e694b3a71b78cee465ff6d7a"
+    },
+    {
+      "bits": "444b1ae4d6e2ef50",
+      "canonical": "1e+21",
+      "hash": "sha256:241c4643fa70b1dcde1205b71be4e3bebb17e9f880c8e1a33d0ead6c27271d3c"
+    },
+    {
+      "bits": "3eb0c6f7a0b5ed8c",
+      "canonical": "9.999999999999997e-7",
+      "hash": "sha256:2ace34b29d30d300aeacd4f2bb83367fa186f11a3f02ed461f35f00fd741a242"
+    },
+    {
+      "bits": "3eb0c6f7a0b5ed8d",
+      "canonical": "0.000001",
+      "hash": "sha256:159fb29a827ad04b260aa6c8ab6d8637f8f2b38af5c4f3cb49d6a21205e040f8"
+    },
+    {
+      "bits": "41b3de4355555553",
+      "canonical": "333333333.3333332",
+      "hash": "sha256:0fdb7bafaf219ccaf278cd0c0a580473db01c774a0baafe72a07d01230ac5c6d"
+    },
+    {
+      "bits": "41b3de4355555554",
+      "canonical": "333333333.33333325",
+      "hash": "sha256:bcbe1777b7d3c91c19c7f90100c595a9b3f1d9b395567da4258baf7ac655d403"
+    },
+    {
+      "bits": "41b3de4355555555",
+      "canonical": "333333333.3333333",
+      "hash": "sha256:6bd9be1c141028789cc35db62f1b43e80d5d4ee24d6d542e775deb16799ff4c7"
+    },
+    {
+      "bits": "41b3de4355555556",
+      "canonical": "333333333.3333334",
+      "hash": "sha256:1e099031ca0cb3cf4054688f7e2e8c95fc72828de5fa7605ce3f729e6cf79d43"
+    },
+    {
+      "bits": "41b3de4355555557",
+      "canonical": "333333333.33333343",
+      "hash": "sha256:cf68ab5e198a77538aafd967fb122a305ba1df95c9348b1fe3dff453c7f7215f"
+    },
+    {
+      "bits": "becbf647612f3696",
+      "canonical": "-0.0000033333333333333333",
+      "hash": "sha256:4e703d4e0928e4f339d03e1fb5454ddc33db657ad735b02530d98123b4fd4b61"
+    },
+    {
+      "bits": "43143ff3c1cb0959",
+      "canonical": "1424953923781206.2",
+      "hash": "sha256:e1547479d27f057e3197d49417a1dcbe19dd8781b34fa9f83b789925943d00cb"
+    },
+    {
+      "bits": "3fefffffffffffff",
+      "canonical": "0.9999999999999999",
+      "hash": "sha256:12d5191c859deac9fee6fecae738d2458bd085951ec1486febd820c1f618f172"
+    },
+    {
+      "bits": "3ff0000000000000",
+      "canonical": "1",
+      "hash": "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    },
+    {
+      "bits": "3ff0000000000001",
+      "canonical": "1.0000000000000002",
+      "hash": "sha256:19119a03721db7fc2a2f06afad179bdd384cc44b54e1d4f4f57e374c5b44fbd0"
+    },
+    {
+      "bits": "4007ffffffffffff",
+      "canonical": "2.9999999999999996",
+      "hash": "sha256:b511504aebd2ea24d2d5f0b30d112c7c087abb488948b0b8f05c4160f16aefb3"
+    },
+    {
+      "bits": "4008000000000000",
+      "canonical": "3",
+      "hash": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+    },
+    {
+      "bits": "4008000000000001",
+      "canonical": "3.0000000000000004",
+      "hash": "sha256:1d49db10698513c864a924716f47af43abab738a70e032ed258c11fe454057b4"
+    },
+    {
+      "bits": "3fb9999999999999",
+      "canonical": "0.09999999999999999",
+      "hash": "sha256:8f1d1852fb713ff4968b09851001fcaa41e98055ee88337d52f9ef808ce6b0c2"
+    },
+    {
+      "bits": "3fb999999999999a",
+      "canonical": "0.1",
+      "hash": "sha256:14be4b45f18e0d8c67b4f719b5144eee88497e413709d11d85b096d8e2346310"
+    },
+    {
+      "bits": "3fb999999999999b",
+      "canonical": "0.10000000000000002",
+      "hash": "sha256:83b2eb6b3590ccf4bc503c75aabc510850a73df5ee9837f60d2ce14ecdc78149"
+    },
+    {
+      "bits": "3fd3333333333333",
+      "canonical": "0.3",
+      "hash": "sha256:221764976efe04132774d96b0253cc31434c5261737469324f222621baf34b20"
+    },
+    {
+      "bits": "3fd3333333333334",
+      "canonical": "0.30000000000000004",
+      "hash": "sha256:06bad31060c1212ae832de4c031f7b31e3b48aed57858294478cb19450cf34ca"
+    },
+    {
+      "bits": "3fd3333333333335",
+      "canonical": "0.3000000000000001",
+      "hash": "sha256:3e2088c6ce3bf39c14e8b8aca51358a716888025710bde9c8f95cdde4d7554da"
+    },
+    {
+      "bits": "3e7ad7f29abcaf47",
+      "canonical": "9.999999999999998e-8",
+      "hash": "sha256:d252ef615f5c19c64a0a57b1e2d2da16c8f08194f00195a2ff7600cec390bdae"
+    },
+    {
+      "bits": "3e7ad7f29abcaf48",
+      "canonical": "1e-7",
+      "hash": "sha256:5b33e02f2c5103a05d32f6ba9cb058294452bfbf393967f68bb30c1bdcbbab22"
+    },
+    {
+      "bits": "3e7ad7f29abcaf49",
+      "canonical": "1.0000000000000001e-7",
+      "hash": "sha256:2e4d40490d2f4134ef7cfc8f9e3402214c61a42d199294668d80b19d0931376d"
+    },
+    {
+      "bits": "3eb0c6f7a0b5ed8e",
+      "canonical": "0.0000010000000000000002",
+      "hash": "sha256:1e50936073755327eade67e6e2f63fbc584f58fb5117e4c3d748ebe554e1ebd1"
+    },
+    {
+      "bits": "4415af1d78b58c3f",
+      "canonical": "99999999999999980000",
+      "hash": "sha256:ad8716b140cd2306174260532316528e6dff48d4dc839c5c14ed255cb02f1f69"
+    },
+    {
+      "bits": "4415af1d78b58c40",
+      "canonical": "100000000000000000000",
+      "hash": "sha256:c344e9487bfbd5c4e03c9fb90d62a5dde5e00b54d55c46e9f4a803aea162b80c"
+    },
+    {
+      "bits": "4415af1d78b58c41",
+      "canonical": "100000000000000020000",
+      "hash": "sha256:c6b869ec5e956ba59630e8a46434b66968e24495cd3bfdd23a599453b572c6a8"
+    },
+    {
+      "bits": "444b1ae4d6e2ef51",
+      "canonical": "1.0000000000000001e+21",
+      "hash": "sha256:35ae94098aa48040d7d4f7464d61ebdc3420ad78a99f0fecf910db0209e53495"
+    },
+    {
+      "bits": "433ffffffffffffe",
+      "canonical": "9007199254740990",
+      "hash": "sha256:bd94269df4e35f2cddd901138a53f0983c638c770381e04dbfa3606ebdfc2278"
+    },
+    {
+      "bits": "433fffffffffffff",
+      "canonical": "9007199254740991",
+      "hash": "sha256:f40b423c2dd95ff2b2f027e22208f438cf7242862e5e746860e697308c9add26"
+    },
+    {
+      "bits": "4340000000000001",
+      "canonical": "9007199254740994",
+      "hash": "sha256:25aa68783313802627958889943e895749ac4c0c7469b2a305cd450a12120768"
+    },
+    {
+      "bits": "4340000000000002",
+      "canonical": "9007199254740996",
+      "hash": "sha256:0237fbe64f6079a91f31d83895c4c17bd35048f038d3f9681b0d5671d7d64ee8"
+    },
+    {
+      "bits": "31ba95fcebc082f3",
+      "canonical": "3.8520526807133054e-69",
+      "hash": "sha256:fe267fc637b0d9d7fc10f27b9433c8dbd6e59eeee9600659057c84d73636542d"
+    },
+    {
+      "bits": "a6045aaf2e981f29",
+      "canonical": "-1.5034417740476548e-125",
+      "hash": "sha256:715dde6effd3301f282e81d594de6df81f66064ee0d472dd1348dc6e587c947d"
+    },
+    {
+      "bits": "599a81b76d09b3f9",
+      "canonical": "4.3806039060795175e+123",
+      "hash": "sha256:c46e1ae8a1961cd69cd1149d7292c4731af024037146f46ca5b6e95985db3e29"
+    },
+    {
+      "bits": "96b151d6cc5b55be",
+      "canonical": "-2.262678438416414e-199",
+      "hash": "sha256:9e47873fe20fee39c0c7d03e7836a40b44bf3d4657de2cd91a29e364187b43d6"
+    },
+    {
+      "bits": "353097bf7e1553fe",
+      "canonical": "1.732365569897767e-52",
+      "hash": "sha256:45cbec02f3b03c7c27a1ead0d0bd944397640d9d2843d690055160f9c29e9ca9"
+    },
+    {
+      "bits": "f3f6408673c282f4",
+      "canonical": "-3.9829647944912346e+250",
+      "hash": "sha256:8655dded256418daaf65c1c8d8a9ae506905de4d5c86d1f2b3d49ec3ac769997"
+    },
+    {
+      "bits": "f04c203c32a2e6e7",
+      "canonical": "-8.733199480894373e+232",
+      "hash": "sha256:b07635429851609ba421ed5c61e0623c13a52ba5386eaa7b5830abc678330dc1"
+    },
+    {
+      "bits": "5d25d9427d901f04",
+      "canonical": "5.2037091400608505e+140",
+      "hash": "sha256:a8a0b2056c31134bc8f9f4f8c7065509b86a97b0ff8090db4d896fbc8e8dd8e9"
+    },
+    {
+      "bits": "db07ae803d9b56ed",
+      "canonical": "-3.283068872469136e+130",
+      "hash": "sha256:e01ee4ded832a357c44fff6153daf6c2a32fb0be96f8ed95735cf45e0b2508ab"
+    },
+    {
+      "bits": "9ba47b7f97197624",
+      "canonical": "-1.617460602267666e-175",
+      "hash": "sha256:b8c3b5f7f18d8793114703f54b6d884c38e89939416abbf717d229780575e3e9"
+    },
+    {
+      "bits": "3ca093f308c4b1bf",
+      "canonical": "1.15032477698672e-16",
+      "hash": "sha256:02bf6028e239f174247a07a961f6c03724aa173dec3b9e993985be98a9070789"
+    },
+    {
+      "bits": "de18a59001496cac",
+      "canonical": "-1.9235222313280663e+145",
+      "hash": "sha256:289fe4d16746e7825e398c5567c93e201f3b03237d73cb079c44b0dfd9381de4"
+    },
+    {
+      "bits": "4c37c21c287f1790",
+      "canonical": "1.4913290309145988e+59",
+      "hash": "sha256:c68171160a6f64fc88d7714ea1fa277a248f8c0a925f7b168525c516ab06eaaf"
+    },
+    {
+      "bits": "920230e39b656070",
+      "canonical": "-6.29055746087915e-222",
+      "hash": "sha256:98ffd03b0c998b77c70af75be781aae6c5e4987312536b5a39ef5bfb092769c2"
+    },
+    {
+      "bits": "e0267b410055537c",
+      "canonical": "-1.50713552795394e+155",
+      "hash": "sha256:6901cdb80c371e90e8f7190386b8e98d648bb317fe77e56f7a307a4e461f6d3e"
+    },
+    {
+      "bits": "66644a398ab60362",
+      "canonical": "1.724281325043967e+185",
+      "hash": "sha256:4a0adbc41c00ef1bdbacc7e7ea8eb28880fdb52b3514417929f49a108af8a6ec"
+    },
+    {
+      "bits": "0848819ed68c4c1b",
+      "canonical": "9.277525502318015e-269",
+      "hash": "sha256:deea10f7d16b175bbf66cef4cea8d719df83557970e325f73c4be58741309199"
+    },
+    {
+      "bits": "a5593773896c1a20",
+      "canonical": "-9.094702753529363e-129",
+      "hash": "sha256:1906ba92b6e7b1e94869766e3daed227bfc0295d65e5a6696d894086a02e756a"
+    },
+    {
+      "bits": "3bc22e52d2ffa1c8",
+      "canonical": "7.699932380576039e-21",
+      "hash": "sha256:b69e54c3480c20becb8db1179cbebdfb4fcc06425b58835f861702079b2b82ac"
+    },
+    {
+      "bits": "05a794404776858e",
+      "canonical": "2.029651127712329e-281",
+      "hash": "sha256:f74d34d892c12d30bd9a43256bbe7b57394918dc8b0f4157cb0c0fd9da4d402d"
+    },
+    {
+      "bits": "faab4bd38b857ded",
+      "canonical": "-7.927716012958036e+282",
+      "hash": "sha256:8e9566c9c43b32368f178eaef6e4f362557236b39c5d90343632adad5d3c6854"
+    },
+    {
+      "bits": "3a45584a46c883e0",
+      "canonical": "5.388206085319439e-28",
+      "hash": "sha256:1cc3dc8d4f472af0c6fba4f58cbc124bc7ceabced2bbadab230d716a5bf6aa9b"
+    },
+    {
+      "bits": "ef7e2b7862904210",
+      "canonical": "-1.1435344032877833e+229",
+      "hash": "sha256:080d77dd751e9611b75fb6a21dfc1fde2677030af4bacced1432106c768ad3ae"
+    },
+    {
+      "bits": "05e29c44061b8b09",
+      "canonical": "2.5631265877515676e-280",
+      "hash": "sha256:d7cd1b05f9dde39ef32df935ffa3ba0420f3eaa9e329c1961a0438e700b7d5ed"
+    },
+    {
+      "bits": "b02089b4b3db8cc3",
+      "canonical": "-7.141210449396979e-77",
+      "hash": "sha256:fccff247f14ea148d6be9cf58785d4f6df233cae1ba757c889958e2629d71996"
+    },
+    {
+      "bits": "fc9ffdc52ee046ce",
+      "canonical": "-1.995297068339496e+292",
+      "hash": "sha256:d5137ef9c445c85b0dec4e37fd7dd6e4fb4463ae7572e66422d911edf76ee693"
+    },
+    {
+      "bits": "e55be3d1514eba7e",
+      "canonical": "-1.8082754202149334e+180",
+      "hash": "sha256:15f157ac6d4df72dbd23493807721fbf7c9236fbb49aea270148869de75f757d"
+    },
+    {
+      "bits": "e3b1a6859017443e",
+      "canonical": "-1.7052731224391365e+172",
+      "hash": "sha256:19940a901c36ddf52de90720f4a4e0c80cb9a0969d31d0dd88b4d1de06c2bb94"
+    },
+    {
+      "bits": "f03d96b4c5285a5a",
+      "canonical": "-4.593698560915605e+232",
+      "hash": "sha256:26d1562e18df2dd11510cac3d19d1476add03ee50732b3fda44a66979b7ad137"
+    },
+    {
+      "bits": "d986112bd2551859",
+      "canonical": "-1.8234464482644742e+123",
+      "hash": "sha256:8c3b3978af1fa28969c5e247258eb6d8a0aec519e35660578f020b7dfba27867"
+    },
+    {
+      "bits": "968822a446be2829",
+      "canonical": "-3.9413584896786944e-200",
+      "hash": "sha256:dd9226629a5694b8500bc08023098ede8be087b4f0ed22bd736ad64740a3dab3"
+    },
+    {
+      "bits": "587adca8efba9125",
+      "canonical": "1.6934637269022793e+118",
+      "hash": "sha256:e9b1bb186da6a5103f8207a710e41822a4341da9fda5fa224fb1991c907efeef"
+    },
+    {
+      "bits": "1ae8464368f73374",
+      "canonical": "4.67996144462759e-179",
+      "hash": "sha256:eda9b88154f1bb5e9531b91da490fb58d1402eb6f6cf90992d583f4e6fcafa38"
+    },
+    {
+      "bits": "fd8b214f7d2404a7",
+      "canonical": "-5.544692265844882e+296",
+      "hash": "sha256:411f4f5920650c79a0dc027a95cb9fa77b31f9a1b2d7800cb851f5ae199cbb61"
+    },
+    {
+      "bits": "7354180db14dc169",
+      "canonical": "3.5123837842182705e+247",
+      "hash": "sha256:b0acb5f8cb50cc0c20b99f777cc613c7db18454a32100d5df77016ae5fdabfba"
+    },
+    {
+      "bits": "b882d4acd200bc66",
+      "canonical": "-1.7708363509288186e-36",
+      "hash": "sha256:d0fa55114aecdf7e3700a46ccf663d5a5f5aca147b7053bb89c1211c0a696796"
+    },
+    {
+      "bits": "281aba21d6009868",
+      "canonical": "1.6957942866128315e-115",
+      "hash": "sha256:58628142ecbe7aae2c58030a23c16b68bdea221b7f7c3e55555ee8b7054a3028"
+    },
+    {
+      "bits": "29090acce8089484",
+      "canonical": "5.206476347297955e-111",
+      "hash": "sha256:96e5240d73494fee49a87a30b377d6489df049776e21a564fc588174cb69a1e4"
+    },
+    {
+      "bits": "310b8729fb5f738d",
+      "canonical": "1.9475358742208286e-72",
+      "hash": "sha256:f74473dd42399b9b7b4e076f965a4e473c21c411b0e5b7bf7908b349216fa02c"
+    },
+    {
+      "bits": "5e0f3d81132c47e9",
+      "canonical": "1.2190525946664918e+145",
+      "hash": "sha256:fc8005a0dfdf74a3532507b4c04c53e91df12bbc5bc6a91d08edbe9cf8951f3a"
+    },
+    {
+      "bits": "65c7bf6c1b2ceba9",
+      "canonical": "1.970832612559854e+182",
+      "hash": "sha256:232afbfd96562f721d02482ada3a2409cda944719b7393f351c61d007e272de7"
+    },
+    {
+      "bits": "c1f901182810f20e",
+      "canonical": "-6712033921.059095",
+      "hash": "sha256:6cea875f80ecd29ad7600c7c51d06ce5119fb2b8cfb11fa2629408f05197ee09"
+    },
+    {
+      "bits": "5eac254df74bb18e",
+      "canonical": "1.1246574524082791e+148",
+      "hash": "sha256:58a05acf94f942655278d985f0123a8719285ad522151514f06f084409704738"
+    },
+    {
+      "bits": "774782ead2310409",
+      "canonical": "3.79057058927543e+266",
+      "hash": "sha256:e7b509c864f56713010f159be3455d94ce479c9b7539fd159b1106f7200d9a17"
+    },
+    {
+      "bits": "a9d02929aea02ea4",
+      "canonical": "-2.752480178539965e-107",
+      "hash": "sha256:9ab3427426ab0eedc1e192f51a5639d09e9ca02e2dd2ebe00e9fac7e7ab79722"
+    },
+    {
+      "bits": "beef644218f9b24b",
+      "canonical": "-0.000014968697342265409",
+      "hash": "sha256:51399ecc5ab893b21040e391809fb809034252e584dad4b14d31af2d3b73c610"
+    },
+    {
+      "bits": "ea43315877a8cea2",
+      "canonical": "-7.52184582533151e+203",
+      "hash": "sha256:1471423d9b37beb765eedfcef5e744975d954034fd300e55647acd3d11b6f3b9"
+    },
+    {
+      "bits": "5827fbc7f8c4e8ca",
+      "canonical": "4.724994033391433e+116",
+      "hash": "sha256:876cf091ae32bf2e19efc8e549b2913923a0d5fa2c3637d2b84ccebc49e66228"
+    },
+    {
+      "bits": "e9106c8d5bf1337b",
+      "canonical": "-1.2277132584959378e+198",
+      "hash": "sha256:675b3939a94ab47b0413beedc8bb3742f7f20d86832e7b0a63894cd1e07245a1"
+    },
+    {
+      "bits": "be66cc9d486e2491",
+      "canonical": "-4.2466958886127666e-8",
+      "hash": "sha256:49adcf599cb45888dd3a067dba36ed32211691c4354ec448548a750087f42d0a"
+    },
+    {
+      "bits": "c70a35a204efe38b",
+      "canonical": "-1.7010940315146777e+34",
+      "hash": "sha256:1deb625561a4ef7a220cc9b9b6cac09ca55e6104e67ad3c95c8e39b51cb87eaf"
+    },
+    {
+      "bits": "0d0a7bffb79da4b8",
+      "canonical": "7.575707690271932e-246",
+      "hash": "sha256:da8d055addff6071b9660591f42fca41fbbbe37df021935d2eaebb8d577b4a12"
+    },
+    {
+      "bits": "8e1252abda52c22c",
+      "canonical": "-6.869711722451031e-241",
+      "hash": "sha256:41e9ac328de3b9a9c0acf7bdfe4d6861cc5b16167c0d904cfd49f1b01a53df66"
+    },
+    {
+      "bits": "548fa8ed059c9cf7",
+      "canonical": "2.1640020723441494e+99",
+      "hash": "sha256:f29f3711371a0ed2aad2ec73c4e3b842e61dcdb8f6600aa14f358bbaa6f80f74"
+    },
+    {
+      "bits": "e74827c3e0df1368",
+      "canonical": "-3.3632589924652e+189",
+      "hash": "sha256:9c158c7126ab2377265d1cc0737776ddfe9ad020dc9360321dcc93696de11ff7"
+    },
+    {
+      "bits": "cea0fd82f6b32d71",
+      "canonical": "-5.863130006990624e+70",
+      "hash": "sha256:73abce61964cf11220d7173d6b09dd937dedc4966ae3ec005d77af751758f032"
+    },
+    {
+      "bits": "56fb8fdb466b522c",
+      "canonical": "1.0356862218621461e+111",
+      "hash": "sha256:db453a99ecd26563be847976c9329605d5c4028c818e88e1af348842a1c98326"
+    },
+    {
+      "bits": "72904b3ce575d2a8",
+      "canonical": "6.953468590511683e+243",
+      "hash": "sha256:5c88ef7a7887e100338bb72379ff546f704659736e314b8aabda892fdfa6f3f2"
+    },
+    {
+      "bits": "79745bdf8ccf72af",
+      "canonical": "1.1277943320180108e+277",
+      "hash": "sha256:7db18bdc11606e2123bc5a4b0dbc43322a92c5601241d17a3002675ffa00c91f"
+    },
+    {
+      "bits": "92131e059e444277",
+      "canonical": "-1.322175627251177e-221",
+      "hash": "sha256:537d19b455df5272d8d1ed8b8bfaa6cf3bf138f0f659defd2f2c8e4848a8ce5f"
+    },
+    {
+      "bits": "aaa26cfd7ecb3a2f",
+      "canonical": "-2.570848627880277e-103",
+      "hash": "sha256:1cce843fccf5c8758179af72c11c2b5d40a8afe80d15a2e1674d37a8080e96cc"
+    },
+    {
+      "bits": "74bc3a02c50f7fa5",
+      "canonical": "2.0694502957080704e+254",
+      "hash": "sha256:3018d6b6625591af79424d6a408fb19674f8cc750383341ed69c3dc1a76189c6"
+    },
+    {
+      "bits": "576a1fa4f2192103",
+      "canonical": "1.2564973969528005e+113",
+      "hash": "sha256:64a596b9566f5adfc37c217ebe1159fd57c5a6db8a2475e261fc3239f94841f7"
+    },
+    {
+      "bits": "6ede4a6fa5842015",
+      "canonical": "1.1212101551557801e+226",
+      "hash": "sha256:816bce82d7c32a25212021a0fe9e76674cbe6a49a25195f9bd82c20e823ab14a"
+    },
+    {
+      "bits": "d06d9c35dfe9b1c8",
+      "canonical": "-2.7429012644363343e+79",
+      "hash": "sha256:ec2ab766569309a75397ca5e78e39b98c27d4968c84aca9e698471ce3c30b1ba"
+    },
+    {
+      "bits": "5518face131574b8",
+      "canonical": "8.74190114031159e+101",
+      "hash": "sha256:27e59967af5f0171b99f739f8ffef2c69b208aedf3a8f83c184aacc4ea899dea"
+    },
+    {
+      "bits": "cb09c32069e14f1d",
+      "canonical": "-3.0844122710743687e+53",
+      "hash": "sha256:292587674da94cf0380118116a94ad2be7826f3bd8c22c8a003e3e449fc6db6a"
+    },
+    {
+      "bits": "a53295383264aa5e",
+      "canonical": "-1.6755411567108965e-129",
+      "hash": "sha256:986907eca459a9ef1242e9c4925c8e8ff1679549010be697c333cfa54f6af6f1"
+    },
+    {
+      "bits": "db4521ba8535eeb8",
+      "canonical": "-4.687309540358009e+131",
+      "hash": "sha256:f4e1b6b67f33301357f9ecd4986af78ea4a940c766813cadd7e979524de9e427"
+    },
+    {
+      "bits": "56cbb64b59ca2b30",
+      "canonical": "1.3016603398030684e+110",
+      "hash": "sha256:99b7d6819e2d52fd2ca2bf3de9fba84645d6a9f373e11a3e09eaead1f6ddf6d1"
+    },
+    {
+      "bits": "d52dc8ca6bc4873d",
+      "canonical": "-2.0846661249994354e+102",
+      "hash": "sha256:556afefea9f5b6c421e7f5f1b59c3e12dbcad901520217ba899a96fdc7214849"
+    },
+    {
+      "bits": "0b0f236f9c521c54",
+      "canonical": "2.0738163165720179e-255",
+      "hash": "sha256:a139695d49c138053f35a7f7fd359268e5def748a0f3882a781cecd2f602b188"
+    },
+    {
+      "bits": "92594d2e04c32f58",
+      "canonical": "-2.7998139138242444e-220",
+      "hash": "sha256:932468355112cd704e6700e85da8cbed674aeaa4c1c9beb1e3973b9e80177132"
+    },
+    {
+      "bits": "84776532cb877c0f",
+      "canonical": "-3.841075830845195e-287",
+      "hash": "sha256:26e5034fe9a371a985e97e3bfc88f21d0e7f78dd3922ec032e6f1d6ffda5f0e7"
+    },
+    {
+      "bits": "96ce65a08c8da5f8",
+      "canonical": "-7.942245866261725e-199",
+      "hash": "sha256:b49eceb240708ef6dfa09898a79b4cfede752422c71c67084c2772bf4444fa05"
+    },
+    {
+      "bits": "33cda22dfc50bf40",
+      "canonical": "3.6881962301594066e-59",
+      "hash": "sha256:f8e88bfcc498a6d0a03f6547d73268ddcd45afcadaef3c3ec26bdddfcb480a10"
+    },
+    {
+      "bits": "a7f215685f5a1e63",
+      "canonical": "-2.86844909580088e-116",
+      "hash": "sha256:2e53b4db06238e0ff129c93a9a17594c2ec05308b01f1c7b6994b123bcfb3348"
+    },
+    {
+      "bits": "3baaef7ac12230a4",
+      "canonical": "2.851903482250984e-21",
+      "hash": "sha256:6b447bcd349d35f7858a2991439f0de7005dd95ee06dc4055a3c167cf96a6551"
+    },
+    {
+      "bits": "8937cd7506baa110",
+      "canonical": "-2.952756340164817e-264",
+      "hash": "sha256:c37737a7489214886643ec20eb888d9a7d4f6a7cf8cd24b950cee5590eb68138"
+    },
+    {
+      "bits": "4026a51347d0b59d",
+      "canonical": "11.322412723757958",
+      "hash": "sha256:95ae638fd99088bf55a58114374ba525ac8106261f5e23134eb023a274503314"
+    },
+    {
+      "bits": "a25e186119e272e6",
+      "canonical": "-3.856201889461351e-143",
+      "hash": "sha256:f60bcb79e9fb12f3c0cc610a2d167c41e121719d78378222b86cfc63b6a155d6"
+    },
+    {
+      "bits": "24b734555581f120",
+      "canonical": "8.172835510035737e-132",
+      "hash": "sha256:7fe330268bc1095f467419ed51e4238fa8940e10bd1367f2d927aaa5cc6140df"
+    },
+    {
+      "bits": "34df4fd086c46865",
+      "canonical": "5.107971732365598e-54",
+      "hash": "sha256:8a2aff72164ae9700cb3d332989ed2488167c8cc2317dde85556420a6da72e1b"
+    },
+    {
+      "bits": "532b430103767376",
+      "canonical": "4.4426506698875663e+92",
+      "hash": "sha256:a8f12f10fbcb67a2090c4ec7c5dc398d5fc2188d8f0988d9acc997463132194f"
+    },
+    {
+      "bits": "0e9850f2365b2ad7",
+      "canonical": "2.3338829739230593e-238",
+      "hash": "sha256:cfc03d96546d1fc7c9005d648caef4c69ab753c457f225dd994f05dc9092793c"
+    },
+    {
+      "bits": "a351fc79c140f0f0",
+      "canonical": "-1.5103660476150233e-138",
+      "hash": "sha256:c93d036307833adbbc2886d85a8f0c04a8748af238e3d5f1a5bfdfbe7ff2f6cc"
+    },
+    {
+      "bits": "2ea0a98f9e4888f2",
+      "canonical": "4.288519715824554e-84",
+      "hash": "sha256:fa6dbd9ca638697d15d32dfe6d6ebfe51239f79742a90abcd1c8acb88c7e9ef4"
+    },
+    {
+      "bits": "f3dde41884111810",
+      "canonical": "-1.3375710168086645e+250",
+      "hash": "sha256:0a947bb7f977c291d1c1918bbef005543edb3a27bc3505dfc0d5d41588ab6a2e"
+    },
+    {
+      "bits": "f134217be11f8868",
+      "canonical": "-2.0482245117743477e+237",
+      "hash": "sha256:ecc6933a2264e871224ae82a027b13ef83d7023d99290c7d3b3358acb4c5a291"
+    },
+    {
+      "bits": "2038420f1619d56c",
+      "canonical": "1.8092474792228658e-153",
+      "hash": "sha256:7d69025e53460b784fd7abdd0d21f2db5e6435838f5942c67d500c59ab5e9f66"
+    },
+    {
+      "bits": "b79cb9442bbf9a96",
+      "canonical": "-8.243296610815621e-41",
+      "hash": "sha256:440cb0be890ab541dfd66c2c6cee1b32da41361a688b24d80569e98424ca4ead"
+    },
+    {
+      "bits": "a0f2e2d1efc28f87",
+      "canonical": "-5.769557666648948e-150",
+      "hash": "sha256:f6b4275f1107082ef36f71681f21e610b2811d68a5d329b3b46096adb9c373fe"
+    },
+    {
+      "bits": "dbda87a2963e46ee",
+      "canonical": "-3.0129537326791555e+134",
+      "hash": "sha256:d72f567c738eb98d651154aa57b7f201e94cda081a2a891b004cd63d591936ab"
+    },
+    {
+      "bits": "566f5b39a995e385",
+      "canonical": "2.3013037483962184e+108",
+      "hash": "sha256:2e1952b3169f663087f19eea6feb9891d9b7c691014dc5ab4fd9a2599d4c0858"
+    },
+    {
+      "bits": "788b340af6c82c0a",
+      "canonical": "4.5988321758452974e+272",
+      "hash": "sha256:32e3e05bbf55a904cf0fe94ab3f1b4888fc883284d704758da4e5a443b0ac754"
+    },
+    {
+      "bits": "ef7b14481481cf7e",
+      "canonical": "-1.0263912722916802e+229",
+      "hash": "sha256:132de2aa0e4f2add39abff8fde84b33969e79cd5a39275984d93f5ef95d1f3d3"
+    },
+    {
+      "bits": "ceb82af061b30ce9",
+      "canonical": "-1.6679954522420277e+71",
+      "hash": "sha256:b793eb0fdd0f1512ef67610b642e4efca2de2016162e9812b8de47f74bd71a8c"
+    },
+    {
+      "bits": "27bcb1626032b98b",
+      "canonical": "2.844567577561123e-117",
+      "hash": "sha256:073969d71af6c4fd75b50a579e5114380e6bb969bd74b2fdb171cb4528e72681"
+    },
+    {
+      "bits": "3e36c3ae6c542124",
+      "canonical": "5.300245302772714e-9",
+      "hash": "sha256:83e3c040dd2c55d607a49e6b46637dc90818842b6c296c315c48bec48ac41c4e"
+    },
+    {
+      "bits": "28d5f93959f35ac1",
+      "canonical": "5.710596562773017e-112",
+      "hash": "sha256:7426fc4491c2d9db1b22e21d05cbd4587eefbd59305b6de010f62b55fbeabded"
+    },
+    {
+      "bits": "a4c3838f52fdbc0e",
+      "canonical": "-1.374599259260919e-131",
+      "hash": "sha256:952753b9c664e923ab371bc6515c7b556b4ab78dd05b592a991fdf07fb767c9c"
+    },
+    {
+      "bits": "e440184cf0368094",
+      "canonical": "-7.961528022160816e+174",
+      "hash": "sha256:b0a7af2abca5c853b5013f0303391b26134a4b39a7f7d770d8b7f8fdb090e8e7"
+    },
+    {
+      "bits": "522d5eeafd575efb",
+      "canonical": "7.30338398113812e+87",
+      "hash": "sha256:8cd7aeceb5a748fde984d90f3a39de526853c338281205a9cfb2220cc4631f5f"
+    },
+    {
+      "bits": "83d687a967920f5a",
+      "canonical": "-3.6123016136720075e-290",
+      "hash": "sha256:2f7ed4ad24419f5fd2ba373f76f5fe61701dbb7758f2bc7ea7b8e32721af4898"
+    },
+    {
+      "bits": "7eb61dccb4d576c5",
+      "canonical": "2.369791812625928e+302",
+      "hash": "sha256:5b550f5dbd7a49257da22db7c9e3061b0d823216b3086114345ec6088324e60f"
+    },
+    {
+      "bits": "4160e1fc7aa4ec20",
+      "canonical": "8851427.832632124",
+      "hash": "sha256:089a32cf5e735b824900ad3dd758a83bd6603d0f5d812f23a98039362150282e"
+    },
+    {
+      "bits": "0dd7fe5fb3a9eb00",
+      "canonical": "5.622374554691797e-242",
+      "hash": "sha256:1f5391cf6d0bab974a87b777b91e96cf270402bb2e67d1d4085632dde51cb1e1"
+    },
+    {
+      "bits": "46e942c488445caa",
+      "canonical": "4.0988009809271994e+33",
+      "hash": "sha256:e9725c3f6be70cda144413b3451c38460e6ae839322846f88230ee28107d2e50"
+    },
+    {
+      "bits": "61c7ea192c9ee5db",
+      "canonical": "1.075890338295473e+163",
+      "hash": "sha256:beb01401dea2d6f571150a26916117e91d88b753e9136553933b57c494b18275"
+    },
+    {
+      "bits": "7e6bb0c45146f1ad",
+      "canonical": "9.272063855454644e+300",
+      "hash": "sha256:07cfd0ef1079d10978f947ff93bd7985cbe7353f01330ecc99e4a3de424fac5f"
+    },
+    {
+      "bits": "41afd2d77b543265",
+      "canonical": "266955709.66444698",
+      "hash": "sha256:ebf46f05841f0fb7a541812a31af7646958933feace43ad2890cf6187d0ef710"
+    },
+    {
+      "bits": "3fc844d2ea61a422",
+      "canonical": "0.1896003384056551",
+      "hash": "sha256:a95f4bad6d1c4b6037549e9d8b34b1530f8456a8bf2f8b5d97ee68e8dc4587db"
+    },
+    {
+      "bits": "8401c755bace0494",
+      "canonical": "-2.2804103414092374e-289",
+      "hash": "sha256:c8335605084945827503fdfb661539dc42eddd1acae7e3d70f5c5e7ad9db1a18"
+    },
+    {
+      "bits": "f6c3b2db5963f520",
+      "canonical": "-1.2405746085740384e+264",
+      "hash": "sha256:58ef084177b99d6ba551eb85b249dc08f4e8a7c52e6a803d7576d9fdc085bd3d"
+    },
+    {
+      "bits": "e17c301923556235",
+      "canonical": "-3.962964320562656e+161",
+      "hash": "sha256:3b28f0fcac72a6d344038abed7a5941c1131a4ae2329e4527660bfced88075e1"
+    },
+    {
+      "bits": "3c5f53682d3bed68",
+      "canonical": "6.7927018958039836e-18",
+      "hash": "sha256:44786457af9b1c56f0dc21a6613c66e2b3df064d9fb01df8359c8128ef0eb827"
+    },
+    {
+      "bits": "fe6c1cf32e2a8df2",
+      "canonical": "-9.413566635970977e+300",
+      "hash": "sha256:6eb381db1f76918208c14fe7d59ce15f45b02db0bb3b21ef6babd2f70a4e83fd"
+    },
+    {
+      "bits": "b35cd15d1a7d17e5",
+      "canonical": "-2.8020902664061197e-61",
+      "hash": "sha256:fe8f0b28c8938e16038958b9dff06bb51ac3709a524ca68fc358d2882924ac51"
+    },
+    {
+      "bits": "c54e242222a8d62b",
+      "canonical": "-7.287681893720432e+25",
+      "hash": "sha256:8bd8178e288ceb6dfd61d8e7fcdc2b52da91a9c397fd7a810f8bf6bd71b0d6ac"
+    },
+    {
+      "bits": "9871afdd15003b5d",
+      "canonical": "-6.202633608273372e-191",
+      "hash": "sha256:df3e41ef2b2a38709a60026b80a0917d19be3e4ca6cab09d0813217377773e7e"
+    },
+    {
+      "bits": "2f12aa871cc71246",
+      "canonical": "6.149436738788359e-82",
+      "hash": "sha256:a84649b0fce5162a0995e157fae89144e1b9a727eb8b9ce8fd01c2507a30e14b"
+    },
+    {
+      "bits": "aa29ae3e3b642448",
+      "canonical": "-1.3996431535792536e-105",
+      "hash": "sha256:140a871d6637115d3a7f555407e5a734bbae0c16275de35742e758715a43a3d2"
+    },
+    {
+      "bits": "12f6fbdbc22e69cf",
+      "canonical": "2.604386220178674e-217",
+      "hash": "sha256:647238744d3cd59d804681bd79384080dd0a9bcfeb635f4bc325a155fd15e30e"
+    },
+    {
+      "bits": "ccbfc3e055fa8fc7",
+      "canonical": "-5.104461490957636e+61",
+      "hash": "sha256:df245e90bd90b7fa0250a155b138976ead6227dc13c643641392829418b4af7c"
+    },
+    {
+      "bits": "d9f10cb929a5542b",
+      "canonical": "-1.803328990066146e+125",
+      "hash": "sha256:d8f54348af99e6b2fff3aa02b7274ef0dbe7a5c270cefddbf3ba6436cd67394d"
+    },
+    {
+      "bits": "0cd63c4981f34cae",
+      "canonical": "7.950425973479349e-247",
+      "hash": "sha256:85df8925da18bc4efdb87d6a16894822311760b1eda03e8ddb68562ba73cbbfa"
+    },
+    {
+      "bits": "a3a4ccc3fd488aff",
+      "canonical": "-5.589236795642106e-137",
+      "hash": "sha256:3fdcfc9074b4f3e662b694e48d0629da8012f9b0ad0390dacae0a792a6fbd993"
+    },
+    {
+      "bits": "1d4aa6ae763ffd06",
+      "canonical": "1.4123669807763737e-167",
+      "hash": "sha256:2f24bf194ceaad34ade7aacad718ffd6631ba5e85e21ebfac404b6cccd75698e"
+    },
+    {
+      "bits": "891b6d7c41e6c83c",
+      "canonical": "-8.506146436740753e-265",
+      "hash": "sha256:77623e2b79b9137ac6b95c88661946360e09427d547fb6058ae5edd0a4c754b7"
+    },
+    {
+      "bits": "66722206734b16d0",
+      "canonical": "3.081944931999289e+185",
+      "hash": "sha256:f118dd23cf79858700c98f83055c51a142e306eec9bd5a2ba8ca1aae6cbbfb9b"
+    },
+    {
+      "bits": "0039b29e9f0095f7",
+      "canonical": "1.4294838405729885e-307",
+      "hash": "sha256:3b3f61094fd15778c79859e81fc5bedcac44d5b08ef7b94bb615a5e29139b87f"
+    },
+    {
+      "bits": "afb8cf62c829b698",
+      "canonical": "-8.369695877631655e-79",
+      "hash": "sha256:e7c1a1064b28d3a0dce2ab45cd7d590a9a18d41fe5003ad07dddfcdbd6286395"
+    },
+    {
+      "bits": "260143acfdfed6a6",
+      "canonical": "1.2752116157318546e-125",
+      "hash": "sha256:5771ce00ef9d9bc0deac82405ec527afc11f636253e4f2b7c6983958de738cb9"
+    },
+    {
+      "bits": "54e8fff8d4664f33",
+      "canonical": "1.093620576236038e+101",
+      "hash": "sha256:9b3047de237022dba6b7169949d02de0084e91b406d2f2c04099df65dd43ea29"
+    },
+    {
+      "bits": "382dbb8cdd48454b",
+      "canonical": "4.368815586737437e-38",
+      "hash": "sha256:69dc8f67452b69b2cb53de3376a7605afdf20cf8ec2d3d7bb7dd9ac190c2b4a2"
+    },
+    {
+      "bits": "70dcfed6c3d8f1fe",
+      "canonical": "4.609636691474264e+235",
+      "hash": "sha256:3e955efcdf1f17c7eb50756b6504ed61a75a4b5b744ff34849f5910aa4aef1c7"
+    },
+    {
+      "bits": "4e960acf27796dfe",
+      "canonical": "3.803245874480967e+70",
+      "hash": "sha256:0b43034242e6808df8098ca2e3eb2655f0a7089c910b6f5a5c264e09c235a885"
+    },
+    {
+      "bits": "1010f1fe5cdf5d4b",
+      "canonical": "2.728677946184785e-231",
+      "hash": "sha256:6a8cc1caafdd2ce49326871d37ff0583546e44bb4b953f749bdbf81921b1e249"
+    },
+    {
+      "bits": "ef9f8be985ed4c0d",
+      "canonical": "-4.782867356125499e+229",
+      "hash": "sha256:f5847c049b512ac4a9220cdbb06dc427980b72349ffbb9bfa53c2cda7a739397"
+    },
+    {
+      "bits": "b0a9f68a67abc0d4",
+      "canonical": "-2.8700322656630114e-74",
+      "hash": "sha256:4a54c8e89250ad3b6c1f190fa0a542b9818d574335f4151ccd3e746f59563718"
+    },
+    {
+      "bits": "e55f671bb6fee126",
+      "canonical": "-2.036035454657713e+180",
+      "hash": "sha256:df1cfa52739a37cca8d9b414a00e4f4641601e53945013454d3341b0515a2fe9"
+    },
+    {
+      "bits": "c42f24f35258b507",
+      "canonical": "-287255814315324960000",
+      "hash": "sha256:649a18821246e74ac94d452bcc3f6c04c78dd4daadab592e3d0da282e439e598"
+    },
+    {
+      "bits": "8d0dc6306c698e7d",
+      "canonical": "-8.516738406959835e-246",
+      "hash": "sha256:c8045bd7d6b8774d26fcb2cae88799fb56f0703c55dcb79161bebc9ebd79c306"
+    },
+    {
+      "bits": "20101914d6b122e6",
+      "canonical": "3.001604420821778e-154",
+      "hash": "sha256:9fad290a78ddb5dd8c06fc1c525bcf351c3296967cb958773f6b010af64198ba"
+    },
+    {
+      "bits": "9d6d95a80194fc7c",
+      "canonical": "-6.2713067043331094e-167",
+      "hash": "sha256:8fc38bc10eaf7263a015a665dcb17d732e5590e27a444e101b5d8d613a09fcb8"
+    },
+    {
+      "bits": "8599dd3900ff4df7",
+      "canonical": "-1.113172055024797e-281",
+      "hash": "sha256:cbdb2f53025923957a72c2ecfc08978bb15bfd7bf42950e49f7705800b8a836d"
+    },
+    {
+      "bits": "6c7d78691f586467",
+      "canonical": "3.9684625234772704e+214",
+      "hash": "sha256:01b0c590dd8d685702c712d9705d97dd5ae14c13b2ae990b06d18bba7e254b48"
+    },
+    {
+      "bits": "b1ec52453aa363ec",
+      "canonical": "-3.2828061106275723e-68",
+      "hash": "sha256:a028c64e204407727067ac8a3b787388d9f426a5dadaf566dc798922a739873c"
+    },
+    {
+      "bits": "1aaf18d565a46a2e",
+      "canonical": "3.7470646469710937e-180",
+      "hash": "sha256:a44a78000e64860666ee861427dfb236d3e5f40c2809467988d57f4f6e86cc23"
+    },
+    {
+      "bits": "71453e597b000115",
+      "canonical": "4.322885653690287e+237",
+      "hash": "sha256:d5f85dd7b06517b03cc57563083377bb371cc9ffbe80c323756382b06e16f359"
+    },
+    {
+      "bits": "5091ae4e13d42e02",
+      "canonical": "1.3102757783119685e+80",
+      "hash": "sha256:6bc5f16366a3d2cb9fffec50d8d8bcdb63f89ceaf7c7b591fea59c3afb06ac3a"
+    },
+    {
+      "bits": "d8ce71fddf4fd150",
+      "canonical": "-6.1419781762698504e+119",
+      "hash": "sha256:e813fa0dd4ef4efa3772d86f4e082c660c992b7c5b7ec960b124f2cb67110e52"
+    },
+    {
+      "bits": "428f9ecb8100c629",
+      "canonical": "4345859940376.77",
+      "hash": "sha256:b0485614128f949cce16218f243ddbed723cd13d8b4ddd303efa54dd432765d7"
+    },
+    {
+      "bits": "d6779d17f8af907e",
+      "canonical": "-3.466103473296838e+108",
+      "hash": "sha256:3297bb7702bb12e28b3cc6542dc0c8dfac2b96e580665b5d88e2d5ad87ac3d86"
+    },
+    {
+      "bits": "db126ec27a6a8967",
+      "canonical": "-5.110766390525887e+130",
+      "hash": "sha256:305e35aee5f1e52ec358542afbd2a6b418148a9edac431e12763f989fb5e3e11"
+    },
+    {
+      "bits": "f40d922e0723b9b5",
+      "canonical": "-1.058601815604746e+251",
+      "hash": "sha256:0c754bd5dbb9d1d237bed0e78476362bf06a3862f417b2ab6ec9aa843ee3e8d4"
+    },
+    {
+      "bits": "00163b5a9840b455",
+      "canonical": "3.091719421525399e-308",
+      "hash": "sha256:e260c7bb051e2c6fff0d20829b93701ad7ee26a6cc34cb7606b8d589b8629f38"
+    },
+    {
+      "bits": "91f4c0d7bc00b33b",
+      "canonical": "-3.58831203814707e-222",
+      "hash": "sha256:99da22c48fb8fa352d38c5a4fa11884fe859ce0ce8bb94eff3d7c5dca594d03b"
+    },
+    {
+      "bits": "0baab6cc8c93ce5e",
+      "canonical": "1.8218537969309436e-252",
+      "hash": "sha256:822f85f026082028f7cd12ce48ca54d2762a1916b1244ca0b8c23dbfa4363620"
+    },
+    {
+      "bits": "a167f50e76dd0ce2",
+      "canonical": "-9.368048662476221e-148",
+      "hash": "sha256:c9b3cc334ddf9d39afa6a1268fd17be2849ee1ce0049f87d6043877a533390ff"
+    },
+    {
+      "bits": "90a8d9ec374d6880",
+      "canonical": "-2.0489045346387625e-228",
+      "hash": "sha256:4c79146056479f3ec066f68fdb2900a8e7c375f7f07e19566417b786bafb3e51"
+    },
+    {
+      "bits": "71afdc5007b8c3c7",
+      "canonical": "4.1493538097177816e+239",
+      "hash": "sha256:b7bee6cb0c70d3b822f0f00f34e3c5a954bf3ceb4593d3db8ad3bdaadb661a73"
+    },
+    {
+      "bits": "59db8e79dfa5baae",
+      "canonical": "7.286567987489774e+124",
+      "hash": "sha256:b82d1b57713ffe1cb46dbc55f7f6ed5033580316d045c58c8c1a94bc13b78f12"
+    },
+    {
+      "bits": "04cc5b9837324f5b",
+      "canonical": "1.4898636583161681e-285",
+      "hash": "sha256:db603c56d4ab8f258027b0e0e1e818da6879aae39020e3d1b9aeaf35e02d2df2"
+    },
+    {
+      "bits": "38033918047a2627",
+      "canonical": "7.061423319453992e-39",
+      "hash": "sha256:3f7a253d06e603e81e869f50f190efadf41b3ed3fe011060f72a8efbb68e1dab"
+    },
+    {
+      "bits": "e6471e18e4289ad0",
+      "canonical": "-4.9114473199891916e+184",
+      "hash": "sha256:0830e25cc14d9691d4b8f0d91fb1d9fb1ff97b629c5455ac921423031f692db1"
+    },
+    {
+      "bits": "c5441cca009611bf",
+      "canonical": "-4.862893787671316e+25",
+      "hash": "sha256:80bc90fe4557fd16a7cc1d47f42cd45b3ba4ce983694b00d3389dfbc6a642793"
+    },
+    {
+      "bits": "5b5c0c8a057f7b89",
+      "canonical": "1.244328954915664e+132",
+      "hash": "sha256:8c48a586f17b51f3daf4676fc2a0a47dd85c3542373a2dcf0a2d1e8dd56be2b3"
+    },
+    {
+      "bits": "3e89d4efcd59446c",
+      "canonical": "1.9246178932728077e-7",
+      "hash": "sha256:cadef69c68e2f500efd65d8e5a4aa7cd8b6159bee104c377f4aa23f5746add2d"
+    },
+    {
+      "bits": "d4fc2d35c2fe688d",
+      "canonical": "-2.4651716898421067e+101",
+      "hash": "sha256:e80594b0de97ff97329fa429f41fe9ecdcaf315cf9b531434deda63006b7d219"
+    },
+    {
+      "bits": "db1197fb0bbeb769",
+      "canonical": "-4.878144783405137e+130",
+      "hash": "sha256:b05319e3daa89a94607bed5b51c4c5ea79273f3859196688f30f4c89f4d86406"
+    },
+    {
+      "bits": "1c802d23981009e3",
+      "canonical": "2.092918528402297e-171",
+      "hash": "sha256:ceb9f3d6ea1cb0b1570eafa5cd1d8386b5d8573257ff0da8688528adafe57c61"
+    },
+    {
+      "bits": "8539b83a9e69aa1d",
+      "canonical": "-1.729613449939174e-283",
+      "hash": "sha256:ca15c438e141c9e9c4bafe1c7724dfcc1b0c7eeaff389fc76e1d6c3940ab4f61"
+    },
+    {
+      "bits": "d75c43683aaa3e26",
+      "canonical": "-6.797064713642931e+112",
+      "hash": "sha256:b1896bea04c5539944c63a53dcd9d60fae9899e4694d4c1dd06f8879120a8c4e"
+    },
+    {
+      "bits": "43db931ebe56a459",
+      "canonical": "7947862653787006000",
+      "hash": "sha256:26ed2fd0d35cce93c3892a53f5d9f94654152cf56dbfa661cfb5112e0b53f5f5"
+    },
+    {
+      "bits": "6de5f015f0ddfd7d",
+      "canonical": "2.4781100669866792e+221",
+      "hash": "sha256:c8372cb8e238373f0f33e09a68f6bb2a264458dfce38159f7ba95ce419a53378"
+    },
+    {
+      "bits": "7c2a0178a2332f11",
+      "canonical": "1.2671708517429202e+290",
+      "hash": "sha256:70b9542fbb6f3204cb11cfc045c3158790aed950ffc2a2010456efcba1ad0737"
+    },
+    {
+      "bits": "d7bef5468c02524f",
+      "canonical": "-4.7648888743547657e+114",
+      "hash": "sha256:abab157e904b19c26deb6bff4f7aae2bbc6872a5704ef2751107ec54293cf328"
+    },
+    {
+      "bits": "d448edecdf08fce6",
+      "canonical": "-1.0649773170741188e+98",
+      "hash": "sha256:8d5d620667fb9870ba92b67a133a2031c7e0e1affd97c4fdf13a704a58d64bb3"
+    },
+    {
+      "bits": "063c757f020517ff",
+      "canonical": "1.2542473439656182e-278",
+      "hash": "sha256:5a902acecc2c3570fc4ac104b9927adca0b6ee89217322f2bdbc7283171a34db"
+    },
+    {
+      "bits": "3231e5fce8f0381e",
+      "canonical": "6.638881957010706e-67",
+      "hash": "sha256:7579c61f212b725736e7d92a74a25cb74e49663a8e0ba14179701bfe2a2d7fee"
+    },
+    {
+      "bits": "22a11355d9aebf0d",
+      "canonical": "7.001421290610415e-142",
+      "hash": "sha256:da7e6411ae5f517626e8a78b572d34448039889888d9ea3bb2b081e92b8d70e0"
+    },
+    {
+      "bits": "44f8a0cb0195222e",
+      "canonical": "1.8608464444432596e+24",
+      "hash": "sha256:2ad17b654a287db71fd217a4b887a3833a40063404d0abcd2efac5047bb3b1b1"
+    },
+    {
+      "bits": "4d91dff90819bac1",
+      "canonical": "4.706115039642124e+65",
+      "hash": "sha256:123a6abd15443088a5dd7e78fc008c3dd1bb55994daa4100dd404fe3af8bee18"
+    },
+    {
+      "bits": "509fdbac01e921e4",
+      "canonical": "2.360905722290344e+80",
+      "hash": "sha256:fc43a064dd3dab3a53cd3bfb4923192d19b2661c4895e10ef48ce2002f23050a"
+    },
+    {
+      "bits": "e135837409a29881",
+      "canonical": "-1.890377616752271e+160",
+      "hash": "sha256:09035f8de8147b526da642bbba061ad55dc240960d695e524703138ba6a82af9"
+    },
+    {
+      "bits": "ec218db55ef9bbdc",
+      "canonical": "-7.386724159114923e+212",
+      "hash": "sha256:a7336df24fdc1f7245ab783848dc4c3c84fc5cfe3642c0ea56aea0484acebd67"
+    },
+    {
+      "bits": "31369fcaf1707ad7",
+      "canonical": "1.2804837989266786e-71",
+      "hash": "sha256:1df06658c5adbbd19a6374fc8c450a2eba5afd83d4d811e468d6d0b3abef88c9"
+    },
+    {
+      "bits": "2314b89290cdbb6e",
+      "canonical": "1.0875079652890091e-139",
+      "hash": "sha256:00efb3ed1af5802623bf276bffb34db9aa5d0d6ac6f973d169ce593b48d0d2b6"
+    },
+    {
+      "bits": "703cb2ba59a7326b",
+      "canonical": "4.4554406372300777e+232",
+      "hash": "sha256:045e21c9b344ffa95c896df46f2792b8157d960a6c23416e819ede832778d1c2"
+    },
+    {
+      "bits": "ed24581f734728f8",
+      "canonical": "-5.610584882674982e+217",
+      "hash": "sha256:7e41c60c78bea124aa0cdeba9c6ee6ef16135c5ae519fffbd0a444299d728e76"
+    },
+    {
+      "bits": "5d648e719742e40a",
+      "canonical": "7.83349325002656e+141",
+      "hash": "sha256:b6d9a3e8b98eee38ae2e26e95202bc7af65f41172f50aba244b447938541f7a3"
+    },
+    {
+      "bits": "91277705763da5fe",
+      "canonical": "-4.952591114733117e-226",
+      "hash": "sha256:0646fa7189a83e443cf445f5a0e42252a5330205d85a6c69810bf45d3865824a"
+    },
+    {
+      "bits": "322d780661759cae",
+      "canonical": "5.4653014943970446e-67",
+      "hash": "sha256:89caa2346eaa948d0afc97c1b2f09edc90673609ceb8d05f5cebfb4cad48c1b0"
+    },
+    {
+      "bits": "02c2b4f0e6e2153c",
+      "canonical": "2.288304347095429e-295",
+      "hash": "sha256:8afc278f97c1452ec37c6b31fcba666763fb5bfb472aa204a4381061f9603119"
+    },
+    {
+      "bits": "081e5630a35ad151",
+      "canonical": "1.4355950076448366e-269",
+      "hash": "sha256:1174b8e097827c21db6eb8c7646fbba253d9fa5f539d2946086c73d2ee019c57"
+    },
+    {
+      "bits": "30f0b378c41c382d",
+      "canonical": "5.907791139192005e-73",
+      "hash": "sha256:40fcc5ba6657e7e41a3e1a39d88df4b49088bcc10557f0761b73d67fe55089e9"
+    },
+    {
+      "bits": "b41fec680a183eb1",
+      "canonical": "-1.2714252477296896e-57",
+      "hash": "sha256:6c4df66e3f86b1d8573badb743a6f7cc035b8aca22771f78273d534bcc2a6713"
+    },
+    {
+      "bits": "e781b3aa561876bb",
+      "canonical": "-3.9435299259016014e+190",
+      "hash": "sha256:bd62b70d4311ee7903e7fc0055f699a132aff3b06e9dcd12dbcba7cdaf986c4b"
+    },
+    {
+      "bits": "f3751fe68758d949",
+      "canonical": "-1.4770159044115394e+248",
+      "hash": "sha256:e64bc903b0be0e361f500475d2ebc3c62d06633293463152d86e299d320a33e6"
+    },
+    {
+      "bits": "e085f8f8fba06731",
+      "canonical": "-9.427319011429177e+156",
+      "hash": "sha256:c5907252837f86d4c2c1b27dcf695a07a7db15c33153d78a8bc1d4c4e32fde47"
+    },
+    {
+      "bits": "b4e791381dcb8d6a",
+      "canonical": "-7.68917817039764e-54",
+      "hash": "sha256:0fd2737d499d10b804db44241178a79cd51cd21d2c26da80ab266a3488aa97b3"
+    },
+    {
+      "bits": "99ad43f23c9872b0",
+      "canonical": "-5.3808063462685694e-185",
+      "hash": "sha256:6ac70e6d3acddbe32a4014707da6d770bdeeff7f7b8d3ba57df029a9a41bcb48"
+    },
+    {
+      "bits": "d1a54bdfc0b9ac4e",
+      "canonical": "-2.0685910334306697e+85",
+      "hash": "sha256:2192b83c32cf33cfa214d0191bd27d35be87f30eb812a3fab8ef2d47e00ce42e"
+    },
+    {
+      "bits": "aadf04a717d48aaf",
+      "canonical": "-3.4622443859390573e-102",
+      "hash": "sha256:f1a698e7e224739af8d60d2f56b4e69957a67c70d51e44d933e82cf898c93b9e"
+    },
+    {
+      "bits": "50515819126251ef",
+      "canonical": "8.03325338307384e+78",
+      "hash": "sha256:812e01535c385f24c4b89ed9587e753e16dd1fd651511e859cab3321f50d219e"
+    },
+    {
+      "bits": "926e30e1f91bfa75",
+      "canonical": "-6.681745495297589e-220",
+      "hash": "sha256:31db3213a3d770506c39f3a907fa40837b1d3759df5ca1a438fb6c6e089248e2"
+    },
+    {
+      "bits": "62b9755e846cfb00",
+      "canonical": "3.753098526042066e+167",
+      "hash": "sha256:2e17d3d62bcde0ea12455affaf311b62e66fccb806d906ee4732a16a4b02d275"
+    },
+    {
+      "bits": "37bcaa5e29453d3b",
+      "canonical": "3.290637936942505e-40",
+      "hash": "sha256:213e66e1a5f9469542f397d9b0a28f1ff7110db9e296305dba9f10a84d58ac05"
+    },
+    {
+      "bits": "31071a27f9332bb6",
+      "canonical": "1.6344207788820286e-72",
+      "hash": "sha256:55b8af0b989544bd3ea8d4201c965d193eca3cb15ac616f42328b37d1b0462d6"
+    },
+    {
+      "bits": "b27d152fa8190400",
+      "canonical": "-1.7259831433080134e-65",
+      "hash": "sha256:744c7cc45d5af21370211707938ffefa2cabbd5438817d0c563d99d2ed963767"
+    },
+    {
+      "bits": "60177afef6e02413",
+      "canonical": "7.870535080653541e+154",
+      "hash": "sha256:b50a90caad0ef036381cb6f65181384611e4f1f701e14699cbeaa27cea59b053"
+    },
+    {
+      "bits": "bdbf0204f5076596",
+      "canonical": "-2.8201509976512558e-11",
+      "hash": "sha256:c0760cd3d26548fb643ef5309f4916965ee0fd8f366e157b652e54d41ac36578"
+    },
+    {
+      "bits": "cce0c9b68c30ca74",
+      "canonical": "-2.1581745769249895e+62",
+      "hash": "sha256:465003612285756b65f0a13e1ca13c6c4b8fac1f0e34ab57c938a12bda657702"
+    },
+    {
+      "bits": "e76ea08128ad5c14",
+      "canonical": "-1.7057340772789543e+190",
+      "hash": "sha256:0a63264c88e00b619bb0a38a6a0ea18e624bb1951edc59685d51f8bea3878ca8"
+    },
+    {
+      "bits": "dc79835b48c1ccd9",
+      "canonical": "-2.96702680234516e+137",
+      "hash": "sha256:49287b99648e4eddef98860baecf44b21bd76085093c336c372d8fe41d81208f"
+    },
+    {
+      "bits": "ca004e6cae7ad7ee",
+      "canonical": "-2.978968894654921e+48",
+      "hash": "sha256:addbd8e4d3cc573d45a6962e4c03bccd5803bb0fe0f24ad044c16529bb566fbd"
+    },
+    {
+      "bits": "aa409cf208476df6",
+      "canonical": "-3.621774176054961e-105",
+      "hash": "sha256:b39015ff8d9d78f81503136e71e3b15c4868642365a96a8f5070489344b390e7"
+    },
+    {
+      "bits": "c413749893f931fa",
+      "canonical": "-89722441300958940000",
+      "hash": "sha256:ebdabba59d572ba2479f29af0c3cf0e966eb4268b8a81543cb1067a98d131bcc"
+    },
+    {
+      "bits": "e8231661ee4cb40b",
+      "canonical": "-4.35426370795862e+193",
+      "hash": "sha256:a2949f0ac40e81a3a6772619434c287d1cef01059fa148d1a22a0a8826f34031"
+    },
+    {
+      "bits": "03d6c10844483dfc",
+      "canonical": "3.648232942332435e-290",
+      "hash": "sha256:54cf359445d5bea900e68173d2a77948234c29f1b6c7d4a83c3a9de49045d01b"
+    },
+    {
+      "bits": "c86b52fcef13083f",
+      "canonical": "-7.438347128265468e+40",
+      "hash": "sha256:13520c8fad81125d5d3ddf5e3cfc07820535ba2e2e384255056ac0486bb87691"
+    },
+    {
+      "bits": "e909d110cf3d585a",
+      "canonical": "-9.649110278998745e+197",
+      "hash": "sha256:c33b48f9e6249000231dc95988c69d389cde276a25316729c4ca6cdbd5a0c91d"
+    },
+    {
+      "bits": "06874a7771d7fc73",
+      "canonical": "3.284732402973328e-277",
+      "hash": "sha256:f49fb0493f77c8998dedd198ee71dccf675c64ad6dfd2c836fd66f0215dca96d"
+    },
+    {
+      "bits": "e0114902bf6c75e6",
+      "canonical": "-5.793915429811912e+154",
+      "hash": "sha256:3283bdb923bef80cf4f534341d044914e5bcf10291997b05502fa64fe535432f"
+    },
+    {
+      "bits": "ede8c76eef347617",
+      "canonical": "-2.799053795495559e+221",
+      "hash": "sha256:62fffb3ab202756ba37d7183c59441a5ae16e18c7602871cfda9c18d25785213"
+    },
+    {
+      "bits": "16ec932953eb06ac",
+      "canonical": "2.9864607800819707e-198",
+      "hash": "sha256:a697476fdd6d7981da6f5ea618d073103e6cb14e499e9a551168e715cad36a91"
+    },
+    {
+      "bits": "905e4c7918eadf01",
+      "canonical": "-7.806343243001547e-230",
+      "hash": "sha256:a8222fc76718c9afdfa858ccf490d62fc5e21ab80b16a2a1786084e8b3994cdc"
+    },
+    {
+      "bits": "894d1f168fd6e154",
+      "canonical": "-7.225146010010317e-264",
+      "hash": "sha256:33321fc73a23f7a6394d84b8921b1f60313c91f95a4c1d883ae6ce10cccce3c5"
+    },
+    {
+      "bits": "53ecd162482f5847",
+      "canonical": "1.9235835448265237e+96",
+      "hash": "sha256:dd13dc54df7ec7b3fe5e664cd2933ea14b7897c3effde59b22a58aab272a0746"
+    },
+    {
+      "bits": "8d4bad8b35c462f8",
+      "canonical": "-1.2667378718064171e-244",
+      "hash": "sha256:5a4649052990471372ba6b2efda5caaeb302469b1d81a76b8b57f05b5a906804"
+    },
+    {
+      "bits": "4462502dfe46bc6b",
+      "canonical": "2.7025515744281635e+21",
+      "hash": "sha256:4f892a5deb9b08748cffd2dc4886b3dc3546a0f42b4a1a605d0d43301efe6d91"
+    },
+    {
+      "bits": "1f438b0f141de8fe",
+      "canonical": "4.448237178295661e-158",
+      "hash": "sha256:149bfe072c0c69ef3b4a6af5bdbf550d8bf32e6ade118ea7c75244ef4eb67470"
+    },
+    {
+      "bits": "e481029d36e44a9a",
+      "canonical": "-1.3462855728389098e+176",
+      "hash": "sha256:293bf4201d114de48f31cd03be2ceab3c95e957955191bb118419cfe4b4778f0"
+    },
+    {
+      "bits": "7beff52dbf5f1307",
+      "canonical": "9.732440848143354e+288",
+      "hash": "sha256:80bbb04d8e4b1a4ef09af065dbd0a988559e99b26feb543f887d6ecc86f15ee4"
+    },
+    {
+      "bits": "d6d3c995760be2cb",
+      "canonical": "-1.8588655214416416e+110",
+      "hash": "sha256:f5d6a43d2a748c8ec689e094985226c37e0cee9d96d4370af54b7a5f10c3ff5e"
+    },
+    {
+      "bits": "3373a446f748a1fa",
+      "canonical": "7.639415503862101e-61",
+      "hash": "sha256:2777c25f1517f70a5e373722c4a17e1ae4cebef62a8a066e5bbc5e71648bc20d"
+    },
+    {
+      "bits": "f4c747135dd4a603",
+      "canonical": "-3.4132278999474074e+254",
+      "hash": "sha256:ecb258f047f930b1f1a388d7dcaaff6dabd6fe08d1fd97db18e47bfafc530514"
+    },
+    {
+      "bits": "0538386854cd0acf",
+      "canonical": "1.628787260622776e-283",
+      "hash": "sha256:56797c45cbc79585b01cb8df53628198c2ad80935055865f61d44ffcbabb31d7"
+    },
+    {
+      "bits": "d4f5c12d94c27a1e",
+      "canonical": "-1.9033107388761106e+101",
+      "hash": "sha256:8faeb16215acea0106ff458f6765d1f90872efeb3997c0e84d8106d35fc31d4e"
+    },
+    {
+      "bits": "3713defc3cb2fcae",
+      "canonical": "2.2276202158151858e-43",
+      "hash": "sha256:1f7f9a3036ea5367340dbde848694897c2f7a2faed4007cdd39f8d5b463999aa"
+    },
+    {
+      "bits": "4b243add7a48390f",
+      "canonical": "9.688217461813993e+53",
+      "hash": "sha256:80efeec32305377030e90c6041961e1286bb7b3e5673b974d78e4463c1e71a6e"
+    },
+    {
+      "bits": "7730082bbeb65022",
+      "canonical": "1.292354482477445e+266",
+      "hash": "sha256:424bd0e8ebe41e90c418246a805b40994b89fa809fb090c10605540986d05e74"
+    },
+    {
+      "bits": "2f2c4b4de4feeedf",
+      "canonical": "1.8642662947957125e-81",
+      "hash": "sha256:6e1b8b9172de6b5a46e63afbf34facd1982d2d1c9883bc1b271378e5a78295cc"
+    },
+    {
+      "bits": "1edaec1d6b007808",
+      "canonical": "4.787346477337438e-160",
+      "hash": "sha256:11ba8bb59d75b117422a7e82de9dc45442e60d60abb8801bc85d49a9a14c77fe"
+    },
+    {
+      "bits": "15fee9f83e68aa6f",
+      "canonical": "9.860009857467387e-203",
+      "hash": "sha256:cf7f286182ecc4e7e7b896395eab6dcb9b4dd6f15f6779ef5d8ab3f0d8f318c9"
+    },
+    {
+      "bits": "187e58889704f473",
+      "canonical": "1.0641965295349429e-190",
+      "hash": "sha256:63f80049e9dd648b7a2e7af9422544515c350d42f6ee93b47dccf58b711f3320"
+    },
+    {
+      "bits": "4680f1cc6efa23a3",
+      "canonical": "4.295947624118214e+31",
+      "hash": "sha256:bf99e3506075fb8a493962d98cc8baf6d2dfa70dc692ff60d0e3b1000ca69b1b"
+    },
+    {
+      "bits": "fa0614433f0bf294",
+      "canonical": "-6.26222057451067e+279",
+      "hash": "sha256:d2866c1e1ed41f2c162128bfedb085858eea76363af5ecaf92c74f34d1245740"
+    },
+    {
+      "bits": "69779d7ae5c39a32",
+      "canonical": "1.1297646107521708e+200",
+      "hash": "sha256:622967ddfddcec6336bb0df55e39b128b7c61e87c358489371d361b9924e864f"
+    },
+    {
+      "bits": "a5b2993236f2cc83",
+      "canonical": "-4.292970923513012e-127",
+      "hash": "sha256:4306023cb65208b48834368a50094c99b6ec5e781ad5eed52cfffa699e3adace"
+    },
+    {
+      "bits": "a73374432e4dbf61",
+      "canonical": "-7.533798438281159e-120",
+      "hash": "sha256:82993cbc07d770d431a399d054ca3b7699c06b9352d93ec52a7e602c9db9bcec"
+    },
+    {
+      "bits": "4aa842afb0514ac8",
+      "canonical": "4.538464086611249e+51",
+      "hash": "sha256:4f2283614d04a373b0ebb6b92319560789e8e3a563423c8eae5916f168f2e1e4"
+    },
+    {
+      "bits": "43a654b766543280",
+      "canonical": "804556308502626300",
+      "hash": "sha256:e77bec8aeeeda8d2c474d9c01371412dbf6fcd564bc4d1757370f394b0980c7b"
+    },
+    {
+      "bits": "e7e5671894f6efd9",
+      "canonical": "-3.0515198050873777e+192",
+      "hash": "sha256:f4350206d6a7803459eeefedf2e2a01569342194eb5ba81631aa995a12cf8702"
+    },
+    {
+      "bits": "9449c8e10f01bb6e",
+      "canonical": "-6.127380690492724e-211",
+      "hash": "sha256:af3370d85e110bc9aa49ce06a564871dccbc904f719166477f33bba819e47d90"
+    }
+  ],
+  "sources": [
+    {
+      "source": "1.0",
+      "canonical": "1"
+    },
+    {
+      "source": "3.0",
+      "canonical": "3"
+    },
+    {
+      "source": "-0",
+      "canonical": "0"
+    },
+    {
+      "source": "-0.0",
+      "canonical": "0"
+    },
+    {
+      "source": "1e3",
+      "canonical": "1000"
+    },
+    {
+      "source": "1e21",
+      "canonical": "1e+21"
+    },
+    {
+      "source": "1e-7",
+      "canonical": "1e-7"
+    },
+    {
+      "source": "1E-06",
+      "canonical": "0.000001"
+    },
+    {
+      "source": "333333333.33333329",
+      "canonical": "333333333.3333333"
+    },
+    {
+      "source": "9007199254740993",
+      "canonical": "9007199254740992"
+    },
+    {
+      "source": "1e400",
+      "canonical": null
+    },
+    {
+      "source": "-1e400",
+      "canonical": null
+    },
+    {
+      "source": "NaN",
+      "canonical": null
+    },
+    {
+      "source": "Infinity",
+      "canonical": null
+    },
+    {
+      "source": "-Infinity",
+      "canonical": null
+    }
+  ]
+}

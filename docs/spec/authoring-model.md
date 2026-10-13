@@ -83,10 +83,9 @@ inline closures and steps whose id names a different export.
 
 Each step return value is persisted as a step output artifact. It is not automatically promoted to a named channel.
 
-V0 artifact values use canonical JSON with safe integers only. In TypeScript,
-use `z.int()` for numeric inputs and outputs; `z.number()` is rejected during
-emission because it admits fractional values that no portable runtime can
-publish canonically.
+V0 artifact values use RFC 8785 canonical JSON with finite IEEE-754 doubles.
+In TypeScript, use `z.number()` for finite numbers or `z.int()` for safe integer
+inputs and outputs. NaN and infinities cannot be published.
 
 ## Step Output
 

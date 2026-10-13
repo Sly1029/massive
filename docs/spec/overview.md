@@ -14,12 +14,11 @@ Python is the primary authoring SDK for v2. It uses Pydantic validation schemas
 for values entering a workflow or step and serialization schemas for values
 leaving one. Runtimes validate inputs with `TypeAdapter`, serialize outputs with
 `dump_python(mode="json")`, then publish canonical immutable JSON artifacts.
-This lets Pydantic `Decimal` cross the wire as its serialized string form while
-keeping v0's prohibition on floating-point JSON numbers. TypeScript remains a
-supported frontend and consumes the same versioned graph and artifact contracts.
-The Python emitter emits validation schemas for inputs, but checks each input
-type's serialization schema before emission; this rejects a bare `float` input
-while retaining Decimal's canonical string transport.
+Pydantic `Decimal` crosses the wire as its serialized string form; `float`
+fields use finite IEEE-754 doubles with RFC 8785 canonical number formatting.
+TypeScript consumes the same versioned graph and artifact contracts. The Python
+emitter checks each input type's serialization schema before accepting its
+validation schema, and runtime canonicalization rejects non-finite numbers.
 
 Two audiences anchor the design. Workflow authors get a typed Python SDK and a one-command local loop, with TypeScript also supported. Platform teams get the differentiating layer: compiled, deterministic, provenance-carrying deploy bundles whose execution contracts (environment, resources, secrets, network) are verifiable artifacts rather than runtime configuration. When scope decisions are close, the compile/verify/provenance layer wins.
 

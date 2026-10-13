@@ -58,10 +58,10 @@ func TestEmptyMapCollectsAnEmptyArray(t *testing.T) {
 
 func TestExpandAndCollectRejectValuesOutsideCanonicalArrayContract(t *testing.T) {
 	for name, body := range map[string][]byte{
-		"object":       []byte(`{"value":1}`),
-		"null":         []byte(`null`),
-		"noncanonical": []byte(`[1, 2]`),
-		"fraction":     []byte(`[1.5]`),
+		"object":            []byte(`{"value":1}`),
+		"null":              []byte(`null`),
+		"noncanonical":      []byte(`[1, 2]`),
+		"fraction spelling": []byte(`[1.50]`),
 	} {
 		t.Run("expand "+name, func(t *testing.T) {
 			if _, err := mapexec.Expand(body); err == nil {

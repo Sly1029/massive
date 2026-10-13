@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf16"
+
+	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 )
 
 func TestCanonicalHashingGoldenVector(t *testing.T) {
@@ -55,12 +55,6 @@ func canonicalJSON(value any) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// canonicalIntegerPattern is the v0 number restriction from
-// conformance/schema/hashing.md: canonical safe integers only.
-var canonicalIntegerPattern = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
-
-const maxSafeInteger = 1<<53 - 1
-
 func writeCanonicalJSON(out *bytes.Buffer, value any) error {
 	switch typed := value.(type) {
 	case nil:
@@ -72,10 +66,15 @@ func writeCanonicalJSON(out *bytes.Buffer, value any) error {
 			out.WriteString("false")
 		}
 	case json.Number:
-		if err := validateCanonicalInteger(typed); err != nil {
+		number, err := typed.Float64()
+		if err != nil {
 			return err
 		}
-		out.WriteString(typed.String())
+		text, err := jsoncanonicalizer.NumberToJSON(number)
+		if err != nil {
+			return err
+		}
+		out.WriteString(text)
 	case string:
 		out.WriteString(jsonQuote(typed))
 	case []any:
@@ -112,18 +111,6 @@ func writeCanonicalJSON(out *bytes.Buffer, value any) error {
 		out.WriteByte('}')
 	default:
 		return fmt.Errorf("unsupported JSON value type %T", typed)
-	}
-	return nil
-}
-
-func validateCanonicalInteger(number json.Number) error {
-	text := number.String()
-	if !canonicalIntegerPattern.MatchString(text) {
-		return fmt.Errorf("non-canonical number %q: v0 canonical field trees restrict numbers to canonical safe integers (conformance/schema/hashing.md)", text)
-	}
-	parsed, err := strconv.ParseInt(text, 10, 64)
-	if err != nil || parsed > maxSafeInteger || parsed < -maxSafeInteger {
-		return fmt.Errorf("number %q exceeds the safe-integer range ±(2^53-1) (conformance/schema/hashing.md)", text)
 	}
 	return nil
 }

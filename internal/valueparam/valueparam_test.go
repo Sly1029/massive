@@ -320,3 +320,68 @@ func TestMergeIsBoundedByDeclaredSizesBeforeReading(t *testing.T) {
 		t.Fatalf("merged = %s, %v", merged, err)
 	}
 }
+
+func TestFiniteFloatsRoundTripThroughReferencedMapValues(t *testing.T) {
+	codec, _ := newCodec(t)
+	ctx := context.Background()
+	numbers, err := os.ReadFile(filepath.Join("..", "..", "conformance", "fixtures", "canonical-json-v0", "valid", "floats.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := canonical.Marshal(map[string]any{
+		"numbers": json.RawMessage(bytes.TrimSuffix(numbers, []byte("\n"))),
+		"padding": strings.Repeat("x", valueparam.InlineLimit),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := canonical.Marshal([]json.RawMessage{item, item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parameter, err := codec.Encode(ctx, list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parameter[0] != '@' {
+		t.Fatal("large float list did not use a reference")
+	}
+	resolved, err := codec.Decode(ctx, parameter)
+	if err != nil || !bytes.Equal(resolved.Body, list) {
+		t.Fatalf("resolve float list: %v", err)
+	}
+	envelopes, err := codec.ExpandItems(ctx, parameter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inputs []json.RawMessage
+	if err := json.Unmarshal(envelopes, &inputs); err != nil {
+		t.Fatal(err)
+	}
+	results := make([]json.RawMessage, len(inputs))
+	for i, input := range inputs {
+		decoded, empty, err := codec.DecodeItem(ctx, input)
+		if err != nil || empty || decoded.Index != i || !bytes.Equal(decoded.Body, item) {
+			t.Fatalf("float map item %d changed: %v", i, err)
+		}
+		if _, err := codec.Encode(ctx, decoded.Body); err != nil {
+			t.Fatal(err)
+		}
+		results[i], err = valueparam.EncodePublishedItemResult(i, decoded.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	aggregate, err := canonical.Marshal(results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collected, err := codec.CollectResults(ctx, aggregate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := codec.Decode(ctx, collected)
+	if err != nil || !bytes.Equal(output.Body, list) {
+		t.Fatalf("collected float bytes changed: %v", err)
+	}
+}

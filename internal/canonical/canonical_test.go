@@ -3,8 +3,10 @@ package canonical
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -136,24 +138,101 @@ func TestMarshalCanonicalizesTypedValuesAndRawMessages(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeJSONRejectsNonSafeIntegers(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-	}{
-		{name: "fraction", input: `{"n":1.5}`},
-		{name: "exponent", input: `{"n":1e3}`},
-		{name: "unsafe", input: `{"n":9007199254740992}`},
-		{name: "negative unsafe", input: `{"n":-9007199254740992}`},
+func TestCanonicalJSONDoubleVectors(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "conformance", "fixtures", "canonical-json-v0", "numbers.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := CanonicalizeJSON([]byte(test.input)); err == nil {
-				t.Fatalf("expected canonicalization error for %s", test.input)
+	var vectors struct {
+		Cases []struct {
+			Bits      string
+			Canonical *string
+			Hash      *string
+		}
+		Sources []struct {
+			Source    string
+			Canonical *string
+		}
+	}
+	if err := json.Unmarshal(body, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range vectors.Cases {
+		t.Run(vector.Bits, func(t *testing.T) {
+			bits, err := strconv.ParseUint(vector.Bits, 16, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			value := math.Float64frombits(bits)
+			encoded, err := Marshal(value)
+			if vector.Canonical == nil {
+				if err == nil {
+					t.Fatalf("non-finite double accepted: %s", encoded)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(encoded) != *vector.Canonical || DigestBytes(encoded) != *vector.Hash {
+				t.Fatalf("got %s (%s), want %s (%s)", encoded, DigestBytes(encoded), *vector.Canonical, *vector.Hash)
+			}
+			var decoded float64
+			if err := json.Unmarshal(encoded, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if value != 0 && math.Float64bits(decoded) != bits {
+				t.Fatalf("double changed: %x", math.Float64bits(decoded))
+			}
+			if value == 0 && math.Signbit(decoded) {
+				t.Fatal("negative zero survived normalization")
+			}
+			again, err := CanonicalizeJSON(encoded)
+			if err != nil || !bytes.Equal(again, encoded) {
+				t.Fatalf("round trip changed: %s, %v", again, err)
 			}
 		})
 	}
+	for _, vector := range vectors.Sources {
+		encoded, err := CanonicalizeJSON([]byte(vector.Source))
+		if vector.Canonical == nil {
+			if err == nil {
+				t.Fatalf("invalid number accepted: %s", vector.Source)
+			}
+		} else if err != nil || string(encoded) != *vector.Canonical {
+			t.Fatalf("canonicalize %s = %s, %v; want %s", vector.Source, encoded, err, *vector.Canonical)
+		}
+	}
+}
+
+func FuzzCanonicalFloatRoundTrip(f *testing.F) {
+	for _, bits := range []uint64{0, 1, 1 << 63, 0x7fefffffffffffff, 0x4340000000000000, 0x444b1ae4d6e2ef50} {
+		f.Add(bits)
+	}
+	f.Fuzz(func(t *testing.T, bits uint64) {
+		value := math.Float64frombits(bits)
+		body, err := Marshal(value)
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			if err == nil {
+				t.Fatal("non-finite value accepted")
+			}
+			return
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded float64
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if value != 0 && math.Float64bits(decoded) != bits {
+			t.Fatalf("%x -> %s -> %x", bits, body, math.Float64bits(decoded))
+		}
+		again, err := CanonicalizeJSON(body)
+		if err != nil || !bytes.Equal(body, again) {
+			t.Fatalf("canonical bytes changed: %s -> %s, %v", body, again, err)
+		}
+	})
 }
 
 func TestDigestJSONWithRootMemberExcluded(t *testing.T) {
@@ -215,6 +294,14 @@ func TestMarshalRejectsInvalidUTF8BeforeEncoding(t *testing.T) {
 	for _, value := range []any{invalid, map[string]string{invalid: "value"}, map[string]string{"key": invalid}} {
 		if result, err := Marshal(value); err == nil {
 			t.Errorf("invalid Go string silently changed to %s", result)
+		}
+	}
+}
+
+func TestSelfExclusionRejectsNumericOverflowBeforeDeletingMember(t *testing.T) {
+	for _, body := range []string{`{"a":1,"self":1e400}`, `{"a":1,"self":{"nested":-1e400}}`} {
+		if digest, err := DigestJSONWithRootMemberExcluded([]byte(body), "self"); err == nil {
+			t.Fatalf("overflow acquired identity %s", digest)
 		}
 	}
 }

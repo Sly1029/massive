@@ -320,3 +320,82 @@ def test_file_artifacts_cross_real_map_subprocesses(tmp_path: Path) -> None:
         }
     # Four mapper subprocesses share one immutable tree, with no persisted scratch paths.
     assert len(list((store / "file-artifacts/trees/sha256").iterdir())) == 1
+
+
+def test_finite_floats_cross_decisions_maps_and_large_artifacts(tmp_path: Path) -> None:
+    from massive import canonical_json
+    from massive.canonical import parse_canonical_json, sha256_ref
+
+    repository = Path(__file__).resolve().parents[3]
+    fixture = Path(__file__).parent / "fixtures/float_workflow.py"
+    module = _load_fixture(fixture)
+    specification = module.graph.emit(
+        source=source_package(root=fixture.parent, include=[fixture.name], package_id="floats")
+    )
+    spec_path = tmp_path / "workflow-spec.json"
+    spec_path.write_text(specification.to_json())
+    store = tmp_path / "store"
+    values = [
+        3.0,
+        0.1,
+        0.1 + 0.2,
+        1e-7,
+        1e-6,
+        1e20,
+        1e21,
+        5e-324,
+        sys.float_info.max,
+        -0.0,
+        float(2**53 - 1),
+        float(2**53),
+        float(2**53 + 2),
+    ]
+    measurements = [
+        {"value": value, "scores": {"score": value}, "padding": "x" * 5000} for value in values
+    ]
+    expected = canonical_json(measurements).encode()
+    for accepted in [True, False]:
+        result = subprocess.run(
+            [
+                "go",
+                "run",
+                "./cmd/massive-orchestrator",
+                "run",
+                "--spec",
+                str(spec_path),
+                "--source-root",
+                str(fixture.parent),
+                "--store",
+                str(store),
+                "--project",
+                "example/floats",
+                "--run-id",
+                f"floats-{accepted}",
+                "--input",
+                canonical_json(
+                    {"accepted": accepted, "confidence": 0.1, "measurements": measurements}
+                ),
+                "--json",
+            ],
+            cwd=repository,
+            env={**os.environ, "MASSIVE_PYTHON": sys.executable},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        run = json.loads(result.stdout)
+        assert run["status"] == "succeeded"
+        body = (store / run["resultKey"]).read_bytes()
+        assert body == expected
+        assert canonical_json(parse_canonical_json(body)).encode() == expected
+        assert (
+            store / "blobs/sha256" / sha256_ref(expected).removeprefix("sha256:")
+        ).read_bytes() == expected
+        # Every item exceeds the scheduler's inline threshold and survives the real mapper.
+        for item in measurements:
+            item_body = canonical_json(item).encode()
+            assert len(item_body) > 4096
+            assert (
+                store / "blobs/sha256" / sha256_ref(item_body).removeprefix("sha256:")
+            ).read_bytes() == item_body

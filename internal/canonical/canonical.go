@@ -11,14 +11,12 @@ import (
 	"io"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 )
 
-const maxSafeInteger = 1<<53 - 1
-
-var canonicalIntegerPattern = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 var sha256RefPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // Marshal encodes a Go value using its JSON representation and returns the v0
@@ -111,7 +109,8 @@ func decodeJSON(data []byte) (any, error) {
 		return nil, fmt.Errorf("decode JSON field tree: trailing JSON content")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
+	// Decode all numbers as IEEE-754 doubles. The JSON decoder rejects overflow
+	// before self-exclusion can remove a non-finite member.
 
 	var value any
 	if err := decoder.Decode(&value); err != nil {
@@ -138,11 +137,12 @@ func writeCanonicalJSON(out *bytes.Buffer, value any) error {
 			return nil
 		}
 		out.WriteString("false")
-	case json.Number:
-		if err := validateCanonicalInteger(typed); err != nil {
-			return err
+	case float64:
+		encoded, err := jsoncanonicalizer.NumberToJSON(typed)
+		if err != nil {
+			return fmt.Errorf("encode finite JSON number %v: %w", typed, err)
 		}
-		out.WriteString(typed.String())
+		out.WriteString(encoded)
 	case string:
 		out.WriteString(jsonQuote(typed))
 	case []any:
@@ -177,26 +177,6 @@ func writeCanonicalJSON(out *bytes.Buffer, value any) error {
 		out.WriteByte('}')
 	default:
 		return fmt.Errorf("unsupported JSON value type %T", typed)
-	}
-
-	return nil
-}
-
-func validateCanonicalInteger(number json.Number) error {
-	text := number.String()
-	if !canonicalIntegerPattern.MatchString(text) {
-		return fmt.Errorf("non-canonical number %q: v0 canonical field trees restrict numbers to canonical safe integers", text)
-	}
-	if text == "-0" {
-		return fmt.Errorf("non-canonical number %q: v0 canonical field trees require zero to use 0", text)
-	}
-
-	parsed, err := strconv.ParseInt(text, 10, 64)
-	if err != nil {
-		return fmt.Errorf("parse canonical integer %q: %w", text, err)
-	}
-	if parsed > maxSafeInteger || parsed < -maxSafeInteger {
-		return fmt.Errorf("number %q exceeds the safe-integer range ±(2^53-1)", text)
 	}
 
 	return nil
