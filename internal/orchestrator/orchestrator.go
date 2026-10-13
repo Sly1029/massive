@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -168,8 +169,8 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			if err != nil {
 				continue
 			}
-			items, err := mapexec.Expand(input)
-			if err != nil {
+			var items []json.RawMessage
+			if err := json.Unmarshal(input, &items); err != nil || items == nil {
 				continue
 			}
 			if totals == nil {

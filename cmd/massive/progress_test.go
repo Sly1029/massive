@@ -86,6 +86,9 @@ func TestRunProgressEventsMatchRealPythonJournals(t *testing.T) {
 			if strings.ContainsAny(stderr.String(), "\r\x1b") {
 				t.Fatalf("plain mode used terminal control sequences: %q", stderr.String())
 			}
+			if _, known := sequence[0].MapTotals["scan"]; known {
+				t.Fatal("upstream-produced map input has no startup cardinality")
+			}
 			if test.name == "collected failures" {
 				retry := false
 				for i := range sequence {
@@ -214,6 +217,11 @@ func assertProgressJournal(t *testing.T, store, project, runID string, events []
 			}
 			attempts[identity] = event.Status
 		case "step.finished":
+			for identity := range attemptStarts {
+				if identity.node == event.NodeID && attempts[identity] == "" {
+					t.Fatal("step finished before an open attempt")
+				}
+			}
 			if _, exists := steps[event.NodeID]; exists {
 				t.Fatal("duplicate step finish")
 			}
@@ -247,6 +255,13 @@ func assertProgressJournal(t *testing.T, store, project, runID string, events []
 	if journal.ExitHook != nil {
 		checkStep(*journal.ExitHook)
 
+	}
+	wantSteps := len(journal.Steps)
+	if journal.ExitHook != nil {
+		wantSteps++
+	}
+	if len(steps) != wantSteps {
+		t.Fatal("extra step completion outside the journal")
 	}
 	if !reflect.DeepEqual(attempts, expectedAttempts) {
 		t.Fatalf("attempt events disagree with journal:\n%v\n%v", attempts, expectedAttempts)
@@ -365,6 +380,9 @@ graph.edge_from(items).to_end(graph.end)
 		t.Fatalf("live map run: %v\n%s", err, readFile(t, stderrPath))
 	}
 	events := readProgressEvents(t, eventsPath)
+	if total, known := events[0].MapTotals["items"]; !known || total != 2 {
+		t.Fatal("missing known map total at run start")
+	}
 	assertProgressJournal(t, store, "test/progress", "live", events)
 	assertProgressJSON(t, stdout.Bytes(), "live", "succeeded", "")
 }
