@@ -167,3 +167,14 @@ graph.on_exit(hook_for_summaries)  # pyright: ignore[reportArgumentType] # ty: i
 
 # An exit hook's return value has nowhere to go.
 graph.on_exit(hook_with_result)  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]
+def to_documents(context: StepContext[Document]) -> list[Document]:
+    return [context.inputs]
+
+
+def summarize_all(context: StepContext[list[Summary]]) -> Answer:
+    return Answer(answer="")
+
+
+# A map that collects item failures produces outcomes, not bare values.
+collected = graph.map(graph.add(to_documents), summarize, id="collected", item_failures="collect")
+graph.edge_from(collected).to(graph.add(summarize_all))  # pyright: ignore[reportArgumentType] # ty: ignore[invalid-argument-type]

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { parseStepInvocationDescriptorText } from "./descriptor.ts";
 import { executeStep } from "./execute.ts";
 import {
@@ -50,6 +50,22 @@ if (
     : await runStep(descriptorPath);
 
   if (outcome.kind !== "success") {
+    if (descriptorPath !== undefined) {
+      try {
+        await writeFile(
+          descriptorPath + ".failure.json",
+          JSON.stringify({
+            exitCode: outcome.exitCode,
+            message: Array.from(
+              `${outcome.error.name}: ${outcome.error.message}`,
+            ).slice(0, 1024).join(""),
+          }),
+        );
+      } catch (error) {
+        console.error(`runner-result-publication-failure: ${error}`);
+        deno.exit(70);
+      }
+    }
     console.error(formatOutcomeDiagnostic(outcome));
   }
 

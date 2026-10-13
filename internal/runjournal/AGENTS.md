@@ -19,3 +19,7 @@ A terminal journal may carry `exitHook`: one attempt, `succeeded` or `failed`,
 written after the run's own terminal state. It never changes the run status.
 Fuzz parsing and terminalization together: accepted records must round trip,
 termination must be idempotent, and successful artifact references must survive.
+
+A map step that collects item failures carries `itemFailures: "collect"`;
+only such a successful map may contain `failed` items. Keep the field on every
+map-step status variant of the schema.

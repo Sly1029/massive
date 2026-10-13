@@ -64,3 +64,8 @@ var RunOutcomeSchemaJSON []byte
 //
 //go:embed value-reference.schema.json
 var ValueReferenceSchemaJSON []byte
+
+// RunnerFailureSchemaJSON carries a bounded exception message independently of task logs.
+//
+//go:embed runner-failure.schema.json
+var RunnerFailureSchemaJSON []byte

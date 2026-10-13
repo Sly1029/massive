@@ -47,7 +47,7 @@ func TestRunDeadlineFailsTheRunAndStopsItsWorkers(t *testing.T) {
 import time
 from datetime import timedelta
 from pathlib import Path
-from massive import GraphBuilder, StepContext, container, execution
+from massive import GraphBuilder, MapItemOutcome, StepContext, container, execution
 
 def items(ctx: StepContext[str]) -> list[str]:
     return [str(Path(ctx.inputs) / str(index)) for index in range(2)]
@@ -57,12 +57,12 @@ def wait(ctx: StepContext[str]) -> int:
     time.sleep(120)
     return 1
 
-graph = GraphBuilder(name="deadline", input_type=str, output_type=list[int],
+graph = GraphBuilder(name="deadline", input_type=str, output_type=list[MapItemOutcome[int]],
     defaults=execution(environment=container("example.invalid/runner@sha256:"+"1"*64)),
     deadline=timedelta(seconds=10))
 source = graph.add(items)
 graph.edge_from(graph.start).to(source)
-graph.edge_from(graph.map(source, wait, id="wait", concurrency=2)).to_end(graph.end)
+graph.edge_from(graph.map(source, wait, id="wait", concurrency=2, item_failures="collect")).to_end(graph.end)
 `
 	entry := filepath.Join(root, "workflow.py")
 	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {

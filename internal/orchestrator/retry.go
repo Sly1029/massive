@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"github.com/Sly1029/massive/internal/mapexec"
 )
 
 // Runner exit codes shared by every language adapter.
@@ -14,6 +15,7 @@ const (
 	runnerExitSchemaValidation     = 65
 	runnerExitStepExecution        = 66
 	runnerExitNonRetryable         = 67
+	runnerExitInfrastructure       = 70
 )
 
 // executionPolicy is the executor view of a contract's retry and timeout
@@ -62,10 +64,44 @@ func retryableOutcome(outcome StepInvocationOutcome) bool {
 		return false
 	}
 	switch outcome.ExitCode {
-	case runnerExitDescriptorResolution, runnerExitSchemaValidation, runnerExitNonRetryable:
+	case runnerExitDescriptorResolution, runnerExitSchemaValidation, runnerExitNonRetryable, runnerExitInfrastructure:
 		return false
 	}
 	return true
+}
+
+// mapItemFailure classifies a terminal runner failure that a collecting map
+// keeps as an item outcome. Descriptor and schema failures violate the plan's
+// contract rather than describe one item, so they still fail the map, as do
+// cancellation, infrastructure, and output verification failures, which have
+// no runner outcome to classify.
+func mapItemFailure(outcome StepInvocationOutcome, attempt int) (mapexec.Failure, bool) {
+	summary := runnerFailureSummary(outcome, "runner-failure")
+	switch {
+	case outcome.TimedOutAfter > 0:
+		return mapexec.NewFailure(mapexec.FailureTimeout, attempt, summary), true
+	case outcome.ExitCode == runnerExitDescriptorResolution || outcome.ExitCode == runnerExitSchemaValidation || outcome.ExitCode == runnerExitInfrastructure:
+		return mapexec.Failure{}, false
+	case outcome.ExitCode == runnerExitNonRetryable:
+		return mapexec.NewFailure(mapexec.FailureNonRetryable, attempt, withRunnerMessage(summary, outcome.RunnerMessage)), true
+	case outcome.ExitCode == runnerExitStepExecution:
+		return mapexec.NewFailure(mapexec.FailureError, attempt, withRunnerMessage(summary, outcome.RunnerMessage)), true
+	// The process owner reports signal termination as a negative exit code.
+	// Positive exits, including 128+signal, are ordinary process exits.
+	case outcome.ExitCode < 0:
+		return mapexec.NewFailure(mapexec.FailureKilled, attempt, summary), true
+	default:
+		return mapexec.NewFailure(mapexec.FailureError, attempt, summary), true
+	}
+}
+
+// withRunnerMessage uses only the separately validated runner result. Captured
+// author logs never supply a failure message.
+func withRunnerMessage(summary, message string) string {
+	if message == "" {
+		return summary
+	}
+	return summary + ": " + message
 }
 
 func waitBeforeRetry(ctx context.Context, delay time.Duration) error {

@@ -2,14 +2,17 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	schemacontract "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
 	"github.com/Sly1029/massive/internal/datastore"
@@ -204,6 +207,10 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		return infrastructureFailure(fmt.Errorf("write descriptor %q: %w", descriptorPath, err))
 	}
 
+	if err := os.Remove(descriptorPath + ".failure.json"); err != nil && !os.IsNotExist(err) {
+		return infrastructureFailure(fmt.Errorf("clear runner failure result: %w", err))
+	}
+
 	var argv []string
 	if len(i.CommandTemplate) == 0 {
 		argv, err = DefaultRunnerCommand(descriptor.Symbol.Language)
@@ -261,13 +268,29 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		return infrastructureFailure(fmt.Errorf("invoke runner for %s: %w", descriptor.NodeID, err))
 	}
 
+	exitCode := exitError.ExitCode()
+	// A signal can supersede a failure published before interpreter shutdown.
+	// Only the runner's diagnostic exit codes consume that structured result.
+	var message string
+	if exitCode >= runnerExitDescriptorResolution && exitCode <= runnerExitNonRetryable {
+		var resultErr error
+		message, resultErr = readRunnerMessage(descriptorPath, exitCode)
+		if resultErr != nil {
+			return infrastructureFailure(fmt.Errorf("runner result for %s: %w", descriptor.NodeID, resultErr))
+		}
+	}
+	if exitCode == runnerExitInfrastructure {
+		return infrastructureFailure(fmt.Errorf("runner failed to publish its result for %s (exit 70)", descriptor.NodeID))
+	}
+
 	return StepInvocationOutcome{
-		NodeID:     descriptor.NodeID,
-		Attempt:    descriptor.Attempt,
-		Scope:      descriptor.Scope,
-		Status:     StatusFailed,
-		ExitCode:   exitError.ExitCode(),
-		Diagnostic: diagnostic,
+		NodeID:        descriptor.NodeID,
+		Attempt:       descriptor.Attempt,
+		Scope:         descriptor.Scope,
+		Status:        StatusFailed,
+		ExitCode:      exitError.ExitCode(),
+		RunnerMessage: message,
+		Diagnostic:    diagnostic,
 	}, nil
 }
 
@@ -313,4 +336,41 @@ func substituteDescriptorPath(command []string, descriptorPath string) []string 
 		argv = append(argv, descriptorPath)
 	}
 	return argv
+}
+
+// readRunnerMessage treats absence as an abrupt exit without an exception
+// message. Invalid or mismatched structured results are infrastructure errors.
+func readRunnerMessage(descriptorPath string, exitCode int) (string, error) {
+	file, err := os.Open(descriptorPath + ".failure.json")
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	// ASCII JSON uses a twelve-byte surrogate pair per astral code point.
+	// Include the fixed exitCode/message object overhead as well.
+	const maxResultBytes = 12*1024 + 128
+	body, err := io.ReadAll(io.LimitReader(file, maxResultBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > maxResultBytes {
+		return "", fmt.Errorf("runner failure result exceeds %d bytes", maxResultBytes)
+	}
+	if err := validateJSONAgainstSchema(string(schemacontract.RunnerFailureSchemaJSON), body); err != nil {
+		return "", fmt.Errorf("invalid runner failure result: %w", err)
+	}
+	var result struct {
+		ExitCode int    `json:"exitCode"`
+		Message  string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+	if result.ExitCode != exitCode {
+		return "", fmt.Errorf("runner result exit %d differs from process exit %d", result.ExitCode, exitCode)
+	}
+	return result.Message, nil
 }

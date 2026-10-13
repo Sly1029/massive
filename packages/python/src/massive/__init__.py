@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     )
     from .files import ArtifactFiles, Blob, Tree
     from .outcome import RunOutcome
+    from .outcomes import MapItemFailed, MapItemFailure, MapItemOutcome, MapItemSucceeded
 
 __all__ = [
     "DEFAULT_MAP_CONCURRENCY",
@@ -44,6 +45,10 @@ __all__ = [
     "GraphBuilder",
     "InvocationContext",
     "JsonValue",
+    "MapItemFailed",
+    "MapItemFailure",
+    "MapItemOutcome",
+    "MapItemSucceeded",
     "NodeHandle",
     "NonRetryableError",
     "Retry",
@@ -85,6 +90,10 @@ _EXPORT_MODULES = {
     "Blob": "files",
     "Tree": "files",
     "RunOutcome": "outcome",
+    "MapItemFailed": "outcomes",
+    "MapItemFailure": "outcomes",
+    "MapItemOutcome": "outcomes",
+    "MapItemSucceeded": "outcomes",
 }
 
 

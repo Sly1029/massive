@@ -9,6 +9,8 @@ from massive import (
     EdgePath,
     GraphBuilder,
     JsonValue,
+    MapItemOutcome,
+    MapItemSucceeded,
     NodeHandle,
     StepContext,
     container,
@@ -115,6 +117,24 @@ mapped: NodeHandle[Never, list[Result]] = map_graph.map(
 )
 map_graph.edge_from(map_graph.start).to(requests)
 map_graph.edge_from(mapped).to_end(map_graph.end)
+
+
+def count_outcomes(context: StepContext[list[MapItemOutcome[Result]]]) -> int:
+    return sum(isinstance(outcome, MapItemSucceeded) for outcome in context.inputs)
+
+
+outcome_graph = GraphBuilder(
+    name="typed-map-outcomes",
+    input_type=BatchRequest,
+    output_type=int,
+    defaults=graph.defaults,
+)
+outcome_requests = outcome_graph.add(unpack)
+outcomes: NodeHandle[Never, list[MapItemOutcome[Result]]] = outcome_graph.map(
+    outcome_requests, increment_item, id="increment-items", item_failures="collect"
+)
+outcome_graph.edge_from(outcome_graph.start).to(outcome_requests)
+outcome_graph.edge_from(outcomes).to(outcome_graph.add(count_outcomes)).to_end(outcome_graph.end)
 
 
 decision_graph: GraphBuilder[Request, Result] = GraphBuilder(

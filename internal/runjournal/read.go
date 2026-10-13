@@ -66,7 +66,7 @@ func Parse(data []byte) (*Manifest, error) {
 			if item.Status == "not-started" && step.Status != "failed" && step.Status != "cancelled" {
 				return nil, fmt.Errorf("map %q has not-started items without termination", step.NodeID)
 			}
-			if step.Status == "succeeded" && item.Status != "succeeded" {
+			if step.Status == "succeeded" && item.Status != "succeeded" && (step.ItemFailures == "" || item.Status != "failed") {
 				return nil, fmt.Errorf("successful map %q has unsuccessful items", step.NodeID)
 			}
 			if (step.Status == "failed" || step.Status == "cancelled") && (item.Status == "pending" || item.Status == "running") {

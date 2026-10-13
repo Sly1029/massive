@@ -147,6 +147,8 @@ type StepInvocationOutcome struct {
 	Status     string
 	ExitCode   int
 	Diagnostic string
+	// RunnerMessage comes from the bounded structured result beside the descriptor.
+	RunnerMessage string
 	// TimedOutAfter is nonzero when the invoker stopped a failed attempt at its
 	// deadline rather than observing the runner exit on its own.
 	TimedOutAfter time.Duration
