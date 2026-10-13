@@ -53,8 +53,8 @@ so `.to(next)` only accepts a step whose input type accepts that output: a wider
 input such as a union is allowed, a narrower one is a type error.
 
 The step functions are top-level named exports, and each step's `run` must be
-the entrypoint export named by the step id; emission rejects inline closures and
-mismatched names. The emitted plan stores symbol references, not function
+the entrypoint export named by the step's `export` (its id by default); emission
+rejects inline closures and mismatched names. The emitted plan stores symbol references, not function
 bodies, and the runner resolves those exports in a fresh step process.
 
 ```sh

@@ -1,8 +1,8 @@
 import { GraphValidationError } from "./errors.ts";
-import { END_NODE, START_NODE, type WorkflowBuilder } from "./workflow.ts";
+import { END_NODE, START_NODE, type WorkflowDefinition } from "./workflow.ts";
 
 export function validateGraphShape(
-  builder: WorkflowBuilder<unknown, never>,
+  builder: WorkflowDefinition,
 ): void {
   const graph = builder.graph;
 
@@ -14,19 +14,23 @@ export function validateGraphShape(
 
   assertAcyclic(builder);
 
+  const nodes = [
+    ...[...builder.stepNodes.keys()].map((id) => ["Step", id] as const),
+    ...[...builder.callNodes.keys()].map((id) => ["Call", id] as const),
+  ];
   const reachableFromStart = traverse(builder, START_NODE, "outbound");
-  for (const step of builder.stepNodes.keys()) {
-    if (!reachableFromStart.has(step)) {
+  for (const [kind, id] of nodes) {
+    if (!reachableFromStart.has(id)) {
       throw new GraphValidationError(
-        `Step "${step}" is not reachable from start`,
+        `${kind} "${id}" is not reachable from start`,
       );
     }
   }
 
   const canReachEnd = traverse(builder, END_NODE, "inbound");
-  for (const step of builder.stepNodes.keys()) {
-    if (!canReachEnd.has(step)) {
-      throw new GraphValidationError(`Step "${step}" cannot reach end`);
+  for (const [kind, id] of nodes) {
+    if (!canReachEnd.has(id)) {
+      throw new GraphValidationError(`${kind} "${id}" cannot reach end`);
     }
   }
 
@@ -35,7 +39,7 @@ export function validateGraphShape(
   }
 }
 
-function assertAcyclic(builder: WorkflowBuilder<unknown, never>): void {
+function assertAcyclic(builder: WorkflowDefinition): void {
   const graph = builder.graph;
   const visiting = new Set<string>();
   const visited = new Set<string>();
@@ -62,7 +66,7 @@ function assertAcyclic(builder: WorkflowBuilder<unknown, never>): void {
 }
 
 function traverse(
-  builder: WorkflowBuilder<unknown, never>,
+  builder: WorkflowDefinition,
   start: string,
   direction: "inbound" | "outbound",
 ): Set<string> {

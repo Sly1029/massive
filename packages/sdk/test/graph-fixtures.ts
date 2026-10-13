@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { workflow, type WorkflowBuilder } from "../src/index.ts";
+import { workflow } from "../src/index.ts";
+import type { WorkflowDefinition } from "../src/workflow.ts";
 
 export interface GraphCase {
   readonly name: string;
@@ -8,8 +9,7 @@ export interface GraphCase {
   readonly expectedTasks: number;
   readonly expectedEdges: number;
   readonly mergeExpectations?: Record<string, readonly string[]>;
-  // A builder consumes its output at end(), so heterogeneous outputs widen to never.
-  build(): WorkflowBuilder<number, never>;
+  build(): WorkflowDefinition;
 }
 
 export const graphCases = [

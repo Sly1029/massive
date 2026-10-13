@@ -8,20 +8,21 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
+import { flattenWorkflow } from "./compose.ts";
 import type { WorkflowPackageConfig } from "./config.ts";
 import type { DeploymentTarget } from "./deployment.ts";
 import { defineWorkflowPackage } from "./config.ts";
 import { MassiveError } from "./errors.ts";
 import { compareCodeUnits } from "./stable.ts";
 import type { EmitSourceSpec } from "./emit.ts";
-import { WorkflowBuilder } from "./workflow.ts";
+import { WorkflowBuilder, type WorkflowDefinition } from "./workflow.ts";
 
 export interface ResolveWorkflowEntrypointOptions {
   readonly target?: DeploymentTarget["kind"];
 }
 
 export interface ResolvedWorkflowEntrypoint {
-  readonly workflow: WorkflowBuilder<unknown, never>;
+  readonly workflow: WorkflowDefinition;
   readonly selectedExport: string;
   readonly packageRoot: string;
   readonly package: WorkflowPackageConfig;
@@ -168,17 +169,18 @@ async function selectWorkflowExport(
   filePath: string,
   requestedExport: string | undefined,
 ): Promise<{
-  readonly workflow: WorkflowBuilder<unknown, never>;
+  readonly workflow: WorkflowDefinition;
   readonly exportName: string;
 }> {
   const module = await import(pathToFileURL(filePath).href);
   const selected = selectExportedWorkflow(module, filePath, requestedExport);
-  // The runner resolves each step as the entrypoint export named by its id.
-  for (const step of selected.workflow.stepNodes.values()) {
-    const exported = module[step.id] as unknown;
+  // The runner resolves each step, including steps of called workflows, as the
+  // entrypoint export named by the step's export (its id unless overridden).
+  for (const step of flattenWorkflow(selected.workflow).steps.values()) {
+    const exported = module[step.exportName] as unknown;
     if (exported !== step.run && (exported as { run?: unknown } | undefined)?.run !== step.run) {
       throw new MassiveError(
-        `step "${step.id}" must use the run function exported as "${step.id}" from ${filePath}`,
+        `step "${step.id}" must use the run function exported as "${step.exportName}" from ${filePath}`,
       );
     }
   }
@@ -190,7 +192,7 @@ function selectExportedWorkflow(
   filePath: string,
   requestedExport: string | undefined,
 ): {
-  readonly workflow: WorkflowBuilder<unknown, never>;
+  readonly workflow: WorkflowDefinition;
   readonly exportName: string;
 } {
   if (requestedExport !== undefined) {
@@ -208,7 +210,7 @@ function selectExportedWorkflow(
   }
 
   const candidates = Object.entries(module)
-    .filter((entry): entry is [string, WorkflowBuilder<unknown, never>] =>
+    .filter((entry): entry is [string, WorkflowDefinition] =>
       entry[1] instanceof WorkflowBuilder
     )
     .sort(([left], [right]) => compareCodeUnits(left, right));
