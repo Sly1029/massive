@@ -20,7 +20,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from massive import canonical_json, sha256_ref
+from massive import MapItemIdentity, canonical_json, sha256_ref
 from massive.artifact import ArtifactRuntime, Destination, Producer
 from massive.canonical import JsonValue
 from massive.datastore import DatastoreObjectTooLargeError, LocalDatastore, S3Datastore
@@ -81,6 +81,12 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
     [
         (
             "capture_sync_invocation",
+            None,
+            1,
+            "massive-invocation-v2/python-runner-test/capture_sync_invocation",
+        ),
+        (
+            "capture_sync_invocation",
             {"frames": [{"kind": "map-item", "mapId": "fanout", "index": 0}]},
             1,
             "massive-invocation-v2/python-runner-test/capture_sync_invocation/scope/maps/fanout/items/0",
@@ -122,22 +128,23 @@ def test_runner_executes_sync_and_async_python_steps_via_descriptor(
     ],
 )
 def test_runner_exposes_collision_free_attempt_stable_idempotency_keys(
-    tmp_path: Path, export: str, scope: dict[str, object], attempt: int, expected_key: str
+    tmp_path: Path, export: str, scope: dict[str, Any] | None, attempt: int, expected_key: str
 ) -> None:
-    output_schema = {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["idempotency_key"],
-        "properties": {"idempotency_key": {"type": "string"}},
-    }
+    class InvocationResult(BaseModel):
+        idempotency_key: str
+        item: MapItemIdentity | None
+
+    output_schema = InvocationResult.model_json_schema(mode="serialization")
     descriptor_path, descriptor, store = _descriptor(
         tmp_path, export=export, output_schema=output_schema
     )
-    descriptor["scope"] = scope
+    if scope is not None:
+        descriptor["scope"] = scope
     descriptor["attempt"] = attempt
     descriptor["maxAttempts"] = 3
-    scope_path = "/scopes" + "".join(
-        f"/maps/{frame['mapId']}/items/{frame['index']}" for frame in scope["frames"]
+    frames = [] if scope is None else scope["frames"]
+    scope_path = ("/scopes" if frames else "") + "".join(
+        f"/maps/{frame['mapId']}/items/{frame['index']}" for frame in frames
     )
     descriptor["output"]["manifestKey"] = (
         f"projects/{PROJECT_KEY}/runs/python-runner-test/steps/{export}{scope_path}/"
@@ -160,12 +167,15 @@ def test_runner_exposes_collision_free_attempt_stable_idempotency_keys(
                 "runId": descriptor["runId"],
                 "nodeId": descriptor["nodeId"],
                 "attempt": descriptor["attempt"],
-                "scope": descriptor["scope"],
+                **({} if scope is None else {"scope": scope}),
             }
         ),
     )
     assert publication.manifest.key == descriptor["output"]["manifestKey"]
-    assert body == canonical_json({"idempotency_key": expected_key}).encode()
+    assert json.loads(body) == {
+        "idempotency_key": expected_key,
+        "item": None if not frames else {"index": frames[-1]["index"], "path": frames},
+    }
 
 
 @pytest.mark.parametrize(

@@ -78,6 +78,12 @@ export async function executeStep(
             attempt: descriptor.attempt,
             maxAttempts: descriptor.maxAttempts,
             idempotencyKey: invocationIdempotencyKey(descriptor),
+            item: descriptor.scope === undefined ? null : Object.freeze({
+              index: descriptor.scope.frames[descriptor.scope.frames.length - 1]!.index,
+              path: Object.freeze(descriptor.scope.frames.map((frame) =>
+                Object.freeze({ ...frame })
+              )),
+            }),
           },
         });
       } catch (error) {

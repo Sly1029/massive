@@ -10,7 +10,15 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
-from massive import Blob, GraphBuilder, NonRetryableError, StepContext, container, execution
+from massive import (
+    Blob,
+    GraphBuilder,
+    MapItemIdentity,
+    NonRetryableError,
+    StepContext,
+    container,
+    execution,
+)
 
 
 class Request(BaseModel):
@@ -54,6 +62,7 @@ class AliasedResult(BaseModel):
 
 class InvocationResult(BaseModel):
     idempotency_key: str
+    item: MapItemIdentity | None
 
 
 graph = GraphBuilder(
@@ -78,11 +87,15 @@ async def increment(context: StepContext[Request]) -> Result:
 
 
 def capture_sync_invocation(context: StepContext[Request]) -> InvocationResult:
-    return InvocationResult(idempotency_key=context.invocation.idempotency_key)
+    return InvocationResult(
+        idempotency_key=context.invocation.idempotency_key, item=context.invocation.item
+    )
 
 
 async def capture_async_invocation(context: StepContext[Request]) -> InvocationResult:
-    return InvocationResult(idempotency_key=context.invocation.idempotency_key)
+    return InvocationResult(
+        idempotency_key=context.invocation.idempotency_key, item=context.invocation.item
+    )
 
 
 def explode(context: StepContext[Request]) -> Result:

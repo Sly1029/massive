@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         retry,
     )
     from .files import ArtifactFiles, Blob, Tree
+    from .identity import MapItemIdentity, MapItemScopeFrame
     from .outcome import RunOutcome
     from .outcomes import MapItemFailed, MapItemFailure, MapItemOutcome, MapItemSucceeded
 
@@ -47,7 +48,9 @@ __all__ = [
     "JsonValue",
     "MapItemFailed",
     "MapItemFailure",
+    "MapItemIdentity",
     "MapItemOutcome",
+    "MapItemScopeFrame",
     "MapItemSucceeded",
     "NodeHandle",
     "NonRetryableError",
@@ -78,6 +81,8 @@ _EXPORT_MODULES = {
     "canonical_json": "canonical",
     "sha256_ref": "canonical",
     "InvocationContext": "context",
+    "MapItemIdentity": "identity",
+    "MapItemScopeFrame": "identity",
     "NonRetryableError": "context",
     "StepContext": "context",
     "Container": "contracts",

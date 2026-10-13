@@ -9,7 +9,9 @@ from massive import (
     EdgePath,
     GraphBuilder,
     JsonValue,
+    MapItemIdentity,
     MapItemOutcome,
+    MapItemScopeFrame,
     MapItemSucceeded,
     NodeHandle,
     StepContext,
@@ -219,7 +221,6 @@ map_select_graph.edge_from(rejected_input).to(rejected_source)
 map_select_graph.edge_from(selected_map).to_end(map_select_graph.end)
 
 
-
 def ordinary_increment(context: StepContext[Request]) -> Result:
     return Result(value=context.inputs.value + 1)
 
@@ -278,8 +279,8 @@ pipeline: GraphBuilder[Document, Answer] = GraphBuilder(
     name="typed-pipeline", input_type=Document, output_type=Answer, defaults=graph.defaults
 )
 summary_call: NodeHandle[Document, Summary] = pipeline.call(summaries, id="summaries")
-prompt_path: EdgePath[Prompt] = pipeline.edge_from(pipeline.start).to(summary_call).transform(
-    to_prompt
+prompt_path: EdgePath[Prompt] = (
+    pipeline.edge_from(pipeline.start).to(summary_call).transform(to_prompt)
 )
 prompt_path.to(pipeline.call(answers, id="answers")).to_end(pipeline.end)
 async_prompt: EdgePath[Prompt] = pipeline.edge_from(summary_call).transform(
@@ -377,3 +378,11 @@ unchecked.gather(unchecked.add(to_base), unchecked.add(to_sub)).to(unchecked.add
 unchecked.merge(
     unchecked.add(first_document, id="first"), unchecked.add(first_document, id="second")
 ).to_end(unchecked.end)
+
+
+def item_identity(ctx: StepContext[Request]) -> tuple[int, str] | None:
+    item: MapItemIdentity | None = ctx.invocation.item
+    if item is None:
+        return None
+    frame: MapItemScopeFrame = item.path[-1]
+    return item.index, frame.map_id
