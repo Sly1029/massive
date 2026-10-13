@@ -3,6 +3,7 @@ package plan
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -264,5 +265,19 @@ func TestPlanReaderRejectsObsoleteGraphIR(t *testing.T) {
 		if _, err := ParseCanonicalJSON(changed); err == nil || !strings.Contains(err.Error(), "rebuild with the current SDK") {
 			t.Fatalf("IR %s: %v", version, err)
 		}
+	}
+}
+
+func TestVerifyCanonicalJSONRejectsRehashedInvalidDeadlines(t *testing.T) {
+	data := readFixture(t, "plans", "linear-chain", "workflow-plan.json")
+	for _, seconds := range []int{0, 604801} {
+		t.Run(fmt.Sprint(seconds), func(t *testing.T) {
+			body, hash := mutateAndResignPlan(t, data, func(root map[string]any) {
+				root["graph"].(map[string]any)["deadlineSeconds"] = seconds
+			})
+			if _, err := VerifyCanonicalJSON(body, hash); err == nil || !strings.Contains(err.Error(), "graph.deadlineSeconds") {
+				t.Fatalf("invalid deadline accepted or undiagnosed: %v", err)
+			}
+		})
 	}
 }

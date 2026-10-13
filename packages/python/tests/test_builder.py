@@ -398,6 +398,20 @@ def test_workflow_call_rejects_a_child_with_its_own_run_deadline() -> None:
         parent.call(child, id="child")
 
 
+
+def test_workflow_call_rejects_a_deadline_assigned_after_registration() -> None:
+    child = GraphBuilder(
+        name="child", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    child.edge_from(child.start).to(child.add(identity)).to_end(child.end)
+    parent = GraphBuilder(
+        name="parent", input_type=Request, output_type=Result, defaults=_defaults()
+    )
+    parent.edge_from(parent.start).to(parent.call(child, id="child")).to_end(parent.end)
+    child.deadline = timedelta(seconds=1)
+    with pytest.raises(ValueError, match="called graph 'child' has a run deadline"):
+        _emit(parent)
+
 def _validate_workflow_spec(spec: dict[str, Any]) -> None:
     schema_path = (
         Path(__file__).resolve().parents[3] / "conformance/schema/workflow-spec.schema.json"

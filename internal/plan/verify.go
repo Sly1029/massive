@@ -39,6 +39,9 @@ func VerifyCanonicalJSON(planJSON []byte, expectedHash string) (*planpb.Workflow
 	if err != nil {
 		return nil, err
 	}
+	if err := ValidateExecution(parsed); err != nil {
+		return nil, err
+	}
 	if err := validateVersionedIdentity(parsed); err != nil {
 		return nil, err
 	}

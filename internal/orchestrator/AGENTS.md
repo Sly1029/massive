@@ -43,7 +43,9 @@ invoker deadline that yields a retryable failure, not a run cancellation. The
 backoff wait must observe the run context.
 The plan's run deadline is a context deadline whose cause is
 `RunDeadlineError`: it stops work like a cancellation but fails the run, and
-its message is the one context cause safe to persist in the journal.
+its message is the one context cause safe to persist in the journal. Claim the
+run and install outcome handling before starting timed source materialization.
+Snapshot verification and file reads observe the run context.
 
 Python tasks run as `python -I -m massive.runner`. Local runs pin the interpreter
 that passed dependency preflight; do not resolve `MASSIVE_PYTHON` again per task.

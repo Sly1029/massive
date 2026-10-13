@@ -315,6 +315,14 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         self._cached_spec: WorkflowSpec | None = None
         self._cached_source: tuple[str, str] | None = None
 
+    def _check_callable(self) -> None:
+        """A run deadline belongs to the outermost workflow."""
+        if self.deadline is not None:
+            raise ValueError(
+                f"called graph {self.name!r} has a run deadline, which bounds only a whole run;"
+                " set the deadline on the calling graph"
+            )
+
     def call(
         self,
         graph: GraphBuilder[InputT, OutputT],
@@ -326,11 +334,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         node_id = SAFE_PATH_SEGMENT.validate_python(id)
         if node_id in self._known_node_ids():
             raise ValueError(f"duplicate or reserved call id {node_id!r}")
-        if graph.deadline is not None:
-            raise ValueError(
-                f"called graph {graph.name!r} has a run deadline, which bounds only a whole run;"
-                " set the deadline on the calling graph"
-            )
+        graph._check_callable()
         handle = NodeHandle[InputT, OutputT](
             graph_token=self._graph_token,
             node_id=node_id,
@@ -1128,6 +1132,7 @@ class GraphBuilder(Generic[WorkflowInputT, WorkflowOutputT]):
         for call_id, child in sorted(
             self._calls.items(), key=lambda item: _canonical_sort_key(item[0])
         ):
+            child._check_callable()
             if child._emitting:
                 raise ValueError(f"recursive workflow call at {call_id!r}")
             if child._cached_spec is None:
