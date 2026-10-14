@@ -12,6 +12,7 @@ type Manifest struct {
 	Failure       *FatalFailure `json:"failure,omitempty"`
 	// Environment is null when the run's frontend has no dependency preflight.
 	Environment *Environment  `json:"environment"`
+	Cache       *Cache        `json:"cache,omitempty"`
 	Steps       []Step        `json:"steps"`
 	Decisions   []Decision    `json:"decisions"`
 	Result      *DataArtifact `json:"result,omitempty"`
@@ -152,4 +153,10 @@ func terminateRunningAttempts(attempts []Attempt, status, diagnostic string) {
 			attempts[index].Diagnostic = diagnostic
 		}
 	}
+}
+
+// Cache observes local preparation reuse; it is outside all portable identities.
+type Cache struct {
+	Preflight bool `json:"preflight"`
+	Emission  bool `json:"emission"`
 }

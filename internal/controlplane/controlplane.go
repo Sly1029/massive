@@ -38,6 +38,8 @@ type FrontendResult struct {
 	// Environment is the preflight report for a Python workflow, whose
 	// interpreter also runs every task. TypeScript workflows have none.
 	Environment *environment.Report
+	Compiled    *plan.CompileResult
+	Cache       *runjournal.Cache
 }
 
 // CheckEnvironment runs dependency preflight for a Python workflow file without
@@ -74,6 +76,10 @@ func PythonEnvironment() (environment.Request, error) {
 // states whether the Python interpreter will also run tasks (Execution) or only
 // emit a graph for a container target (Emission).
 func Emit(ctx context.Context, entry string, scope environment.Scope) (*FrontendResult, error) {
+	return emit(ctx, entry, scope, nil)
+}
+
+func emit(ctx context.Context, entry string, scope environment.Scope, checked *environment.Report) (*FrontendResult, error) {
 	path := entry
 	if index := strings.LastIndex(entry, "#"); index >= 0 {
 		path = entry[:index]
@@ -98,7 +104,10 @@ func Emit(ctx context.Context, entry string, scope environment.Scope) (*Frontend
 	}
 	switch extension {
 	case ".py":
-		report, err = CheckEnvironment(ctx, absolute, scope)
+		report = checked
+		if report == nil {
+			report, err = CheckEnvironment(ctx, absolute, scope)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -187,7 +196,11 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 	if request.Frontend == nil {
 		return nil, errors.New("frontend result is required")
 	}
-	compiled, err := plan.Compile(request.Frontend.Spec, request.Frontend.Canonical)
+	compiled := request.Frontend.Compiled
+	var err error
+	if compiled == nil {
+		compiled, err = plan.Compile(request.Frontend.Spec, request.Frontend.Canonical)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("compile workflow plan: %w", err)
 	}
@@ -235,6 +248,7 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 		Plan:              compiled.Plan,
 		RunnerCommand:     runnerCommand,
 		Environment:       realized,
+		Cache:             request.Frontend.Cache,
 		DatastoreRoot:     storeRoot,
 		ProjectID:         project,
 		RunID:             request.RunID,

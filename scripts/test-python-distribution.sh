@@ -22,10 +22,12 @@ if [ -z "$wheel" ]; then
 fi
 test -f "$wheel"
 
-uv venv "$test_root/venv"
+# Warm-hit assertions require a supported interpreter; distro startup hooks
+# deliberately disable preparation caching.
+uv venv --managed-python "$test_root/venv"
 python="$test_root/venv/bin/python"
 massive="$test_root/venv/bin/massive"
-uv pip install --python "$python" "$wheel"
+uv pip install --link-mode copy --python "$python" "$wheel"
 
 version="$("$python" -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])' "$repository/packages/python/pyproject.toml")"
 "$python" -c 'import sys; from importlib.metadata import version; assert version("massive-workflows") == sys.argv[1]' "$version"
@@ -45,6 +47,41 @@ run_result="$(
     --json \
     --verbose
 )"
+
+# Repeated invocations through the shipped launcher reuse preparation across
+# processes; task execution still produces the same result and plan identity.
+warm_result="$(
+  cd "$test_root/project"
+  "$massive" run workflow.py --input '{"value": 41}' \
+    --store "$test_root/store" --project massive/distribution-test \
+    --run-id warm-wheel --json --verbose
+)"
+"$massive" inspect warm-wheel --project massive/distribution-test \
+  --store "$test_root/store" --json > "$test_root/warm.json"
+"$python" - "$run_result" "$warm_result" "$test_root/warm.json" <<'PYCACHE'
+import json, sys
+from pathlib import Path
+cold, warm = map(json.loads, sys.argv[1:3])
+assert cold["result"] == warm["result"] == {"value": 42}
+assert cold["planHash"] == warm["planHash"]
+assert json.loads(Path(sys.argv[3]).read_text())["cache"] == {"preflight": True, "emission": True}
+PYCACHE
+forced_result="$(
+  cd "$test_root/project"
+  "$massive" run workflow.py --input '{"value": 41}' \
+    --store "$test_root/store" --project massive/distribution-test \
+    --run-id forced-wheel --no-cache --json --verbose
+)"
+"$massive" inspect forced-wheel --project massive/distribution-test \
+  --store "$test_root/store" --json > "$test_root/forced.json"
+"$python" - "$run_result" "$forced_result" "$test_root/forced.json" <<'PYCACHE'
+import json, sys
+from pathlib import Path
+cold, forced = map(json.loads, sys.argv[1:3])
+assert cold["result"] == forced["result"] == {"value": 42}
+assert cold["planHash"] == forced["planHash"]
+assert json.loads(Path(sys.argv[3]).read_text())["cache"] == {"preflight": False, "emission": False}
+PYCACHE
 
 "$massive" inspect clean-wheel --project massive/distribution-test \
   --store "$test_root/store" --json > "$test_root/inspected.json"

@@ -52,6 +52,7 @@ type RunCommand struct {
 	RunID     string `name:"run-id" help:"Caller-provided run identifier."`
 	JSON      bool   `help:"Emit one structured JSON result."`
 	Verbose   bool   `help:"Include plan and artifact identities."`
+	NoCache   bool   `name:"no-cache" help:"Recompute Python dependency preflight, emission, and compilation."`
 }
 
 type BuildCommand struct {
@@ -337,7 +338,7 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedE
 	if err != nil {
 		return err
 	}
-	frontend, err := controlplane.Emit(ctx, command.Entry, environment.Execution)
+	frontend, err := controlplane.EmitLocal(ctx, command.Entry, command.Store, command.NoCache)
 	if err != nil {
 		return err
 	}

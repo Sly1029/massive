@@ -40,6 +40,7 @@ type RunConfig struct {
 	// Environment is the checked dependency realization recorded in the
 	// journal; nil when the frontend has no dependency preflight.
 	Environment *runjournal.Environment
+	Cache       *runjournal.Cache
 	StepInvoker StepInvoker
 	Hooks       RunHooks
 }

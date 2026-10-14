@@ -33,29 +33,10 @@ class SourcePackage:
         return source_package(root=root, include=list(include), package_id="python-main")
 
     def manifest(self) -> tuple[list[dict[str, str]], str]:
-        import glob
-
         from .canonical import sha256_ref, utf16_sort_key
         from .hashing import SourcePackageFileHash, SourcePackageHashInput
 
-        root = self.root.resolve(strict=True)
-        files: dict[str, Path] = {}
-        for pattern in self.include:
-            if Path(pattern).is_absolute() or ".." in Path(pattern).parts:
-                raise ValueError("source include patterns must stay within the workflow directory")
-            # glob.glob keeps a trailing "**" matching files on every supported Python,
-            # as fast-glob does. Wildcards skip dot paths (.env, .git, ...), which are
-            # published only when a pattern names them.
-            for match in glob.glob(pattern, root_dir=root, recursive=True):
-                candidate = root / match
-                relative = candidate.relative_to(root)
-                if any((root / part).is_symlink() for part in (relative, *relative.parents)):
-                    raise ValueError(f"source package must not include symlinks: {relative}")
-                if not candidate.is_file():
-                    continue
-                files[relative.as_posix()] = candidate
-        if not files:
-            raise ValueError("source package include did not select any files")
+        files = selected_files(self.root, self.include)
         identity_files = [
             SourcePackageFileHash(path=path, hash=sha256_ref(file.read_bytes()))
             for path, file in sorted(files.items(), key=lambda item: utf16_sort_key(item[0]))
@@ -70,3 +51,28 @@ def source_package(*, root: Path, include: list[str], package_id: str) -> Source
     if not package_id:
         raise ValueError("source package id must not be empty")
     return SourcePackage(root=root, include=tuple(include), package_id=package_id)
+
+
+def selected_files(root: Path, include: tuple[str, ...]) -> dict[str, Path]:
+    """Select and validate paths without importing author code or hashing libraries."""
+    import glob
+
+    root = root.resolve(strict=True)
+    files: dict[str, Path] = {}
+    for pattern in include:
+        if Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+            raise ValueError("source include patterns must stay within the workflow directory")
+        # glob.glob keeps a trailing "**" matching files on every supported Python,
+        # as fast-glob does. Wildcards skip dot paths (.env, .git, ...), which are
+        # published only when a pattern names them.
+        for match in glob.glob(pattern, root_dir=root, recursive=True):
+            candidate = root / match
+            relative = candidate.relative_to(root)
+            if any((root / part).is_symlink() for part in (relative, *relative.parents)):
+                raise ValueError(f"source package must not include symlinks: {relative}")
+            if not candidate.is_file():
+                continue
+            files[relative.as_posix()] = candidate
+    if not files:
+        raise ValueError("source package include did not select any files")
+    return files
