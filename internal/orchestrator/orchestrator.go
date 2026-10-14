@@ -1486,8 +1486,9 @@ func newRunManifest(planHash string, projectKey string, runID string, stepOrder 
 	}
 	return runjournal.Manifest{
 		Kind:          "RunManifest",
-		SchemaVersion: 6,
-		Encoding:      "json-v6",
+		SchemaVersion: 7,
+		Encoding:      "json-v7",
+		RunKind:       "graph",
 		PlanHash:      planHash,
 		ProjectKey:    projectKey,
 		RunID:         runID,

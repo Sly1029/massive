@@ -47,6 +47,12 @@ func Parse(data []byte) (*Manifest, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, err
 	}
+	if (manifest.RunKind == "coordinator") != (manifest.CoordinatorRecord != nil) {
+		return nil, fmt.Errorf("run kind and coordinator record disagree")
+	}
+	if manifest.RunKind == "coordinator" && (len(manifest.Decisions) != 0 || manifest.ExitHook != nil) {
+		return nil, fmt.Errorf("coordinator cannot carry graph decisions or an exit hook")
+	}
 	if manifest.Failure != nil {
 		found := false
 		for _, step := range manifest.Steps {
@@ -72,7 +78,7 @@ func Parse(data []byte) (*Manifest, error) {
 		if manifest.Status != "running" && (step.Status == "pending" || step.Status == "running") {
 			return nil, fmt.Errorf("terminal run has unfinished step %q", step.NodeID)
 		}
-		if manifest.Status == "succeeded" && step.Status != "succeeded" && step.Status != "skipped" {
+		if manifest.Status == "succeeded" && step.Status != "succeeded" && step.Status != "skipped" && !(manifest.RunKind == "coordinator" && step.Status == "failed") {
 			return nil, fmt.Errorf("successful run has unsuccessful step %q", step.NodeID)
 		}
 		if err := validateAttempts(step.Attempts, step.Status); err != nil {

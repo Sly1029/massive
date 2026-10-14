@@ -51,6 +51,15 @@
         },
         "environment": {
           "$ref": "#/$defs/environment"
+        },
+        "runKind": {
+          "enum": [
+            "graph",
+            "coordinator"
+          ]
+        },
+        "coordinatorRecord": {
+          "$ref": "#/$defs/artifactRef"
         }
       },
       "required": [
@@ -63,7 +72,8 @@
         "steps",
         "decisions",
         "status",
-        "environment"
+        "environment",
+        "runKind"
       ],
       "additionalProperties": false
     },
@@ -73,11 +83,11 @@
     },
     "version": {
       "type": "number",
-      "const": 6
+      "const": 7
     },
     "encoding": {
       "type": "string",
-      "const": "json-v6"
+      "const": "json-v7"
     },
     "planHash": {
       "type": "string"
@@ -1039,6 +1049,15 @@
         },
         "failure": {
           "$ref": "#/$defs/fatalFailure"
+        },
+        "runKind": {
+          "enum": [
+            "graph",
+            "coordinator"
+          ]
+        },
+        "coordinatorRecord": {
+          "$ref": "#/$defs/artifactRef"
         }
       },
       "required": [
@@ -1052,7 +1071,8 @@
         "decisions",
         "status",
         "diagnostic",
-        "environment"
+        "environment",
+        "runKind"
       ],
       "additionalProperties": false
     },
@@ -1095,6 +1115,15 @@
         },
         "exitHook": {
           "$ref": "#/$defs/exitHook"
+        },
+        "runKind": {
+          "enum": [
+            "graph",
+            "coordinator"
+          ]
+        },
+        "coordinatorRecord": {
+          "$ref": "#/$defs/artifactRef"
         }
       },
       "required": [
@@ -1108,7 +1137,8 @@
         "decisions",
         "result",
         "status",
-        "environment"
+        "environment",
+        "runKind"
       ],
       "additionalProperties": false
     },
@@ -1155,6 +1185,15 @@
         },
         "exitHook": {
           "$ref": "#/$defs/exitHook"
+        },
+        "runKind": {
+          "enum": [
+            "graph",
+            "coordinator"
+          ]
+        },
+        "coordinatorRecord": {
+          "$ref": "#/$defs/artifactRef"
         }
       },
       "required": [
@@ -1168,7 +1207,8 @@
         "decisions",
         "status",
         "diagnostic",
-        "environment"
+        "environment",
+        "runKind"
       ],
       "additionalProperties": false
     },

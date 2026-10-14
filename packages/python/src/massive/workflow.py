@@ -40,8 +40,8 @@ class _Future(Generic[O]):
     done: bool = False
     value: O | None = None
     error: BaseException | None = None
-    waiters: list[_Task] = field(default_factory=list)
-    listeners: list[_Future[None]] = field(default_factory=list)
+    waiters: list[_Task] = field(default_factory=lambda: list[_Task]())
+    listeners: list[_Future[None]] = field(default_factory=lambda: list[_Future[None]]())
 
     def __await__(self) -> Generator[_Future[O], None, O]:
         if not self.done:

@@ -12,7 +12,7 @@ func TestJournalReaderValidatesTerminalMapState(t *testing.T) {
 		{Index: 0, Status: "failed", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "user error"}}},
 		{Index: 1, Status: "not-started", Attempts: []Attempt{}, Diagnostic: "sibling failed"},
 	}
-	original := Manifest{Kind: "RunManifest", SchemaVersion: 6, Encoding: "json-v6", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "failed", Diagnostic: "map failed", Decisions: []Decision{}, Steps: []Step{{NodeID: "map", Status: "failed", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "map failed"}}, Items: &items}}}
+	original := Manifest{Kind: "RunManifest", RunKind: "graph", SchemaVersion: 7, Encoding: "json-v7", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "failed", Diagnostic: "map failed", Decisions: []Decision{}, Steps: []Step{{NodeID: "map", Status: "failed", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "map failed"}}, Items: &items}}}
 	body, err := json.Marshal(original)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestJournalAcceptsFailedItemsOnlyInMapsThatCollectThem(t *testing.T) {
 		{Index: 0, Status: "succeeded", Attempts: []Attempt{{Attempt: 1, Status: "succeeded", Input: input, Output: &output}}},
 		{Index: 1, Status: "failed", Attempts: []Attempt{{Attempt: 1, Status: "failed", Input: input, Diagnostic: "runner-killed (signal)"}}},
 	}
-	manifest := Manifest{Kind: "RunManifest", SchemaVersion: 6, Encoding: "json-v6", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{}, Steps: []Step{{
+	manifest := Manifest{Kind: "RunManifest", RunKind: "graph", SchemaVersion: 7, Encoding: "json-v7", PlanHash: "sha256:plan", ProjectKey: "project", RunID: "run", Status: "running", Decisions: []Decision{}, Steps: []Step{{
 		NodeID: "map", Status: "succeeded", ItemFailures: "collect", Items: &items,
 		Attempts: []Attempt{{Attempt: 1, Status: "succeeded", Input: input, Output: &output}},
 	}}}

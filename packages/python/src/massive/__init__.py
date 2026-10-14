@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from .source_package import SourcePackage, source_package
 
 if TYPE_CHECKING:
-    from .workflow import StepFailed, Workflow
     from .builder import (
         DEFAULT_MAP_CONCURRENCY,
         MAX_MAP_CONCURRENCY,
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
     from .identity import MapItemIdentity, MapItemScopeFrame
     from .outcome import RunOutcome
     from .outcomes import MapItemFailed, MapItemFailure, MapItemOutcome, MapItemSucceeded
+    from .workflow import StepFailed, Workflow
 
 __all__ = [
     "DEFAULT_MAP_CONCURRENCY",
@@ -60,10 +60,10 @@ __all__ = [
     "RunOutcome",
     "SourcePackage",
     "StepContext",
-    "Tree",
-    "WorkflowSpec",
-    "Workflow",
     "StepFailed",
+    "Tree",
+    "Workflow",
+    "WorkflowSpec",
     "canonical_json",
     "container",
     "execution",

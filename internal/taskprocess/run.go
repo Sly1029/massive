@@ -29,7 +29,13 @@ func Run(ctx context.Context, argv []string, directory string) (string, error) {
 // rather than share the bounded combined log capture used by task invocations.
 // A nil environment inherits this process's environment.
 func RunTo(ctx context.Context, argv []string, directory string, environment []string, stdout, stderr io.Writer) error {
+	return RunDuplex(ctx, argv, directory, environment, nil, stdout, stderr)
+}
+
+// RunDuplex gives protocol adapters a dedicated input stream under the same process owner.
+func RunDuplex(ctx context.Context, argv []string, directory string, environment []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Stdin = stdin
 	cmd.Dir, cmd.Env = directory, environment
 	// Bound inherited-pipe drainage even if a descendant leaves the ownership
 	// group. Local author code is trusted execution, not an OS sandbox.
