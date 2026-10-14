@@ -79,6 +79,8 @@ the schema in `conformance/fixtures/map-outcomes`. The IR omits the default
 policy; never emit `itemFailures: "fail"`.
 
 Local code-first coordinators use `Workflow.run` with plain exported activities.
+Once authored code raises `FatalRunError`, `wf.run` rejects further commands,
+including calls from a catch or finalizer that resumes control flow.
 Use ordinary `asyncio.gather` and `asyncio.as_completed` for joins. The pinned
 CPython selector loop drains its FIFO ready queue to quiescence before another
 result enters Python; queued timers require a capability diagnostic. Keep the

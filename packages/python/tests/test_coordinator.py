@@ -498,8 +498,13 @@ def test_coordinator_runtime_capabilities_and_sticky_fatal(
         ),
         (
             "sticky",
-            'try:\n        raise FatalRunError("sticky safe cause")\n    except FatalRunError:\n        pass\n    return []',
+            'try:\n        raise FatalRunError("sticky safe cause")\n    except FatalRunError:\n        pass\n    return [await wf.run(stage_a, inputs[0], key="after-fatal")]',
             "sticky safe cause",
+        ),
+        (
+            "fatal-finalizer",
+            'try:\n        raise FatalRunError("sticky finalizer cause")\n    finally:\n        await wf.run(stage_a, inputs[0], key="cleanup")',
+            "sticky finalizer cause",
         ),
     ]:
         fixture.write_text(
@@ -511,6 +516,7 @@ def test_coordinator_runtime_capabilities_and_sticky_fatal(
         result = run(argv(coordinator_cli, source, store, jobs, name))
         assert result.returncode != 0 and diagnostic in result.stderr, result.stderr
         assert not list(control.glob("effect-*"))
+        assert not journal(store, name)["steps"]
         if name == "sticky":
             assert journal(store, name)["failure"]["message"] == "sticky safe cause"
 

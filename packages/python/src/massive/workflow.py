@@ -115,6 +115,8 @@ class Workflow:
         contract: ExecutionContract | None = None,
         key: str | None = None,
     ) -> O:
+        if self._scheduler.fatal is not None:
+            raise self._scheduler.fatal
         with self._scheduler.runtime():
             from .builder import _symbol_module
 

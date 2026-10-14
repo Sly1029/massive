@@ -448,3 +448,5 @@ against real CLI/runner processes and filesystem stores, through `massive-heavy`
 Frontend selection additionally passes 17 functional cases: only async function
 exports enter coordinator validation, while explicit non-graph selectors retain
 the builder diagnostic. This preserves ordinary Pydantic model exports.
+Sticky-fatal cases call `wf.run` from a catch and a finalizer and verify that no
+new invocation enters the journal and no activity effect is produced.
