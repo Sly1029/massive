@@ -487,18 +487,29 @@ graph.edge_from(route.case(Inactive)).to(c)
 selected = route.select(bool, active=b, inactive=c)
 graph.edge_from(selected).to_end(graph.end)
 `
-	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(root, "dispatched")
-	input, _ := json.Marshal(marker)
-	command := exec.Command(binary, "run", entry, "--store", progressStore(t), "--project", "tests/inactive-secret", "--input", string(input), "--progress", "none")
-	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
-	output, err := command.CombinedOutput()
-	if err == nil || !bytes.Contains(output, []byte("inactive-only")) {
-		t.Fatalf("inactive secret: %v\n%s", err, output)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("dispatched before inactive secret validation: %v", err)
+	for _, mode := range []string{"missing", "reserved-name"} {
+		t.Run(mode, func(t *testing.T) {
+			workflow := source
+			if mode == "reserved-name" {
+				workflow = strings.Replace(workflow, `"TOKEN":"inactive-only"`, `"PATH":"inactive-only"`, 1)
+			}
+			if err := os.WriteFile(entry, []byte(workflow), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(root, mode+"-dispatched")
+			input, _ := json.Marshal(marker)
+			command := exec.Command(binary, "run", entry, "--store", progressStore(t), "--project", "tests/inactive-secret", "--input", string(input), "--progress", "none")
+			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
+			output, err := command.CombinedOutput()
+			if err == nil || !bytes.Contains(output, []byte("inactive-only")) {
+				t.Fatalf("inactive secret: %v\n%s", err, output)
+			}
+			if mode == "reserved-name" && !bytes.Contains(output, []byte("conflicts")) {
+				t.Fatalf("reserved secret name: %s", output)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("dispatched before inactive secret validation: %v", err)
+			}
+		})
 	}
 }

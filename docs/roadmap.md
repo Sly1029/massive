@@ -64,8 +64,8 @@ for what works today.
 
 ## 2. Make execution predictable
 
-- `massive run --max-workers N` exposes a run-wide process budget (available CPUs
-  by default). Independent ready DAG branches share it with every map, whose
+- `massive run --max-workers N` exposes a run-wide process budget (Go runtime CPU budget
+  by default, respecting container CPU limits). Independent ready DAG branches share it with every map, whose
   declared concurrency remains an additional upper bound.
 - Local task subprocesses now own ordinary descendants through OS process groups
   or Windows jobs, with bounded pipe drainage and captured output. Context

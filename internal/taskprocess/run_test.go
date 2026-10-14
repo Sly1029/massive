@@ -254,7 +254,10 @@ func TestRunUsesExplicitEmptyEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Go supplies SYSTEMROOT on Windows even with an empty explicit block.
-	for _, entry := range strings.Fields(output) {
+	for _, entry := range strings.Split(strings.TrimSpace(output), "\n") {
+		if entry == "" {
+			continue
+		}
 		name, value, _ := strings.Cut(entry, "=")
 		if runtime.GOOS != "windows" || !strings.EqualFold(name, "SYSTEMROOT") || value != os.Getenv("SYSTEMROOT") {
 			t.Fatalf("empty environment inherited %q", entry)
