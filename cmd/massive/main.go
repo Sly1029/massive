@@ -345,7 +345,13 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedE
 	if err != nil {
 		return err
 	}
-	defer func() { returnedErr = errors.Join(returnedErr, progress.close()) }()
+	var fatalCause string
+	defer func() {
+		returnedErr = errors.Join(returnedErr, progress.close())
+		if command.Progress != "none" && fatalCause != "" {
+			fmt.Fprintln(os.Stderr, safeProgressText(fatalCause))
+		}
+	}()
 	var hooks orchestrator.RunHooks
 	if progress != nil {
 		hooks.OnRunEvent = progress.event
@@ -355,6 +361,9 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedE
 		Project: command.Project, RunID: command.RunID,
 		Hooks: hooks,
 	})
+	if result != nil && result.Run != nil && result.Run.Failure != nil {
+		fatalCause = (&orchestrator.FatalRunError{Failure: *result.Run.Failure}).Error()
+	}
 	if err != nil {
 		if result != nil && result.Run != nil {
 			_ = renderRun(stdout, command.JSON, command.Verbose, result, nil)

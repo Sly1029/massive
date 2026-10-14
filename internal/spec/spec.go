@@ -984,7 +984,12 @@ func standaloneArrayItemSchema(document, items json.RawMessage) (json.RawMessage
 			if !ok {
 				return nil, false
 			}
-			return standaloneArrayItemSchema(document, resolved)
+			// The resolver follows the entire pointer chain with a visited set.
+			// Continue with its terminal schema instead of recursing.
+			items = resolved
+			if err := json.Unmarshal(items, &referenceOnly); err != nil {
+				return items, true
+			}
 		}
 	}
 

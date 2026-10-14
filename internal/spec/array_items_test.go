@@ -55,3 +55,36 @@ func TestMapArrayItemSchemaVectors(t *testing.T) {
 		}
 	}
 }
+
+func TestMapArrayItemLocalPointerCycles(t *testing.T) {
+	for _, test := range []struct {
+		name, schema string
+		accepted     bool
+	}{
+		{"self", `{"type":"array","items":{"$ref":"#/items"}}`, false},
+		{"mutual", `{"type":"array","items":{"$ref":"#/additionalProperties"},"additionalProperties":{"$ref":"#/items"}}`, false},
+		{"chain", `{"type":"array","items":{"$ref":"#/additionalProperties"},"additionalProperties":{"type":"integer"}}`, true},
+	} {
+		for _, boundary := range []string{"input", "output"} {
+			t.Run(test.name+"/"+boundary, func(t *testing.T) {
+				data := mutateValidFixture(t, "finite-map", func(root map[string]any) {
+					node := root["graph"].(map[string]any)["nodes"].([]any)[1].(map[string]any)
+					schemas := root["schemas"].(map[string]any)
+					schemas[node[boundary+"Schema"].(string)] = json.RawMessage(test.schema)
+					schemas[node["item"+strings.ToUpper(boundary[:1])+boundary[1:]+"Schema"].(string)] = json.RawMessage(`{"type":"integer"}`)
+				})
+				parsed, err := Parse(data)
+				if test.accepted {
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := ValidateControlFlow(parsed.Graph, parsed.Schemas); err != nil {
+						t.Fatal(err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), "items exactly equal item"+strings.ToUpper(boundary[:1])+boundary[1:]+"Schema") {
+					t.Fatalf("Parse error = %v, want map item schema validation error", err)
+				}
+			})
+		}
+	}
+}

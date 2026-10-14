@@ -65,10 +65,11 @@ Returned outcomes also supply events for invokers without callbacks. Open attemp
 without a reported outcome are closed before step and run completion. Events have
 no independent execution state model.
 
-Non-success classifications are `error`, `non-retryable`, `terminated`, `timeout`,
+Non-success classifications are `error`, `non-retryable`, `fatal`, `terminated`, `timeout`,
 `contract`, `infrastructure`, `cancelled`, and `verification`. Diagnostics contain
 only safe lifecycle summaries. Author messages and logs stay out of this
-contract. Terminal controls are sanitized by the CLI renderer. Production writes
+contract. Fatal attempts use `fatal`; the human progress summary shows the
+settled run's explicitly safe fatal cause separately. Terminal controls are sanitized by the CLI renderer. Production writes
 events without validating itself; functional tests and consumers validate the
 versioned schema.
 

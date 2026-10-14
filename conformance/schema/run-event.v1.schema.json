@@ -146,6 +146,7 @@
               "enum": [
                 "error",
                 "non-retryable",
+                "fatal",
                 "terminated",
                 "timeout",
                 "contract",
