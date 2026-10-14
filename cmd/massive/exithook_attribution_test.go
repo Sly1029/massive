@@ -176,7 +176,8 @@ func compiledExitHookFixture(t *testing.T, source string) (orchestrator.RunConfi
 	outcomeFile := filepath.Join(root, "outcome.json")
 	t.Setenv("OUTCOME_FILE", outcomeFile)
 	return orchestrator.RunConfig{
-		Plan: compiled.Plan, DatastoreRoot: store, ProjectID: "test/settlement-hook", RunID: "deadline",
+		PassEnv: []string{"OUTCOME_FILE"},
+		Plan:    compiled.Plan, DatastoreRoot: store, ProjectID: "test/settlement-hook", RunID: "deadline",
 		SourcePackageRoot: root, SourceManifests: manifests, RunnerCommand: orchestrator.PythonRunnerCommand(python),
 	}, outcomeFile
 }

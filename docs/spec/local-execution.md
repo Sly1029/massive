@@ -33,7 +33,9 @@ variable does not satisfy a declared secret requirement.
 Python tasks use the absolute interpreter checked by dependency preflight,
 with `-I`; activation variables such as `VIRTUAL_ENV`, `PYTHONPATH`, and
 `PYTHONHOME` are unnecessary. Preflight checks metadata before graph import and
-pins uv's offline check to that interpreter and prefix. Secrets and scheduling
+pins uv's offline check to that interpreter and prefix. The metadata probe
+uses this reduced base; uv retains the control plane's allowlisted `UV_*`
+settings for cache, index, and resolution inputs. Secrets and scheduling
 stay outside dependency realization identity. Graph import remains trusted code
 in the launching environment; selective task environments are not a sandbox.
 

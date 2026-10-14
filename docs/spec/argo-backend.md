@@ -827,10 +827,11 @@ Reserved names protect runtime configuration; they are not a security boundary
 against author code. A deployment mapping can contain refs unused by a particular graph; they are
 never injected unless a task declares them.
 
-This is native environment binding only. Local execution continues to inherit
-the caller's environment without selective binding or secret preflight. There
-is no `.env` loader, secret-manager lookup, optional-secret fallback, or secret
-value serialization. The live Argo gate checks a real Secret through a mapped
+This is native environment binding only. Local execution uses the same declared
+name/ref contract with local `{env}` or `{file}` sources; see
+[local execution](local-execution.md). Argo lowering is unchanged. There is no
+`.env` loader, secret-manager lookup, optional-secret fallback, or secret value
+serialization. The live Argo gate checks a real Secret through a mapped
 invocation and verifies that other pods never receive its environment entry.
 
 ### Fatal run cancellation

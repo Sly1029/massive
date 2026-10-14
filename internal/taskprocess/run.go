@@ -18,9 +18,9 @@ const (
 // Run captures bounded combined output. A task owns its descendants: completing
 // or cancelling the adapter terminates processes still in its OS ownership group.
 // Tasks must await children whose work contributes to their result.
-func Run(ctx context.Context, argv []string, directory string) (string, error) {
+func Run(ctx context.Context, argv []string, directory string, environment []string) (string, error) {
 	var output boundedOutput
-	err := RunTo(ctx, argv, directory, nil, &output, &output)
+	err := RunTo(ctx, argv, directory, environment, &output, &output)
 	return output.String(), err
 }
 

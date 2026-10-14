@@ -40,8 +40,12 @@ type RunConfig struct {
 	// Environment is the checked dependency realization recorded in the
 	// journal; nil when the frontend has no dependency preflight.
 	Environment *runjournal.Environment
-	StepInvoker StepInvoker
-	Hooks       RunHooks
+	// Local execution options stay outside plan and environment identity.
+	SecretBindings map[string]LocalSecretBinding
+	PassEnv        []string
+	MaxWorkers     int
+	StepInvoker    StepInvoker
+	Hooks          RunHooks
 }
 
 // SourcePackageManifest is the compiled spec's view of one source package: the

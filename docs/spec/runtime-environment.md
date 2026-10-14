@@ -1,6 +1,7 @@
 # Runtime Environment Bindings
 
-Status: design direction, not an implemented provider framework.
+Status: selective local bindings and native Argo bindings are implemented.
+Provider frameworks remain deferred.
 
 This supersedes the broad facet/provider proposal. Start with explicit requirements
 and two concrete deployment modes, not a registry of providers, renderers, proxies,
@@ -28,9 +29,10 @@ expects. The deployment maps that name to a concrete source:
 | `catalog-api` exposed as `CATALOG_API_TOKEN` | read a configured environment variable | emit `secretKeyRef` for a configured Secret/key |
 | object-store access | CI-provided workload identity | pod/workload identity |
 
-This is a design example, not new authoring syntax. The existing contract's
-`secrets` name/ref pairs remain the current wire surface; separating logical
-requirements from deployment mappings requires a versioned schema change.
+The existing contract's `secrets` name/ref pairs are the wire surface on both
+targets. Bindings remain executor configuration, outside graph identity. Local
+`{env}` or `{file}` sources and Argo `{name,key}` sources use the same logical
+keys; see [local execution](local-execution.md).
 
 Compile should validate binding shape and capability, not require secret values.
 Local execution should check required environment variables before starting tasks;
@@ -44,8 +46,8 @@ not an authorization policy: possession of a name does not grant access.
 
 ## Current limits
 
-- Python local processes inherit the launching environment. Declared secrets are not
-  yet selectively bound or preflighted.
+- Local task processes receive a documented interpreter base, explicit non-secret
+  pass-through, and only declared secrets. Required sources are preflighted.
 - Argo binds declared environment secrets through a deployment mapping to native
   Kubernetes Secret keys; see [Argo secret bindings](argo-backend.md#application-secret-bindings).
 - Local execution does not enforce a container, Kubernetes resources, or network policy.
@@ -94,8 +96,8 @@ is scheduled.
 ## Local execution trust
 
 Local workflow authoring and task processes execute trusted application code.
-Both language adapters inherit the invoking environment and may use the local
-filesystem and network. Loading a graph itself imports author code; local
+Frontend adapters inherit the invoking environment; task interpreters start with
+selective environments. Both may use the local filesystem and network. Loading a graph itself imports author code; local
 execution is not a security boundary. The old TypeScript-only Deno permission
 flags are removed rather than presented as isolation the Python path or frontend
 never provided. Use an isolated execution environment and its native access

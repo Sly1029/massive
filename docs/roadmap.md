@@ -64,8 +64,9 @@ for what works today.
 
 ## 2. Make execution predictable
 
-- Expose a run-wide worker budget. Local maps already use parallel subprocesses;
-  independent DAG branches should share the same budget rather than multiply it.
+- `massive run --max-workers N` exposes a run-wide process budget (available CPUs
+  by default). Independent ready DAG branches share it with every map, whose
+  declared concurrency remains an additional upper bound.
 - Local task subprocesses now own ordinary descendants through OS process groups
   or Windows jobs, with bounded pipe drainage and captured output. Context
   cancellation persists terminal journals and retains verified completed map

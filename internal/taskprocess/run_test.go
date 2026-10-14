@@ -99,7 +99,7 @@ func TestRunOwnsDescendantsAndInheritedOutput(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := Run(ctx, []string{executable, "process-fixture", mode, ready}, "")
+				_, err := Run(ctx, []string{executable, "process-fixture", mode, ready}, "", nil)
 				done <- err
 			}()
 			var address string
@@ -159,14 +159,14 @@ func TestRunBoundsOutputAndPreservesAuthorExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := Run(t.Context(), []string{executable, "process-fixture", "output", "unused"}, "")
+	output, err := Run(t.Context(), []string{executable, "process-fixture", "output", "unused"}, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(output, "[task output truncated; showing last 1048576 bytes]\n") || !strings.HasSuffix(output, "final-tail\n") || strings.Contains(output, "discarded-prefix") || len(output) > outputLimit+100 {
 		t.Fatalf("output was not bounded and marked: length %d", len(output))
 	}
-	output, err = Run(t.Context(), []string{executable, "process-fixture", "failure", "unused"}, "")
+	output, err = Run(t.Context(), []string{executable, "process-fixture", "failure", "unused"}, "", nil)
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 42 || output != "author diagnostic\n" {
 		t.Fatalf("author result = %q, %v", output, err)
@@ -174,7 +174,7 @@ func TestRunBoundsOutputAndPreservesAuthorExit(t *testing.T) {
 }
 
 func TestRunRejectsMissingExecutableAndCancelledContext(t *testing.T) {
-	if _, err := Run(t.Context(), []string{filepath.Join(t.TempDir(), "missing")}, ""); err == nil {
+	if _, err := Run(t.Context(), []string{filepath.Join(t.TempDir(), "missing")}, "", nil); err == nil {
 		t.Fatal("missing executable succeeded")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -183,7 +183,7 @@ func TestRunRejectsMissingExecutableAndCancelledContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(ctx, []string{executable, "process-fixture", "failure", "unused"}, ""); !errors.Is(err, context.Canceled) {
+	if _, err := Run(ctx, []string{executable, "process-fixture", "failure", "unused"}, "", nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("pre-cancelled invocation = %v", err)
 	}
 }
@@ -214,7 +214,7 @@ func TestRunRetainsChunkedOutputAcrossRingWraps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := Run(t.Context(), []string{executable, "process-fixture", "chunked-output", "unused"}, "")
+	output, err := Run(t.Context(), []string{executable, "process-fixture", "chunked-output", "unused"}, "", nil)
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 42 {
 		t.Fatalf("exit = %v", err)

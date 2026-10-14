@@ -113,3 +113,14 @@ Keep I/O and verification outside worker locks. Event producers keep only clocks
 and sequence ordering. Events contain safe lifecycle summaries; task logs and
 author messages belong outside the target-neutral event contract. Emit run
 completion after the terminal journal and exit-hook publication attempt.
+
+Local runs resolve executable nodes' declared secrets before dispatch, including
+inactive branches and the exit hook. Keep binding values only in memory and
+process environments. Build each task environment before interpreter startup;
+only the documented base, explicit pass-through, and its own declarations enter.
+Remote process invocations inherit their already contract-scoped pod environment.
+One local process budget spans all batches; acquire it before start observations
+and attempt deadlines, and release it after process ownership cleanup. Ready-node
+workers own their node journal state; root publication copies and serializes it.
+Cancel sibling nodes on failure, reconcile every worker, and preserve the root
+failure under the outer run context.

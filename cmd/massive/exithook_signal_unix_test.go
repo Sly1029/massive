@@ -74,6 +74,7 @@ graph.on_exit(notify)
 			}
 			command := exec.Command(binary, "run", entry, "--input=2", "--store", store,
 				"--project", "test/hook-signals", "--run-id", "signals", "--json")
+			command.Args = append(command.Args, "--pass-env", "STALL_RUN", "--pass-env", "RUN_READY", "--pass-env", "HOOK_READY")
 			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "STALL_RUN="+stall,
 				"RUN_READY="+runReady, "HOOK_READY="+hookReady)
 			command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

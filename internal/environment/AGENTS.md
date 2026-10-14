@@ -49,3 +49,8 @@ regenerate it when the SDK's dependencies or version change, and never edit it b
 Launch the probe and uv through `taskprocess.RunTo` so descendants are owned and
 inherited-pipe drainage is bounded, as for the frontend. A cancelled context is
 returned as the error, never reported as a finding.
+
+Local control-plane probes use the reduced interpreter base environment, while
+uv's offline metadata checks retain their explicit UV settings. Pin tasks to the
+probe's absolute executable; no activation variables are required. Pass-through
+settings and secret values do not enter dependency realization identity.

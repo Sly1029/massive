@@ -231,7 +231,7 @@ func runIsolatedInvocation(ctx context.Context, config IsolatedStepConfig, input
 			runnerCommand = append(runnerCommand, "--termination-log", config.TerminationLog)
 		}
 	}
-	invoker := ProcessStepInvoker{CommandTemplate: runnerCommand, WorkingDir: config.WorkingDir, ProcessLimit: 1}
+	invoker := &ProcessStepInvoker{CommandTemplate: runnerCommand, WorkingDir: config.WorkingDir, workers: make(chan struct{}, 1)}
 	outcomes, err := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, MaxConcurrency: 1})
 	if err == nil && config.TerminationLog != "" && len(outcomes) == 1 && outcomes[0].Status == StatusFailed && outcomes[0].ExitCode < 0 && outcomes[0].TimedOutAfter == 0 {
 		body, readErr := os.ReadFile(config.TerminationLog)

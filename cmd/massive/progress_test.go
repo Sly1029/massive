@@ -342,6 +342,7 @@ graph.edge_from(items).to_end(graph.end)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, "run", workflow+"#graph", "--project", "test/progress", "--store", store, "--run-id", "live", "--input", "[0,1]", "--json", "--events", eventsPath)
+	command.Args = append(command.Args, "--pass-env", "MASSIVE_PROGRESS_HANDSHAKE")
 	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "MASSIVE_PROGRESS_HANDSHAKE="+root)
 	var stdout bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, stderr

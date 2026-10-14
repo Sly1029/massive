@@ -1,0 +1,279 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+func TestLocalTaskEnvironmentBindings(t *testing.T) {
+	binary, python, _ := progressCLI(t)
+	root := t.TempDir()
+	entry := filepath.Join(root, "workflow.py")
+	source := `import os
+import hashlib
+from pathlib import Path
+from massive import GraphBuilder, StepContext, container, execution
+image = container("example.invalid/runner@sha256:" + "0" * 64)
+def plain(ctx: StepContext[str]) -> bool:
+    assert os.getenv("UNDECLARED_CREDENTIAL") is None
+    assert os.getenv("BOUND_TOKEN") is None
+    assert os.getenv("BOUND_FILE") is None
+    assert os.getenv("CI_TOKEN_SOURCE") is None
+    assert os.getenv("MASSIVE_UNDECLARED_CREDENTIAL") is None
+    assert os.getenv("VIRTUAL_ENV") is None
+    assert os.getenv("LOCAL_CONFIG") == "enabled"
+    Path(ctx.inputs + ".plain").touch()
+    return True
+def authenticated(ctx: StepContext[bool]) -> bool:
+    assert ctx.inputs
+    assert hashlib.sha256(os.environ["BOUND_TOKEN"].encode()).hexdigest() == "a8a961bbfd48e245639ee53f297e279f9d7dca11931034975265c0803ba9fd14"
+    assert hashlib.sha256(os.environ["BOUND_FILE"].encode()).hexdigest() == "16072921ed76d02c1de47e75e56e7f0fd00dfa65eff93395ed84cd9abc50705e"
+    assert os.getenv("CI_TOKEN_SOURCE") is None
+    assert os.getenv("UNDECLARED_CREDENTIAL") is None
+    return True
+graph = GraphBuilder(name="scoped", input_type=str, output_type=bool, defaults=execution(environment=image))
+a = graph.add(plain)
+b = graph.add(authenticated, contract=execution(environment=image, secrets={"BOUND_TOKEN":"api", "BOUND_FILE":"file"}))
+graph.edge_from(graph.start).to(a)
+graph.edge_from(a).to(b)
+graph.edge_from(b).to_end(graph.end)
+`
+	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bindings := filepath.Join(root, "bindings.json")
+	if err := os.WriteFile(bindings, []byte(`{"api":{"env":"CI_TOKEN_SOURCE"},"file":{"file":"token"},"unused":{"env":"DOES_NOT_EXIST"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "token"), []byte("bound-file-value-never-journal\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "MASSIVE_PYTHON="+python, "UNDECLARED_CREDENTIAL=hidden-value", "MASSIVE_UNDECLARED_CREDENTIAL=hidden-value", "CI_TOKEN_SOURCE=bound-env-value-never-journal", "LOCAL_CONFIG=enabled", "VIRTUAL_ENV=unused-activation", "BOUND_TOKEN=ambient-bait", "BOUND_FILE=ambient-bait")
+	for _, mode := range []string{"bound", "missing-binding", "missing-env", "missing-file", "invalid-source", "missing-pass-env"} {
+		t.Run(mode, func(t *testing.T) {
+			store, marker, events := progressStore(t), filepath.Join(root, mode+"-started"), filepath.Join(root, mode+".ndjson")
+			input, _ := json.Marshal(marker)
+			args := []string{"run", entry, "--store", store, "--project", "tests/local-bindings", "--run-id", mode, "--json", "--progress", "none", "--events", events, "--pass-env", "LOCAL_CONFIG"}
+			args = append(args, "--input", string(input))
+			if mode == "missing-pass-env" {
+				args = append(args, "--pass-env", "DOES_NOT_EXIST")
+			}
+			if mode != "missing-binding" {
+				body := `{"api":{"env":"CI_TOKEN_SOURCE"},"file":{"file":"token"},"unused":{"env":"DOES_NOT_EXIST"}}`
+				if mode == "missing-env" {
+					body = `{"api":{"env":"DOES_NOT_EXIST"},"file":{"file":"token"}}`
+				}
+				if mode == "missing-file" {
+					body = `{"api":{"env":"CI_TOKEN_SOURCE"},"file":{"file":"missing-token"}}`
+				}
+				if mode == "invalid-source" {
+					body = `{"api":{"value":"bound-env-value-never-journal"}}`
+				}
+				if err := os.WriteFile(bindings, []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--secret-bindings", bindings)
+			}
+			command := exec.Command(binary, args...)
+			command.Env = env
+			output, err := command.CombinedOutput()
+			if mode == "bound" {
+				if err != nil {
+					t.Fatalf("run: %v\n%s", err, output)
+				}
+				if !bytes.Contains(output, []byte(`"result":true`)) {
+					t.Fatalf("result: %s", output)
+				}
+			} else {
+				want := "secret"
+				if mode == "missing-pass-env" {
+					want = "--pass-env"
+				}
+				if err == nil || !bytes.Contains(output, []byte(want)) {
+					t.Fatalf("missing/invalid source: %s %v", output, err)
+				}
+				if _, err := os.Stat(marker + ".plain"); !os.IsNotExist(err) {
+					t.Fatalf("step ran before secret validation: %v", err)
+				}
+			}
+			for _, value := range []string{"bound-env-value-never-journal", "bound-file-value-never-journal", "hidden-value"} {
+				if bytes.Contains(output, []byte(value)) {
+					t.Fatal("CLI diagnostic leaked a secret")
+				}
+				// Scan all serialized artifacts, not just journal/events.
+				if err := filepath.WalkDir(store, func(path string, item os.DirEntry, err error) error {
+					if os.IsNotExist(err) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					if item.IsDir() {
+						return nil
+					}
+					body, err := os.ReadFile(path)
+					if err != nil {
+						return err
+					}
+					if bytes.Contains(body, []byte(value)) {
+						return fmt.Errorf("binding value persisted in %s", path)
+					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				body, _ := os.ReadFile(events)
+				if bytes.Contains(body, []byte(value)) {
+					t.Fatal("event leaked a secret")
+				}
+			}
+		})
+	}
+}
+
+// Each item records its author-code lifetime in a separate file. Overlap between
+// distinct maps proves ready branches execute together; their combined sweep
+// measures the run-wide budget independently of the implementation's semaphore.
+func TestLocalWorkerBudgetAcrossIndependentMaps(t *testing.T) {
+	binary, python, _ := progressCLI(t)
+	root := t.TempDir()
+	entry := filepath.Join(root, "workflow.py")
+	source := `import os
+import time
+import json
+from pathlib import Path
+from massive import GraphBuilder, StepContext, container, execution
+
+def source(ctx: StepContext[list[int]]) -> list[int]:
+    return ctx.inputs
+def first(ctx: StepContext[int]) -> int:
+    return measure("first", ctx.inputs)
+def second(ctx: StepContext[int]) -> int:
+    return measure("second", ctx.inputs)
+def measure(branch: str, value: int) -> int:
+    started = time.time_ns()
+    root = Path(os.environ["LIFETIME_DIR"])
+    if value == 0 and int(os.environ["WORKER_LIMIT"]) > 1:
+        (root / (branch + ".ready")).touch()
+        other = root / (("second" if branch == "first" else "first") + ".ready")
+        deadline = time.monotonic() + 15
+        while not other.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert other.exists(), "independent map did not dispatch"
+    time.sleep(0.3)
+    ended = time.time_ns()
+    Path(os.environ["LIFETIME_DIR"], f"{branch}-{value}.json").write_text(json.dumps({"branch":branch, "start":started, "end":ended}))
+    return value
+
+graph = GraphBuilder(name="workers", input_type=list[int], output_type=list[int], defaults=execution(environment=container("example.invalid/runner@sha256:" + "0"*64)))
+producer = graph.add(source)
+graph.edge_from(graph.start).to(producer)
+a = graph.map(producer, first, id="first-map", concurrency=2)
+b = graph.map(producer, second, id="second-map", concurrency=2)
+graph.edge_from(a).to_end(graph.end)
+`
+	// The otherwise unused branch must reach the graph's end through a typed merge.
+	source = strings.Replace(source, "graph.edge_from(a).to_end(graph.end)", `def merge(ctx: StepContext[list[list[int]]]) -> list[int]:
+    return ctx.inputs[0] + ctx.inputs[1]
+joined = graph.add(merge)
+graph.gather(a, b).to(joined)
+graph.edge_from(joined).to_end(graph.end)`, 1)
+	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, limit := range []int{1, 2, 3} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			lifetimes := filepath.Join(root, fmt.Sprintf("lifetimes-%d", limit))
+			if err := os.Mkdir(lifetimes, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command(binary, "run", entry, "--store", progressStore(t), "--project", "tests/workers", "--json", "--progress", "none", "--input", "[0,1,2,3]", "--pass-env", "LIFETIME_DIR", "--pass-env", "WORKER_LIMIT", "--max-workers", fmt.Sprint(limit))
+			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "LIFETIME_DIR="+lifetimes, "WORKER_LIMIT="+fmt.Sprint(limit))
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("run: %v\n%s", err, output)
+			}
+			if !bytes.Contains(output, []byte(`"result":[0,1,2,3,0,1,2,3]`)) {
+				t.Fatalf("unordered result: %s", output)
+			}
+			type interval struct {
+				Branch     string
+				Start, End int64
+			}
+			var intervals []interval
+			files, err := os.ReadDir(lifetimes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range files {
+				if !strings.HasSuffix(file.Name(), ".json") {
+					continue
+				}
+				body, err := os.ReadFile(filepath.Join(lifetimes, file.Name()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var interval interval
+				if err := json.Unmarshal(body, &interval); err != nil {
+					t.Fatal(err)
+				}
+				intervals = append(intervals, interval)
+			}
+			if len(intervals) != 8 {
+				t.Fatalf("lifetimes = %d", len(intervals))
+			}
+			type change struct {
+				at    int64
+				delta int
+			}
+			var changes []change
+			crossBranch := false
+			for _, a := range intervals {
+				changes = append(changes, change{a.Start, 1}, change{a.End, -1})
+				for _, b := range intervals {
+					if a.Branch != b.Branch && a.Start < b.End && b.Start < a.End {
+						crossBranch = true
+					}
+				}
+			}
+			sort.Slice(changes, func(i, j int) bool {
+				if changes[i].at == changes[j].at {
+					return changes[i].delta < changes[j].delta
+				}
+				return changes[i].at < changes[j].at
+			})
+			live, maximum := 0, 0
+			for _, change := range changes {
+				live += change.delta
+				maximum = max(maximum, live)
+			}
+			if maximum != limit {
+				t.Fatalf("maximum overlapping processes = %d, want %d", maximum, limit)
+			}
+			if limit > 1 && !crossBranch {
+				t.Fatal("independent maps never overlapped")
+			}
+			// Per-map concurrency also bounds each branch, even with a larger run limit.
+			for _, branch := range []string{"first", "second"} {
+				for _, a := range intervals {
+					count := 0
+					for _, b := range intervals {
+						if b.Branch == branch && b.Start <= a.Start && a.Start < b.End {
+							count++
+						}
+					}
+					if count > 2 {
+						t.Fatalf("%s exceeded map concurrency", branch)
+					}
+				}
+			}
+		})
+	}
+}
