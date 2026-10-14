@@ -229,6 +229,75 @@ def test_emit_errors_have_a_stable_nonzero_exit(tmp_path: Path) -> None:
     assert first.stderr == second.stderr
 
 
+@pytest.mark.parametrize(
+    ("source_validator", "mapper_validator", "accepted"),
+    [
+        ("validate_value", "validate_value", True),
+        ("partial(validate_value, offset=1)", "partial(validate_value, offset=1)", False),
+        ("CallableValidator()", "CallableValidator()", False),
+        ("partial(validate_value, offset=1)", "partial(validate_value, offset=2)", False),
+        ("attrgetter('real')", "attrgetter('real')", False),
+    ],
+)
+def test_emit_compares_validator_names_or_reports_authoring_error(
+    tmp_path: Path, source_validator: str, mapper_validator: str, accepted: bool
+) -> None:
+    workflow = tmp_path / "workflow.py"
+    mapper_model = (
+        "MapperRequest = Request"
+        if source_validator == mapper_validator
+        else f"class MapperRequest(BaseModel):\n    value: Annotated[int, AfterValidator({mapper_validator})]"
+    )
+    workflow.write_text(
+        f'''\
+from functools import partial
+from operator import attrgetter
+from typing import Annotated
+from pydantic import AfterValidator, BaseModel
+from massive import GraphBuilder, StepContext, container, execution
+
+def validate_value(value: int, *, offset: int = 0) -> int:
+    return value + offset
+
+class CallableValidator:
+    def __call__(self, value: int) -> int:
+        return value + 1
+
+class Request(BaseModel):
+    value: Annotated[int, AfterValidator({source_validator})]
+
+{mapper_model}
+
+def identity(context: StepContext[MapperRequest]) -> MapperRequest:
+    return context.inputs
+
+graph = GraphBuilder(
+    name="validator-map",
+    input_type=list[Request],
+    output_type=list[MapperRequest],
+    defaults=execution(environment=container(
+        "example.invalid/python@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    )),
+)
+mapped = graph.map(graph.start, identity, id="validate-items")
+graph.edge_from(mapped).to_end(graph.end)
+'''
+    )
+
+    result = _emit(workflow)
+
+    if accepted:
+        assert result.returncode == 0, result.stderr
+        assert result.spec
+    else:
+        assert result.returncode == 2
+        assert result.spec == ""
+        assert "use a named module-level function instead of a partial or callable instance" in (
+            result.stderr
+        )
+        assert "AttributeError" not in result.stderr
+
+
 def test_missing_entrypoint_in_source_fails_before_import(tmp_path: Path) -> None:
     workflow = tmp_path / "workflow.py"
     workflow.write_text('raise RuntimeError("must not import")\n')

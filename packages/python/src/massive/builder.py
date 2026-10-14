@@ -1494,7 +1494,18 @@ def _normalize_core_schema_node(
             if key in {"definitions", "metadata", "ref"}:
                 continue
             if (key == "cls" and isinstance(child, type)) or callable(child):
-                normalized[key] = f"{child.__module__}.{child.__qualname__}"
+                module = getattr(child, "__module__", None)
+                qualname = getattr(child, "__qualname__", None)
+                if (
+                    not (isinstance(child, type) or inspect.isroutine(child))
+                    or not isinstance(module, str)
+                    or not isinstance(qualname, str)
+                ):
+                    raise TypeError(
+                        "Pydantic schema callable cannot be compared by a stable name; "
+                        "use a named module-level function instead of a partial or callable instance"
+                    )
+                normalized[key] = f"{module}.{qualname}"
             else:
                 normalized[key] = _normalize_core_schema_node(child, definitions, resolving)
         return normalized
