@@ -436,3 +436,11 @@ against real CLI/runner processes and filesystem stores, through `massive-heavy`
    `as_completed` values. Wrong synchronous/asynchronous inputs and a wrong
    awaited output assignment remain rejected; both checkers treat unused negative
    ignores as errors.
+6. **Distribution and example:** `scripts/test-python-distribution.sh` passes
+   from a built sdist/wheel on CPython 3.14.3, including the shipped coordinator
+   runner and protocol schema. The installed CLI executes the real fan-in and
+   map-outcomes activities, recovers a two-attempt exhausted failure, and resumes
+   from its archive after deleting the submission directory. Result identity is
+   unchanged, inspection recognizes journal v7, and TypeScript still selects
+   its own adapter through the Python launcher. No cluster/Argo execution gate
+   is claimed by this local distribution test.
