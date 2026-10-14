@@ -58,7 +58,7 @@ graph.edge_from(b).to_end(graph.end)
 		t.Fatal(err)
 	}
 	env := append(os.Environ(), "MASSIVE_PYTHON="+python, "UNDECLARED_CREDENTIAL=hidden-value", "MASSIVE_UNDECLARED_CREDENTIAL=hidden-value", "CI_TOKEN_SOURCE=bound-env-value-never-journal", "LOCAL_CONFIG=enabled", "VIRTUAL_ENV=unused-activation", "BOUND_TOKEN=ambient-bait", "BOUND_FILE=ambient-bait")
-	for _, mode := range []string{"bound", "missing-binding", "missing-env", "missing-file", "invalid-source", "missing-pass-env"} {
+	for _, mode := range []string{"bound", "missing-binding", "missing-env", "missing-file", "invalid-source", "missing-pass-env", "folded-missing-pass-env"} {
 		t.Run(mode, func(t *testing.T) {
 			store, marker, events := progressStore(t), filepath.Join(root, mode+"-started"), filepath.Join(root, mode+".ndjson")
 			input, _ := json.Marshal(marker)
@@ -66,6 +66,9 @@ graph.edge_from(b).to_end(graph.end)
 			args = append(args, "--input", string(input))
 			if mode == "missing-pass-env" {
 				args = append(args, "--pass-env", "DOES_NOT_EXIST")
+			}
+			if mode == "folded-missing-pass-env" {
+				args = append(args, "--pass-env", "tZ")
 			}
 			if mode != "missing-binding" {
 				body := `{"api":{"env":"CI_TOKEN_SOURCE"},"file":{"file":"token"},"unused":{"env":"DOES_NOT_EXIST"}}`
@@ -85,6 +88,15 @@ graph.edge_from(b).to_end(graph.end)
 			}
 			command := exec.Command(binary, args...)
 			command.Env = env
+			if mode == "folded-missing-pass-env" {
+				command.Env = make([]string, 0, len(env))
+				for _, variable := range env {
+					name, _, _ := strings.Cut(variable, "=")
+					if !strings.EqualFold(name, "TZ") {
+						command.Env = append(command.Env, variable)
+					}
+				}
+			}
 			output, err := command.CombinedOutput()
 			if mode == "bound" {
 				if err != nil {
@@ -95,7 +107,7 @@ graph.edge_from(b).to_end(graph.end)
 				}
 			} else {
 				want := "secret"
-				if mode == "missing-pass-env" {
+				if mode == "missing-pass-env" || mode == "folded-missing-pass-env" {
 					want = "--pass-env"
 				}
 				if err == nil || !bytes.Contains(output, []byte(want)) {

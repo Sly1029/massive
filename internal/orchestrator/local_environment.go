@@ -59,17 +59,18 @@ func LocalBaseEnvironment(pass []string) ([]string, error) {
 	if runtime.GOOS == "windows" {
 		names = append(names, "SYSTEMROOT", "COMSPEC", "USERPROFILE")
 	}
-	names = append(names, pass...)
-	env := make([]string, 0, len(names))
-	explicit := make(map[string]bool, len(pass))
 	for _, name := range pass {
-		explicit[name] = true
-	}
-	seen := make(map[string]bool, len(names))
-	for _, name := range names {
 		if !portableEnvName.MatchString(name) {
 			return nil, fmt.Errorf("invalid --pass-env name %q: use a portable environment variable name", name)
 		}
+		if _, exists := os.LookupEnv(name); !exists {
+			return nil, fmt.Errorf("--pass-env %s is not set in the launching environment", name)
+		}
+	}
+	names = append(names, pass...)
+	env := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
 		key := name
 		if runtime.GOOS == "windows" {
 			key = strings.ToUpper(key)
@@ -80,8 +81,6 @@ func LocalBaseEnvironment(pass []string) ([]string, error) {
 		seen[key] = true
 		if value, exists := os.LookupEnv(name); exists {
 			env = append(env, name+"="+value)
-		} else if explicit[name] {
-			return nil, fmt.Errorf("--pass-env %s is not set in the launching environment", name)
 		}
 	}
 	return env, nil
