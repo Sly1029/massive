@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestLocalSecretResolutionBoundsAndNames(t *testing.T) {
@@ -35,22 +36,22 @@ func TestLocalSecretResolutionBoundsAndNames(t *testing.T) {
 				}
 				binding = LocalSecretBinding{File: path}
 			}
-			secrets := []*planpb.SecretRef{{Name: "TOKEN", Ref: "ref"}}
+			secrets := []*planpb.SecretRef{{Name: proto.String("TOKEN"), Ref: proto.String("ref")}}
 			var pass []string
 			if mode == "base" {
-				secrets[0].Name = "PATH"
+				secrets[0].Name = proto.String("PATH")
 			}
 			if mode == "pass" {
-				secrets[0].Name = "CONFIG"
+				secrets[0].Name = proto.String("CONFIG")
 				pass = []string{"CONFIG"}
 				t.Setenv("CONFIG", "safe")
 			}
 			if mode == "total" {
 				for _, name := range []string{"SECOND", "THIRD", "FOURTH", "FIFTH", "SIXTH"} {
-					secrets = append(secrets, &planpb.SecretRef{Name: name, Ref: "ref"})
+					secrets = append(secrets, &planpb.SecretRef{Name: proto.String(name), Ref: proto.String("ref")})
 				}
 			}
-			plan := &planpb.WorkflowPlan{Contracts: []*planpb.ExecutionContract{{ContractRef: "contract", Secrets: secrets}}, Graph: &planpb.GraphIR{Nodes: []*planpb.GraphNode{{Id: "step", Kind: "step", ContractRef: "contract"}}}}
+			plan := &planpb.WorkflowPlan{Contracts: []*planpb.ExecutionContract{{ContractRef: proto.String("contract"), Secrets: secrets}}, Graph: &planpb.GraphIR{Nodes: []*planpb.GraphNode{{Id: proto.String("step"), Kind: proto.String("step"), ContractRef: proto.String("contract")}}}}
 			envs, err := localTaskEnvironments(plan, map[string]LocalSecretBinding{"ref": binding}, pass)
 			if mode == "symlink" {
 				if err != nil {
