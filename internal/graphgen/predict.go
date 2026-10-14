@@ -129,6 +129,8 @@ type Prediction struct {
 	Nodes     map[string]*Outcome
 	Succeeded bool
 	Result    []byte
+	// CompletionGroups orders runnable independent nodes at each dependency depth.
+	CompletionGroups [][]string
 }
 
 // Predict interprets the workflow directly from the generator's records. It
@@ -148,6 +150,30 @@ func (w *Workflow) Predict() (*Prediction, error) {
 	end := interpreter.outcomes["__end"]
 	if prediction.Succeeded {
 		prediction.Result = end.Value
+	}
+	depths := map[string]int{}
+	inbound := map[string][]string{}
+	for _, edge := range w.Spec.Graph.Edges {
+		inbound[edge.To] = append(inbound[edge.To], edge.From)
+	}
+	for _, id := range w.NodeOrder {
+		node := w.Nodes[id]
+		for _, source := range inbound[id] {
+			depths[id] = max(depths[id], depths[source])
+		}
+		if node.Kind == spec.NodeKindStep || node.Kind == spec.NodeKindMap {
+			depths[id]++
+		}
+	}
+	for _, id := range w.CompletionOrder {
+		node, outcome := w.Nodes[id], prediction.Nodes[id]
+		if (node.Kind != spec.NodeKindStep && node.Kind != spec.NodeKindMap) || outcome.Status == Skipped || outcome.Status == Blocked || (node.Kind == spec.NodeKindMap && len(outcome.Items) == 0) {
+			continue
+		}
+		for len(prediction.CompletionGroups) <= depths[id] {
+			prediction.CompletionGroups = append(prediction.CompletionGroups, nil)
+		}
+		prediction.CompletionGroups[depths[id]] = append(prediction.CompletionGroups[depths[id]], id)
 	}
 	return prediction, nil
 }
