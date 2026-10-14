@@ -325,6 +325,17 @@ s = Path(p).read_text(); Path(p).write_text(s.replace('Version: 0.1.0', 'Version
 			t.Fatalf("invalid cache object %s: %v", object.Key, err)
 		}
 	}
+	// Moving the same kind of resource to an active site root creates a real
+	// startup hook, so both preparations must take the uncached path.
+	hook := exec.Command(python, "-I", "-c", `import site
+from pathlib import Path
+(Path(site.getsitepackages()[0]) / "unsupported.pth").write_text("import sys\n")`)
+	if output, err := hook.CombinedOutput(); err != nil {
+		t.Fatalf("active import hook: %v\n%s", err, output)
+	}
+	for range 2 {
+		emit(entry, false, false, false)
+	}
 }
 
 func TestEditableEnvironmentBypassesLocalPreparationCache(t *testing.T) {

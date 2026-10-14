@@ -105,7 +105,8 @@ def fingerprint(root):
         pending = [str(path)]
         while pending:
             directory = pending.pop()
-            if directory in seen:
+            # A root nested under another root still needs its startup checks.
+            if directory in seen and directory != str(path):
                 continue
             seen.add(directory)
             entries = sorted(os.scandir(directory), key=lambda item: item.name)
@@ -117,7 +118,6 @@ def fingerprint(root):
                     item
                     for item in entries
                     if item.name not in ("site-packages", "dist-packages")
-                    or item.path in sys.path
                 ]
             if any(
                 item.name.endswith((".pyc", ".pyo"))
