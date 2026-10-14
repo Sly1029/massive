@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from .source_package import SourcePackage, source_package
 
 if TYPE_CHECKING:
+    from .workflow import StepFailed, Workflow
     from .builder import (
         DEFAULT_MAP_CONCURRENCY,
         MAX_MAP_CONCURRENCY,
@@ -61,6 +62,8 @@ __all__ = [
     "StepContext",
     "Tree",
     "WorkflowSpec",
+    "Workflow",
+    "StepFailed",
     "canonical_json",
     "container",
     "execution",
@@ -70,6 +73,8 @@ __all__ = [
 ]
 
 _EXPORT_MODULES = {
+    "Workflow": "workflow",
+    "StepFailed": "workflow",
     "DEFAULT_MAP_CONCURRENCY": "builder",
     "MAX_MAP_CONCURRENCY": "builder",
     "CaseHandle": "builder",

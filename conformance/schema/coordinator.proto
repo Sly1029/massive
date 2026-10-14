@@ -1,0 +1,57 @@
+syntax = "proto3";
+package massive.coordinator.v1;
+option go_package = "github.com/Sly1029/massive/conformance/schema/coordinatorpb;coordinatorpb";
+import "workflow-plan.proto";
+import "step-invocation.proto";
+import "item-failure.proto";
+message CoordinatorStart {
+  optional string kind = 1;
+  optional uint32 protocol_version = 2;
+  optional massive.runtime.v3.StepInvocationDescriptor descriptor = 3;
+  optional massive.plan.v1.ExecutionContract defaults = 4;
+  optional massive.plan.v1.EnvironmentRequirement environment = 5;
+  optional string deadline = 6;
+}
+message InvokeCommand {
+  optional string kind = 1;
+  optional uint32 protocol_version = 2;
+  optional uint32 turn = 3;
+  optional string invocation_key = 4;
+  optional string symbol_ref = 5;
+  optional massive.plan.v1.ExecutionContract contract = 6;
+  optional massive.plan.v1.ArtifactRef input = 7;
+  optional massive.plan.v1.SymbolEntry symbol = 8;
+  repeated massive.plan.v1.SchemaEntry schemas = 9;
+  optional string input_schema = 10;
+  optional string output_schema = 11;
+  optional massive.plan.v1.EnvironmentRequirement environment = 12;
+}
+message InvokeResult {
+  optional string kind = 1;
+  optional uint32 protocol_version = 2;
+  optional uint32 turn = 3;
+  optional string invocation_key = 4;
+  oneof result {
+    massive.plan.v1.ArtifactRef output = 5;
+    massive.failure.v1.ItemFailure failure = 6;
+  }
+}
+message CoordinatorComplete {
+  optional string kind = 1;
+  optional uint32 protocol_version = 2;
+  optional uint32 turn = 3;
+  optional massive.plan.v1.ArtifactRef output = 4;
+}
+message CoordinatorFail {
+  optional string kind = 1;
+  optional uint32 protocol_version = 2;
+  optional uint32 turn = 3;
+  optional string diagnostic = 4;
+  optional string fatal_message = 5;
+  optional string fatal_type = 6;
+}
+message CoordinatorQuiescent {
+  optional string kind = 1;
+  optional uint32 protocol_version = 2;
+  optional uint32 turn = 3;
+}

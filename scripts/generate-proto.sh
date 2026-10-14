@@ -37,3 +37,7 @@ protoc \
   -I . \
   --go_out=paths=source_relative:materializationpb \
   materialization.proto
+
+mkdir -p failurepb coordinatorpb
+protoc -I . --go_out=paths=source_relative:failurepb item-failure.proto
+protoc -I . --go_out=paths=source_relative:coordinatorpb coordinator.proto

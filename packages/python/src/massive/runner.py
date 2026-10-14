@@ -607,6 +607,10 @@ def _write_execution_phase(
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--coordinator"]:
+        from .coordinator import run
+
+        return run()
     parser = argparse.ArgumentParser()
     parser.add_argument("descriptor", type=Path)
     parser.add_argument("--termination-log", type=Path)

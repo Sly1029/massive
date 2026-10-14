@@ -10,6 +10,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from packaging.tags import sys_tags
 
 _SCHEMAS = (
+    Path("conformance/schema/coordinator.schema.json"),
     Path("conformance/schema/step-invocation-descriptor.schema.json"),
     Path("conformance/schema/data-artifact-manifest.schema.json"),
     Path("conformance/schema/workflow-spec.schema.json"),
