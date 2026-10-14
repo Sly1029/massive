@@ -27,6 +27,7 @@ func installedCachePython(t *testing.T) string {
 	root := t.TempDir()
 	run := func(args ...string) {
 		command := exec.Command("uv", args...)
+		command.Env = append(os.Environ(), "UV_LINK_MODE=copy")
 		if body, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("uv %v: %v\n%s", args, err, body)
 		}
@@ -48,6 +49,7 @@ func installedCachePython(t *testing.T) string {
 }
 
 func TestLocalPreparationCache(t *testing.T) {
+	t.Setenv("UV_LINK_MODE", "copy")
 	python := installedCachePython(t)
 	root := t.TempDir()
 	repository, _ := filepath.Abs(filepath.Join("..", ".."))
@@ -57,6 +59,7 @@ func TestLocalPreparationCache(t *testing.T) {
 			t.Fatal(err)
 		}
 		if name == "workflow.py" {
+			body = bytes.Replace(body, []byte("class Result(BaseModel):"), []byte("class Result(BaseModel):\n    \"\"\"A <value> & its typed result.\"\"\""), 1)
 			body = append(body, []byte("\nother = graph\n")...)
 		}
 		if err := os.WriteFile(filepath.Join(root, name), body, 0600); err != nil {
@@ -107,9 +110,30 @@ func TestLocalPreparationCache(t *testing.T) {
 		if err != nil || len(objects) != 1 {
 			t.Fatalf("cache objects: %v, %v", objects, err)
 		}
-		if _, err := store.Put(t.Context(), objects[0].Key, []byte(`{"broken":true}`), datastore.PutOptions{ContentType: "application/json"}); err != nil {
+		original, err := store.Get(t.Context(), objects[0].Key)
+		if err != nil {
 			t.Fatal(err)
 		}
+		var damaged cacheEntry
+		if err := json.Unmarshal(original.Body, &damaged); err != nil {
+			t.Fatal(err)
+		}
+		// Keep a parseable envelope but damage its payload without updating
+		// the digest. The reader must verify bytes before using either record.
+		damaged.Value = json.RawMessage(`{"corrupt":true}`)
+		damagedBytes, err := json.Marshal(damaged)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Put(t.Context(), objects[0].Key, damagedBytes, datastore.PutOptions{ContentType: "application/json"}); err != nil {
+			t.Fatal(err)
+		}
+		emit(entry, true, false, false)
+		stillDamaged, err := store.Get(t.Context(), objects[0].Key)
+		if err != nil || !bytes.Equal(stillDamaged.Body, damagedBytes) {
+			t.Fatalf("--no-cache updated a damaged entry: %v", err)
+		}
+
 		repaired := emit(entry, false, kind != "preflight", kind != "emission")
 		if repaired.Compiled.PlanHash != cold.Compiled.PlanHash {
 			t.Fatal("corrupt entry changed plan identity")
@@ -183,6 +207,21 @@ func TestLocalPreparationCache(t *testing.T) {
 	if err := os.WriteFile(pyproject, []byte("[project]\nname = 'cache-test'\nversion = '0.1.0'\nrequires-python = '>=3.12'\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	emit(entry, false, false, false)
+	emit(entry, false, true, true)
+	projectBytes, err := os.ReadFile(pyproject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pyproject, bytes.ReplaceAll(projectBytes, []byte(">=3.12"), []byte(">=99")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EmitLocal(t.Context(), entry, storeRoot, false); err == nil || !strings.Contains(err.Error(), "REQUIRES_PYTHON") {
+		t.Fatalf("requires-python = %v", err)
+	}
+	if err := os.WriteFile(pyproject, projectBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
 	command = exec.Command("uv", "lock", "--offline", "--project", root, "--python", python)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("uv lock: %v\n%s", err, output)
@@ -195,7 +234,7 @@ func TestLocalPreparationCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	emit(entry, false, false, false)
-	emit(entry, false, true, true)
+	lockedWarm := emit(entry, false, true, true)
 	// A changed SDK METADATA is a real installed-distribution mutation, and
 	// must be observed even when it retains the same package files.
 	command = exec.Command(python, "-I", "-c", `from importlib.metadata import distribution
@@ -207,7 +246,7 @@ s = Path(p).read_text(); Path(p).write_text(s.replace('Version: 0.1.0', 'Version
 		t.Fatalf("change SDK metadata: %v\n%s", err, output)
 	}
 	sdkChanged := emit(entry, false, false, false)
-	if sdkChanged.Environment.Record.GetRealizationHash() == secondDistribution.Environment.Record.GetRealizationHash() {
+	if sdkChanged.Environment.Record.GetRealizationHash() == lockedWarm.Environment.Record.GetRealizationHash() {
 		t.Fatal("SDK version did not change realization")
 	}
 
@@ -217,14 +256,23 @@ s = Path(p).read_text(); Path(p).write_text(s.replace('Version: 0.1.0', 'Version
 	var workers sync.WaitGroup
 	errors := make(chan error, 6)
 	hashes := make(chan string, 6)
-	for range 6 {
+	for index := range 6 {
 		workers.Go(func() {
 			frontend, err := EmitLocal(t.Context(), entry, concurrentStore, false)
 			if err != nil {
 				errors <- err
 				return
 			}
-			hashes <- frontend.Compiled.PlanHash
+			result, err := RunLocal(t.Context(), LocalRunRequest{Frontend: frontend, Input: []byte(`{"value":41}`), Store: concurrentStore, Project: "test/concurrent-cache", RunID: fmt.Sprintf("run-%d", index)})
+			if err != nil {
+				errors <- err
+				return
+			}
+			if string(result.Result) != `{"value":42}` {
+				errors <- fmt.Errorf("concurrent result = %s", result.Result)
+				return
+			}
+			hashes <- result.Plan.PlanHash
 		})
 	}
 	workers.Wait()

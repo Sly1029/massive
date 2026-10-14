@@ -70,11 +70,11 @@ func readCache(ctx context.Context, store datastore.Datastore, key datastore.Key
 }
 
 func writeCache(ctx context.Context, store datastore.Datastore, key datastore.Key, value any) error {
-	body, err := json.Marshal(value)
+	body, err := canonical.Marshal(value)
 	if err != nil {
 		return err
 	}
-	entry, err := json.Marshal(cacheEntry{Key: key.String(), Hash: canonical.DigestBytes(body), Value: body})
+	entry, err := canonical.Marshal(cacheEntry{Key: key.String(), Hash: canonical.DigestBytes(body), Value: body})
 	if err != nil {
 		return err
 	}
@@ -171,13 +171,12 @@ func EmitLocal(ctx context.Context, entry, storeRoot string, noCache bool) (*Fro
 	variables := os.Environ()
 	// Environ order is not semantic.
 	slices.Sort(variables)
-	envBytes, err := canonical.Marshal(variables)
-	if err != nil {
-		return nil, err
-	}
+	// Process environment entries cannot contain NUL; preserve their exact
+	// bytes, including values that are not UTF-8, in this local fingerprint.
+	variablesHash := canonical.DigestBytes([]byte(strings.Join(variables, "\x00")))
 	input, err := canonical.Marshal(map[string]any{
 		"version": localCacheVersion, "request": request,
-		"environment": before.Environment, "variables": canonical.DigestBytes(envBytes),
+		"environment": before.Environment, "variables": variablesHash,
 		"controlPlane": binaryHash,
 	})
 	if err != nil {
@@ -221,8 +220,12 @@ func EmitLocal(ctx context.Context, entry, storeRoot string, noCache bool) (*Fro
 		workflow, specErr := spec.Parse(emission.Spec)
 		compiled, planErr := plan.VerifyCanonicalJSON(emission.Plan, emission.PlanHash)
 		if specErr == nil && planErr == nil && compiled.GetSpecHash() == workflow.SpecHash && workflow.SourcePackages["python-main"].PackageHash == sourceHash {
+			schedule, err := plan.BuildSchedule(workflow.Graph)
+			if err != nil {
+				return nil, err
+			}
 			result = &FrontendResult{Spec: workflow, Canonical: emission.Spec, PackageRoot: root, Environment: report,
-				Compiled: &plan.CompileResult{Plan: compiled, CanonicalJSON: emission.Plan, PlanHash: emission.PlanHash, SpecHash: workflow.SpecHash}}
+				Compiled: &plan.CompileResult{Plan: compiled, CanonicalJSON: emission.Plan, PlanHash: emission.PlanHash, SpecHash: workflow.SpecHash, Schedule: schedule}}
 			cache.Emission = true
 		}
 	}
@@ -235,6 +238,10 @@ func EmitLocal(ctx context.Context, entry, storeRoot string, noCache bool) (*Fro
 		if err != nil {
 			return nil, fmt.Errorf("compile workflow plan: %w", err)
 		}
+	}
+	if cache.Preflight && cache.Emission {
+		result.Cache = cache
+		return result, nil
 	}
 	// Refuse publication (and retry the normal path) if source or environment
 	// changed while probing/importing. A cache entry must describe one snapshot.

@@ -42,7 +42,6 @@ type CLI struct {
 }
 
 type RunCommand struct {
-	NoCache   bool   `name:"no-cache" help:"Recompute Python dependency preflight, emission, and compilation."`
 	Events    string `help:"Write live NDJSON events to a new file."`
 	Progress  string `help:"Stderr progress: auto shows a live TTY view or a final summary; plain shows event lines." enum:"auto,plain,none" default:"auto"`
 	Entry     string `arg:"" name:"entry" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
@@ -53,6 +52,7 @@ type RunCommand struct {
 	RunID     string `name:"run-id" help:"Caller-provided run identifier."`
 	JSON      bool   `help:"Emit one structured JSON result."`
 	Verbose   bool   `help:"Include plan and artifact identities."`
+	NoCache   bool   `name:"no-cache" help:"Recompute Python dependency preflight, emission, and compilation."`
 }
 
 type BuildCommand struct {

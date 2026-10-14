@@ -830,6 +830,21 @@ uv sync --locked
 uv run --locked massive run workflow.py --project example/analysis --input '{}'
 ```
 
+### Local preparation reuse
+
+Repeated `massive run` invocations reuse dependency preflight and spec/plan
+preparation when selected source bytes and a freshly fingerprinted interpreter
+environment match. Editable installs and unsupported mutable environments always
+run full preparation. Every invocation still executes its tasks. The journal's
+`cache.preflight` and `cache.emission` flags show which preparation was reused.
+
+Graph emission must be deterministic for the selected source and environment.
+Cache hits skip workflow import-time side effects; use `massive run --no-cache`
+when importing the module must happen again or when it consults changing external
+state. The flag forces preflight, emission and compilation without updating caches.
+See [the cache contract](../../docs/spec/environment-materialization.md#local-preparation-caches)
+for keys, invalidation and integrity checks.
+
 ### Dependency preflight
 
 `massive run` and `massive build` check the launching interpreter before importing
