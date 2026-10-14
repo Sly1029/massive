@@ -51,6 +51,9 @@
         },
         "environment": {
           "$ref": "#/$defs/environment"
+        },
+        "cache": {
+          "$ref": "#/$defs/cache"
         }
       },
       "required": [
@@ -1039,6 +1042,9 @@
         },
         "failure": {
           "$ref": "#/$defs/fatalFailure"
+        },
+        "cache": {
+          "$ref": "#/$defs/cache"
         }
       },
       "required": [
@@ -1095,6 +1101,9 @@
         },
         "exitHook": {
           "$ref": "#/$defs/exitHook"
+        },
+        "cache": {
+          "$ref": "#/$defs/cache"
         }
       },
       "required": [
@@ -1155,6 +1164,9 @@
         },
         "exitHook": {
           "$ref": "#/$defs/exitHook"
+        },
+        "cache": {
+          "$ref": "#/$defs/cache"
         }
       },
       "required": [
@@ -1259,6 +1271,22 @@
       "required": [
         "message",
         "nodeId"
+      ],
+      "additionalProperties": false
+    },
+    "cache": {
+      "type": "object",
+      "properties": {
+        "preflight": {
+          "type": "boolean"
+        },
+        "emission": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "preflight",
+        "emission"
       ],
       "additionalProperties": false
     }

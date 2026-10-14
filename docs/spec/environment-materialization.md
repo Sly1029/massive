@@ -214,3 +214,40 @@ lockfiles, build arguments, source archives, specs, or image layers.
 No generic materializer registry, Nix integration, environment solver, automatic
 network installation in the runner, or backend-specific Python dependency syntax.
 Prove one locked Python path and one immutable image path before adding adapters.
+
+## Local preparation caches
+
+`massive run` may reuse Python dependency preflight and the emitted spec/compiled
+plan in its local `--store`. Portable source, spec, plan, requirement and
+realization identity recipes are unchanged. `massive env check`, `massive build`
+and remote attempt preflight always perform their checks.
+
+Before reuse, an isolated, metadata-only fingerprint rechecks selected source
+bytes (using the frontend's source selection), interpreter files and import paths,
+installed package metadata and file change stamps, project/lock inputs, ancestor
+workspace declarations and uv configuration. System-site environments, editable
+installs, external local lock sources, symlinked package trees and custom `.pth`
+imports are uncached. The uv-created `_virtualenv.pth` hook is supported, with its
+files included in the fingerprint. Source bytes and metadata contents are hashed;
+package files use size, mode, inode/device and nanosecond mtime/ctime stamps.
+A detected change invalidates reuse. Fingerprints are checked again before
+publication; changed snapshots fall back to full preparation.
+
+Preflight keys bind that fingerprint, project and requested interpreter paths,
+control-plane release/binary and inherited environment variables (values are
+hashed, never stored). Emission keys additionally bind the selected-files source
+identity, entrypoint/graph selector, realized interpreter identity (including the
+SDK distribution/version), frontend protocol, compiler and IR versions. No current
+local emission/compile flags exist; input, run ID and runtime scheduling flags
+are outside preparation identity. Both entry kinds are atomically written with a
+payload digest verified on read; specs and plans also pass their normal identity
+and semantic validators. Missing or corrupt entries are rebuilt.
+
+Workflow emission must be deterministic for the selected source and interpreter
+environment, as stable spec/plan identity already requires. Imports can otherwise
+perform side effects or consult changing external state; cache hits skip these
+imports. Use `massive run --no-cache` to force preflight, emission and compilation.
+This option neither reads nor updates preparation entries. The optional journal
+`cache` observation records `preflight` and `emission` hits; it does not participate
+in any portable identity or result reuse. Task execution and output publication
+still happen on every run.

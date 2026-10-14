@@ -137,6 +137,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 
 	manifest := newRunManifest(config.Plan.GetPlanHash(), projectKey, runID, index.stepOrder, index.nodesByID)
 	manifest.Environment = config.Environment
+	manifest.Cache = config.Cache
 	manifestKey := runManifestKey(projectKey, runID)
 	// Creating the journal claims the run id, so a reused id cannot overwrite
 	// an earlier run's record; later journal updates replace it in place.

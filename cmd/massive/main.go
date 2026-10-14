@@ -42,6 +42,7 @@ type CLI struct {
 }
 
 type RunCommand struct {
+	NoCache   bool   `name:"no-cache" help:"Recompute Python dependency preflight, emission, and compilation."`
 	Events    string `help:"Write live NDJSON events to a new file."`
 	Progress  string `help:"Stderr progress: auto shows a live TTY view or a final summary; plain shows event lines." enum:"auto,plain,none" default:"auto"`
 	Entry     string `arg:"" name:"entry" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
@@ -337,7 +338,7 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedE
 	if err != nil {
 		return err
 	}
-	frontend, err := controlplane.Emit(ctx, command.Entry, environment.Execution)
+	frontend, err := controlplane.EmitLocal(ctx, command.Entry, command.Store, command.NoCache)
 	if err != nil {
 		return err
 	}
