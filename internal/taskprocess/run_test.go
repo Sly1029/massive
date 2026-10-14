@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -249,7 +250,14 @@ func TestRunUsesExplicitEmptyEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	output, err := Run(t.Context(), []string{executable, "process-fixture", "environment", "unused"}, "", []string{})
-	if err != nil || output != "" {
-		t.Fatalf("empty environment: %q %v", output, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Go supplies SYSTEMROOT on Windows even with an empty explicit block.
+	for _, entry := range strings.Fields(output) {
+		name, value, _ := strings.Cut(entry, "=")
+		if runtime.GOOS != "windows" || !strings.EqualFold(name, "SYSTEMROOT") || value != os.Getenv("SYSTEMROOT") {
+			t.Fatalf("empty environment inherited %q", entry)
+		}
 	}
 }
