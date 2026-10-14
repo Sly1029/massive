@@ -24,7 +24,7 @@ type Manifest struct {
 
 // The run journal is versioned independently of graph IR. Only v7/json-v7 is
 // accepted. Terminal runs distinguish cancelled attempts from undispatched work;
-// every planned step has a terminal status. Attempts are ordered and 1-based;
+// graph runs have static planned steps; coordinators record observed invocations. Attempts are ordered and 1-based;
 // only the last attempt of a step or map item can still be running.
 
 // FatalFailure is an author-supplied safe terminal cause, never captured logs.

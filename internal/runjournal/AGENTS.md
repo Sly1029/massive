@@ -10,7 +10,7 @@ invariants. Exercise records emitted by real successful and failed executions.
 Inspection must read existing artifacts without importing author code, writing
 store bytes, or scanning other projects. Reject obsolete journal transports.
 
-The only transport is v6/json-v6. `environment` is required: null when the
+The only transport is v7/json-v7. `environment` is required: null when the
 frontend has no dependency preflight, otherwise both identity hashes and the
 content-addressed record. Older journals are rejected; rebuild with the current SDK and create a new run. Failed and cancelled runs require a root
 diagnostic and no unfinished steps or map items. Undispatched work has no
@@ -27,3 +27,9 @@ map-step status variant of the schema.
 Only failed runs may carry the optional typed `failure` cause. A fatal cause's
 node must name a failed dispatched step or map; preserve its safe message and
 optional type independently of sibling cancellation diagnostics.
+
+`runKind` discriminates graph and coordinator success rules. Only coordinator
+runs may succeed with recovered terminal activity failures. A coordinator
+journal references an immutable replay snapshot containing the identical step
+records; publish the snapshot before committing its reference in the journal.
+Validate and verify completed artifacts before replay can dispatch any work.

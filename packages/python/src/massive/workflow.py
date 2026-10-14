@@ -6,10 +6,12 @@ The local spike supports these coroutine joins, not an asyncio event loop.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import re
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Generic, TypeVar, cast, overload
@@ -61,6 +63,17 @@ class _Scheduler:
     def __init__(self) -> None:
         self.ready: deque[_Task] = deque()
         self.tasks: list[_Task] = []
+        self.author_turn = False
+        self.fatal: BaseException | None = None
+
+    @contextmanager
+    def runtime(self) -> Generator[None, None, None]:
+        author_turn = self.author_turn
+        self.author_turn = False
+        try:
+            yield
+        finally:
+            self.author_turn = author_turn
 
     def spawn(self, value: Awaitable[O]) -> _Future[O]:
         result: _Future[O] = _Future()
@@ -85,6 +98,7 @@ class _Scheduler:
         while self.ready:
             task = self.ready.popleft()
             try:
+                self.author_turn = True
                 blocked = next(task.iterator)
             except StopIteration as result:
                 self.settle(task.result, result.value)
@@ -100,6 +114,8 @@ class _Scheduler:
                     self.ready.append(task)
                 else:
                     blocked.waiters.append(task)
+            finally:
+                self.author_turn = False
 
     def close(self) -> None:
         for task in self.tasks:
@@ -150,25 +166,32 @@ class Workflow:
         contract: ExecutionContract | None = None,
         key: str | None = None,
     ) -> O:
-        from .builder import _symbol_module
+        with self._scheduler.runtime():
+            from .builder import _symbol_module
 
-        StepDefinition[I, O].from_callable(fn)
-        symbol = f"{self._package_id}:{_symbol_module(fn, self._root)}#{fn.__name__}"
-        if key is not None and re.fullmatch(r"[A-Za-z0-9_.-]+", key) is None:
-            raise ValueError("invocation key must match [A-Za-z0-9_.-]+")
-        invocation_key = symbol if key is None else f"{symbol}@{key}"
-        if len(invocation_key) > 128 or re.fullmatch(r"[A-Za-z0-9_.@:#-]+", invocation_key) is None:
-            raise ValueError("invocation identity must be a safe segment of at most 128 characters")
-        if symbol in self._symbols and (key is None or not self._symbols[symbol]):
-            raise ValueError("repeated symbols require explicit keys on all uses")
-        if invocation_key in self._keys:
-            raise ValueError("duplicate invocation key")
-        self._symbols[symbol] = key is not None
-        self._keys.add(invocation_key)
-        return cast(O, await self._issue(fn, input, contract or self.defaults, invocation_key))
+            StepDefinition[I, O].from_callable(fn)
+            symbol = f"{self._package_id}:{_symbol_module(fn, self._root)}#{fn.__name__}"
+            if key is not None and re.fullmatch(r"[A-Za-z0-9_.-]+", key) is None:
+                raise ValueError("invocation key must match [A-Za-z0-9_.-]+")
+            invocation_key = symbol if key is None else f"{symbol}@{key}"
+            if (
+                len(invocation_key) > 128
+                or re.fullmatch(r"[A-Za-z0-9_.@:#-]+", invocation_key) is None
+            ):
+                raise ValueError(
+                    "invocation identity must be a safe segment of at most 128 characters"
+                )
+            if symbol in self._symbols and (key is None or not self._symbols[symbol]):
+                raise ValueError("repeated symbols require explicit keys on all uses")
+            if invocation_key in self._keys:
+                raise ValueError("duplicate invocation key")
+            self._symbols[symbol] = key is not None
+            self._keys.add(invocation_key)
+            future = self._issue(fn, input, contract or self.defaults, invocation_key)
+        return cast(O, await future)
 
     @overload
-    async def gather(self, items: list[Awaitable[O]], /) -> list[O]: ...
+    async def gather(self, items: Sequence[Awaitable[O]], /) -> list[O]: ...
     @overload
     async def gather(self, a: Awaitable[A], /) -> tuple[A]: ...
     @overload
@@ -178,8 +201,8 @@ class Workflow:
         self, a: Awaitable[A], b: Awaitable[B], c: Awaitable[C], /
     ) -> tuple[A, B, C]: ...
     async def gather(self, *items: Any) -> Any:
-        as_list = len(items) == 1 and isinstance(items[0], list)
-        selected = cast(list[Awaitable[Any]], items[0]) if as_list else list(items)
+        as_list = len(items) == 1 and isinstance(items[0], (list, tuple))
+        selected = cast(Sequence[Awaitable[Any]], items[0]) if as_list else list(items)
         futures = [self._scheduler.spawn(item) for item in selected]
         values = [await future for future in futures]
         return values if as_list else tuple(values)
@@ -235,3 +258,42 @@ def entry_types(fn: Callable[..., Any]) -> tuple[Any, Any]:
             "coordinator requires async def coordinator(wf: Workflow, inputs: Input) -> Output"
         )
     return hints[parameters[1]], hints["return"]
+
+
+def check_coordinator_operations(fn: Callable[..., Any]) -> None:
+    """Cheap authoring checks; replay is still the correctness boundary."""
+    tree = ast.parse(inspect.getsource(fn))
+    forbidden = {
+        "open",
+        "input",
+        "time",
+        "sleep",
+        "monotonic",
+        "perf_counter",
+        "now",
+        "today",
+        "random",
+        "randint",
+        "randrange",
+        "choice",
+        "uuid4",
+        "urandom",
+        "getenv",
+        "read_text",
+        "read_bytes",
+        "write_text",
+        "write_bytes",
+        "Popen",
+        "Thread",
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else (node.func.attr if isinstance(node.func, ast.Attribute) else "")
+            )
+            if name in forbidden:
+                raise TypeError(f"coordinator capability: {name} must run inside an activity")
+        if isinstance(node, ast.Attribute) and node.attr == "environ":
+            raise TypeError("coordinator capability: environment reads must run inside an activity")

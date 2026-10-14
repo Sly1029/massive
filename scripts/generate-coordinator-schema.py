@@ -65,3 +65,39 @@ frame("CoordinatorQuiescent", {"turn": turn})
 (root / "coordinator.schema.json").write_text(json.dumps({
     "$schema": "https://json-schema.org/draft/2020-12/schema", "oneOf": variants,
     "$defs": defs}, indent=2) + "\n")
+
+# The frontend metadata and immutable replay snapshot are separate artifacts.
+# Both reuse the same shared definitions and frame projection.
+spec_properties = {
+    "kind": {"const": "CoordinatorSpec"}, "protocolVersion": {"const": 1},
+    "symbol": ref("symbolEntry"),
+    "source": obj({"packageId": ref("safePathSegment"), "language": {"const": "python"},
+                   "packageHash": ref("hashRef")}),
+    "defaults": ref("contract"), "environment": ref("environment"),
+    "schemas": {"type": "array", "items": ref("schema"), "minItems": 2, "maxItems": 2},
+    "files": {"type": "array", "minItems": 1, "items": obj({
+        "path": ref("relativePath"), "hash": ref("hashRef")})},
+    "inputSchema": ref("hashRef"), "outputSchema": ref("hashRef"),
+    "deadlineSeconds": {"type": "integer", "minimum": 0, "maximum": 604800},
+}
+(root / "coordinator-spec.schema.json").write_text(json.dumps({
+    "$schema": "https://json-schema.org/draft/2020-12/schema", **obj(spec_properties),
+    "$defs": defs}, indent=2) + "\n")
+record_defs = copy.deepcopy(defs)
+record_defs["frame"] = {"oneOf": variants}
+record_properties = {
+    "schemaVersion": {"const": 1}, "definition": {"type": "object"},
+    "start": ref("frame"), "interpreter": {"type": "string", "minLength": 1},
+    "deadline": {"type": "string"},
+    "turns": {"type": "array", "minItems": 1, "items": obj({
+        "commands": {"type": "array", "items": ref("frame")}, "closed": {"type": "boolean"}})},
+    "results": {"type": "object", "additionalProperties": ref("frame")},
+    "settlements": {"type": "array", "items": {"type": "string"}},
+    "deliveries": {"type": "array", "items": {"type": "string"}},
+    "steps": {"type": "array", "items": {"type": "object"}},
+    "retryAt": {"type": "object", "additionalProperties": {"type": "string"}},
+    "sequence": {"type": "integer", "minimum": 0}, "final": ref("frame"),
+}
+(root / "coordinator-record.schema.json").write_text(json.dumps({
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    **obj(record_properties, ("deadline", "final")), "$defs": record_defs}, indent=2) + "\n")

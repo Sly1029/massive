@@ -54,7 +54,7 @@ func Parse(data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("coordinator cannot carry graph decisions or an exit hook")
 	}
 	if manifest.Failure != nil {
-		found := false
+		found := manifest.RunKind == "coordinator" && manifest.Failure.NodeID == "coordinator"
 		for _, step := range manifest.Steps {
 			if step.NodeID != manifest.Failure.NodeID || step.Status != "failed" || len(step.Attempts) == 0 {
 				continue

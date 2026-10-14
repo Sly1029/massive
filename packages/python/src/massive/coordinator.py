@@ -11,6 +11,8 @@ import sys
 from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import FrameType
 from typing import Any, BinaryIO, cast
 
 from jsonschema import Draft202012Validator
@@ -21,6 +23,7 @@ from .artifact import ArtifactBodyConflictError, ArtifactRuntime, blob_key, put_
 from .canonical import JsonValue, canonical_json, sha256_ref
 from .context import FatalRunError
 from .contracts import Container, ExecutionContract, Retry
+from .files import ArtifactFiles
 from .outcomes import MapItemFailure
 from .runner import (
     SchemaValidator,
@@ -36,6 +39,7 @@ from .workflow import (
     Workflow,
     _Future,
     _Scheduler,
+    check_coordinator_operations,
     entry_types,
     resolved_contract,
     schema_record,
@@ -114,11 +118,38 @@ def run() -> int:
         store = _datastore(descriptor["datastore"])
         defaults = contract_from_json(start["defaults"], start["environment"])
         pending: dict[str, tuple[_Future[Any], TypeAdapter[Any]]] = {}
-        with _source_root(descriptor["sourcePackage"], store) as root, _source_import_path(root):
+        with (
+            _source_root(descriptor["sourcePackage"], store) as root,
+            _source_import_path(root),
+            TemporaryDirectory(prefix="massive-coordinator-files-") as scratch,
+        ):
+            files = ArtifactFiles(store, Path(scratch))
             symbol = descriptor["symbol"]
             fn = getattr(importlib.import_module(symbol["module"]), symbol["export"])
             input_type, output_type = entry_types(fn)
-            inputs = TypeAdapter(input_type).validate_json(_read_input(descriptor, store))
+            check_coordinator_operations(fn)
+
+            def audit(event: str, args: tuple[Any, ...]) -> None:
+                if scheduler.author_turn and (
+                    event == "open"
+                    or event.startswith(("socket.", "subprocess.", "os.exec", "os.spawn"))
+                ):
+                    raise RuntimeError("coordinator capability: I/O must run inside an activity")
+
+            def trace(frame: FrameType, event: str, arg: Any) -> Any:
+                if (
+                    event == "exception"
+                    and frame.f_code.co_filename.startswith(str(root) + os.sep)
+                    and isinstance(arg[1], FatalRunError)
+                ):
+                    scheduler.fatal = arg[1]
+                return trace
+
+            sys.addaudithook(audit)
+            sys.settrace(trace)
+            inputs = TypeAdapter(input_type).validate_json(
+                _read_input(descriptor, store), context=files
+            )
 
             def issue(
                 fn: Callable[..., Any], value: Any, contract: ExecutionContract, key: str
@@ -134,7 +165,9 @@ def run() -> int:
                     cast(
                         JsonValue,
                         TypeAdapter(step.input_type).dump_python(
-                            TypeAdapter(step.input_type).validate_python(value), mode="json"
+                            TypeAdapter(step.input_type).validate_python(value, context=files),
+                            mode="json",
+                            context=files,
                         ),
                     )
                 ).encode()
@@ -189,6 +222,8 @@ def run() -> int:
             terminal = scheduler.spawn(fn(wf, inputs))
             while True:
                 scheduler.drain()
+                if scheduler.fatal is not None:
+                    raise scheduler.fatal
                 if terminal.done:
                     if terminal.error is not None:
                         raise terminal.error
@@ -199,7 +234,9 @@ def run() -> int:
                         cast(
                             JsonValue,
                             adapter.dump_python(
-                                adapter.validate_python(terminal.value), mode="json"
+                                adapter.validate_python(terminal.value, context=files),
+                                mode="json",
+                                context=files,
                             ),
                         )
                     ).encode()
@@ -239,7 +276,7 @@ def run() -> int:
                     body = store.get(manifest["body"]["key"]).body
                     if sha256_ref(body) != manifest["body"]["hash"]:
                         raise ValueError("coordinator result body hash mismatch")
-                    scheduler.settle(future, adapter.validate_json(body))
+                    scheduler.settle(future, adapter.validate_json(body, context=files))
     except BaseException as error:  # noqa: BLE001 -- process boundary
         frame: dict[str, Any] = {
             "kind": "CoordinatorFail",
@@ -256,5 +293,6 @@ def run() -> int:
         write(frame)
         return 1
     finally:
+        sys.settrace(None)
         scheduler.close()
         protocol.close()

@@ -77,3 +77,10 @@ outcome models in `outcomes.py` are the Go-checked contract: keep fields
 sorted, without defaults or docstrings, so validation and serialization emit
 the schema in `conformance/fixtures/map-outcomes`. The IR omits the default
 policy; never emit `itemFailures: "fail"`.
+
+Local code-first coordinators use `Workflow.run` with plain exported activities.
+Their minimal coroutine scheduler supports `wf.gather` and `wf.as_completed`;
+raw asyncio futures and duration waits require an unsupported-capability diagnostic.
+Every delivery drains all ready continuations in FIFO order before another
+result enters Python. Reserve protocol stdout and redirect fd 1 before importing
+author code. The installed wheel must include the coordinator protocol schema.

@@ -51,6 +51,9 @@ func runCoordinatorLocal(ctx context.Context, request LocalRunRequest) (*LocalRu
 	}
 	run, runErr := orchestrator.RunCoordinator(ctx, config)
 	result := &LocalRunResult{Run: run, Store: root}
+	if run != nil {
+		result.Fingerprint = run.PlanHash
+	}
 	if run == nil {
 		return result, runErr
 	}

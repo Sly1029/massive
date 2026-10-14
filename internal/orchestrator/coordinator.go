@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"time"
+	"unicode/utf8"
 
 	schema "github.com/Sly1029/massive/conformance/schema"
 	"github.com/Sly1029/massive/conformance/schema/coordinatorpb"
@@ -26,6 +27,21 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
 )
+
+type coordinatorDivergenceError struct{ Reason string }
+
+func (failure *coordinatorDivergenceError) Error() string {
+	return "coordinator divergence: " + failure.Reason
+}
+
+// This recipe is independently versioned; it never asserts GraphIR compilation.
+func coordinatorFingerprint(definition, input []byte, env *runjournal.Environment) (string, error) {
+	body, err := canonical.Marshal(map[string]any{"kind": "CoordinatorExecution", "recipeVersion": 1, "definition": json.RawMessage(definition), "input": json.RawMessage(input), "environment": env})
+	if err != nil {
+		return "", err
+	}
+	return canonical.DigestBytes(body), nil
+}
 
 type CoordinatorRunConfig struct {
 	Definition                                           *CoordinatorDefinition
@@ -88,6 +104,12 @@ type localCoordinator struct {
 // RunCoordinator uses the existing invoker and artifact runtime, without compiling
 // a graph. The immutable snapshot reference in the journal is the commit point.
 func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *RunResult, returnedErr error) {
+	startedAt := time.Now()
+	if !config.Resume && config.Definition != nil && config.Definition.DeadlineSeconds > 0 {
+		var stop context.CancelFunc
+		ctx, stop = context.WithDeadlineCause(ctx, startedAt.Add(time.Duration(config.Definition.DeadlineSeconds)*time.Second), &RunDeadlineError{Seconds: config.Definition.DeadlineSeconds})
+		defer stop()
+	}
 	if config.ProjectID == "" {
 		return nil, fmt.Errorf("coordinator requires --project")
 	}
@@ -170,6 +192,24 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 		if startDescriptor.RunID != config.RunID || startDescriptor.ProjectKey != project || startDescriptor.PlanHash != engine.manifest.PlanHash {
 			return nil, fmt.Errorf("coordinator start identity mismatch")
 		}
+		binding, ok := startDescriptor.Datastore.(LocalDatastoreDescriptor)
+		if !ok || binding.Path != config.StoreRoot {
+			return nil, fmt.Errorf("coordinator store location changed; restore the original store location")
+		}
+		if startDescriptor.SourcePackage.PackageHash != definition.Source.GetPackageHash() || startDescriptor.NodeID != "coordinator" || startDescriptor.Input.Schema != definition.InputSchema || startDescriptor.Output.Schema != definition.OutputSchema || startDescriptor.Symbol.Module != definition.Symbol.GetModule() || startDescriptor.Symbol.Export != definition.Symbol.GetExport() {
+			return nil, fmt.Errorf("coordinator start/definition disagreement")
+		}
+		originalInput, err := store.Get(ctx, datastore.MustKey(startDescriptor.Input.Artifact.Key))
+		if err != nil {
+			return nil, fmt.Errorf("coordinator input artifact unavailable")
+		}
+		if canonical.DigestBytes(originalInput.Body) != startDescriptor.Input.Artifact.Hash {
+			return nil, fmt.Errorf("coordinator input artifact identity mismatch")
+		}
+		hash, err := coordinatorFingerprint(definition.Canonical, originalInput.Body, engine.manifest.Environment)
+		if err != nil || hash != engine.manifest.PlanHash {
+			return nil, fmt.Errorf("coordinator execution fingerprint mismatch")
+		}
 		if config.Input != nil {
 			input, err := canonical.CanonicalizeJSON(config.Input)
 			if err != nil {
@@ -192,11 +232,10 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 			return nil, err
 		}
 		// Versioned execution fingerprint has an explicit coordinator discriminator.
-		fingerprint, err := canonical.Marshal(map[string]any{"kind": "CoordinatorExecution", "recipeVersion": 1, "definition": json.RawMessage(definition.Canonical), "input": json.RawMessage(input), "environment": config.Environment})
+		hash, err := coordinatorFingerprint(definition.Canonical, input, config.Environment)
 		if err != nil {
 			return nil, err
 		}
-		hash := canonical.DigestBytes(fingerprint)
 		engine.manifest = &runjournal.Manifest{Kind: "RunManifest", SchemaVersion: 7, Encoding: "json-v7", RunKind: "coordinator", PlanHash: hash, ProjectKey: project, RunID: config.RunID, Status: StatusRunning, Environment: config.Environment, Steps: []runjournal.Step{}, Decisions: []runjournal.Decision{}}
 		// Reuse only prerequisite materialization, not graph validation or scheduling.
 		packages, err := materializePrerequisites(ctx, store, RunConfig{Plan: &planpb.WorkflowPlan{SourcePackages: []*planpb.SourcePackageRef{definition.Source}, Schemas: definition.Schemas}, DatastoreRoot: config.StoreRoot, SourcePackageRoot: config.SourceRoot, SourceManifests: map[string]SourcePackageManifest{definition.Source.GetPackageId(): {Root: config.SourceRoot, Files: definition.Files}}})
@@ -226,7 +265,7 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 		start := &coordinatorpb.CoordinatorStart{Kind: pointer("CoordinatorStart"), ProtocolVersion: pointer(uint32(1)), Descriptor_: startProto, Defaults: definition.Defaults, Environment: definition.Environment}
 		deadline := ""
 		if definition.DeadlineSeconds > 0 {
-			deadline = time.Now().Add(time.Duration(definition.DeadlineSeconds) * time.Second).UTC().Format(time.RFC3339Nano)
+			deadline = startedAt.Add(time.Duration(definition.DeadlineSeconds) * time.Second).UTC().Format(time.RFC3339Nano)
 			start.Deadline = &deadline
 		}
 		startJSON, err := coordinatorProtoJSON(start)
@@ -235,7 +274,7 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 		}
 		engine.record = &coordinatorRecord{SchemaVersion: 1, Definition: definition.Canonical, Start: startJSON, Interpreter: config.Interpreter, Deadline: deadline, Turns: []coordinatorTurn{{Commands: []json.RawMessage{}}}, Results: map[string]json.RawMessage{}, Settlements: []string{}, Deliveries: []string{}, Steps: []runjournal.Step{}, RetryAt: map[string]string{}}
 	}
-	if engine.record.Deadline != "" {
+	if config.Resume && engine.record.Deadline != "" {
 		deadline, err := time.Parse(time.RFC3339Nano, engine.record.Deadline)
 		if err != nil {
 			return nil, err
@@ -250,7 +289,7 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 		engine.events = &runEvents{hook: config.Hooks.OnRunEvent, projectKey: project, runID: config.RunID, started: time.Now(), sequence: engine.record.Sequence, attemptStarts: map[eventIdentity]time.Time{}, stepStarts: map[string]time.Time{}}
 		engine.events.emit(runevent.Event{Type: "run.started", PlanHash: engine.manifest.PlanHash})
 	}
-	result = &RunResult{RunID: config.RunID, ProjectKey: project, ManifestKey: runManifestKey(project, config.RunID).String(), Status: StatusRunning}
+	result = &RunResult{PlanHash: engine.manifest.PlanHash, RunID: config.RunID, ProjectKey: project, ManifestKey: runManifestKey(project, config.RunID).String(), Status: StatusRunning}
 	// All outcome reconciliation precedes the terminal snapshot and journal.
 	defer func() {
 		engine.cancel()
@@ -276,6 +315,10 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 				result.Failure = &fatal.Failure
 				diagnostic = fatal.Error()
 				status = StatusFailed
+			}
+			var divergence *coordinatorDivergenceError
+			if errors.As(returnedErr, &divergence) {
+				diagnostic = divergence.Error()
 			}
 			engine.manifest.Terminate(status, diagnostic)
 		}
@@ -330,6 +373,18 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 				if err != nil || step.Attempts[len(step.Attempts)-1].Output == nil || !reflect.DeepEqual(output.Published, *step.Attempts[len(step.Attempts)-1].Output) {
 					return result, fmt.Errorf("completed coordinator artifact verification failed")
 				}
+			}
+		}
+		if len(engine.record.Final) > 0 {
+			verification, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			final, err := resolveOutputArtifact(verification, store, startDescriptor, engine.index)
+			stop()
+			if err != nil || engine.manifest.Result == nil || final.Published.Body.Hash != engine.manifest.Result.Hash {
+				return result, fmt.Errorf("completed coordinator final artifact verification failed")
+			}
+			body, err := store.Get(ctx, datastore.MustKey(engine.manifest.Result.Key))
+			if err != nil || canonical.DigestBytes(body.Body) != engine.manifest.Result.Hash {
+				return result, fmt.Errorf("completed coordinator result artifact verification failed")
 			}
 		}
 		if err := engine.validateHistory(); err != nil {
@@ -612,7 +667,7 @@ func (engine *localCoordinator) dispatch() error {
 		return engine.ctx.Err()
 	}
 	limit := engine.config.ProcessLimit
-	if limit <= 0 {
+	if limit <= 0 || limit > defaultLocalProcessConcurrency {
 		limit = defaultLocalProcessConcurrency
 	}
 	for i := range engine.manifest.Steps {
@@ -726,24 +781,24 @@ func (engine *localCoordinator) accept(body []byte) error {
 		return err
 	}
 	if int(command.GetTurn()) != engine.turn || engine.quiescent {
-		return fmt.Errorf("coordinator divergence: command outside its delivery turn")
+		return &coordinatorDivergenceError{Reason: "command outside its delivery turn"}
 	}
 	if engine.replaying && engine.turn < len(engine.replayTurns) {
 		turn := engine.replayTurns[engine.turn]
 		if engine.issued < len(turn.Commands) {
 			if !bytes.Equal(canonicalBody, turn.Commands[engine.issued]) {
-				return fmt.Errorf("coordinator divergence: canonical command differs from recorded prefix")
+				return &coordinatorDivergenceError{Reason: "canonical command differs from recorded prefix"}
 			}
 			engine.issued++
 			return nil
 		}
 		if turn.Closed {
-			return fmt.Errorf("coordinator divergence: new command before recorded turn boundary")
+			return &coordinatorDivergenceError{Reason: "new command before recorded turn boundary"}
 		}
 	}
 	// Extra commands are allowed only after the entire accepted history is reissued.
 	if engine.replaying && (engine.turn < len(engine.replayTurns)-1 || engine.delivered < len(engine.replayDeliveries)) {
-		return fmt.Errorf("coordinator divergence: new command ahead of recorded suffix")
+		return &coordinatorDivergenceError{Reason: "new command ahead of recorded suffix"}
 	}
 	key := command.GetInvocationKey()
 	if engine.commands[key] != nil {
@@ -767,10 +822,10 @@ func (engine *localCoordinator) accept(body []byte) error {
 
 func (engine *localCoordinator) closeTurn() error {
 	if engine.quiescent {
-		return fmt.Errorf("coordinator divergence: duplicate turn boundary")
+		return &coordinatorDivergenceError{Reason: "duplicate turn boundary"}
 	}
 	if engine.replaying && engine.turn < len(engine.replayTurns) && engine.issued < len(engine.replayTurns[engine.turn].Commands) {
-		return fmt.Errorf("coordinator divergence: turn ended before recorded command suffix")
+		return &coordinatorDivergenceError{Reason: "turn ended before recorded command suffix"}
 	}
 	engine.record.Turns[engine.turn].Closed = true
 	engine.quiescent = true
@@ -833,7 +888,7 @@ func (engine *localCoordinator) deliver(writer io.Writer) error {
 
 func (engine *localCoordinator) complete(body []byte, descriptor StepInvocationDescriptor) error {
 	if engine.replaying && (engine.turn < len(engine.replayTurns)-1 || engine.issued < len(engine.replayTurns[engine.turn].Commands) || engine.delivered < len(engine.replayDeliveries)) {
-		return fmt.Errorf("coordinator divergence: early completion before recorded suffix")
+		return &coordinatorDivergenceError{Reason: "early completion before recorded suffix"}
 	}
 	for key := range engine.commands {
 		if engine.record.Results[key] == nil {
@@ -852,7 +907,7 @@ func (engine *localCoordinator) complete(body []byte, descriptor StepInvocationD
 		return err
 	}
 	if len(engine.record.Final) > 0 && !bytes.Equal(canonicalBody, engine.record.Final) {
-		return fmt.Errorf("coordinator divergence: final output differs")
+		return &coordinatorDivergenceError{Reason: "final output differs"}
 	}
 	verification, stop := context.WithTimeout(context.WithoutCancel(engine.ctx), 5*time.Second)
 	output, err := resolveOutputArtifact(verification, engine.store, descriptor, engine.index)
@@ -932,7 +987,7 @@ func (engine *localCoordinator) loop(descriptor StepInvocationDescriptor) error 
 		case err := <-readErrors:
 			return err
 		case body := <-frames:
-			if len(body) == 0 || !json.Valid(body) {
+			if len(body) == 0 || !utf8.Valid(body) || !json.Valid(body) {
 				return fmt.Errorf("invalid coordinator NDJSON frame")
 			}
 			if err := validateJSONAgainstSchema(string(schema.CoordinatorSchemaJSON), body); err != nil {
@@ -946,7 +1001,7 @@ func (engine *localCoordinator) loop(descriptor StepInvocationDescriptor) error 
 				return err
 			}
 			if tag.Turn != engine.turn {
-				return fmt.Errorf("coordinator divergence: unexpected delivery turn")
+				return &coordinatorDivergenceError{Reason: "unexpected delivery turn"}
 			}
 			switch tag.Kind {
 			case "InvokeCommand":
@@ -960,14 +1015,14 @@ func (engine *localCoordinator) loop(descriptor StepInvocationDescriptor) error 
 			case "CoordinatorComplete":
 				return engine.complete(body, descriptor)
 			case "CoordinatorFail":
+				if engine.replaying {
+					return &coordinatorDivergenceError{Reason: "coordinator stopped before replay completed"}
+				}
 				var failure coordinatorpb.CoordinatorFail
 				if err := protojson.Unmarshal(body, &failure); err != nil {
 					return err
 				}
 				if failure.FatalMessage != nil {
-					// A fatal raised by coordination still receives dispatched attribution
-					// through the coordinator entry, preserving journal fatal invariants.
-					engine.manifest.Steps = append(engine.manifest.Steps, runjournal.Step{NodeID: "coordinator", Status: StatusFailed, Attempts: []runjournal.Attempt{{Attempt: 1, Status: StatusFailed, Input: runjournal.DataArtifact{Key: descriptor.Input.Artifact.Key, Hash: descriptor.Input.Artifact.Hash, ContentType: jsonContentType, Schema: descriptor.Input.Schema}}}})
 					return &FatalRunError{Failure: runjournal.FatalFailure{Message: failure.GetFatalMessage(), Type: failure.GetFatalType(), NodeID: "coordinator"}}
 				}
 				return fmt.Errorf("coordinator failed: %s", failure.GetDiagnostic())

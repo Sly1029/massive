@@ -304,7 +304,7 @@ never rejects an input: non-string messages use a safe fallback and non-string
 types are omitted. Exception chains and exception-group text are omitted. A fatal
 signal is never retried or collected by `item_failures="collect"`. Local execution
 stops dispatch and cancels running sibling process groups, retaining verified
-completed outputs. The v6 journal and `massive run --json` carry `failure` with
+completed outputs. The v7 journal and `massive run --json` carry `failure` with
 message, optional type, and node ID; the CLI exits 69. Older journals require a
 rebuild and a new run.
 
