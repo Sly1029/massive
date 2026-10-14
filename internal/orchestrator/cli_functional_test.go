@@ -775,7 +775,7 @@ func assertRunManifestSucceeded(t *testing.T, storeRoot string, projectKey strin
 
 	manifest := readRunManifest(t, storeRoot, projectKey, runID)
 	if manifest.SchemaVersion != 7 || manifest.Encoding != "json-v7" {
-		t.Fatalf("run-manifest protocol = (%d, %q), want v6/json-v6", manifest.SchemaVersion, manifest.Encoding)
+		t.Fatalf("run-manifest protocol = (%d, %q), want v7/json-v7", manifest.SchemaVersion, manifest.Encoding)
 	}
 	if manifest.Status != StatusSucceeded {
 		t.Fatalf("manifest status = %s, want succeeded", manifest.Status)

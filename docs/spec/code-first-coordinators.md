@@ -409,6 +409,8 @@ against real CLI/runner processes and filesystem stores, through `massive-heavy`
    retain exact attempts and publications; gathered output equals an uninterrupted
    run. Resume events have strictly increasing sequences and cached keys emit
    no new attempt-start events. Event sequence reservations may leave crash gaps.
+   Every initially dispatched worker handshakes before SIGKILL; its owned process
+   group is checked quiescent through `/proc` before resume is allowed.
 2. **Divergence:** unchanged archived source with changed input-to-command,
    reordered keys, a new key ahead of the recorded suffix, or early completion
    fails with a safe divergence diagnostic. The four cases preserve every

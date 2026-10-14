@@ -166,7 +166,9 @@ def test_sigkill_resume_delivery_turns_preserve_publications(
     try:
         wait_for(
             lambda: (
-                completed(journal(store, "crash")) and list(control.glob(f"started-b-{first}-*.json"))
+                completed(journal(store, "crash"))
+                and len(list(control.glob("started-a-*-1.json"))) == len(jobs)
+                and list(control.glob(f"started-b-{first}-*.json"))
             ),
             process,
         )
@@ -659,7 +661,9 @@ def test_resume_event_sequences_are_monotonic(coordinator_cli: Path, tmp_path: P
     try:
         wait_for(
             lambda: (
-                completed(journal(store, "events")) and list(control.glob("started-b-one-*.json"))
+                completed(journal(store, "events"))
+                and len(list(control.glob("started-a-*-1.json"))) == len(jobs)
+                and list(control.glob("started-b-one-*.json"))
             ),
             process,
         )
