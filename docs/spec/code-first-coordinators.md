@@ -421,3 +421,12 @@ against real CLI/runner processes and filesystem stores, through `massive-heavy`
    idempotency key. Only coordinator journals admit recovered failures; v6 is
    rejected with a rebuild diagnostic. These cases run through the CPython
    asyncio driver, with ordinary standard-library joins.
+4. **Delivery scheduler:** all 43 coordinator functional cases pass on CPython
+   3.14.3. Four SIGKILL scenarios cover gathered per-item chains and deterministically
+   created `as_completed` tasks, with either the first or third submitted activity
+   completing first. A blocked earlier activity does not delay the later
+   continuation. For both patterns, sending the complete response history in one
+   write or streaming one result per quiescent turn produces byte-identical
+   protocol frames, commands, boundaries, and final artifacts. Complete-record
+   resume reproduces the original output. The delivery scheduler held; no
+   issue-order fallback was needed.
