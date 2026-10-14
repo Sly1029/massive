@@ -260,7 +260,7 @@ projects/<project-key>/runs/<run-id>/steps/<step-id>/scopes/maps/<map-id>/items/
 
 Static invocations omit `scope` and retain the original static paths.
 
-`run-manifest.json` is the v6 (`schemaVersion: 6`, `encoding: "json-v6"`) run
+`run-manifest.json` is the v7 (`schemaVersion: 6`, `encoding: "json-v7"`) run
 manifest the orchestrator records when it creates a run: plan hash, run status,
 the checked dependency environment, per-step attempt/artifact records, finite-map
 item records, and durable decision outcomes. `environment` is required: either

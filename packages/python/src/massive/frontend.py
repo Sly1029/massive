@@ -1,7 +1,9 @@
+# pyright: reportPrivateUsage=false
 from __future__ import annotations
 
 import hashlib
 import importlib.util
+import inspect
 import sys
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -54,15 +56,21 @@ class GraphSelection:
 
 @dataclass(frozen=True, slots=True)
 class EmitResult:
-    specification: WorkflowSpec
+    specification: WorkflowSpec | dict[str, Any]
 
     @property
     def canonical_json(self) -> str:
-        return self.specification.to_json()
+        from .canonical import canonical_json
+
+        return (
+            self.specification.to_json()
+            if isinstance(self.specification, WorkflowSpec)
+            else canonical_json(self.specification)
+        )
 
 
 def emit(request: EntrypointRequest) -> EmitResult:
-    """Load exactly one exported graph and emit its portable workflow specification."""
+    """Load one exported graph or typed coordinator and emit its specification."""
     source = SourcePackage.from_project(request.path.parent)
     files, _ = source.manifest()
     if request.path.name not in {file["path"] for file in files}:
@@ -72,6 +80,47 @@ def emit(request: EntrypointRequest) -> EmitResult:
         )
     selected = {file["path"] for file in files}
     with _import_workflow(request) as module:
+        candidate = getattr(module, request.selector or "coordinator", None)
+        if inspect.iscoroutinefunction(candidate):
+            from .builder import _symbol_module
+            from .contracts import ExecutionContract
+            from .workflow import entry_types, resolved_contract, schema_record
+
+            input_type, output_type = entry_types(candidate)
+            defaults = getattr(module, "coordinator_defaults", None)
+            if not isinstance(defaults, ExecutionContract):
+                raise FrontendError(
+                    "coordinator requires module-exported coordinator_defaults: ExecutionContract"
+                )
+            contract, environment = resolved_contract(defaults)
+            input_schema = schema_record(input_type, mode="validation")
+            output_schema = schema_record(output_type, mode="serialization")
+            symbol_module = _symbol_module(candidate, source.root)
+            return EmitResult(
+                specification={
+                    "kind": "CoordinatorSpec",
+                    "protocolVersion": 1,
+                    "symbol": {
+                        "symbolRef": f"{source.package_id}:{symbol_module}#{candidate.__name__}",
+                        "packageId": source.package_id,
+                        "language": "python",
+                        "module": symbol_module,
+                        "export": candidate.__name__,
+                    },
+                    "source": {
+                        "packageId": source.package_id,
+                        "language": "python",
+                        "packageHash": source.manifest()[1],
+                    },
+                    "files": files,
+                    "defaults": contract,
+                    "environment": environment,
+                    "schemas": [input_schema, output_schema],
+                    "inputSchema": input_schema["hash"],
+                    "outputSchema": output_schema["hash"],
+                    "deadlineSeconds": getattr(module, "coordinator_deadline_seconds", 0),
+                }
+            )
         selection = _select_graph(request, module)
         # Runners import from the extracted source package alone, so each module
         # loaded from the workflow directory must be part of it.
@@ -122,7 +171,9 @@ def _select_graph(request: EntrypointRequest, module: ModuleType) -> GraphSelect
     if request.selector is not None:
         selected = graphs.get(request.selector)
         if selected is None:
-            raise FrontendError(f'workflow entrypoint "{request.display}" does not export a GraphBuilder')
+            raise FrontendError(
+                f'workflow entrypoint "{request.display}" does not export a GraphBuilder'
+            )
         return GraphSelection(graph=selected, export_name=request.selector)
     candidates = sorted(graphs)
     if len(candidates) == 1:

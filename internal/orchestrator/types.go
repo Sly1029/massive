@@ -66,6 +66,7 @@ type RunHooks struct {
 }
 
 type RunResult struct {
+	PlanHash    string
 	Failure     *runjournal.FatalFailure
 	RunID       string
 	ProjectKey  string

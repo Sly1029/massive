@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from .identity import MapItemIdentity, MapItemScopeFrame
     from .outcome import RunOutcome
     from .outcomes import MapItemFailed, MapItemFailure, MapItemOutcome, MapItemSucceeded
+    from .workflow import StepFailed, Workflow
 
 __all__ = [
     "DEFAULT_MAP_CONCURRENCY",
@@ -59,7 +60,9 @@ __all__ = [
     "RunOutcome",
     "SourcePackage",
     "StepContext",
+    "StepFailed",
     "Tree",
+    "Workflow",
     "WorkflowSpec",
     "canonical_json",
     "container",
@@ -70,6 +73,8 @@ __all__ = [
 ]
 
 _EXPORT_MODULES = {
+    "Workflow": "workflow",
+    "StepFailed": "workflow",
     "DEFAULT_MAP_CONCURRENCY": "builder",
     "MAX_MAP_CONCURRENCY": "builder",
     "CaseHandle": "builder",

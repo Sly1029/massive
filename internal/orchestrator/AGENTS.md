@@ -94,7 +94,7 @@ errors. Failure-result publication errors (exit 70) fail the run.
 Fatal runner exit 69 carries a bounded safe message and optional type. Preserve
 its typed cause while cancelling sibling invocations through the batch context;
 sibling context errors cannot reclassify the root as cancellation or infrastructure
-failure. Reconcile dispatched outcomes before terminalization. The terminal v6
+failure. Reconcile dispatched outcomes before terminalization. The terminal v7
 journal carries `failure` only for fatal runs; exit hooks receive `fatal` with
 message and optional type. An exit hook's own fatal stays a hook failure.
 Remote invocations poll the run-scoped marker with jitter. Read errors back off
@@ -113,3 +113,14 @@ Keep I/O and verification outside worker locks. Event producers keep only clocks
 and sequence ordering. Events contain safe lifecycle summaries; task logs and
 author messages belong outside the target-neutral event contract. Emit run
 completion after the terminal journal and exit-hook publication attempt.
+
+Coordinator execution uses the same v3 descriptors, invoker, retry classifier,
+and verifier. Its fingerprint is a coordinator recipe, never a compiled graph.
+Record each accepted command before dispatch; record one delivery before releasing
+it; drain the Python turn to quiescence before delivering another result. Replay
+compares full canonical commands and closed-turn command counts before allowing
+new activity effects. Retry output slots and the absolute run deadline persist.
+
+The Unix coordinator lock excludes CLI owners but does not fence orphan workers.
+`--workers-quiescent` asserts that the operator has stopped them before resuming
+an interrupted run. Keep this precondition explicit; SIGKILL does not run cleanup.

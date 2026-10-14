@@ -1,15 +1,17 @@
 package runjournal
 
 type Manifest struct {
-	Kind          string        `json:"kind"`
-	SchemaVersion uint32        `json:"schemaVersion"`
-	Encoding      string        `json:"encoding"`
-	PlanHash      string        `json:"planHash"`
-	ProjectKey    string        `json:"projectKey"`
-	RunID         string        `json:"runId"`
-	Status        string        `json:"status"`
-	Diagnostic    string        `json:"diagnostic,omitempty"`
-	Failure       *FatalFailure `json:"failure,omitempty"`
+	RunKind           string        `json:"runKind"`
+	CoordinatorRecord *ArtifactRef  `json:"coordinatorRecord,omitempty"`
+	Kind              string        `json:"kind"`
+	SchemaVersion     uint32        `json:"schemaVersion"`
+	Encoding          string        `json:"encoding"`
+	PlanHash          string        `json:"planHash"`
+	ProjectKey        string        `json:"projectKey"`
+	RunID             string        `json:"runId"`
+	Status            string        `json:"status"`
+	Diagnostic        string        `json:"diagnostic,omitempty"`
+	Failure           *FatalFailure `json:"failure,omitempty"`
 	// Environment is null when the run's frontend has no dependency preflight.
 	Environment *Environment  `json:"environment"`
 	Steps       []Step        `json:"steps"`
@@ -20,9 +22,9 @@ type Manifest struct {
 	ExitHook *Step `json:"exitHook,omitempty"`
 }
 
-// The run journal is versioned independently of graph IR. Only v6/json-v6 is
+// The run journal is versioned independently of graph IR. Only v7/json-v7 is
 // accepted. Terminal runs distinguish cancelled attempts from undispatched work;
-// every planned step has a terminal status. Attempts are ordered and 1-based;
+// graph runs have static planned steps; coordinators record observed invocations. Attempts are ordered and 1-based;
 // only the last attempt of a step or map item can still be running.
 
 // FatalFailure is an author-supplied safe terminal cause, never captured logs.

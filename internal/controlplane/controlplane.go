@@ -32,6 +32,7 @@ var Version = developmentVersion
 const developmentVersion = "0.0.0-dev"
 
 type FrontendResult struct {
+	Coordinator *orchestrator.CoordinatorDefinition
 	Spec        *spec.WorkflowSpec
 	Canonical   []byte
 	PackageRoot string
@@ -154,6 +155,19 @@ func Emit(ctx context.Context, entry string, scope environment.Scope) (*Frontend
 	if err != nil {
 		return nil, fmt.Errorf("%s frontend did not write a WorkflowSpec: %w", language, err)
 	}
+	var tag struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(canonicalBytes, &tag); err != nil {
+		return nil, err
+	}
+	if tag.Kind == "CoordinatorSpec" {
+		definition, err := orchestrator.ParseCoordinatorDefinition(canonicalBytes)
+		if err != nil {
+			return nil, err
+		}
+		return &FrontendResult{Coordinator: definition, Canonical: canonicalBytes, PackageRoot: packageRoot, Environment: report}, nil
+	}
 	workflowSpec, err := spec.Parse(canonicalBytes)
 	if err != nil {
 		return nil, fmt.Errorf("%s frontend emitted an invalid WorkflowSpec: %w", language, err)
@@ -167,23 +181,30 @@ func Emit(ctx context.Context, entry string, scope environment.Scope) (*Frontend
 }
 
 type LocalRunRequest struct {
-	Hooks    orchestrator.RunHooks
-	Frontend *FrontendResult
-	Input    []byte
-	Store    string
-	Project  string
-	RunID    string
+	Resume           bool
+	WorkersQuiescent bool
+	Workers          int
+	Hooks            orchestrator.RunHooks
+	Frontend         *FrontendResult
+	Input            []byte
+	Store            string
+	Project          string
+	RunID            string
 }
 
 type LocalRunResult struct {
-	Run    *orchestrator.RunResult
-	Plan   *plan.CompileResult
-	Result json.RawMessage
-	Reused bool
-	Store  string
+	Fingerprint string
+	Run         *orchestrator.RunResult
+	Plan        *plan.CompileResult
+	Result      json.RawMessage
+	Reused      bool
+	Store       string
 }
 
 func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, error) {
+	if request.Resume || request.Frontend != nil && request.Frontend.Coordinator != nil {
+		return runCoordinatorLocal(ctx, request)
+	}
 	if request.Frontend == nil {
 		return nil, errors.New("frontend result is required")
 	}

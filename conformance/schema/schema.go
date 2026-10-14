@@ -84,3 +84,13 @@ var ExecutionEvidenceSchemaJSON []byte
 //
 //go:embed run-event.v1.schema.json
 var RunEventSchemaJSON []byte
+
+// CoordinatorSchemaJSON freezes the bounded delivery-turn protocol.
+//go:embed coordinator.schema.json
+var CoordinatorSchemaJSON []byte
+
+//go:embed coordinator-spec.schema.json
+var CoordinatorSpecSchemaJSON []byte
+
+//go:embed coordinator-record.schema.json
+var CoordinatorRecordSchemaJSON []byte

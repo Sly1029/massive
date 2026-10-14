@@ -1,0 +1,10 @@
+syntax = "proto3";
+package massive.failure.v1;
+option go_package = "github.com/Sly1029/massive/conformance/schema/failurepb;failurepb";
+// Exact promotion of map-item-failure.schema.json, shared by maps and coordinators.
+message ItemFailure {
+  optional uint32 attempts = 1;
+  optional string diagnostic = 2;
+  // error, killed, non-retryable, timeout; schema validates the closed taxonomy.
+  optional string kind = 3;
+}

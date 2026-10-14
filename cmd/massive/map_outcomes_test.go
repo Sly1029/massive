@@ -52,7 +52,7 @@ func TestArgoMapOutcomesMatchLocalExecution(t *testing.T) {
 		})
 	})
 	var stdout bytes.Buffer
-	if err := (&RunCommand{Entry: workflow + "#graph", Input: input, Store: store, Project: "test/map-outcomes", RunID: "local", JSON: true}).Run(t.Context(), &stdout); err != nil {
+	if err := (&RunCommand{Entry: workflow + "#graph", Input: input, Store: store, Project: "test/map-outcomes", RunID: "local", Workers: 4, JSON: true}).Run(t.Context(), &stdout); err != nil {
 		t.Fatal(err)
 	}
 	local := collectedMapOutput(t, store, "test/map-outcomes", "local", "scan")

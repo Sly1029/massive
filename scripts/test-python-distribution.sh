@@ -54,7 +54,7 @@ from pathlib import Path
 journal=json.loads(Path(sys.argv[1]).read_text())
 assert journal["status"] == "succeeded"
 assert journal["runId"] == "clean-wheel"
-assert journal["schemaVersion"] == 6
+assert journal["schemaVersion"] == 7
 assert journal["environment"]["realizationHash"].startswith("sha256:"), journal
 assert journal["steps"][0]["attempts"][0]["output"]["manifest"]["key"]
 PYJOURNAL
@@ -358,6 +358,32 @@ sdk = next(item for item in ready["distributions"] if item["name"] == "massive-w
 assert sdk["direct"] is True and sdk["editable"] is False, sdk
 assert Path(ready["interpreter"]["prefix"]).resolve() == Path(sys.argv[2]).resolve(), ready
 PY
+
+# The installed wheel includes the coordinator mode and its frozen protocol.
+cp -R "$repository/conformance/workflows/python-coordinator" "$test_root/coordinator"
+"$massive" run "$test_root/coordinator/workflow.py" --input '{"value":3}' \
+  --store "$test_root/coordinator-store" --project massive/distribution-coordinator \
+  --run-id coordinator-wheel --json --verbose > "$test_root/coordinator-result.json"
+# Resume from the archive after the submission directory is removed.
+rm -rf "$test_root/coordinator"
+"$massive" run --resume coordinator-wheel --store "$test_root/coordinator-store" \
+  --project massive/distribution-coordinator --json > "$test_root/coordinator-resumed.json"
+"$massive" inspect coordinator-wheel --store "$test_root/coordinator-store" \
+  --project massive/distribution-coordinator --json > "$test_root/coordinator-journal.json"
+"$python" - "$test_root" <<'PYCOORDINATOR'
+import json,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+original=json.loads((root/"coordinator-result.json").read_text())
+resumed=json.loads((root/"coordinator-resumed.json").read_text())
+journal=json.loads((root/"coordinator-journal.json").read_text())
+assert original["status"] == resumed["status"] == journal["status"] == "succeeded"
+assert original["result"] == resumed["result"]
+assert original["planHash"] == journal["planHash"]
+assert original["result"]["report"]["parts"] == ["Doubled=6", "Squared=9"]
+assert original["result"]["outcomes"][1]["failure"]["attempts"] == 2
+assert journal["runKind"] == "coordinator" and journal["coordinatorRecord"]["hash"].startswith("sha256:")
+PYCOORDINATOR
 
 # The shipped Go CLI dispatches to the TypeScript adapters even when the Python
 # launcher supplies MASSIVE_PYTHON. No repository CLI or binary build cache runs.

@@ -42,16 +42,19 @@ type CLI struct {
 }
 
 type RunCommand struct {
-	Events    string `help:"Write live NDJSON events to a new file."`
-	Progress  string `help:"Stderr progress: auto shows a live TTY view or a final summary; plain shows event lines." enum:"auto,plain,none" default:"auto"`
-	Entry     string `arg:"" name:"entry" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
-	Input     string `help:"Workflow input as JSON; defaults to null." xor:"input-source"`
-	InputFile string `name:"input-file" help:"Read workflow input JSON from this file." type:"existingfile" xor:"input-source"`
-	Store     string `help:"Local artifact store root." type:"path"`
-	Project   string `help:"Stable project identity, for example owner/repository."`
-	RunID     string `name:"run-id" help:"Caller-provided run identifier."`
-	JSON      bool   `help:"Emit one structured JSON result."`
-	Verbose   bool   `help:"Include plan and artifact identities."`
+	Resume           string `help:"Resume a recorded coordinator run by run id."`
+	WorkersQuiescent bool   `help:"Assert orphan coordinator workers have stopped before resume."`
+	Workers          int    `help:"Run-wide coordinator worker budget." default:"32"`
+	Events           string `help:"Write live NDJSON events to a new file."`
+	Progress         string `help:"Stderr progress: auto shows a live TTY view or a final summary; plain shows event lines." enum:"auto,plain,none" default:"auto"`
+	Entry            string `arg:"" name:"entry" optional:"" help:"Python or TypeScript workflow entrypoint, optionally followed by #export." type:"path"`
+	Input            string `help:"Workflow input as JSON; defaults to null." xor:"input-source"`
+	InputFile        string `name:"input-file" help:"Read workflow input JSON from this file." type:"existingfile" xor:"input-source"`
+	Store            string `help:"Local artifact store root." type:"path"`
+	Project          string `help:"Stable project identity, for example owner/repository."`
+	RunID            string `name:"run-id" help:"Caller-provided run identifier."`
+	JSON             bool   `help:"Emit one structured JSON result."`
+	Verbose          bool   `help:"Include plan and artifact identities."`
 }
 
 type BuildCommand struct {
@@ -337,9 +340,26 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedE
 	if err != nil {
 		return err
 	}
-	frontend, err := controlplane.Emit(ctx, command.Entry, environment.Execution)
-	if err != nil {
-		return err
+	var frontend *controlplane.FrontendResult
+	if command.Entry != "" {
+		frontend, err = controlplane.Emit(ctx, command.Entry, environment.Execution)
+		if err != nil {
+			return err
+		}
+	} else if command.Resume == "" {
+		return fmt.Errorf("run requires an entrypoint or --resume")
+	}
+	if command.Resume != "" {
+		if command.RunID != "" {
+			return fmt.Errorf("--resume cannot be combined with --run-id")
+		}
+		command.RunID = command.Resume
+		if command.Input == "" && command.InputFile == "" {
+			input = nil
+		}
+	}
+	if command.Workers < 1 || command.Workers > 32 {
+		return fmt.Errorf("--workers must be between 1 and 32")
 	}
 	progress, err := newRunProgress(command.Events, command.Progress, os.Stderr)
 	if err != nil {
@@ -357,6 +377,7 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedE
 		hooks.OnRunEvent = progress.event
 	}
 	result, err := controlplane.RunLocal(ctx, controlplane.LocalRunRequest{
+		Resume: command.Resume != "", WorkersQuiescent: command.WorkersQuiescent, Workers: command.Workers,
 		Frontend: frontend, Input: input, Store: command.Store,
 		Project: command.Project, RunID: command.RunID,
 		Hooks: hooks,
@@ -409,7 +430,10 @@ func renderRun(writer io.Writer, jsonMode, verbose bool, result *controlplane.Lo
 			output.Failure = result.Run.Failure
 		}
 		if verbose {
-			output.PlanHash = result.Plan.PlanHash
+			output.PlanHash = result.Fingerprint
+			if result.Plan != nil {
+				output.PlanHash = result.Plan.PlanHash
+			}
 			output.Store = result.Store
 		}
 		return json.NewEncoder(writer).Encode(output)
@@ -441,7 +465,11 @@ func renderRun(writer io.Writer, jsonMode, verbose bool, result *controlplane.Lo
 		fmt.Fprintf(writer, "\n✗ %s  run %s\n", status, runID)
 	}
 	if verbose {
-		fmt.Fprintf(writer, "  plan    %s\n  store   %s\n", result.Plan.PlanHash, result.Store)
+		hash := result.Fingerprint
+		if result.Plan != nil {
+			hash = result.Plan.PlanHash
+		}
+		fmt.Fprintf(writer, "  identity %s\n  store   %s\n", hash, result.Store)
 	}
 	return nil
 }

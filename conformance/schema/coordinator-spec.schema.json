@@ -1,0 +1,672 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "CoordinatorSpec"
+    },
+    "protocolVersion": {
+      "const": 1
+    },
+    "symbol": {
+      "$ref": "#/$defs/symbolEntry"
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "packageId": {
+          "$ref": "#/$defs/safePathSegment"
+        },
+        "language": {
+          "const": "python"
+        },
+        "packageHash": {
+          "$ref": "#/$defs/hashRef"
+        }
+      },
+      "required": [
+        "packageId",
+        "language",
+        "packageHash"
+      ],
+      "additionalProperties": false
+    },
+    "defaults": {
+      "$ref": "#/$defs/contract"
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    },
+    "schemas": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/schema"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/relativePath"
+          },
+          "hash": {
+            "$ref": "#/$defs/hashRef"
+          }
+        },
+        "required": [
+          "path",
+          "hash"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "inputSchema": {
+      "$ref": "#/$defs/hashRef"
+    },
+    "outputSchema": {
+      "$ref": "#/$defs/hashRef"
+    },
+    "deadlineSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 604800
+    }
+  },
+  "required": [
+    "kind",
+    "protocolVersion",
+    "symbol",
+    "source",
+    "defaults",
+    "environment",
+    "schemas",
+    "files",
+    "inputSchema",
+    "outputSchema",
+    "deadlineSeconds"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.@/:#-]+$"
+    },
+    "safePathSegment": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.@:#-]+$",
+      "not": {
+        "enum": [
+          ".",
+          ".."
+        ]
+      }
+    },
+    "mapItemScopeFrame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "mapId",
+        "index"
+      ],
+      "properties": {
+        "kind": {
+          "const": "map-item"
+        },
+        "mapId": {
+          "$ref": "#/$defs/safePathSegment"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      }
+    },
+    "executionScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frames"
+      ],
+      "properties": {
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/mapItemScopeFrame"
+          }
+        }
+      }
+    },
+    "projectKey": {
+      "type": "string",
+      "pattern": "^sha256-[0-9a-f]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/\\\\]+(?:/[^/\\\\]+)*$",
+      "not": {
+        "pattern": "(^|/)\\.{1,2}(/|$)"
+      }
+    },
+    "modulePath": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/relativePath"
+        },
+        {
+          "type": "string",
+          "pattern": "^\\./[^/\\\\]+(?:/[^/\\\\]+)*$",
+          "not": {
+            "pattern": "/\\.{1,2}(/|$)"
+          }
+        }
+      ]
+    },
+    "datastoreKey": {
+      "$ref": "#/$defs/relativePath"
+    },
+    "hashRef": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "language": {
+      "enum": [
+        "typescript",
+        "python"
+      ]
+    },
+    "symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packageId",
+        "language",
+        "module",
+        "export"
+      ],
+      "properties": {
+        "packageId": {
+          "$ref": "#/$defs/id"
+        },
+        "language": {
+          "$ref": "#/$defs/language"
+        },
+        "module": {
+          "$ref": "#/$defs/modulePath"
+        },
+        "export": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "sourcePackageRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packageId",
+        "language",
+        "packageHash",
+        "sourceArchive"
+      ],
+      "properties": {
+        "packageId": {
+          "$ref": "#/$defs/id"
+        },
+        "language": {
+          "$ref": "#/$defs/language"
+        },
+        "packageHash": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "sourceArchive": {
+          "$ref": "#/$defs/artifactRef"
+        },
+        "manifest": {
+          "$ref": "#/$defs/artifactRef"
+        }
+      }
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "hash",
+        "contentType"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/datastoreKey"
+        },
+        "hash": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "contentType": {
+          "$ref": "#/$defs/contentType"
+        }
+      }
+    },
+    "dataArtifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact",
+        "schema"
+      ],
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/artifactRef"
+        },
+        "schema": {
+          "$ref": "#/$defs/hashRef"
+        }
+      }
+    },
+    "dataArtifactManifestDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifestKey",
+        "schema"
+      ],
+      "properties": {
+        "manifestKey": {
+          "$ref": "#/$defs/datastoreKey"
+        },
+        "schema": {
+          "$ref": "#/$defs/hashRef"
+        }
+      }
+    },
+    "contentType": {
+      "type": "string",
+      "minLength": 1
+    },
+    "datastore": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/localDatastore"
+        },
+        {
+          "$ref": "#/$defs/s3Datastore"
+        }
+      ]
+    },
+    "localDatastore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "kind": {
+          "const": "local"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "s3Datastore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "bucket",
+        "region"
+      ],
+      "properties": {
+        "kind": {
+          "const": "s3"
+        },
+        "bucket": {
+          "$ref": "#/$defs/id"
+        },
+        "prefix": {
+          "$ref": "#/$defs/datastoreKey"
+        },
+        "region": {
+          "type": "string",
+          "minLength": 1
+        },
+        "endpoint": {
+          "type": "string",
+          "pattern": "^https?://[^/?#@\\s]+/?$"
+        },
+        "forcePathStyle": {
+          "type": "boolean"
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "properties": {
+        "attempts": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "diagnostic": {
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "error",
+            "killed",
+            "non-retryable",
+            "timeout"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempts",
+        "diagnostic",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "descriptor": {
+      "title": "Massive StepInvocationDescriptor",
+      "description": "Canonical proto-JSON projection of the v3 StepInvocationDescriptor transport between backend orchestration and language runtime adapters. Output publication is manifest-last and immutable. scope is optional for static invocations and ordered outer-to-inner for mapped invocations.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "schemaVersion",
+        "encoding",
+        "planHash",
+        "projectKey",
+        "runId",
+        "nodeId",
+        "attempt",
+        "maxAttempts",
+        "symbol",
+        "sourcePackage",
+        "environmentRef",
+        "input",
+        "output",
+        "datastore"
+      ],
+      "properties": {
+        "kind": {
+          "const": "StepInvocationDescriptor"
+        },
+        "schemaVersion": {
+          "const": 3
+        },
+        "encoding": {
+          "const": "json-v3"
+        },
+        "planHash": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "projectKey": {
+          "$ref": "#/$defs/projectKey"
+        },
+        "runId": {
+          "$ref": "#/$defs/safePathSegment"
+        },
+        "nodeId": {
+          "$ref": "#/$defs/safePathSegment"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "scope": {
+          "$ref": "#/$defs/executionScope"
+        },
+        "symbol": {
+          "$ref": "#/$defs/symbol"
+        },
+        "sourcePackage": {
+          "$ref": "#/$defs/sourcePackageRef"
+        },
+        "environmentRef": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "input": {
+          "$ref": "#/$defs/dataArtifactRef"
+        },
+        "output": {
+          "$ref": "#/$defs/dataArtifactManifestDestination"
+        },
+        "datastore": {
+          "$ref": "#/$defs/datastore"
+        }
+      }
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "hash": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "canonicalJson": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hash",
+        "canonicalJson"
+      ],
+      "additionalProperties": false
+    },
+    "symbolEntry": {
+      "type": "object",
+      "properties": {
+        "packageId": {
+          "$ref": "#/$defs/id"
+        },
+        "language": {
+          "$ref": "#/$defs/language"
+        },
+        "module": {
+          "$ref": "#/$defs/modulePath"
+        },
+        "export": {
+          "$ref": "#/$defs/id"
+        },
+        "symbolRef": {
+          "$ref": "#/$defs/safePathSegment"
+        }
+      },
+      "required": [
+        "packageId",
+        "language",
+        "module",
+        "export",
+        "symbolRef"
+      ],
+      "additionalProperties": false
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environmentRef",
+        "contractRef"
+      ],
+      "properties": {
+        "environmentRef": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxAttempts",
+            "delaySeconds",
+            "backoffFactor",
+            "maxDelaySeconds"
+          ],
+          "properties": {
+            "maxAttempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "delaySeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 86400
+            },
+            "backoffFactor": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "maxDelaySeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 86400
+            }
+          }
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": "string",
+              "minLength": 1
+            },
+            "memory": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "ref"
+            ],
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/id"
+              },
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "network": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "egress",
+                "hosts"
+              ],
+              "properties": {
+                "egress": {
+                  "const": "declared"
+                },
+                "hosts": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "egress"
+              ],
+              "properties": {
+                "egress": {
+                  "enum": [
+                    "none",
+                    "any"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "contractRef": {
+          "$ref": "#/$defs/hashRef"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "envRef": {
+          "$ref": "#/$defs/hashRef"
+        },
+        "container": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "image",
+            "platform"
+          ],
+          "properties": {
+            "image": {
+              "type": "string",
+              "minLength": 1
+            },
+            "command": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "workingDirectory": {
+              "$ref": "#/$defs/relativePath"
+            },
+            "platform": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$"
+            }
+          }
+        }
+      },
+      "required": [
+        "envRef",
+        "container"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

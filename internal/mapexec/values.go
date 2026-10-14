@@ -10,8 +10,10 @@ import (
 	"strings"
 
 	schemacontract "github.com/Sly1029/massive/conformance/schema"
+	"github.com/Sly1029/massive/conformance/schema/failurepb"
 	"github.com/Sly1029/massive/internal/artifact"
 	"github.com/Sly1029/massive/internal/canonical"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 type Item struct {
@@ -101,6 +103,15 @@ type Failure struct {
 	Attempts   int         `json:"attempts"`
 	Diagnostic string      `json:"diagnostic"`
 	Kind       FailureKind `json:"kind"`
+}
+
+// MarshalJSON projects the shared item-failure proto for both map and coordinator values.
+func (failure Failure) MarshalJSON() ([]byte, error) {
+	if failure.Attempts < 1 || uint64(failure.Attempts) > uint64(^uint32(0)) {
+		return nil, fmt.Errorf("invalid item failure attempt count")
+	}
+	attempts, kind := uint32(failure.Attempts), string(failure.Kind)
+	return protojson.Marshal(&failurepb.ItemFailure{Attempts: &attempts, Kind: &kind, Diagnostic: &failure.Diagnostic})
 }
 
 // NewFailure bounds the diagnostic to DiagnosticLimit code points of valid UTF-8.

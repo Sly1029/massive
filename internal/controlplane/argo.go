@@ -32,6 +32,9 @@ type ArgoCompilation struct {
 // content-addressed environment references; the receiving compiler independently
 // validates/recompiles the spec instead of trusting a client-produced plan.
 func PrepareArgo(frontend *FrontendResult) (*ArgoInputs, error) {
+	if frontend != nil && frontend.Coordinator != nil {
+		return nil, fmt.Errorf("Argo capability: code-first coordinators are local-only; provide a builder GraphIR entry")
+	}
 	if frontend == nil {
 		return nil, errors.New("frontend result is required")
 	}
