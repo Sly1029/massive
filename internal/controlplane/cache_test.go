@@ -42,6 +42,21 @@ func installedCachePython(t *testing.T) string {
 	python := filepath.Join(prefix, "bin", "python")
 	if runtime.GOOS == "windows" {
 		python = filepath.Join(prefix, "Scripts", "python.exe")
+	} else {
+		// uv's managed-interpreter aliases can leave lib-dynload on sys.path
+		// under an alias even though sys.base_prefix names the resolved tree.
+		command := exec.Command(python, "-I", "-c", "import sys; print(sys.base_prefix)")
+		base, err := command.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		alias := filepath.Join(root, "base-alias")
+		if err := os.Symlink(strings.TrimSpace(string(base)), alias); err != nil {
+			t.Fatal(err)
+		}
+		prefix = filepath.Join(root, "aliased-venv")
+		run("venv", "--quiet", "--python", filepath.Join(alias, "bin", "python3"), prefix)
+		python = filepath.Join(prefix, "bin", "python")
 	}
 	run("pip", "install", "--quiet", "--python", python, wheels[0])
 	t.Setenv("MASSIVE_PYTHON", python)
@@ -51,6 +66,16 @@ func installedCachePython(t *testing.T) string {
 func TestLocalPreparationCache(t *testing.T) {
 	t.Setenv("UV_LINK_MODE", "copy")
 	python := installedCachePython(t)
+	// Python processes .pth files only at import roots, not inside package
+	// resource directories. This real file must not disable a valid cache.
+	resource := exec.Command(python, "-I", "-c", `import site
+from pathlib import Path
+root = Path(site.getsitepackages()[0]) / "cache_test_resources"
+root.mkdir()
+(root / "ignored.pth").write_text("import module_that_does_not_exist\n")`)
+	if output, err := resource.CombinedOutput(); err != nil {
+		t.Fatalf("nested import resource: %v\n%s", err, output)
+	}
 	root := t.TempDir()
 	repository, _ := filepath.Abs(filepath.Join("..", ".."))
 	for _, name := range []string{"workflow.py", "helper.py"} {

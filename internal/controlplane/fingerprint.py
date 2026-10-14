@@ -7,8 +7,10 @@ all diagnostics and validation to the normal source reader and preflight.
 import hashlib
 import json
 import os
+import platform
 import shutil
 import sys
+import sysconfig
 from pathlib import Path
 
 import tomllib
@@ -36,7 +38,8 @@ def stamp(path):
 def fingerprint(root):
     # System sites, editable installs, custom .pth hooks and external lock sources
     # can change import resolution outside the inspected trees. Do not cache them.
-    prefix = Path(sys.prefix)
+    prefix = Path(sys.prefix).resolve()
+    base_prefix = Path(sys.base_prefix).resolve()
     config = prefix / "pyvenv.cfg"
     if sys.prefix == sys.base_prefix or not config.is_file():
         return None
@@ -72,7 +75,11 @@ def fingerprint(root):
     state = [
         digest(lock_file.read_bytes()) if lock_file.is_file() else None,
         sys.version,
+        sys.implementation.name,
         sys.implementation.cache_tag,
+        sys.platform,
+        platform.machine(),
+        sysconfig.get_platform(),
         sys.prefix,
         sys.base_prefix,
         sys.path,
@@ -80,9 +87,12 @@ def fingerprint(root):
         stamp(Path(sys._base_executable)),
         digest(config.read_bytes()),
     ]
+    stdlib = str(Path(sysconfig.get_path("stdlib")).resolve())
     seen = set()
     for entry in sys.path:
-        path = Path(entry)
+        # uv may expose the base interpreter through a directory alias. Keep
+        # sys.path in the identity, but compare and scan its actual import roots.
+        path = Path(entry).resolve()
         if not path.exists():
             state.append([entry, None])
             continue
@@ -90,9 +100,7 @@ def fingerprint(root):
             state.append([stamp(path), digest(path.read_bytes())])
             continue
         # No path injected from an external editable source or startup hook.
-        if not path.is_relative_to(prefix) and not path.is_relative_to(
-            Path(sys.base_prefix)
-        ):
+        if not path.is_relative_to(prefix) and not path.is_relative_to(base_prefix):
             return None
         pending = [str(path)]
         while pending:
@@ -101,6 +109,16 @@ def fingerprint(root):
                 continue
             seen.add(directory)
             entries = sorted(os.scandir(directory), key=lambda item: item.name)
+            # Isolated venvs do not import the base interpreter's global site.
+            # Inspect actual import roots separately, without descending into
+            # inactive global packages while walking the standard library.
+            if directory == stdlib:
+                entries = [
+                    item
+                    for item in entries
+                    if item.name not in ("site-packages", "dist-packages")
+                    or item.path in sys.path
+                ]
             if any(
                 item.name.endswith((".pyc", ".pyo"))
                 and not Path(item.path).with_suffix(".py").is_file()
@@ -120,16 +138,17 @@ def fingerprint(root):
                 if item.is_dir():
                     pending.append(item.path)
                     continue
-                if item.name in (
-                    "sitecustomize.py",
-                    "usercustomize.py",
-                ) or item.name.endswith(".egg-link"):
-                    return None
-                if item.name.endswith(".pth") and (
-                    item.name != "_virtualenv.pth"
-                    or Path(item.path).read_text().strip() != "import _virtualenv"
-                ):
-                    return None
+                if directory == str(path):
+                    if item.name in (
+                        "sitecustomize.py",
+                        "usercustomize.py",
+                    ) or item.name.endswith(".egg-link"):
+                        return None
+                    if item.name.endswith(".pth") and (
+                        item.name != "_virtualenv.pth"
+                        or Path(item.path).read_text().strip() != "import _virtualenv"
+                    ):
+                        return None
                 info = item.stat()
                 state.append(
                     [
