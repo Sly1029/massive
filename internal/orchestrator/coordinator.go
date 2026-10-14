@@ -71,8 +71,9 @@ type coordinatorRecord struct {
 	Deliveries    []string                   `json:"deliveries"`
 	Steps         []runjournal.Step          `json:"steps"`
 	RetryAt       map[string]string          `json:"retryAt"`
-	Sequence      int                        `json:"sequence"`
-	Final         json.RawMessage            `json:"final,omitempty"`
+	// Sequence reserves a high watermark before observations are emitted; crash recovery may leave gaps.
+	Sequence int             `json:"sequence"`
+	Final    json.RawMessage `json:"final,omitempty"`
 }
 
 type coordinatorOutcome struct {
@@ -287,7 +288,6 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 	defer engine.cancel()
 	if config.Hooks.OnRunEvent != nil {
 		engine.events = &runEvents{hook: config.Hooks.OnRunEvent, projectKey: project, runID: config.RunID, started: time.Now(), sequence: engine.record.Sequence, attemptStarts: map[eventIdentity]time.Time{}, stepStarts: map[string]time.Time{}}
-		engine.events.emit(runevent.Event{Type: "run.started", PlanHash: engine.manifest.PlanHash})
 	}
 	result = &RunResult{PlanHash: engine.manifest.PlanHash, RunID: config.RunID, ProjectKey: project, ManifestKey: runManifestKey(project, config.RunID).String(), Status: StatusRunning}
 	// All outcome reconciliation precedes the terminal snapshot and journal.
@@ -322,10 +322,10 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 			}
 			engine.manifest.Terminate(status, diagnostic)
 		}
-		engine.events.runFinished(engine.manifest.Status)
 		if err := engine.save(context.WithoutCancel(ctx), false); err != nil {
 			returnedErr = errors.Join(returnedErr, err)
 		}
+		engine.events.runFinished(engine.manifest.Status)
 		result.Status = engine.manifest.Status
 		result.Steps = summariesFromManifest(*engine.manifest)
 		if returnedErr != nil {
@@ -428,6 +428,9 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 	if err := engine.save(ctx, !config.Resume); err != nil {
 		return result, err
 	}
+	if engine.events != nil {
+		engine.events.emit(runevent.Event{Type: "run.started", PlanHash: engine.manifest.PlanHash})
+	}
 	if err := engine.loop(startDescriptor); err != nil {
 		return result, err
 	}
@@ -473,7 +476,7 @@ func (engine *localCoordinator) save(ctx context.Context, create bool) error {
 	defer stop()
 	engine.record.Steps = engine.manifest.Steps
 	if engine.events != nil {
-		engine.record.Sequence = engine.events.sequence
+		engine.record.Sequence = max(engine.record.Sequence, engine.events.sequence+64)
 	}
 	body, err := canonical.Marshal(engine.record)
 	if err != nil {
@@ -656,10 +659,13 @@ func (engine *localCoordinator) settle(report coordinatorOutcome) error {
 			}
 		}
 	}
+	if err := engine.save(context.WithoutCancel(engine.ctx), false); err != nil {
+		return err
+	}
 	if step.Status == StatusSucceeded || step.Status == StatusFailed {
 		engine.events.stepFinished(step)
 	}
-	return engine.save(context.WithoutCancel(engine.ctx), false)
+	return nil
 }
 
 func (engine *localCoordinator) dispatch() error {

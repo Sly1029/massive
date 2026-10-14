@@ -380,3 +380,14 @@ safe errors, and events shared. Move graph-specific coordination into the
 builder/GraphIR scheduler while replay targets consume invocations directly.
 Do not remove GraphIR operators, introduce a general engine/plugin framework,
 or grow hosted policy until a second real target demonstrates the need.
+
+## Spike evidence
+
+Functional evidence is produced by `packages/python/tests/test_coordinator.py`
+against real CLI/runner processes and filesystem stores, through `massive-heavy`.
+
+1. **Abrupt recovery:** both fan-out/per-item-chain patterns pass CLI SIGKILL,
+   worker quiescence, exclusive ownership, and resume. Completed step records
+   retain exact attempts and publications; gathered output equals an uninterrupted
+   run. Resume events have strictly increasing sequences and cached keys emit
+   no new attempt-start events. Event sequence reservations may leave crash gaps.

@@ -536,3 +536,95 @@ def test_run_wide_worker_budget(coordinator_cli: Path, tmp_path: Path) -> None:
     finally:
         if process.poll() is None:
             kill_and_quiesce(process, control)
+
+
+def test_recovered_failures_require_coordinator_journal_kind(
+    coordinator_cli: Path, tmp_path: Path
+) -> None:
+    source = ROOT / "conformance/workflows/python-coordinator/workflow.py"
+    result = run(
+        [
+            str(coordinator_cli),
+            "run",
+            str(source),
+            "--input",
+            '{"value":3}',
+            "--store",
+            str(tmp_path),
+            "--project",
+            PROJECT,
+            "--run-id",
+            "kind",
+            "--json",
+            "--progress",
+            "none",
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    inspect_args = [
+        str(coordinator_cli),
+        "inspect",
+        "kind",
+        "--store",
+        str(tmp_path),
+        "--project",
+        PROJECT,
+        "--json",
+    ]
+    assert run(inspect_args).returncode == 0
+    state = journal(tmp_path, "kind")
+    state["runKind"] = "graph"
+    del state["coordinatorRecord"]
+    path = next(tmp_path.glob("projects/*/runs/kind/run-manifest.json"))
+    path.write_text(json.dumps(state))
+    rejected = run(inspect_args)
+    assert rejected.returncode != 0 and "successful run has unsuccessful step" in rejected.stderr
+    state["schemaVersion"], state["encoding"] = 6, "json-v6"
+    path.write_text(json.dumps(state))
+    obsolete = run(inspect_args)
+    assert obsolete.returncode != 0 and "rebuild" in obsolete.stderr
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="SIGKILL quiescence evidence uses Linux /proc")
+def test_resume_event_sequences_are_monotonic(coordinator_cli: Path, tmp_path: Path) -> None:
+    source, control, store, jobs = setup(tmp_path, blocked=["a-two", "a-three", "b-one"])
+    original_events, resumed_events = tmp_path / "original.ndjson", tmp_path / "resumed.ndjson"
+    process = subprocess.Popen(
+        [*argv(coordinator_cli, source, store, jobs, "events"), "--events", str(original_events)],
+        env=env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        wait_for(
+            lambda: (
+                completed(journal(store, "events")) and list(control.glob("started-b-one-*.json"))
+            ),
+            process,
+        )
+        kill_and_quiesce(process, control)
+    finally:
+        if process.poll() is None:
+            kill_and_quiesce(process, control)
+    (control / "settings.json").write_text("{}")
+    resumed = run(
+        [
+            *argv(coordinator_cli, source, store, jobs, "events", resume=True),
+            "--events",
+            str(resumed_events),
+        ]
+    )
+    assert resumed.returncode == 0, resumed.stderr
+    before = [json.loads(line) for line in original_events.read_text().splitlines()]
+    after = [json.loads(line) for line in resumed_events.read_text().splitlines()]
+    sequences = [event["sequence"] for event in [*before, *after]]
+    assert sequences == sorted(set(sequences))
+    # Find the actual completed key from the original durable delivery sequence.
+    cached_key = record(store, "events")["deliveries"][0]
+    assert not [
+        event
+        for event in after
+        if event.get("nodeId") == cached_key and event["type"] == "step.attempt.started"
+    ]
+    assert after[-1]["type"] == "run.finished"
