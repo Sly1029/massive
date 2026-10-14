@@ -5,6 +5,7 @@ package environment_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,9 +21,9 @@ func TestProbeDescendantsCannotHoldPreflightOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	_, err := environment.Check(t.Context(), environment.Request{Python: python, ProjectRoot: root})
-	if err == nil {
-		t.Fatal("invalid probe output accepted")
+	_, err := environment.Check(t.Context(), environment.Request{Python: python, ProjectRoot: root, ProbeEnvironment: os.Environ()})
+	if err == nil || (!strings.Contains(err.Error(), "environment probe emitted invalid JSON") && !strings.Contains(err.Error(), "descendants kept output open")) {
+		t.Fatalf("probe error = %v, want invalid JSON or bounded pipe drainage after running the process", err)
 	}
 	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("preflight waited %s for a descendant holding the probe's stdout", elapsed)

@@ -114,7 +114,7 @@ func localTaskEnvironments(plan *planpb.WorkflowPlan, bindings map[string]LocalS
 		nodes = append(nodes, hook)
 	}
 	for _, node := range nodes {
-		if node.GetKind() != "step" && node.GetKind() != "map" {
+		if node.GetKind() != "step" && node.GetKind() != "map" && node.GetKind() != "exit-hook" {
 			continue
 		}
 		env := append(make([]string, 0, len(base)), base...)

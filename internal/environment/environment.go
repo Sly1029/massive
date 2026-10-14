@@ -112,7 +112,8 @@ type Probe struct {
 }
 
 type Request struct {
-	// ProbeEnvironment is explicit for local execution; nil uses the executor environment.
+	// ProbeEnvironment must be non-nil; callers choose the reduced local base
+	// or explicitly inherit the isolated executor's environment.
 	ProbeEnvironment []string
 	// Python is the interpreter to inspect; the report pins its sys.executable.
 	Python string

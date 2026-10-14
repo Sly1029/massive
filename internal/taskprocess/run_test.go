@@ -201,7 +201,7 @@ func TestRunToPreservesProtocolOutputAndSeparateDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if err := RunTo(t.Context(), []string{executable, "process-fixture", "output", "unused"}, "", nil, &stdout, &stderr); err != nil {
+	if err := RunTo(t.Context(), []string{executable, "process-fixture", "output", "unused"}, "", os.Environ(), &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if stdout.String() != "discarded-prefix\n"+strings.Repeat("x", outputLimit*2)+"final-tail\n" || stderr.Len() != 0 {
@@ -209,7 +209,7 @@ func TestRunToPreservesProtocolOutputAndSeparateDiagnostics(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	err = RunTo(t.Context(), []string{executable, "process-fixture", "failure", "unused"}, "", nil, &stdout, &stderr)
+	err = RunTo(t.Context(), []string{executable, "process-fixture", "failure", "unused"}, "", os.Environ(), &stdout, &stderr)
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 42 || stdout.Len() != 0 || stderr.String() != "author diagnostic\n" {
 		t.Fatalf("diagnostic output mixed or exit lost: stdout=%q stderr=%q err=%v", stdout.String(), stderr.String(), err)

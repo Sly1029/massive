@@ -332,6 +332,9 @@ func TestLocalSchedulerDispatchesDependentsOnCompletion(t *testing.T) {
 from pathlib import Path
 from massive import GraphBuilder, StepContext, container, execution
 
+def source(ctx: StepContext[str]) -> str:
+    return ctx.inputs
+
 def slow(ctx: StepContext[str]) -> str:
     root = Path(ctx.inputs)
     (root / "a-started").touch()
@@ -360,12 +363,14 @@ def merge(ctx: StepContext[list[str]]) -> list[str]:
     return ctx.inputs
 
 graph = GraphBuilder(name="completion", input_type=str, output_type=list[str], defaults=execution(environment=container("example.invalid/runner@sha256:" + "0"*64)))
+producer = graph.add(source)
 a = graph.add(slow)
 b = graph.add(fast)
 c = graph.add(dependent)
 d = graph.add(merge)
-graph.edge_from(graph.start).to(a)
-graph.edge_from(graph.start).to(b)
+graph.edge_from(graph.start).to(producer)
+graph.edge_from(producer).to(a)
+graph.edge_from(producer).to(b)
 graph.edge_from(b).to(c)
 graph.gather(a, c).to(d)
 graph.edge_from(d).to_end(graph.end)
@@ -410,7 +415,7 @@ contract = execution(environment=container("example.invalid/runner@sha256:" + "0
 graph = GraphBuilder(name="exact-env", input_type=list[int], output_type=list[int], defaults=contract)
 a = graph.add(first)
 graph.edge_from(graph.start).to(a)
-b = graph.map(a, item)
+b = graph.map(a, item, id="items")
 graph.edge_from(b).to_end(graph.end)
 graph.on_exit(hook)
 `
@@ -481,7 +486,7 @@ a = graph.add(classify)
 b = graph.add(active)
 c = graph.add(inactive, contract=execution(environment=image, secrets={"TOKEN":"inactive-only"}))
 graph.edge_from(graph.start).to(a)
-route = graph.decision(a, on="kind")
+route = graph.decision(a, on="kind", id="route")
 graph.edge_from(route.case(Active)).to(b)
 graph.edge_from(route.case(Inactive)).to(c)
 selected = route.select(bool, active=b, inactive=c)

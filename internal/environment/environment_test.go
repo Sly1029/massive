@@ -185,7 +185,8 @@ func check(t *testing.T, python, root, release string) *environment.Report {
 		version = "0.0.0-dev"
 	}
 	report, err := environment.Check(t.Context(), environment.Request{
-		Python: python, ProjectRoot: root, ControlPlaneVersion: version, RequireSDK: release != "",
+		ProbeEnvironment: os.Environ(),
+		Python:           python, ProjectRoot: root, ControlPlaneVersion: version, RequireSDK: release != "",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -406,14 +407,14 @@ func TestShadowedDistributionsAndModulesFail(t *testing.T) {
 func TestProbeErrorsAreConcise(t *testing.T) {
 	python := sdkPython(t)
 	root := writeProject(t, "", "[project]\nname = \"invalid\"\nversion = \"0.1.0\"\ndependencies = [\"not a requirement!\"]\n", map[string]string{"workflow.py": ""})
-	_, err := environment.Check(t.Context(), environment.Request{Python: python, ProjectRoot: root})
+	_, err := environment.Check(t.Context(), environment.Request{Python: python, ProjectRoot: root, ProbeEnvironment: os.Environ()})
 	if err == nil || !strings.HasPrefix(err.Error(), "invalid "+filepath.Join(root, "pyproject.toml")+": project.dependencies.0:") ||
 		strings.Contains(err.Error(), "errors.pydantic.dev") || strings.Contains(err.Error(), "install") || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("error = %v", err)
 	}
 
 	base := strings.TrimSpace(run(t, "", nil, python, "-I", "-c", "import sys; print(sys._base_executable)"))
-	_, err = environment.Check(t.Context(), environment.Request{Python: base, ProjectRoot: root})
+	_, err = environment.Check(t.Context(), environment.Request{Python: base, ProjectRoot: root, ProbeEnvironment: os.Environ()})
 	if err == nil || !strings.Contains(err.Error(), "does not have massive-workflows installed") || !strings.Contains(err.Error(), "uv sync --locked") {
 		t.Fatalf("error = %v", err)
 	}

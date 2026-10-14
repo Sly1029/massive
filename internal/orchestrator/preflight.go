@@ -74,6 +74,9 @@ func isolatedPreflight(ctx context.Context, store datastore.Datastore, request e
 		return fail(err)
 	}
 	request.ProjectRoot = root
+	// The isolated executor inherits its contract-scoped pod environment,
+	// unlike local control-plane probes, which use the reduced base.
+	request.ProbeEnvironment = os.Environ()
 	report, err := environment.Check(ctx, request)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		// A terminated or evicted pod must stay retryable.
