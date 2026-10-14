@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import inspect
 import sys
 from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
@@ -69,7 +70,7 @@ class EmitResult:
 
 
 def emit(request: EntrypointRequest) -> EmitResult:
-    """Load exactly one exported graph and emit its portable workflow specification."""
+    """Load one exported graph or typed coordinator and emit its specification."""
     source = SourcePackage.from_project(request.path.parent)
     files, _ = source.manifest()
     if request.path.name not in {file["path"] for file in files}:
@@ -80,7 +81,7 @@ def emit(request: EntrypointRequest) -> EmitResult:
     selected = {file["path"] for file in files}
     with _import_workflow(request) as module:
         candidate = getattr(module, request.selector or "coordinator", None)
-        if candidate is not None and callable(candidate):
+        if inspect.iscoroutinefunction(candidate):
             from .builder import _symbol_module
             from .contracts import ExecutionContract
             from .workflow import entry_types, resolved_contract, schema_record

@@ -444,3 +444,7 @@ against real CLI/runner processes and filesystem stores, through `massive-heavy`
    unchanged, inspection recognizes journal v7, and TypeScript still selects
    its own adapter through the Python launcher. No cluster/Argo execution gate
    is claimed by this local distribution test.
+
+Frontend selection additionally passes 17 functional cases: only async function
+exports enter coordinator validation, while explicit non-graph selectors retain
+the builder diagnostic. This preserves ordinary Pydantic model exports.
