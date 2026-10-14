@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -356,6 +357,10 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 	finished := make(chan nodeCompletion, len(index.nodeOrder))
 	var firstError error
 	failedNode := ""
+	nodePositions := make(map[string]int, len(index.nodeOrder))
+	for position, id := range index.nodeOrder {
+		nodePositions[id] = position
+	}
 	// Workers publish while the scheduler resolves other branches. Serialize all
 	// root journal reads and writes; graph resolution stays on this goroutine.
 	scanReady := func() ([]executableNode, bool, error) {
@@ -390,17 +395,17 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 					markStepSkipped(&manifest, nodeID, *reason)
 					events.stepFinished(findManifestStep(&manifest, nodeID))
 				case "decision":
-					markDecisionSkipped(&manifest, nodeID, *reason)
+					recordDecision(&manifest, runjournal.Decision{NodeID: nodeID, Status: StatusSkipped, SkipReason: reason}, nodePositions)
 				}
 			} else {
 				switch node.GetKind() {
 				case "decision":
 					selected, err := resolution.routeDecision(node)
 					if err != nil {
-						markDecisionFailed(&manifest, nodeID, err.Error())
+						recordDecision(&manifest, runjournal.Decision{NodeID: nodeID, Status: StatusFailed, Diagnostic: err.Error()}, nodePositions)
 						return nil, false, err
 					}
-					manifest.Decisions = append(manifest.Decisions, runjournal.Decision{NodeID: nodeID, Status: "selected", SelectedCase: selected})
+					recordDecision(&manifest, runjournal.Decision{NodeID: nodeID, Status: "selected", SelectedCase: selected}, nodePositions)
 				case "select":
 					if err := resolution.selectOutput(node); err != nil {
 						return nil, false, err
@@ -436,6 +441,9 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			}
 			if err != nil {
 				firstError, failedNode = err, activeNodeID
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+					failedNode = ""
+				}
 				cancel()
 			} else {
 				for _, task := range ready {
@@ -469,7 +477,9 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		}
 		completion := <-finished
 		delete(running, completion.id)
-		if completion.err != nil && firstError == nil {
+		var fatal, previousFatal *FatalRunError
+		preferFatal := errors.As(completion.err, &fatal) && !errors.As(firstError, &previousFatal) && !(ctx.Err() != nil && errors.Is(firstError, ctx.Err()))
+		if completion.err != nil && (firstError == nil || preferFatal) {
 			firstError, failedNode = completion.err, completion.id
 			cancel()
 		}
@@ -1803,20 +1813,11 @@ func markStepSkipped(manifest *runjournal.Manifest, nodeID string, reason runjou
 	}
 }
 
-func markDecisionFailed(manifest *runjournal.Manifest, nodeID string, diagnostic string) {
-	manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
-		NodeID:     nodeID,
-		Status:     "failed",
-		Diagnostic: diagnostic,
+func recordDecision(manifest *runjournal.Manifest, decision runjournal.Decision, positions map[string]int) {
+	position := sort.Search(len(manifest.Decisions), func(i int) bool {
+		return positions[manifest.Decisions[i].NodeID] > positions[decision.NodeID]
 	})
-}
-
-func markDecisionSkipped(manifest *runjournal.Manifest, nodeID string, reason runjournal.SkipReason) {
-	manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
-		NodeID:     nodeID,
-		Status:     StatusSkipped,
-		SkipReason: &reason,
-	})
+	manifest.Decisions = slices.Insert(manifest.Decisions, position, decision)
 }
 
 func summariesFromManifest(manifest runjournal.Manifest) []StepSummary {

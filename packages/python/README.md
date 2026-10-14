@@ -930,12 +930,8 @@ before task dispatch. Missing bindings or sources fail before any step starts;
 unused refs are not read. Values never enter plans, descriptors, environment
 identities, journals, or lifecycle events.
 
-The base contains `PATH`, `HOME`, `TMPDIR`, `TEMP`, `TMP`, `LANG`, `TZ`, and
-`LC_ALL`, `LC_COLLATE`, `LC_CTYPE`, `LC_MESSAGES`, `LC_MONETARY`, `LC_NUMERIC`,
-`LC_TIME`; Windows also keeps `SYSTEMROOT`, `COMSPEC`, and `USERPROFILE`.
-These support executable lookup, home configuration, scratch, locale, timezone,
-and native process startup. Massive passes only its `MASSIVE_PYTHON` and
-`MASSIVE_TYPESCRIPT_RUNNER` runtime selectors, not every `MASSIVE_*` variable.
+See the [local execution spec](../../docs/spec/local-execution.md) for the
+base environment and runtime selectors passed to local tasks on each platform.
 For other non-secret configuration, repeat `--pass-env NAME`. Missing explicit
 pass-through variables are errors; a pass-through does not satisfy a declared
 secret requirement. This deliberately replaces full local task inheritance.

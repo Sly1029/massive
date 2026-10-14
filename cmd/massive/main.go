@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -45,7 +44,7 @@ type CLI struct {
 type RunCommand struct {
 	SecretBindings string   `name:"secret-bindings" help:"JSON file mapping logical secret refs to local env or file sources." type:"existingfile"`
 	PassEnv        []string `name:"pass-env" help:"Pass a launching environment variable to every local task; repeat for non-secret configuration."`
-	MaxWorkers     int      `name:"max-workers" help:"Run-wide limit on live local task processes; defaults to the Go runtime CPU budget."`
+	MaxWorkers     *int     `name:"max-workers" help:"Run-wide limit on live local task processes; defaults to the Go runtime CPU budget."`
 
 	Events    string `help:"Write live NDJSON events to a new file."`
 	Progress  string `help:"Stderr progress: auto shows a live TTY view or a final summary; plain shows event lines." enum:"auto,plain,none" default:"auto"`
@@ -337,19 +336,18 @@ type exitHookOutput struct {
 	Status                string `json:"status"`
 }
 
-func (command *RunCommand) BeforeApply() error {
-	command.MaxWorkers = runtime.GOMAXPROCS(0)
-	return nil
-}
-
 func (command *RunCommand) Validate() error {
-	if command.MaxWorkers <= 0 {
+	if command.MaxWorkers != nil && *command.MaxWorkers <= 0 {
 		return fmt.Errorf("--max-workers must be positive")
 	}
 	return nil
 }
 
 func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedErr error) {
+	maxWorkers := 0
+	if command.MaxWorkers != nil {
+		maxWorkers = *command.MaxWorkers
+	}
 	input, err := command.input()
 	if err != nil {
 		return err
@@ -377,7 +375,7 @@ func (command *RunCommand) Run(ctx context.Context, stdout io.Writer) (returnedE
 	result, err := controlplane.RunLocal(ctx, controlplane.LocalRunRequest{
 		Frontend: frontend, Input: input, Store: command.Store,
 		Project: command.Project, RunID: command.RunID,
-		Hooks: hooks, SecretBindings: bindings, PassEnv: command.PassEnv, MaxWorkers: command.MaxWorkers,
+		Hooks: hooks, SecretBindings: bindings, PassEnv: command.PassEnv, MaxWorkers: maxWorkers,
 	})
 	if err != nil {
 		if result != nil && result.Run != nil {
