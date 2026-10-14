@@ -1,8 +1,8 @@
 # Code-first coordinators
 
-Status: implemented local spike, based on `1e07ae0`; validation evidence is
-recorded below as each gate passes. The protocol, CPython asyncio runner,
-replay record, functional fixtures, and typing fixtures are implemented.
+Status: validated local spike, based on `1e07ae0`. The protocol, CPython asyncio
+runner, replay record, functional fixtures, and typing fixtures are implemented;
+all six evidence gates and the repository check pass on Linux/CPython 3.14.3.
 Adoption and merge require the owner's review. Argo consumes builder GraphIR.
 
 The hypothesis is that ordinary typed Python can replace costly coordination
@@ -452,3 +452,17 @@ exports enter coordinator validation, while explicit non-graph selectors retain
 the builder diagnostic. This preserves ordinary Pydantic model exports.
 Sticky-fatal cases call `wf.run` from a catch and a finalizer and verify that no
 new invocation enters the journal and no activity effect is produced.
+
+Final validation: `massive-heavy pnpm check` and
+`node scripts/check-no-test-mocks.mjs` pass. The repository gate includes 438
+Python tests, 122 passing TypeScript tests, Go/protobuf conformance, and the
+installed-wheel distribution test. One existing TypeScript test requiring a
+configured S3 endpoint is ignored; the real MinIO runner/artifact tests pass.
+No kind or Argo workflow execution was run.
+
+Size against `1e07ae0`: existing runtime/tooling edits are +199/-45 (net +154).
+The additive runtime/protocol/tooling is 1,945 lines, including 1,775 runtime
+lines. Frozen schemas/generated bindings add a net 3,324 lines, and functional,
+typing, example, and distribution evidence add a net 1,130. GraphIR operators
+remain available; this spike demonstrates a second coordination mode rather
+than retiring the builder scheduler.
