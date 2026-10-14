@@ -78,6 +78,7 @@ graph.on_exit(record)
 	command := exec.Command(binary, "run", entry, "--input", string(input), "--store", store,
 		"--project", "test/interrupt", "--run-id", "interrupted", "--json", "--events", eventsPath, "--progress", "none")
 	outcome := filepath.Join(root, "outcome")
+	command.Args = append(command.Args, "--pass-env", "OUTCOME_FILE")
 	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "OUTCOME_FILE="+outcome)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var stdout, stderr bytes.Buffer

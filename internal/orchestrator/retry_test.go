@@ -204,7 +204,7 @@ func TestProcessStepInvokerTimesOutAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{script}, ProcessLimit: 1}).InvokeSteps(context.Background(), StepInvocationBatch{
+	outcomes, err := (&ProcessStepInvoker{CommandTemplate: []string{script}, Environments: map[string][]string{"map-items": os.Environ()}, workers: make(chan struct{}, 1)}).InvokeSteps(context.Background(), StepInvocationBatch{
 		Steps: []StepInvocation{{Descriptor: processMapDescriptor("timeout", 0), Timeout: 200 * time.Millisecond}},
 	})
 	if err != nil {
@@ -294,7 +294,7 @@ exec "` + filepath.Join(repoRootForTest(t), "scripts", "massive-typescript-runne
 }
 
 func (r flakyRunner) invoker() *ProcessStepInvoker {
-	return &ProcessStepInvoker{CommandTemplate: []string{r.script, descriptorPathToken}, ProcessLimit: 2}
+	return &ProcessStepInvoker{CommandTemplate: []string{r.script, descriptorPathToken}, workers: make(chan struct{}, 2)}
 }
 
 type capturedDescriptor struct {

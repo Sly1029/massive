@@ -92,7 +92,8 @@ graph.on_exit(notify, timeout=timedelta(seconds=10))
 	ctx, stop := context.WithTimeoutCause(t.Context(), 100*time.Millisecond, &orchestrator.RunDeadlineError{Seconds: 1})
 	defer stop()
 	result, runErr := orchestrator.Run(ctx, orchestrator.RunConfig{
-		Plan: compiled.Plan, DatastoreRoot: store, ProjectID: "test/materialization-hook", RunID: "deadline",
+		PassEnv: []string{"OUTCOME_FILE"},
+		Plan:    compiled.Plan, DatastoreRoot: store, ProjectID: "test/materialization-hook", RunID: "deadline",
 		SourcePackageRoot: source, SourceManifests: manifests, RunnerCommand: orchestrator.PythonRunnerCommand(python),
 	}, []byte("20"))
 	var deadline *orchestrator.RunDeadlineError

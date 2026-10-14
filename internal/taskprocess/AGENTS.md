@@ -24,3 +24,6 @@ cross-compilation alone does not validate native process lifetime behavior.
 Combined task output retains the last bounded bytes in a ring, so noisy logs
 cannot evict the final failure context. Frontend output still uses the caller's
 separate unbounded protocol streams.
+
+Require a non-nil environment for every process. Callers that inherit must pass
+`os.Environ()` explicitly; an empty non-nil slice starts with no variables.

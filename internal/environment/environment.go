@@ -112,6 +112,9 @@ type Probe struct {
 }
 
 type Request struct {
+	// ProbeEnvironment must be non-nil; callers choose the reduced local base
+	// or explicitly inherit the isolated executor's environment.
+	ProbeEnvironment []string
 	// Python is the interpreter to inspect; the report pins its sys.executable.
 	Python string
 	// ProjectRoot is the workflow directory holding pyproject.toml and uv.lock.
@@ -167,7 +170,7 @@ const sdkDistribution = "massive-workflows"
 // Check probes the interpreter and, when the project has a uv.lock, verifies
 // that the lock is current and its runtime packages are installed.
 func Check(ctx context.Context, request Request) (*Report, error) {
-	probe, err := runProbe(ctx, request.Python, request.ProjectRoot)
+	probe, err := runProbe(ctx, request.Python, request.ProjectRoot, request.ProbeEnvironment)
 	if err != nil {
 		return nil, err
 	}
@@ -231,10 +234,10 @@ const probeProjectError = 2
 
 var missingProbe = regexp.MustCompile(`No module named '?massive_environment'?$`)
 
-func runProbe(ctx context.Context, python, root string) (*Probe, error) {
+func runProbe(ctx context.Context, python, root string, probeEnvironment []string) (*Probe, error) {
 	// Isolated mode keeps the workflow directory and PYTHONPATH off sys.path.
 	var stdout, stderr bytes.Buffer
-	if err := taskprocess.RunTo(ctx, []string{python, "-I", "-m", "massive_environment", "probe", root}, root, nil, &stdout, &stderr); err != nil {
+	if err := taskprocess.RunTo(ctx, []string{python, "-I", "-m", "massive_environment", "probe", root}, root, probeEnvironment, &stdout, &stderr); err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}

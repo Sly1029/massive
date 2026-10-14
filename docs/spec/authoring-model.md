@@ -278,3 +278,17 @@ there is no injected dependency object or shared mutable workflow state.
 The TypeScript step function exists for local execution, type inference, and symbol registration. The portable plan must not depend on serializing closures.
 
 Every executable step, reducer, projection, and advanced condition must have a stable symbol identity in the compiled plan. Backend runners resolve symbols through a language/runtime registry.
+
+## Local task execution
+
+Both SDKs use `massive run --secret-bindings bindings.json --max-workers N`.
+A TypeScript contract's `secrets: [{ name: "SERVICE_TOKEN", ref: "catalog-api" }]`
+receives only that declared binding, resolved from
+`{"catalog-api":{"env":"CI_SERVICE_TOKEN"}}` (or a `{file}` source).
+Local task environments replace full inheritance with a documented interpreter
+base and repeated `--pass-env NAME` for non-secret configuration. All required
+sources are checked before task dispatch. The worker budget defaults to available
+CPUs and applies across independent ready branches, with each map's concurrency
+as another upper bound. Results keep declared merge and source-index order.
+See [local execution](local-execution.md) for the exact allowlist and source
+resolution rules. Argo retains its existing native Secret bindings.

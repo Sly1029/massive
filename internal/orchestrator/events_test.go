@@ -31,7 +31,7 @@ func TestRunEventsCloseStartedAttemptsAfterRejectedBatch(t *testing.T) {
 			planHash := processMapDescriptor("rejected", 0).PlanHash
 			events := newRunEvents(RunConfig{Plan: &planpb.WorkflowPlan{PlanHash: &planHash}, Hooks: RunHooks{OnRunEvent: func(event runevent.Event) { queue <- event }}}, "project", "rejected", time.Now(), nil)
 			steps := []StepInvocation{{Descriptor: processMapDescriptor("rejected", 0)}, {Descriptor: processMapDescriptor("rejected", 1)}}
-			outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{executable, "-test.run=^TestRunEventsProcess$", "--", descriptorPathToken}}).InvokeSteps(t.Context(), StepInvocationBatch{Steps: steps, OnStarted: events.attemptStarted})
+			outcomes, err := (&ProcessStepInvoker{CommandTemplate: []string{executable, "-test.run=^TestRunEventsProcess$", "--", descriptorPathToken}, Environments: map[string][]string{"map-items": {"MASSIVE_EVENT_PROCESS=1"}}}).InvokeSteps(t.Context(), StepInvocationBatch{Steps: steps, OnStarted: events.attemptStarted})
 			if err != nil {
 				t.Fatal(err)
 			}

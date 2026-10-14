@@ -176,6 +176,11 @@ func Parse(data []byte) (*Spec, error) {
 	return &parsed, nil
 }
 
+// ValidateLocalSecretBindings checks local sources against the shared binding schema.
+func ValidateLocalSecretBindings(data []byte) error {
+	return validateSchema(data, "#/$defs/localSecretBindings")
+}
+
 // ParseSecretBindings validates the name-only deployment input used by the CLI.
 func ParseSecretBindings(data []byte) (map[string]SecretKeyRef, error) {
 	if err := validateSchema(data, "#/$defs/secretBindings"); err != nil {

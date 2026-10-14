@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -528,11 +529,12 @@ func TestRunFiniteMapPersistsNotStartedItemsAfterInvokerFailure(t *testing.T) {
 		DatastoreRoot:     storeRoot,
 		ProjectID:         "examples/finite-map-failure",
 		RunID:             "finite-map-invoker-failure",
+		MaxWorkers:        2,
 		SourcePackageRoot: sourceRoot,
 		SourceManifests:   manifests,
 		StepInvoker: &ProcessStepInvoker{
 			CommandTemplate: []string{"massive-runner-that-does-not-exist"},
-			ProcessLimit:    2,
+			workers:         make(chan struct{}, 2),
 		},
 	}, []byte(`[1,2,3,4,5]`))
 	if err == nil {
@@ -1146,6 +1148,7 @@ func TestRunFailsAtSelectWhenACompiledPlanBypassesLineageValidation(t *testing.T
 }
 
 type functionalStepInvoker struct {
+	mu          sync.Mutex
 	storeRoot   string
 	descriptors []StepInvocationDescriptor
 }
@@ -1159,7 +1162,9 @@ func (i *functionalStepInvoker) InvokeSteps(ctx context.Context, batch StepInvoc
 	outcomes := make([]StepInvocationOutcome, 0, len(batch.Steps))
 	for _, step := range batch.Steps {
 		descriptor := step.Descriptor
+		i.mu.Lock()
 		i.descriptors = append(i.descriptors, descriptor)
+		i.mu.Unlock()
 		inputObject, err := store.Get(ctx, datastore.MustKey(descriptor.Input.Artifact.Key))
 		if err != nil {
 			return nil, err

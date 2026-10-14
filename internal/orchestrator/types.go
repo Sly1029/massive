@@ -40,8 +40,12 @@ type RunConfig struct {
 	// Environment is the checked dependency realization recorded in the
 	// journal; nil when the frontend has no dependency preflight.
 	Environment *runjournal.Environment
-	StepInvoker StepInvoker
-	Hooks       RunHooks
+	// Local execution options stay outside plan and environment identity.
+	SecretBindings map[string]LocalSecretBinding
+	PassEnv        []string
+	MaxWorkers     int
+	StepInvoker    StepInvoker
+	Hooks          RunHooks
 }
 
 // SourcePackageManifest is the compiled spec's view of one source package: the
@@ -61,7 +65,9 @@ type SourcePackageFile struct {
 type RunHooks struct {
 	// OnRunEvent only enqueues observations. It must not do I/O, block on sinks,
 	// or mutate execution state. Delivery errors cannot change execution outcomes.
-	OnRunEvent          func(runevent.Event)
+	OnRunEvent func(runevent.Event)
+	// AfterStepInvocation may run concurrently for independent nodes.
+	// Implementations must be goroutine-safe.
 	AfterStepInvocation func(context.Context, StepInvocationDescriptor) error
 }
 

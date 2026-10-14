@@ -23,7 +23,6 @@ import (
 
 const (
 	descriptorPathToken             = "{descriptor}"
-	defaultLocalProcessConcurrency  = 32
 	stepInvocationStatusInfraFailed = "infrastructure-failed"
 )
 
@@ -59,12 +58,14 @@ type ProcessStepInvoker struct {
 	CommandTemplate []string
 	WorkingDir      string
 	DescriptorDir   string
-	// ProcessLimit is the executor-owned ceiling applied after a workflow's
-	// maxConcurrency. Zero uses a conservative local default.
-	ProcessLimit int
+	// Environments is resolved once by the local run, keyed by executable node.
+	// Every dispatched node must have an explicit non-nil environment.
+	Environments map[string][]string
+	// workers is shared across all batches in one local run.
+	workers chan struct{}
 }
 
-func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocationBatch) ([]StepInvocationOutcome, error) {
+func (i *ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocationBatch) ([]StepInvocationOutcome, error) {
 	if len(batch.Steps) == 0 {
 		return nil, nil
 	}
@@ -111,12 +112,8 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 	if maxConcurrency <= 0 || maxConcurrency > len(batch.Steps) {
 		maxConcurrency = len(batch.Steps)
 	}
-	processLimit := i.ProcessLimit
-	if processLimit <= 0 {
-		processLimit = defaultLocalProcessConcurrency
-	}
-	if maxConcurrency > processLimit {
-		maxConcurrency = processLimit
+	if i.workers != nil && maxConcurrency > cap(i.workers) {
+		maxConcurrency = cap(i.workers)
 	}
 	batchContext, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -141,6 +138,17 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 					if batchContext.Err() != nil {
 						return
 					}
+					if i.workers != nil {
+						select {
+						case i.workers <- struct{}{}:
+						case <-batchContext.Done():
+							return
+						}
+						if batchContext.Err() != nil {
+							<-i.workers
+							return
+						}
+					}
 					started[index] = true
 					if batch.OnStarted != nil {
 						batch.OnStarted(batch.Steps[index].Descriptor)
@@ -149,6 +157,9 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 					outcomes[index] = outcome
 					if batch.OnFinished != nil {
 						batch.OnFinished(batch.Steps[index].Descriptor, outcome)
+					}
+					if i.workers != nil {
+						<-i.workers
 					}
 					if outcome.Fatal != nil {
 						err = &FatalRunError{Failure: *outcome.Fatal}
@@ -191,7 +202,7 @@ func (i ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocatio
 	return completed, nil
 }
 
-func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string, invocation StepInvocation) (outcome StepInvocationOutcome, returnedErr error) {
+func (i *ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string, invocation StepInvocation) (outcome StepInvocationOutcome, returnedErr error) {
 	descriptor := invocation.Descriptor
 	infrastructureFailure := func(err error) (StepInvocationOutcome, error) {
 		return StepInvocationOutcome{
@@ -238,8 +249,12 @@ func (i ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string,
 		attemptContext, stop = context.WithTimeout(ctx, invocation.Timeout)
 		defer stop()
 	}
+	environment, exists := i.Environments[descriptor.NodeID]
+	if !exists || environment == nil {
+		return infrastructureFailure(fmt.Errorf("missing resolved environment for node %s", descriptor.NodeID))
+	}
 	started := time.Now()
-	output, err := taskprocess.Run(attemptContext, argv, i.WorkingDir)
+	output, err := taskprocess.Run(attemptContext, argv, i.WorkingDir, environment)
 	duration := time.Since(started)
 	defer func() { outcome.Duration = duration }()
 	diagnostic := strings.TrimSpace(output)

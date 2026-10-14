@@ -82,7 +82,7 @@ func TestProcessStepInvokerRejectsUnsafeScopeIdentityBeforeWritingDescriptors(t 
 	} {
 		t.Run(name, func(t *testing.T) {
 			descriptorDir := filepath.Join(t.TempDir(), "descriptors")
-			_, err := (ProcessStepInvoker{DescriptorDir: descriptorDir, CommandTemplate: []string{"must-not-run"}}).InvokeSteps(t.Context(), StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor}}})
+			_, err := (&ProcessStepInvoker{DescriptorDir: descriptorDir, CommandTemplate: []string{"must-not-run"}}).InvokeSteps(t.Context(), StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor}}})
 			if err == nil {
 				t.Fatal("InvokeSteps accepted unsafe descriptor identity")
 			}
@@ -120,7 +120,7 @@ func TestProcessStepInvokerBoundsHighCardinalityBatchWithRealProcesses(t *testin
 	for index := range steps {
 		steps[index] = StepInvocation{Descriptor: processMapDescriptor("bounded-batch", index)}
 	}
-	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{script}, ProcessLimit: 3}).InvokeSteps(
+	outcomes, err := (&ProcessStepInvoker{CommandTemplate: []string{script}, Environments: map[string][]string{"map-items": os.Environ()}, workers: make(chan struct{}, 3)}).InvokeSteps(
 		context.Background(),
 		StepInvocationBatch{Steps: steps, MaxConcurrency: 1_000_000},
 	)
@@ -174,7 +174,7 @@ func TestProcessStepInvokerStopsDispatchAfterContextCancellation(t *testing.T) {
 			}
 		}
 	}()
-	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{script}}).InvokeSteps(
+	outcomes, err := (&ProcessStepInvoker{CommandTemplate: []string{script}, Environments: map[string][]string{"map-items": os.Environ()}}).InvokeSteps(
 		ctx,
 		StepInvocationBatch{Steps: steps, MaxConcurrency: 3},
 	)
@@ -201,7 +201,7 @@ func TestProcessStepInvokerStopsDispatchAfterInfrastructureFailure(t *testing.T)
 	for index := range steps {
 		steps[index] = StepInvocation{Descriptor: processMapDescriptor("missing-runner", index)}
 	}
-	outcomes, err := (ProcessStepInvoker{CommandTemplate: []string{"massive-runner-that-does-not-exist"}}).InvokeSteps(
+	outcomes, err := (&ProcessStepInvoker{CommandTemplate: []string{"massive-runner-that-does-not-exist"}, Environments: map[string][]string{"map-items": os.Environ()}}).InvokeSteps(
 		context.Background(),
 		StepInvocationBatch{Steps: steps, MaxConcurrency: 3},
 	)
@@ -304,5 +304,15 @@ func TestFatalRunnerRecordIsRequiredAndValidated(t *testing.T) {
 				t.Fatal("invalid fatal record accepted")
 			}
 		})
+	}
+}
+
+func TestProcessStepInvokerRequiresResolvedNodeEnvironment(t *testing.T) {
+	for _, environments := range []map[string][]string{nil, {}, {"map-items": nil}} {
+		invoker := &ProcessStepInvoker{Environments: environments, CommandTemplate: []string{"must-not-start"}}
+		outcome, err := invoker.invokeOne(t.Context(), t.TempDir(), StepInvocation{Descriptor: processMapDescriptor("missing-env", 0)})
+		if err == nil || !strings.Contains(err.Error(), "environment") || outcome.Status != stepInvocationStatusInfraFailed {
+			t.Fatalf("unresolved environment: %#v %v", outcome, err)
+		}
 	}
 }

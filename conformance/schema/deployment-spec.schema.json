@@ -90,6 +90,19 @@
       "propertyNames": { "minLength": 1 },
       "additionalProperties": { "$ref": "#/$defs/secretKeyRef" }
     },
+    "localSecretBindings": {
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "env": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+          "file": { "type": "string", "minLength": 1 }
+        },
+        "oneOf": [{ "required": ["env"] }, { "required": ["file"] }]
+      }
+    },
     "argoTarget": {
       "type": "object",
       "additionalProperties": false,

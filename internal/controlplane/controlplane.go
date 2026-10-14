@@ -51,6 +51,10 @@ func CheckEnvironment(ctx context.Context, workflowFile string, scope environmen
 		return nil, err
 	}
 	request.ProjectRoot, request.Scope = filepath.Dir(workflowFile), scope
+	request.ProbeEnvironment, err = orchestrator.LocalBaseEnvironment(nil)
+	if err != nil {
+		return nil, err
+	}
 	return environment.Check(ctx, request)
 }
 
@@ -134,7 +138,7 @@ func Emit(ctx context.Context, entry string, scope environment.Scope) (*Frontend
 	argv = append(argv, "emit", "--output", output, resolvedEntry)
 	// Author output from either stream is only a diagnostic.
 	var authorOutput bytes.Buffer
-	if err := taskprocess.RunTo(ctx, argv, filepath.Dir(absolute), nil, &authorOutput, &authorOutput); err != nil {
+	if err := taskprocess.RunTo(ctx, argv, filepath.Dir(absolute), os.Environ(), &authorOutput, &authorOutput); err != nil {
 		diagnostic := strings.TrimSpace(authorOutput.String())
 		if errors.Is(err, exec.ErrWaitDelay) {
 			if diagnostic != "" {
@@ -167,12 +171,15 @@ func Emit(ctx context.Context, entry string, scope environment.Scope) (*Frontend
 }
 
 type LocalRunRequest struct {
-	Hooks    orchestrator.RunHooks
-	Frontend *FrontendResult
-	Input    []byte
-	Store    string
-	Project  string
-	RunID    string
+	SecretBindings map[string]orchestrator.LocalSecretBinding
+	PassEnv        []string
+	MaxWorkers     int
+	Hooks          orchestrator.RunHooks
+	Frontend       *FrontendResult
+	Input          []byte
+	Store          string
+	Project        string
+	RunID          string
 }
 
 type LocalRunResult struct {
@@ -232,6 +239,9 @@ func RunLocal(ctx context.Context, request LocalRunRequest) (*LocalRunResult, er
 		}
 	}
 	runResult, runErr := orchestrator.Run(ctx, orchestrator.RunConfig{
+		SecretBindings:    request.SecretBindings,
+		PassEnv:           request.PassEnv,
+		MaxWorkers:        request.MaxWorkers,
 		Plan:              compiled.Plan,
 		RunnerCommand:     runnerCommand,
 		Environment:       realized,

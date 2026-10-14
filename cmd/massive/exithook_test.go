@@ -141,6 +141,7 @@ unwritable_hook.on_exit(unwritable)
 			defer stop()
 			command := exec.CommandContext(commandContext, binary, "run", entry+"#"+test.graph, "--input="+test.input, "--store", store,
 				"--project", "test/exit-hooks", "--run-id", runID, "--json")
+			command.Args = append(command.Args, "--pass-env", "OUTCOME_FILE", "--pass-env", "STORE_ROOT")
 			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "OUTCOME_FILE="+outcomeFile, "STORE_ROOT="+store)
 			var stdout, stderr bytes.Buffer
 			command.Stdout, command.Stderr = &stdout, &stderr

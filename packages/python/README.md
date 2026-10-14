@@ -539,10 +539,17 @@ map_graph.edge_from(results).to_end(map_graph.end)
 input to be exactly `T`. Its mapper is registered by `map()`, rather than with
 `add()`. The result preserves source order and represents an empty input as an
 empty `list[Result]`; it may feed ordinary downstream nodes, including a later
-map as sequential composition. `concurrency` defaults to 20 and must be a
+map as sequential composition. `massive run --max-workers N` bounds live task
+processes across all ready branches and maps (including retries and exit hooks),
+defaulting to the Go runtime CPU budget, respecting container CPU limits.
+Network-bound maps may want a higher explicit value. Independent ready nodes may run together; each
+map's `concurrency` is an additional upper bound. Waiting for a worker does not
+consume a task's timeout. Result order remains source order.
+
+`concurrency` defaults to 20 and must be a
 strict integer from 1 through 4,294,967,295. It is an upper bound: a target may
-apply a lower executor capacity. The local process executor currently caps a
-map at 32 simultaneous child processes.
+apply a lower executor capacity. The local executor applies the shared `--max-workers` budget as well as
+the map's declared concurrency.
 
 Emission produces one Graph IR 0.3 `map` node with its input, item-input,
 item-output, and collected-output schemas, mapper symbol and contract, and
@@ -907,9 +914,40 @@ nested module, a text resource, and ordered collection into a typed result.
 
 CI or the platform owns obtaining and rotating credentials. Never place their
 values in project metadata, lockfiles, source includes, or execution contracts.
-Local Python processes currently inherit the launching environment; secret
-preflight and selective task binding are not implemented locally. Argo binds
-logical secret references through `massive build --secret-bindings bindings.json`.
+Local tasks receive a small interpreter base environment and only the logical
+secrets their execution contract declares. For example,
+`execution(environment=image, secrets={"SERVICE_TOKEN": "catalog-api"})` uses:
+
+```json
+{"catalog-api": {"env": "CI_SERVICE_TOKEN"}}
+```
+
+Run with `massive run workflow.py --secret-bindings bindings.json`. A source may
+instead be `{"file": "secrets/token"}`: relative paths resolve beside the
+bindings file, and the entire file becomes the value without trimming. All
+required sources, including inactive branches and exit hooks, are resolved once
+before task dispatch. Missing bindings or sources fail before any step starts;
+unused refs are not read. Values never enter plans, descriptors, environment
+identities, journals, or lifecycle events.
+
+See the [local execution spec](../../docs/spec/local-execution.md) for the
+base environment and runtime selectors passed to local tasks on each platform.
+For other non-secret configuration, repeat `--pass-env NAME`. Missing explicit
+pass-through variables are errors; a pass-through does not satisfy a declared
+secret requirement. This deliberately replaces full local task inheritance.
+
+Dependency preflight probes with this reduced base environment and `-I`, then
+pins every task to the checked absolute interpreter. `VIRTUAL_ENV`,
+`PYTHONPATH`, and `PYTHONHOME` are unnecessary. uv's offline metadata checks run
+in the control plane with its existing allowlisted `UV_*` settings, the checked
+interpreter, and `UV_PROJECT_ENVIRONMENT` pinned to its prefix. Dependency
+identities do not include secrets or pass-through settings. Frontend graph
+import still inherits the launching environment and executes trusted author
+code; task environment selection is not a sandbox.
+
+Argo binds logical secret references through
+`massive build --secret-bindings bindings.json`, using its existing `{name,key}`
+sources.
 Only steps declaring a reference receive its Kubernetes `secretKeyRef`.
 See [application secret bindings](https://github.com/Sly1029/massive/blob/main/docs/spec/argo-backend.md#application-secret-bindings)
 for file format, reserved environment names, and failure behavior.

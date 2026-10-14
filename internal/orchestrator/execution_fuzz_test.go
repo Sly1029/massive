@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -44,15 +45,24 @@ func executeGenerated(t *testing.T, data []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prediction, err := workflow.Predict()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, runErr, executor, storeRoot := runGeneratedWorkflow(t, workflow, newCompletionGates(prediction))
+	oracle := &executionOracle{t: t, workflow: workflow, prediction: prediction, storeRoot: storeRoot, executor: executor}
+	oracle.check(result, runErr)
+}
+
+// runGeneratedWorkflow installs real sources and executes the descriptor and
+// artifact protocol against a filesystem store, with controlled completion gates.
+func runGeneratedWorkflow(t *testing.T, workflow *graphgen.Workflow, completions map[string]*completionGate) (*RunResult, error, *generatedExecutor, string) {
+	t.Helper()
 	parsed, err := spec.Parse(workflow.JSON)
 	if err != nil {
 		t.Fatalf("generated spec rejected: %v", err)
 	}
 	compiled, err := plan.Compile(parsed, workflow.JSON)
-	if err != nil {
-		t.Fatal(err)
-	}
-	prediction, err := workflow.Predict()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +77,7 @@ func executeGenerated(t *testing.T, data []byte) {
 	}
 	ctx, cancel := context.WithCancelCause(t.Context())
 	defer cancel(nil)
-	executor := &generatedExecutor{workflow: workflow, store: store, cancel: cancel, slots: map[string]bool{}, exports: map[string]string{}}
+	executor := &generatedExecutor{workflow: workflow, store: store, cancel: cancel, slots: map[string]bool{}, exports: map[string]string{}, completions: completions}
 	for ref, symbol := range parsed.Symbols {
 		executor.exports[symbol.Export] = ref
 	}
@@ -81,8 +91,43 @@ func executeGenerated(t *testing.T, data []byte) {
 	if result == nil {
 		t.Fatalf("run returned no result: %v", runErr)
 	}
-	oracle := &executionOracle{t: t, workflow: workflow, prediction: prediction, storeRoot: storeRoot, executor: executor}
-	oracle.check(result, runErr)
+	return result, runErr, executor, storeRoot
+}
+
+func TestConcurrentFatalOverridesOrdinaryFailure(t *testing.T) {
+	workflow, err := graphgen.Generate([]byte{0, 1, 0, 1, 2, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The two fan-out steps execute independently after the entry step.
+	ordinary, fatal := "s1", "s2"
+	if workflow.Nodes[ordinary] == nil || workflow.Nodes[fatal] == nil || !slices.Equal(workflow.Nodes[ordinary].Sources, workflow.Nodes[fatal].Sources) {
+		t.Fatal("regression fixture must contain independent fan-out steps")
+	}
+	workflow.Interrupt = nil
+	workflow.Faults = map[graphgen.Invocation]graphgen.Fault{
+		{NodeID: ordinary, Item: -1, Attempt: 1}: graphgen.FailNonRetryable,
+		{NodeID: fatal, Item: -1, Attempt: 1}:    graphgen.FailFatal,
+	}
+	prediction, err := workflow.Predict()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 10 {
+		gates := newCompletionGates(prediction)
+		// Both runner outcomes exist before the ordinary failure is returned.
+		// The fatal completion is released only after the scheduler cancels its
+		// execution context, proving the error is promoted while draining.
+		gates[ordinary].previous = gates[fatal].arrived
+		gates[fatal].previous = make(chan struct{})
+		result, runErr, executor, storeRoot := runGeneratedWorkflow(t, workflow, gates)
+		var cause *FatalRunError
+		if !errors.As(runErr, &cause) || result.Failure == nil || result.Failure.NodeID != fatal {
+			t.Fatalf("ordinary failure masked concurrent fatal: %+v %v", result, runErr)
+		}
+		oracle := &executionOracle{t: t, workflow: workflow, prediction: prediction, storeRoot: storeRoot, executor: executor}
+		oracle.check(result, runErr)
+	}
 }
 
 var errInfrastructure = errors.New("generated executor infrastructure failure")
@@ -102,8 +147,8 @@ type generatedExecutor struct {
 	exports  map[string]string
 	// mu guards the mutable state below, so a concurrent dispatcher such as
 	// a run-wide worker budget cannot race the executor's bookkeeping.
-	mu      sync.Mutex
-	batches int
+	mu          sync.Mutex
+	completions map[string]*completionGate
 	// fired records an interrupt that actually took effect.
 	fired *graphgen.InterruptKind
 	slots map[string]bool
@@ -112,12 +157,15 @@ type generatedExecutor struct {
 }
 
 func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocationBatch) ([]StepInvocationOutcome, error) {
-	e.mu.Lock()
-	batchIndex := e.batches
-	e.batches++
-	e.mu.Unlock()
+	if len(batch.Steps) == 0 {
+		return nil, nil
+	}
+	descriptor := batch.Steps[0].Descriptor
+	if gate := e.completions[descriptor.NodeID]; gate != nil && descriptor.Attempt == gate.attempt {
+		defer gate.complete(ctx)
+	}
 	interrupt := e.workflow.Interrupt
-	if interrupt == nil || interrupt.Batch != batchIndex {
+	if interrupt == nil || interrupt.NodeID != descriptor.NodeID || interrupt.Attempt != descriptor.Attempt {
 		interrupt = nil
 	}
 	if interrupt != nil && interrupt.Kind == graphgen.CancelBefore {
@@ -125,8 +173,12 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 		return nil, ctx.Err()
 	}
 	outcomes := make([]StepInvocationOutcome, 0, len(batch.Steps))
-	for position, step := range batch.Steps {
+	for _, step := range batch.Steps {
 		descriptor := step.Descriptor
+		position := 0
+		if descriptor.Scope != nil {
+			position = descriptor.Scope.Frames[0].Index
+		}
 		if interrupt != nil && interrupt.Position == position {
 			switch interrupt.Kind {
 			case graphgen.CancelDuring:
@@ -143,6 +195,17 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 		}
 		outcome, err := e.invoke(ctx, step, batch.MaxConcurrency)
 		if err != nil {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				outcome = StepInvocationOutcome{NodeID: descriptor.NodeID, Attempt: descriptor.Attempt, Scope: descriptor.Scope, Status: StatusCancelled, ExitCode: -1}
+				invocation := graphgen.Invocation{NodeID: descriptor.NodeID, Item: -1, Attempt: descriptor.Attempt}
+				if descriptor.Scope != nil {
+					invocation.Item = descriptor.Scope.Frames[0].Index
+				}
+				e.mu.Lock()
+				e.log = append(e.log, executedInvocation{invocation: invocation, status: StatusCancelled})
+				e.mu.Unlock()
+				return append(outcomes, outcome), err
+			}
 			e.mu.Lock()
 			e.err = errors.Join(e.err, err)
 			e.mu.Unlock()
@@ -158,6 +221,48 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 		return outcomes, ctx.Err()
 	}
 	return outcomes, nil
+}
+
+// Each node's final predicted batch waits for its predecessor at the same dependency
+// depth. The reference supplies only runnable nodes, so success cannot wait on
+// an inactive branch; cancellation releases gates whose nodes never dispatch.
+type completionGate struct {
+	attempt  int
+	previous <-chan struct{}
+	arrived  chan struct{}
+	done     chan struct{}
+	once     sync.Once
+}
+
+func newCompletionGates(prediction *graphgen.Prediction) map[string]*completionGate {
+	gates := map[string]*completionGate{}
+	for _, group := range prediction.CompletionGroups {
+		var previous <-chan struct{}
+		for _, id := range group {
+			outcome := prediction.Nodes[id]
+			attempt := len(outcome.Attempts)
+			for _, item := range outcome.Items {
+				attempt = max(attempt, len(item.Attempts))
+			}
+			gate := &completionGate{attempt: attempt, previous: previous, arrived: make(chan struct{}), done: make(chan struct{})}
+			gates[id] = gate
+			previous = gate.done
+		}
+	}
+	return gates
+}
+
+func (g *completionGate) complete(ctx context.Context) {
+	g.once.Do(func() {
+		close(g.arrived)
+		if g.previous != nil {
+			select {
+			case <-g.previous:
+			case <-ctx.Done():
+			}
+		}
+		close(g.done)
+	})
 }
 
 func (e *generatedExecutor) fire(kind graphgen.InterruptKind) {
@@ -351,7 +456,14 @@ func (o *executionOracle) checkTerminalStatus(runErr error) {
 				failed = append(failed, step.NodeID)
 			}
 		}
-		if len(failed) != 1 || runError.StepID != failed[0] || o.prediction.Nodes[failed[0]].Status != graphgen.Failed {
+		attributed := false
+		for _, id := range failed {
+			if o.prediction.Nodes[id].Status != graphgen.Failed {
+				t.Fatalf("step %s failed, prediction %+v", id, o.prediction.Nodes[id])
+			}
+			attributed = attributed || runError.StepID == id
+		}
+		if !attributed {
 			t.Fatalf("failed steps %v attributed to %q", failed, runError.StepID)
 		}
 	}

@@ -57,8 +57,12 @@ path = graph.edge_from(graph.start).to(graph.add(first))
 			}}
 			result, runErr := orchestrator.Run(ctx, config, []byte("20"))
 			var deadline *orchestrator.RunDeadlineError
+			var failure *orchestrator.RunError
 			if !errors.As(runErr, &deadline) || result == nil || result.Status != "failed" || result.ExitHook == nil || result.ExitHook.Status != "succeeded" {
 				t.Fatalf("deadline/hook result = %#v (%v)", result, runErr)
+			}
+			if !errors.As(runErr, &failure) || failure.StepID != "" {
+				t.Fatalf("between-task deadline has a failed node: %v", runErr)
 			}
 			body, err := os.ReadFile(outcomeFile)
 			if err != nil {
@@ -176,7 +180,8 @@ func compiledExitHookFixture(t *testing.T, source string) (orchestrator.RunConfi
 	outcomeFile := filepath.Join(root, "outcome.json")
 	t.Setenv("OUTCOME_FILE", outcomeFile)
 	return orchestrator.RunConfig{
-		Plan: compiled.Plan, DatastoreRoot: store, ProjectID: "test/settlement-hook", RunID: "deadline",
+		PassEnv: []string{"OUTCOME_FILE"},
+		Plan:    compiled.Plan, DatastoreRoot: store, ProjectID: "test/settlement-hook", RunID: "deadline",
 		SourcePackageRoot: root, SourceManifests: manifests, RunnerCommand: orchestrator.PythonRunnerCommand(python),
 	}, outcomeFile
 }

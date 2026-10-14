@@ -39,6 +39,8 @@ func TestCLIExplainsInvalidArguments(t *testing.T) {
 		{"run conflicting inputs", []string{"run", "example.py", "--input", "null", "--input-file", inputPath}, "--input"},
 		{"run empty input conflicts with file", []string{"run", "example.py", "--input=", "--input-file", inputPath}, "--input"},
 		{"inspect environment is not a step view", []string{"inspect", "run-id", "--project", "test", "--environment", "--step", "task"}, "--environment"},
+		{"zero worker budget", []string{"run", "example.py", "--max-workers=0"}, "--max-workers"},
+		{"negative worker budget", []string{"run", "example.py", "--max-workers=-1"}, "--max-workers"},
 		{"unknown flag", []string{"run", "example.py", "--invalid"}, "--invalid"},
 		{"missing build option", []string{"build", "example.py"}, "--output"},
 		{"invalid target", []string{"build", "example.py", "--target", "invalid", "--output", "bundle", "--namespace", "default", "--service-account", "runner"}, "argo"},

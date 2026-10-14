@@ -18,17 +18,20 @@ const (
 // Run captures bounded combined output. A task owns its descendants: completing
 // or cancelling the adapter terminates processes still in its OS ownership group.
 // Tasks must await children whose work contributes to their result.
-func Run(ctx context.Context, argv []string, directory string) (string, error) {
+func Run(ctx context.Context, argv []string, directory string, environment []string) (string, error) {
 	var output boundedOutput
-	err := RunTo(ctx, argv, directory, nil, &output, &output)
+	err := RunTo(ctx, argv, directory, environment, &output, &output)
 	return output.String(), err
 }
 
 // RunTo runs an adapter with separate output streams and owns its descendants.
 // Callers choose their output policy; frontend specifications must remain intact
 // rather than share the bounded combined log capture used by task invocations.
-// A nil environment inherits this process's environment.
+// Environment inheritance must be explicit: callers pass os.Environ().
 func RunTo(ctx context.Context, argv []string, directory string, environment []string, stdout, stderr io.Writer) error {
+	if environment == nil {
+		return errors.New("task process requires an explicit non-nil environment")
+	}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir, cmd.Env = directory, environment
 	// Bound inherited-pipe drainage even if a descendant leaves the ownership

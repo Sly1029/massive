@@ -11,6 +11,7 @@ package graphgen
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Sly1029/massive/internal/canonical"
@@ -84,9 +85,10 @@ const (
 	interruptCount
 )
 
-// Interrupt applies to the Batch'th StepInvoker call, counting from zero.
+// Interrupt identifies a node's attempt independently of dispatch order.
 type Interrupt struct {
-	Batch    int
+	NodeID   string
+	Attempt  int
 	Position int
 	Kind     InterruptKind
 }
@@ -138,6 +140,8 @@ type Workflow struct {
 	NodeOrder []string
 	Faults    map[Invocation]Fault
 	Interrupt *Interrupt
+	// CompletionOrder is a byte-derived priority order for independent nodes.
+	CompletionOrder []string
 }
 
 // Fault returns the scripted outcome of an invocation.
@@ -210,6 +214,7 @@ func Generate(data []byte) (*Workflow, error) {
 	}
 	if len(collect) == 0 {
 		scriptFatal(c, workflow)
+		scriptCompletions(c, workflow)
 		return workflow, nil
 	}
 	_, collecting, err := emitWorkflow(main, style, collect)
@@ -218,6 +223,7 @@ func Generate(data []byte) (*Workflow, error) {
 	}
 	collecting.Input, collecting.Faults, collecting.Interrupt = workflow.Input, workflow.Faults, workflow.Interrupt
 	scriptFatal(c, collecting)
+	scriptCompletions(c, collecting)
 	return collecting, nil
 }
 
@@ -334,7 +340,22 @@ func scriptFaults(c *choices, w *Workflow) {
 		}
 	}
 	if c.chance(1, 4) {
-		w.Interrupt = &Interrupt{Batch: c.intn(12), Position: c.intn(maxMapItems + 2), Kind: InterruptKind(c.intn(int(interruptCount)))}
+		ordinal, position, kind := c.intn(12), c.intn(maxMapItems+2), InterruptKind(c.intn(int(interruptCount)))
+		var executable []string
+		for _, id := range w.NodeOrder {
+			if node := w.Nodes[id]; node.Kind == spec.NodeKindStep || node.Kind == spec.NodeKindMap {
+				executable = append(executable, id)
+			}
+		}
+		w.Interrupt = &Interrupt{NodeID: executable[ordinal%len(executable)], Attempt: 1, Position: position, Kind: kind}
+	}
+}
+
+func scriptCompletions(c *choices, w *Workflow) {
+	w.CompletionOrder = slices.Clone(w.NodeOrder)
+	for i := len(w.CompletionOrder) - 1; i > 0; i-- {
+		j := c.intn(i + 1)
+		w.CompletionOrder[i], w.CompletionOrder[j] = w.CompletionOrder[j], w.CompletionOrder[i]
 	}
 }
 

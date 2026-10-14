@@ -34,3 +34,10 @@ the fatal signal fires. The
 interpreter stops a fatal map round
 at the signal, preserves completed items, and leaves undispatched items blocked;
 collecting maps cannot turn this fault into an item outcome.
+
+Interrupts identify a node and attempt, independent of concurrent dispatch order;
+map positions identify source items. Completion priorities consume trailing bytes
+after the fault scripts and policies. Derive independent completion groups from
+graph edges, including selects and expanded calls. Named execution seeds must
+prove their scenarios through execution and journal assertions; regenerate a seed
+when a byte-contract change erases its coverage.

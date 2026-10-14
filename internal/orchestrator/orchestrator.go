@@ -14,8 +14,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Sly1029/massive/conformance/schema/planpb"
@@ -120,14 +123,24 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			return nil, &InvalidRunInputError{Field: "source package hash", Value: sourcePackage.GetPackageHash(), Message: "must be a canonical sha256:<64 lowercase hex> digest"}
 		}
 	}
-	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: config.DatastoreRoot})
-	if err != nil {
-		return nil, fmt.Errorf("open local datastore: %w", err)
-	}
-
 	index, err := buildExecutionIndex(config.Plan)
 	if err != nil {
 		return nil, err
+	}
+
+	if config.MaxWorkers < 0 {
+		return nil, fmt.Errorf("max workers must be positive")
+	}
+	if config.MaxWorkers == 0 {
+		config.MaxWorkers = runtime.GOMAXPROCS(0)
+	}
+	environments, err := localTaskEnvironments(config.Plan, config.SecretBindings, config.PassEnv)
+	if err != nil {
+		return nil, err
+	}
+	store, err := datastore.NewLocalDatastore(datastore.LocalConfig{Root: config.DatastoreRoot})
+	if err != nil {
+		return nil, fmt.Errorf("open local datastore: %w", err)
 	}
 
 	workflowInput, err := canonical.CanonicalizeJSON(inputJSON)
@@ -193,10 +206,17 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 
 	invoker := config.StepInvoker
 	if invoker == nil {
-		invoker = ProcessStepInvoker{
+		invoker = &ProcessStepInvoker{
 			CommandTemplate: config.RunnerCommand,
 			WorkingDir:      config.RunnerWorkingDir,
 		}
+	}
+
+	if process, ok := invoker.(*ProcessStepInvoker); ok {
+		configured := *process
+		configured.Environments = environments
+		configured.workers = make(chan struct{}, config.MaxWorkers)
+		invoker = &configured
 	}
 
 	activeNodeID := ""
@@ -302,178 +322,190 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 	index.packagesByID = sourcePackages
 
 	resolution := newExecutionResolver(index, config.Plan.GetGraph(), workflowInput)
-	for _, nodeID := range index.nodeOrder {
-		activeNodeID = ""
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		node := index.nodesByID[nodeID]
-		activeNodeID = nodeID
-		reason, err := resolution.activationSkipReason(node)
+	completed := map[string]bool{config.Plan.GetGraph().GetStartNode(): true}
+	var journalMu sync.Mutex
+	publish := func(publication context.Context, local runjournal.Manifest) error {
+		// JSON copying transfers ownership of nested attempt/item slices. Workers
+		// can keep reconciling their own node while another publishes the root.
+		body, err := json.Marshal(local.Steps[0])
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if reason != nil {
-			resolution.inactive[nodeID] = *reason
-			switch node.GetKind() {
-			case "step", "map":
-				markStepSkipped(&manifest, nodeID, *reason)
-				events.stepFinished(findManifestStep(&manifest, nodeID))
-			case "decision":
-				markDecisionSkipped(&manifest, nodeID, *reason)
-			case "select":
-				// Selects are graph control nodes. Their inactivity is propagated
-				// through the activation map rather than materializing an artifact.
-			default:
-				return nil, fmt.Errorf("unsupported plan node kind %q for %q", node.GetKind(), nodeID)
-			}
-			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-				return nil, err
-			}
-			continue
+		var step runjournal.Step
+		if err := json.Unmarshal(body, &step); err != nil {
+			return err
 		}
-		switch node.GetKind() {
-		case "decision":
-			selectedCase, err := resolution.routeDecision(node)
+		journalMu.Lock()
+		defer journalMu.Unlock()
+		*findManifestStep(&manifest, step.NodeID) = step
+		return writeRunManifest(publication, store, manifestKey, manifest)
+	}
+	type executableNode struct {
+		node    *planpb.GraphNode
+		input   []byte
+		journal runjournal.Manifest
+	}
+	type nodeCompletion struct {
+		id      string
+		output  nodeOutput
+		journal runjournal.Manifest
+		err     error
+	}
+	running := make(map[string]bool)
+	executionContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	finished := make(chan nodeCompletion, len(index.nodeOrder))
+	var firstError error
+	failedNode := ""
+	nodePositions := make(map[string]int, len(index.nodeOrder))
+	for position, id := range index.nodeOrder {
+		nodePositions[id] = position
+	}
+	// Workers publish while the scheduler resolves other branches. Serialize all
+	// root journal reads and writes; graph resolution stays on this goroutine.
+	scanReady := func() ([]executableNode, bool, error) {
+		journalMu.Lock()
+		defer journalMu.Unlock()
+		var ready []executableNode
+		progressed := false
+		for _, nodeID := range index.nodeOrder {
+			if completed[nodeID] || running[nodeID] {
+				continue
+			}
+			node := index.nodesByID[nodeID]
+			dependenciesReady := true
+			for _, edge := range index.inboundByTarget[nodeID] {
+				if !completed[edge.GetFrom()] {
+					dependenciesReady = false
+					break
+				}
+			}
+			if !dependenciesReady {
+				continue
+			}
+			activeNodeID = nodeID
+			reason, err := resolution.activationSkipReason(node)
 			if err != nil {
-				// Decision resolution already excludes classified values from errors.
-				markDecisionFailed(&manifest, nodeID, err.Error())
-				return nil, err
+				return nil, false, err
 			}
-			manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
-				NodeID:       nodeID,
-				Status:       "selected",
-				SelectedCase: selectedCase,
-			})
-			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-				return nil, err
-			}
-			continue
-		case "select":
-			if err := resolution.selectOutput(node); err != nil {
-				return nil, err
-			}
-			continue
-		case "start", "end":
-			continue
-		case "map":
-			output, err := runMapNode(ctx, store, config, invoker, projectKey, runID, node, resolution, &manifest, manifestKey, events)
-			if items := findManifestStep(&manifest, nodeID).Items; items != nil {
-				for _, item := range *items {
-					if len(item.Attempts) > 0 {
-						dispatchedNodes[nodeID] = true
-						break
-					}
+			if reason != nil {
+				resolution.inactive[nodeID] = *reason
+				switch node.GetKind() {
+				case "step", "map":
+					markStepSkipped(&manifest, nodeID, *reason)
+					events.stepFinished(findManifestStep(&manifest, nodeID))
+				case "decision":
+					recordDecision(&manifest, runjournal.Decision{NodeID: nodeID, Status: StatusSkipped, SkipReason: reason}, nodePositions)
 				}
-			}
-			if err != nil {
-				return nil, err
-			}
-			resolution.outputs[nodeID] = output
-			continue
-		case "step":
-		default:
-			return nil, fmt.Errorf("unsupported plan node kind %q for %q", node.GetKind(), nodeID)
-		}
-
-		inputBytes, err := resolution.inputForNode(node)
-		if err != nil {
-			return nil, err
-		}
-
-		inputArtifact := runjournal.DataArtifact{
-			Key:         runInputKey(projectKey, runID, nodeID, nil).String(),
-			Hash:        canonical.DigestBytes(inputBytes),
-			ContentType: jsonContentType,
-			Schema:      node.GetInputSchema(),
-		}
-		if _, err := store.Put(ctx, datastore.MustKey(inputArtifact.Key), inputBytes, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
-			return nil, fmt.Errorf("write input artifact for %s: %w", nodeID, err)
-		}
-
-		policy := policyForContract(index.contractsByRef[node.GetContractRef()])
-		for attempt := 1; ; attempt++ {
-			descriptor, err := descriptorForStep(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, inputArtifact, index, attempt)
-			if err != nil {
-				return nil, err
-			}
-
-			markAttemptRunning(&manifest, nodeID, attempt, inputArtifact)
-			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-				return nil, err
-			}
-
-			outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, OnStarted: events.attemptStarted, OnFinished: events.attemptObserved})
-			if len(outcomes) != 1 {
-				if len(outcomes) == 0 && invokeErr != nil {
-					// Drop the undispatched attempt. Earlier failed attempts keep
-					// the step running so terminalization records the run status.
-					step := findManifestStep(&manifest, nodeID)
-					step.Attempts = step.Attempts[:len(step.Attempts)-1]
-					if len(step.Attempts) == 0 {
-						step.Status = StatusNotStarted
-						events.stepFinished(step)
+			} else {
+				switch node.GetKind() {
+				case "decision":
+					selected, err := resolution.routeDecision(node)
+					if err != nil {
+						recordDecision(&manifest, runjournal.Decision{NodeID: nodeID, Status: StatusFailed, Diagnostic: err.Error()}, nodePositions)
+						return nil, false, err
 					}
-					return nil, invokeErr
-				}
-				return nil, fmt.Errorf("step invoker returned %d outcomes, want 1", len(outcomes))
-			}
-			dispatchedNodes[nodeID] = true
-			outcome := outcomes[0]
-			events.attemptObserved(descriptor, outcome)
-			if outcome.Status != StatusSucceeded {
-				status, diagnostic := StatusFailed, durableRunnerDiagnostic(outcome)
-				if outcome.Status == StatusCancelled {
-					status, diagnostic = StatusCancelled, "invocation cancelled"
-				}
-				if outcome.Status == stepInvocationStatusInfraFailed {
-					diagnostic = "invocation infrastructure failed"
-				}
-				if invokeErr == nil && attempt < policy.maxAttempts && retryableOutcome(outcome) {
-					markAttemptRetrying(&manifest, nodeID, diagnostic)
-					if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-						return nil, err
+					recordDecision(&manifest, runjournal.Decision{NodeID: nodeID, Status: "selected", SelectedCase: selected}, nodePositions)
+				case "select":
+					if err := resolution.selectOutput(node); err != nil {
+						return nil, false, err
 					}
-					if err := waitBeforeRetry(ctx, policy.delayBefore(attempt+1)); err != nil {
-						return nil, err
+				case "step", "map":
+					input, err := resolution.inputForNode(node)
+					if err != nil {
+						return nil, false, err
 					}
+					ready = append(ready, executableNode{node: node, input: input, journal: runjournal.Manifest{Steps: []runjournal.Step{*findManifestStep(&manifest, nodeID)}}})
 					continue
+				default:
+					return nil, false, fmt.Errorf("unsupported plan node kind %q for %q", node.GetKind(), nodeID)
 				}
-				markAttemptTerminal(&manifest, nodeID, status, diagnostic)
-				events.stepFinished(findManifestStep(&manifest, nodeID))
-				if outcome.Fatal != nil {
-					return nil, &FatalRunError{Failure: *outcome.Fatal}
-				}
-				if invokeErr != nil {
-					return nil, invokeErr
-				}
-				if outcome.Status == StatusCancelled && ctx.Err() != nil {
-					return nil, ctx.Err()
-				}
-				return nil, errors.New(runnerDiagnostic(outcome) + attemptSuffix(attempt, policy))
 			}
-			// A successful outcome remains useful even if cancellation arrived as
-			// the invoker returned. Verify its published artifacts before stopping.
-			output, err := settleInvocation(ctx, store, descriptor, index, config.Hooks)
+			completed[nodeID] = true
+			progressed = true
+		}
+		if len(ready) > 0 || progressed {
+			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+				return nil, false, err
+			}
+		}
+		return ready, progressed, nil
+	}
+	for {
+		progressed := false
+		if firstError == nil {
+			var ready []executableNode
+			var err error
+			if err = ctx.Err(); err == nil {
+				ready, progressed, err = scanReady()
+			}
 			if err != nil {
-				markAttemptTerminal(&manifest, nodeID, StatusFailed, "output verification failed")
-				events.stepFinished(findManifestStep(&manifest, nodeID))
-				return nil, err
+				firstError, failedNode = err, activeNodeID
+				if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+					failedNode = ""
+				}
+				cancel()
+			} else {
+				for _, task := range ready {
+					running[task.node.GetId()] = true
+					go func() {
+						var output nodeOutput
+						var err error
+						if task.node.GetKind() == "map" {
+							output, err = runMapNode(executionContext, store, config, invoker, projectKey, runID, task.node, task.input, index, &task.journal, publish, events)
+						} else {
+							output, err = runStepNode(executionContext, store, config, invoker, projectKey, runID, task.node, task.input, index, &task.journal, publish, events)
+						}
+						finished <- nodeCompletion{id: task.node.GetId(), output: output, journal: task.journal, err: err}
+					}()
+				}
 			}
-			resolution.outputs[nodeID] = output
-			markAttemptSucceeded(&manifest, nodeID, output.Published)
-			events.stepFinished(findManifestStep(&manifest, nodeID))
-			publicationContext, finishPublication := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			err = writeRunManifest(publicationContext, store, manifestKey, manifest)
-			finishPublication()
-			if err != nil {
-				return nil, err
+		}
+		if len(running) == 0 {
+			if firstError != nil {
+				activeNodeID = failedNode
+				return nil, firstError
 			}
-			if invokeErr != nil {
-				return nil, invokeErr
+			if progressed {
+				continue
 			}
 			break
 		}
+		// Graph markers may unlock another node without a process completion.
+		if progressed && firstError == nil {
+			continue
+		}
+		completion := <-finished
+		delete(running, completion.id)
+		var fatal, previousFatal *FatalRunError
+		preferFatal := errors.As(completion.err, &fatal) && !errors.As(firstError, &previousFatal) && !(ctx.Err() != nil && errors.Is(firstError, ctx.Err()))
+		if completion.err != nil && (firstError == nil || preferFatal) {
+			firstError, failedNode = completion.err, completion.id
+			cancel()
+		}
+		// Drain and reconcile every started worker before terminal publication.
+		publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		publicationErr := publish(publication, completion.journal)
+		stop()
+		if publicationErr != nil && firstError == nil {
+			firstError, failedNode = publicationErr, completion.id
+			cancel()
+		}
+		step := completion.journal.Steps[0]
+		if step.Items != nil {
+			for _, item := range *step.Items {
+				if len(item.Attempts) > 0 {
+					dispatchedNodes[completion.id] = true
+					break
+				}
+			}
+		} else if len(step.Attempts) > 0 {
+			dispatchedNodes[completion.id] = true
+		}
+		if completion.err == nil {
+			resolution.outputs[completion.id] = completion.output
+		}
+		completed[completion.id] = true
 	}
 
 	activeNodeID = ""
@@ -1031,11 +1063,106 @@ func descriptorForMapItem(planHash string, binding DatastoreDescriptor, projectK
 	return descriptor, nil
 }
 
-func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, projectKey string, runID string, node *planpb.GraphNode, resolution *executionResolver, manifest *runjournal.Manifest, manifestKey datastore.Key, events *runEvents) (nodeOutput, error) {
-	inputBytes, err := resolution.inputForNode(node)
-	if err != nil {
-		return nodeOutput{}, err
+func runStepNode(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, projectKey, runID string, node *planpb.GraphNode, inputBytes []byte, index executionIndex, manifest *runjournal.Manifest, publish func(context.Context, runjournal.Manifest) error, events *runEvents) (nodeOutput, error) {
+	nodeID := node.GetId()
+	var completedOutput nodeOutput
+
+	inputArtifact := runjournal.DataArtifact{
+		Key:         runInputKey(projectKey, runID, nodeID, nil).String(),
+		Hash:        canonical.DigestBytes(inputBytes),
+		ContentType: jsonContentType,
+		Schema:      node.GetInputSchema(),
 	}
+	if _, err := store.Put(ctx, datastore.MustKey(inputArtifact.Key), inputBytes, datastore.PutOptions{ContentType: jsonContentType}); err != nil {
+		return nodeOutput{}, fmt.Errorf("write input artifact for %s: %w", nodeID, err)
+	}
+
+	policy := policyForContract(index.contractsByRef[node.GetContractRef()])
+	for attempt := 1; ; attempt++ {
+		descriptor, err := descriptorForStep(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, inputArtifact, index, attempt)
+		if err != nil {
+			return nodeOutput{}, err
+		}
+
+		markAttemptRunning(manifest, nodeID, attempt, inputArtifact)
+		if err := publish(ctx, *manifest); err != nil {
+			return nodeOutput{}, err
+		}
+
+		outcomes, invokeErr := invoker.InvokeSteps(ctx, StepInvocationBatch{Steps: []StepInvocation{{Descriptor: descriptor, Timeout: policy.timeout}}, OnStarted: events.attemptStarted, OnFinished: events.attemptObserved})
+		if len(outcomes) != 1 {
+			if len(outcomes) == 0 && invokeErr != nil {
+				// Drop the undispatched attempt. Earlier failed attempts keep
+				// the step running so terminalization records the run status.
+				step := findManifestStep(manifest, nodeID)
+				step.Attempts = step.Attempts[:len(step.Attempts)-1]
+				if len(step.Attempts) == 0 {
+					step.Status = StatusNotStarted
+					events.stepFinished(step)
+				}
+				return nodeOutput{}, invokeErr
+			}
+			return nodeOutput{}, fmt.Errorf("step invoker returned %d outcomes, want 1", len(outcomes))
+		}
+		outcome := outcomes[0]
+		events.attemptObserved(descriptor, outcome)
+		if outcome.Status != StatusSucceeded {
+			status, diagnostic := StatusFailed, durableRunnerDiagnostic(outcome)
+			if outcome.Status == StatusCancelled {
+				status, diagnostic = StatusCancelled, "invocation cancelled"
+			}
+			if outcome.Status == stepInvocationStatusInfraFailed {
+				diagnostic = "invocation infrastructure failed"
+			}
+			if invokeErr == nil && attempt < policy.maxAttempts && retryableOutcome(outcome) {
+				markAttemptRetrying(manifest, nodeID, diagnostic)
+				if err := publish(ctx, *manifest); err != nil {
+					return nodeOutput{}, err
+				}
+				if err := waitBeforeRetry(ctx, policy.delayBefore(attempt+1)); err != nil {
+					return nodeOutput{}, err
+				}
+				continue
+			}
+			markAttemptTerminal(manifest, nodeID, status, diagnostic)
+			events.stepFinished(findManifestStep(manifest, nodeID))
+			if outcome.Fatal != nil {
+				return nodeOutput{}, &FatalRunError{Failure: *outcome.Fatal}
+			}
+			if invokeErr != nil {
+				return nodeOutput{}, invokeErr
+			}
+			if outcome.Status == StatusCancelled && ctx.Err() != nil {
+				return nodeOutput{}, ctx.Err()
+			}
+			return nodeOutput{}, errors.New(runnerDiagnostic(outcome) + attemptSuffix(attempt, policy))
+		}
+		// A successful outcome remains useful even if cancellation arrived as
+		// the invoker returned. Verify its published artifacts before stopping.
+		output, err := settleInvocation(ctx, store, descriptor, index, config.Hooks)
+		if err != nil {
+			markAttemptTerminal(manifest, nodeID, StatusFailed, "output verification failed")
+			events.stepFinished(findManifestStep(manifest, nodeID))
+			return nodeOutput{}, err
+		}
+		completedOutput = output
+		markAttemptSucceeded(manifest, nodeID, output.Published)
+		events.stepFinished(findManifestStep(manifest, nodeID))
+		publicationContext, finishPublication := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		err = publish(publicationContext, *manifest)
+		finishPublication()
+		if err != nil {
+			return nodeOutput{}, err
+		}
+		if invokeErr != nil {
+			return nodeOutput{}, invokeErr
+		}
+		break
+	}
+	return completedOutput, nil
+}
+
+func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig, invoker StepInvoker, projectKey string, runID string, node *planpb.GraphNode, inputBytes []byte, index executionIndex, manifest *runjournal.Manifest, publish func(context.Context, runjournal.Manifest) error, events *runEvents) (nodeOutput, error) {
 	input := runjournal.DataArtifact{
 		Key:         runInputKey(projectKey, runID, node.GetId(), nil).String(),
 		Hash:        canonical.DigestBytes(inputBytes),
@@ -1055,7 +1182,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 			events.stepFinished(step)
 		}
 	}()
-	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+	if err := publish(ctx, *manifest); err != nil {
 		return nodeOutput{}, err
 	}
 	items, err := mapexec.Expand(inputBytes)
@@ -1078,7 +1205,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		}
 		itemInputs[item.Index] = itemInput
 	}
-	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+	if err := publish(ctx, *manifest); err != nil {
 		return nodeOutput{}, err
 	}
 
@@ -1089,7 +1216,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 			fmt.Errorf("map maxConcurrency %d exceeds the local executor integer range", node.GetMaxConcurrency()),
 		)
 	}
-	policy := policyForContract(resolution.index.contractsByRef[node.GetContractRef()])
+	policy := policyForContract(index.contractsByRef[node.GetContractRef()])
 	collectFailures := node.GetItemFailures() == spec.MapItemFailuresCollect
 	results := make([]mapexec.Result, 0, len(items))
 	// failures holds the terminal item failures a collecting map keeps as outcomes.
@@ -1103,7 +1230,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 	// previous attempt failed retryably, under the same concurrency bound.
 	for attempt := 1; len(pending) > 0; attempt++ {
 		if attempt > 1 {
-			if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+			if err := publish(ctx, *manifest); err != nil {
 				return nodeOutput{}, err
 			}
 			if err := waitBeforeRetry(ctx, policy.delayBefore(attempt)); err != nil {
@@ -1112,7 +1239,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 		}
 		invocations := make([]StepInvocation, 0, len(pending))
 		for _, itemIndex := range pending {
-			descriptor, err := descriptorForMapItem(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, itemInputs[itemIndex], resolution.index, itemIndex, attempt)
+			descriptor, err := descriptorForMapItem(config.Plan.GetPlanHash(), LocalDatastoreDescriptor{Kind: "local", Path: config.DatastoreRoot}, projectKey, runID, node, itemInputs[itemIndex], index, itemIndex, attempt)
 			if err != nil {
 				return nodeOutput{}, failMapNode(ctx, manifest, node.GetId(), "map item descriptor construction failed", err)
 			}
@@ -1178,7 +1305,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 				markMapItemTerminal(manifest, node.GetId(), itemIndex, StatusFailed, diagnostic)
 				continue
 			}
-			output, err := settleInvocation(ctx, store, invocations[position].Descriptor, resolution.index, config.Hooks)
+			output, err := settleInvocation(ctx, store, invocations[position].Descriptor, index, config.Hooks)
 			if err != nil {
 				terminalFailure = true
 				if firstRunnerFailure == "" {
@@ -1262,7 +1389,7 @@ func runMapNode(ctx context.Context, store datastore.Datastore, config RunConfig
 	}
 	output := nodeOutputFromPublished(published, verifiedBody)
 	markAttemptSucceeded(manifest, node.GetId(), output.Published)
-	if err := writeRunManifest(ctx, store, manifestKey, *manifest); err != nil {
+	if err := publish(ctx, *manifest); err != nil {
 		return nodeOutput{}, err
 	}
 	return output, nil
@@ -1686,20 +1813,11 @@ func markStepSkipped(manifest *runjournal.Manifest, nodeID string, reason runjou
 	}
 }
 
-func markDecisionFailed(manifest *runjournal.Manifest, nodeID string, diagnostic string) {
-	manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
-		NodeID:     nodeID,
-		Status:     "failed",
-		Diagnostic: diagnostic,
+func recordDecision(manifest *runjournal.Manifest, decision runjournal.Decision, positions map[string]int) {
+	position := sort.Search(len(manifest.Decisions), func(i int) bool {
+		return positions[manifest.Decisions[i].NodeID] > positions[decision.NodeID]
 	})
-}
-
-func markDecisionSkipped(manifest *runjournal.Manifest, nodeID string, reason runjournal.SkipReason) {
-	manifest.Decisions = append(manifest.Decisions, runjournal.Decision{
-		NodeID:     nodeID,
-		Status:     StatusSkipped,
-		SkipReason: &reason,
-	})
+	manifest.Decisions = slices.Insert(manifest.Decisions, position, decision)
 }
 
 func summariesFromManifest(manifest runjournal.Manifest) []StepSummary {
