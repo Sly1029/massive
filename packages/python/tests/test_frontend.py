@@ -236,7 +236,7 @@ def test_emit_errors_have_a_stable_nonzero_exit(tmp_path: Path) -> None:
         ("partial(validate_value, offset=1)", "partial(validate_value, offset=1)", False),
         ("CallableValidator()", "CallableValidator()", False),
         ("partial(validate_value, offset=1)", "partial(validate_value, offset=2)", False),
-        ("attrgetter('real')", "attrgetter('real')", False),
+        ("[].count", "[].count", False),
     ],
 )
 def test_emit_compares_validator_names_or_reports_authoring_error(
@@ -251,7 +251,6 @@ def test_emit_compares_validator_names_or_reports_authoring_error(
     workflow.write_text(
         f'''\
 from functools import partial
-from operator import attrgetter
 from typing import Annotated
 from pydantic import AfterValidator, BaseModel
 from massive import GraphBuilder, StepContext, container, execution
