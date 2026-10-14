@@ -22,7 +22,9 @@ if [ -z "$wheel" ]; then
 fi
 test -f "$wheel"
 
-uv venv "$test_root/venv"
+# Warm-hit assertions require a supported interpreter; distro startup hooks
+# deliberately disable preparation caching.
+uv venv --managed-python "$test_root/venv"
 python="$test_root/venv/bin/python"
 massive="$test_root/venv/bin/massive"
 uv pip install --link-mode copy --python "$python" "$wheel"

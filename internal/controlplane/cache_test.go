@@ -38,7 +38,9 @@ func installedCachePython(t *testing.T) string {
 		t.Fatalf("wheels = %v, %v", wheels, err)
 	}
 	prefix := filepath.Join(root, "venv")
-	run("venv", "--quiet", prefix)
+	// Distro interpreters may have real startup hooks and correctly bypass
+	// preparation caches. A hit fixture must select a supported interpreter.
+	run("venv", "--quiet", "--managed-python", prefix)
 	python := filepath.Join(prefix, "bin", "python")
 	if runtime.GOOS == "windows" {
 		python = filepath.Join(prefix, "Scripts", "python.exe")
