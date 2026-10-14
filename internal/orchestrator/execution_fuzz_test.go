@@ -161,7 +161,7 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 		return nil, nil
 	}
 	descriptor := batch.Steps[0].Descriptor
-	if gate := e.completions[descriptor.NodeID]; gate != nil {
+	if gate := e.completions[descriptor.NodeID]; gate != nil && descriptor.Attempt == gate.attempt {
 		defer gate.complete(ctx)
 	}
 	interrupt := e.workflow.Interrupt
@@ -223,10 +223,11 @@ func (e *generatedExecutor) InvokeSteps(ctx context.Context, batch StepInvocatio
 	return outcomes, nil
 }
 
-// Each node's first batch waits for its predecessor at the same dependency
+// Each node's final predicted batch waits for its predecessor at the same dependency
 // depth. The reference supplies only runnable nodes, so success cannot wait on
 // an inactive branch; cancellation releases gates whose nodes never dispatch.
 type completionGate struct {
+	attempt  int
 	previous <-chan struct{}
 	arrived  chan struct{}
 	done     chan struct{}
@@ -238,7 +239,12 @@ func newCompletionGates(prediction *graphgen.Prediction) map[string]*completionG
 	for _, group := range prediction.CompletionGroups {
 		var previous <-chan struct{}
 		for _, id := range group {
-			gate := &completionGate{previous: previous, arrived: make(chan struct{}), done: make(chan struct{})}
+			outcome := prediction.Nodes[id]
+			attempt := len(outcome.Attempts)
+			for _, item := range outcome.Items {
+				attempt = max(attempt, len(item.Attempts))
+			}
+			gate := &completionGate{attempt: attempt, previous: previous, arrived: make(chan struct{}), done: make(chan struct{})}
 			gates[id] = gate
 			previous = gate.done
 		}
