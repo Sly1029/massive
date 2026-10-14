@@ -44,6 +44,8 @@ uses this reduced base; uv retains the control plane's allowlisted `UV_*`
 settings for cache, index, and resolution inputs. Secrets and scheduling
 stay outside dependency realization identity. Graph import remains trusted code
 in the launching environment; selective task environments are not a sandbox.
+On macOS, CoreFoundation may create `__CF_USER_TEXT_ENCODING` during interpreter
+startup; this variable is not inherited from the launching environment.
 
 For a corporate network, explicitly pass the configured proxy and extra CA
 variables, for example:

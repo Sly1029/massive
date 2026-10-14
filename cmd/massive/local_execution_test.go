@@ -390,12 +390,19 @@ func TestLocalExactEnvironmentForStepMapAndExitHook(t *testing.T) {
 	binary, python, _ := progressCLI(t)
 	root := t.TempDir()
 	entry := filepath.Join(root, "workflow.py")
-	source := `import json, os
+	source := `import json, os, sys
 from pathlib import Path
 from massive import GraphBuilder, StepContext, RunOutcome, container, execution
 
 def check() -> None:
     expected = set(json.loads(os.environ["EXPECTED_KEYS"])) | {"TOKEN"}
+    # CoreFoundation can add this variable during macOS interpreter startup.
+    # Its generated uid/encoding tuple must replace the launching bait value.
+    if sys.platform == "darwin" and "__CF_USER_TEXT_ENCODING" in os.environ:
+        uid, script, region = os.environ["__CF_USER_TEXT_ENCODING"].split(":")
+        assert int(uid, 16) == os.getuid()
+        assert int(script, 16) >= 0 and int(region, 16) >= 0
+        expected.add("__CF_USER_TEXT_ENCODING")
     assert set(os.environ) == expected, f"environment keys: {set(os.environ) ^ expected}"
     assert os.environ["TOKEN"] == "secret\n"
 
@@ -433,7 +440,7 @@ graph.on_exit(hook)
 	if runtime.GOOS == "windows" {
 		allowed = append(allowed, strings.Fields("SYSTEMROOT COMSPEC USERPROFILE SYSTEMDRIVE WINDIR PATHEXT LOCALAPPDATA APPDATA USERNAME")...)
 	}
-	env := append(os.Environ(), "MASSIVE_PYTHON="+python, "SECRET_SOURCE=secret\n", "SSL_CERT_FILE="+filepath.Join(root, "ca.pem"), "SSL_CERT_DIR="+root, "LC_ALL=C.UTF-8", "HOOK_MARKER="+marker)
+	env := append(os.Environ(), "MASSIVE_PYTHON="+python, "SECRET_SOURCE=secret\n", "SSL_CERT_FILE="+filepath.Join(root, "ca.pem"), "SSL_CERT_DIR="+root, "LC_ALL=C.UTF-8", "HOOK_MARKER="+marker, "__CF_USER_TEXT_ENCODING=ambient-bait")
 	expected := []string{"EXPECTED_KEYS", "HOOK_MARKER"}
 	for _, key := range allowed {
 		for _, entry := range env {
