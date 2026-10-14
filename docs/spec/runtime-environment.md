@@ -97,3 +97,7 @@ execution is not a security boundary. The old TypeScript-only Deno permission
 flags are removed rather than presented as isolation the Python path or frontend
 never provided. Use an isolated execution environment and its native access
 controls when running code that must not have host access.
+
+The runner currently performs datastore I/O in the author process. A future local
+object-store datastore needs engine-side artifact I/O to keep datastore credentials
+out of steps; selective environment bindings alone cannot provide that separation.

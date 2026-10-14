@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -320,5 +321,184 @@ graph.edge_from(joined).to_end(graph.end)`, 1)
 				}
 			}
 		})
+	}
+}
+
+func TestLocalSchedulerDispatchesDependentsOnCompletion(t *testing.T) {
+	binary, python, _ := progressCLI(t)
+	root := t.TempDir()
+	entry := filepath.Join(root, "workflow.py")
+	source := `import os, time
+from pathlib import Path
+from massive import GraphBuilder, StepContext, container, execution
+
+def slow(ctx: StepContext[str]) -> str:
+    root = Path(ctx.inputs)
+    (root / "a-started").touch()
+    deadline = time.monotonic() + 10
+    while not (root / "c-started").exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert (root / "c-started").exists(), "dependent waited for slow sibling"
+    (root / "a-finished").touch()
+    return ctx.inputs
+
+def fast(ctx: StepContext[str]) -> str:
+    root = Path(ctx.inputs)
+    deadline = time.monotonic() + 10
+    while not (root / "a-started").exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert (root / "a-started").exists()
+    return ctx.inputs
+
+def dependent(ctx: StepContext[str]) -> str:
+    root = Path(ctx.inputs)
+    assert not (root / "a-finished").exists()
+    (root / "c-started").touch()
+    return ctx.inputs
+
+def merge(ctx: StepContext[list[str]]) -> list[str]:
+    return ctx.inputs
+
+graph = GraphBuilder(name="completion", input_type=str, output_type=list[str], defaults=execution(environment=container("example.invalid/runner@sha256:" + "0"*64)))
+a = graph.add(slow)
+b = graph.add(fast)
+c = graph.add(dependent)
+d = graph.add(merge)
+graph.edge_from(graph.start).to(a)
+graph.edge_from(graph.start).to(b)
+graph.edge_from(b).to(c)
+graph.gather(a, c).to(d)
+graph.edge_from(d).to_end(graph.end)
+`
+	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := json.Marshal(root)
+	command := exec.Command(binary, "run", entry, "--store", progressStore(t), "--project", "tests/completion", "--input", string(input), "--max-workers", "2", "--progress", "none", "--json")
+	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("completion scheduling: %v\n%s", err, output)
+	}
+}
+
+func TestLocalExactEnvironmentForStepMapAndExitHook(t *testing.T) {
+	binary, python, _ := progressCLI(t)
+	root := t.TempDir()
+	entry := filepath.Join(root, "workflow.py")
+	source := `import json, os
+from pathlib import Path
+from massive import GraphBuilder, StepContext, RunOutcome, container, execution
+
+def check() -> None:
+    expected = set(json.loads(os.environ["EXPECTED_KEYS"])) | {"TOKEN"}
+    assert set(os.environ) == expected, f"environment keys: {set(os.environ) ^ expected}"
+    assert os.environ["TOKEN"] == "secret\n"
+
+def first(ctx: StepContext[list[int]]) -> list[int]:
+    check()
+    return ctx.inputs
+
+def item(ctx: StepContext[int]) -> int:
+    check()
+    return ctx.inputs
+
+def hook(ctx: StepContext[RunOutcome]) -> None:
+    check()
+    Path(os.environ["HOOK_MARKER"]).touch()
+
+contract = execution(environment=container("example.invalid/runner@sha256:" + "0"*64), secrets={"TOKEN":"api"})
+graph = GraphBuilder(name="exact-env", input_type=list[int], output_type=list[int], defaults=contract)
+a = graph.add(first)
+graph.edge_from(graph.start).to(a)
+b = graph.map(a, item)
+graph.edge_from(b).to_end(graph.end)
+graph.on_exit(hook)
+`
+	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bindings := filepath.Join(root, "bindings.json")
+	if err := os.WriteFile(bindings, []byte(`{"api":{"env":"SECRET_SOURCE"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "hook-started")
+	// Independent contract assertion: enumerate the documented base, then intersect
+	// it with the launching environment rather than reusing the resolver under test.
+	allowed := strings.Fields("PATH HOME TMPDIR TEMP TMP LANG TZ SSL_CERT_FILE SSL_CERT_DIR LC_ALL LC_COLLATE LC_CTYPE LC_MESSAGES LC_MONETARY LC_NUMERIC LC_TIME MASSIVE_PYTHON MASSIVE_TYPESCRIPT_RUNNER")
+	if runtime.GOOS == "windows" {
+		allowed = append(allowed, strings.Fields("SYSTEMROOT COMSPEC USERPROFILE SYSTEMDRIVE WINDIR PATHEXT LOCALAPPDATA APPDATA USERNAME")...)
+	}
+	env := append(os.Environ(), "MASSIVE_PYTHON="+python, "SECRET_SOURCE=secret\n", "SSL_CERT_FILE="+filepath.Join(root, "ca.pem"), "SSL_CERT_DIR="+root, "LC_ALL=C.UTF-8", "HOOK_MARKER="+marker)
+	expected := []string{"EXPECTED_KEYS", "HOOK_MARKER"}
+	for _, key := range allowed {
+		for _, entry := range env {
+			name, _, _ := strings.Cut(entry, "=")
+			if name == key || runtime.GOOS == "windows" && strings.EqualFold(name, key) {
+				expected = append(expected, key)
+				break
+			}
+		}
+	}
+	keys, _ := json.Marshal(expected)
+	env = append(env, "EXPECTED_KEYS="+string(keys))
+	command := exec.Command(binary, "run", entry, "--store", progressStore(t), "--project", "tests/exact-env", "--input", "[1,2]", "--secret-bindings", bindings, "--pass-env", "EXPECTED_KEYS", "--pass-env", "HOOK_MARKER", "--max-workers", "2", "--json", "--progress", "none")
+	command.Env = env
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("exact environments: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("exit hook did not pass exact environment assertion: %v\n%s", err, output)
+	}
+}
+
+func TestLocalMissingInactiveBranchSecretFailsBeforeDispatch(t *testing.T) {
+	binary, python, _ := progressCLI(t)
+	root := t.TempDir()
+	entry := filepath.Join(root, "workflow.py")
+	source := `from pathlib import Path
+from typing import Annotated, Literal
+from pydantic import BaseModel, Field
+from massive import GraphBuilder, StepContext, container, execution
+
+class Active(BaseModel):
+    kind: Literal["active"] = "active"
+class Inactive(BaseModel):
+    kind: Literal["inactive"] = "inactive"
+Choice = Annotated[Active | Inactive, Field(discriminator="kind")]
+
+def classify(ctx: StepContext[str]) -> Choice:
+    Path(ctx.inputs).touch()
+    return Active()
+def active(ctx: StepContext[Active]) -> bool:
+    return True
+def inactive(ctx: StepContext[Inactive]) -> bool:
+    return False
+
+image = container("example.invalid/runner@sha256:" + "0"*64)
+graph = GraphBuilder(name="inactive-secret", input_type=str, output_type=bool, defaults=execution(environment=image))
+a = graph.add(classify)
+b = graph.add(active)
+c = graph.add(inactive, contract=execution(environment=image, secrets={"TOKEN":"inactive-only"}))
+graph.edge_from(graph.start).to(a)
+route = graph.decision(a, on="kind")
+graph.edge_from(route.case(Active)).to(b)
+graph.edge_from(route.case(Inactive)).to(c)
+selected = route.select(bool, active=b, inactive=c)
+graph.edge_from(selected).to_end(graph.end)
+`
+	if err := os.WriteFile(entry, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "dispatched")
+	input, _ := json.Marshal(marker)
+	command := exec.Command(binary, "run", entry, "--store", progressStore(t), "--project", "tests/inactive-secret", "--input", string(input), "--progress", "none")
+	command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python)
+	output, err := command.CombinedOutput()
+	if err == nil || !bytes.Contains(output, []byte("inactive-only")) {
+		t.Fatalf("inactive secret: %v\n%s", err, output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("dispatched before inactive secret validation: %v", err)
 	}
 }

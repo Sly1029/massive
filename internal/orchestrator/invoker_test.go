@@ -306,3 +306,13 @@ func TestFatalRunnerRecordIsRequiredAndValidated(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessStepInvokerRequiresResolvedNodeEnvironment(t *testing.T) {
+	for _, environments := range []map[string][]string{{}, {"map-items": nil}} {
+		invoker := &ProcessStepInvoker{Environments: environments, CommandTemplate: []string{"must-not-start"}}
+		outcome, err := invoker.invokeOne(t.Context(), t.TempDir(), StepInvocation{Descriptor: processMapDescriptor("missing-env", 0)})
+		if err == nil || !strings.Contains(err.Error(), "environment") || outcome.Status != stepInvocationStatusInfraFailed {
+			t.Fatalf("unresolved environment: %#v %v", outcome, err)
+		}
+	}
+}

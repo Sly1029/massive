@@ -23,6 +23,12 @@ func TestMain(m *testing.M) {
 }
 
 func runFixture(mode, ready string) {
+	if mode == "environment" {
+		for _, entry := range os.Environ() {
+			fmt.Println(entry)
+		}
+		return
+	}
 	if mode == "output" {
 		fmt.Print("discarded-prefix\n" + strings.Repeat("x", outputLimit*2) + "final-tail\n")
 		return
@@ -99,7 +105,7 @@ func TestRunOwnsDescendantsAndInheritedOutput(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := Run(ctx, []string{executable, "process-fixture", mode, ready}, "", nil)
+				_, err := Run(ctx, []string{executable, "process-fixture", mode, ready}, "", os.Environ())
 				done <- err
 			}()
 			var address string
@@ -159,14 +165,14 @@ func TestRunBoundsOutputAndPreservesAuthorExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := Run(t.Context(), []string{executable, "process-fixture", "output", "unused"}, "", nil)
+	output, err := Run(t.Context(), []string{executable, "process-fixture", "output", "unused"}, "", os.Environ())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(output, "[task output truncated; showing last 1048576 bytes]\n") || !strings.HasSuffix(output, "final-tail\n") || strings.Contains(output, "discarded-prefix") || len(output) > outputLimit+100 {
 		t.Fatalf("output was not bounded and marked: length %d", len(output))
 	}
-	output, err = Run(t.Context(), []string{executable, "process-fixture", "failure", "unused"}, "", nil)
+	output, err = Run(t.Context(), []string{executable, "process-fixture", "failure", "unused"}, "", os.Environ())
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 42 || output != "author diagnostic\n" {
 		t.Fatalf("author result = %q, %v", output, err)
@@ -174,7 +180,7 @@ func TestRunBoundsOutputAndPreservesAuthorExit(t *testing.T) {
 }
 
 func TestRunRejectsMissingExecutableAndCancelledContext(t *testing.T) {
-	if _, err := Run(t.Context(), []string{filepath.Join(t.TempDir(), "missing")}, "", nil); err == nil {
+	if _, err := Run(t.Context(), []string{filepath.Join(t.TempDir(), "missing")}, "", os.Environ()); err == nil {
 		t.Fatal("missing executable succeeded")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -183,7 +189,7 @@ func TestRunRejectsMissingExecutableAndCancelledContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(ctx, []string{executable, "process-fixture", "failure", "unused"}, "", nil); !errors.Is(err, context.Canceled) {
+	if _, err := Run(ctx, []string{executable, "process-fixture", "failure", "unused"}, "", os.Environ()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("pre-cancelled invocation = %v", err)
 	}
 }
@@ -214,7 +220,7 @@ func TestRunRetainsChunkedOutputAcrossRingWraps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, err := Run(t.Context(), []string{executable, "process-fixture", "chunked-output", "unused"}, "", nil)
+	output, err := Run(t.Context(), []string{executable, "process-fixture", "chunked-output", "unused"}, "", os.Environ())
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 42 {
 		t.Fatalf("exit = %v", err)
@@ -228,5 +234,22 @@ func TestRunRetainsChunkedOutputAcrossRingWraps(t *testing.T) {
 	want := "[task output truncated; showing last 1048576 bytes]\n" + text[len(text)-outputLimit:]
 	if output != want {
 		t.Fatalf("chunked output tail differs: got %d bytes, want %d", len(output), len(want))
+	}
+}
+
+func TestRunRejectsImplicitEnvironmentInheritance(t *testing.T) {
+	if _, err := Run(t.Context(), []string{"must-not-start"}, "", nil); err == nil || !strings.Contains(err.Error(), "environment") {
+		t.Fatalf("nil environment: %v", err)
+	}
+}
+
+func TestRunUsesExplicitEmptyEnvironment(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := Run(t.Context(), []string{executable, "process-fixture", "environment", "unused"}, "", []string{})
+	if err != nil || output != "" {
+		t.Fatalf("empty environment: %q %v", output, err)
 	}
 }

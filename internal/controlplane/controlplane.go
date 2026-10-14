@@ -138,7 +138,7 @@ func Emit(ctx context.Context, entry string, scope environment.Scope) (*Frontend
 	argv = append(argv, "emit", "--output", output, resolvedEntry)
 	// Author output from either stream is only a diagnostic.
 	var authorOutput bytes.Buffer
-	if err := taskprocess.RunTo(ctx, argv, filepath.Dir(absolute), nil, &authorOutput, &authorOutput); err != nil {
+	if err := taskprocess.RunTo(ctx, argv, filepath.Dir(absolute), os.Environ(), &authorOutput, &authorOutput); err != nil {
 		diagnostic := strings.TrimSpace(authorOutput.String())
 		if errors.Is(err, exec.ErrWaitDelay) {
 			if diagnostic != "" {

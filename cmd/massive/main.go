@@ -45,7 +45,7 @@ type CLI struct {
 type RunCommand struct {
 	SecretBindings string   `name:"secret-bindings" help:"JSON file mapping logical secret refs to local env or file sources." type:"existingfile"`
 	PassEnv        []string `name:"pass-env" help:"Pass a launching environment variable to every local task; repeat for non-secret configuration."`
-	MaxWorkers     int      `name:"max-workers" help:"Run-wide limit on live local task processes; defaults to available CPUs."`
+	MaxWorkers     int      `name:"max-workers" help:"Run-wide limit on live local task processes; defaults to the Go runtime CPU budget."`
 
 	Events    string `help:"Write live NDJSON events to a new file."`
 	Progress  string `help:"Stderr progress: auto shows a live TTY view or a final summary; plain shows event lines." enum:"auto,plain,none" default:"auto"`
@@ -338,7 +338,7 @@ type exitHookOutput struct {
 }
 
 func (command *RunCommand) BeforeApply() error {
-	command.MaxWorkers = runtime.NumCPU()
+	command.MaxWorkers = runtime.GOMAXPROCS(0)
 	return nil
 }
 

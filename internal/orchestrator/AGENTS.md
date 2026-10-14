@@ -118,7 +118,12 @@ Local runs resolve executable nodes' declared secrets before dispatch, including
 inactive branches and the exit hook. Keep binding values only in memory and
 process environments. Build each task environment before interpreter startup;
 only the documented base, explicit pass-through, and its own declarations enter.
-Remote process invocations inherit their already contract-scoped pod environment.
+Remote process invocations explicitly pass their contract-scoped pod environment.
+A configured local environment map must contain a non-nil entry for every
+dispatched node; reject missing entries rather than inheriting.
 One local process budget spans all batches; acquire it before start observations
 and attempt deadlines, and release it after process ownership cleanup. Ready-node
 workers own their node journal state; root publication copies and serializes it.
+Re-scan readiness on each settled node while siblings run. Serialize scheduler
+access to the root journal with worker publication; drain all started workers
+before terminalization. AfterStepInvocation hooks must be goroutine-safe.

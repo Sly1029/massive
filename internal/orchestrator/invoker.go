@@ -59,7 +59,8 @@ type ProcessStepInvoker struct {
 	WorkingDir      string
 	DescriptorDir   string
 	// Environments is resolved once by the local run, keyed by executable node.
-	// Remote invocations inherit their already contract-scoped pod environment.
+	// A nil map uses the already contract-scoped pod environment explicitly.
+	// A non-nil map must resolve every dispatched node to a non-nil environment.
 	Environments map[string][]string
 	// workers is shared across all batches in one local run.
 	workers chan struct{}
@@ -249,8 +250,16 @@ func (i *ProcessStepInvoker) invokeOne(ctx context.Context, descriptorDir string
 		attemptContext, stop = context.WithTimeout(ctx, invocation.Timeout)
 		defer stop()
 	}
+	environment := os.Environ()
+	if i.Environments != nil {
+		var exists bool
+		environment, exists = i.Environments[descriptor.NodeID]
+		if !exists || environment == nil {
+			return infrastructureFailure(fmt.Errorf("missing resolved environment for node %s", descriptor.NodeID))
+		}
+	}
 	started := time.Now()
-	output, err := taskprocess.Run(attemptContext, argv, i.WorkingDir, i.Environments[descriptor.NodeID])
+	output, err := taskprocess.Run(attemptContext, argv, i.WorkingDir, environment)
 	duration := time.Since(started)
 	defer func() { outcome.Duration = duration }()
 	diagnostic := strings.TrimSpace(output)

@@ -65,7 +65,9 @@ type SourcePackageFile struct {
 type RunHooks struct {
 	// OnRunEvent only enqueues observations. It must not do I/O, block on sinks,
 	// or mutate execution state. Delivery errors cannot change execution outcomes.
-	OnRunEvent          func(runevent.Event)
+	OnRunEvent func(runevent.Event)
+	// AfterStepInvocation may run concurrently for independent nodes.
+	// Implementations must be goroutine-safe.
 	AfterStepInvocation func(context.Context, StepInvocationDescriptor) error
 }
 

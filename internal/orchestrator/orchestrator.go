@@ -131,7 +131,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		return nil, fmt.Errorf("max workers must be positive")
 	}
 	if config.MaxWorkers == 0 {
-		config.MaxWorkers = runtime.NumCPU()
+		config.MaxWorkers = runtime.GOMAXPROCS(0)
 	}
 	environments, err := localTaskEnvironments(config.Plan, config.SecretBindings, config.PassEnv)
 	if err != nil {
@@ -330,11 +330,13 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		if err != nil {
 			return err
 		}
-		journalMu.Lock()
-		defer journalMu.Unlock()
-		if err := json.Unmarshal(body, findManifestStep(&manifest, local.Steps[0].NodeID)); err != nil {
+		var step runjournal.Step
+		if err := json.Unmarshal(body, &step); err != nil {
 			return err
 		}
+		journalMu.Lock()
+		defer journalMu.Unlock()
+		*findManifestStep(&manifest, step.NodeID) = step
 		return writeRunManifest(publication, store, manifestKey, manifest)
 	}
 	type executableNode struct {
@@ -348,15 +350,21 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 		journal runjournal.Manifest
 		err     error
 	}
-	for len(completed) <= len(index.nodeOrder) {
-		activeNodeID = ""
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
+	running := make(map[string]bool)
+	executionContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	finished := make(chan nodeCompletion, len(index.nodeOrder))
+	var firstError error
+	failedNode := ""
+	// Workers publish while the scheduler resolves other branches. Serialize all
+	// root journal reads and writes; graph resolution stays on this goroutine.
+	scanReady := func() ([]executableNode, bool, error) {
+		journalMu.Lock()
+		defer journalMu.Unlock()
 		var ready []executableNode
 		progressed := false
 		for _, nodeID := range index.nodeOrder {
-			if completed[nodeID] {
+			if completed[nodeID] || running[nodeID] {
 				continue
 			}
 			node := index.nodesByID[nodeID]
@@ -373,7 +381,7 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 			activeNodeID = nodeID
 			reason, err := resolution.activationSkipReason(node)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			if reason != nil {
 				resolution.inactive[nodeID] = *reason
@@ -390,87 +398,104 @@ func Run(ctx context.Context, config RunConfig, inputJSON []byte) (returned *Run
 					selected, err := resolution.routeDecision(node)
 					if err != nil {
 						markDecisionFailed(&manifest, nodeID, err.Error())
-						return nil, err
+						return nil, false, err
 					}
 					manifest.Decisions = append(manifest.Decisions, runjournal.Decision{NodeID: nodeID, Status: "selected", SelectedCase: selected})
 				case "select":
 					if err := resolution.selectOutput(node); err != nil {
-						return nil, err
+						return nil, false, err
 					}
 				case "step", "map":
 					input, err := resolution.inputForNode(node)
 					if err != nil {
-						return nil, err
+						return nil, false, err
 					}
 					ready = append(ready, executableNode{node: node, input: input, journal: runjournal.Manifest{Steps: []runjournal.Step{*findManifestStep(&manifest, nodeID)}}})
 					continue
 				default:
-					return nil, fmt.Errorf("unsupported plan node kind %q for %q", node.GetKind(), nodeID)
+					return nil, false, fmt.Errorf("unsupported plan node kind %q for %q", node.GetKind(), nodeID)
 				}
 			}
 			completed[nodeID] = true
 			progressed = true
 		}
-		if len(ready) == 0 {
+		if len(ready) > 0 || progressed {
+			if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
+				return nil, false, err
+			}
+		}
+		return ready, progressed, nil
+	}
+	for {
+		progressed := false
+		if firstError == nil {
+			var ready []executableNode
+			var err error
+			if err = ctx.Err(); err == nil {
+				ready, progressed, err = scanReady()
+			}
+			if err != nil {
+				firstError, failedNode = err, activeNodeID
+				cancel()
+			} else {
+				for _, task := range ready {
+					running[task.node.GetId()] = true
+					go func() {
+						var output nodeOutput
+						var err error
+						if task.node.GetKind() == "map" {
+							output, err = runMapNode(executionContext, store, config, invoker, projectKey, runID, task.node, task.input, index, &task.journal, publish, events)
+						} else {
+							output, err = runStepNode(executionContext, store, config, invoker, projectKey, runID, task.node, task.input, index, &task.journal, publish, events)
+						}
+						finished <- nodeCompletion{id: task.node.GetId(), output: output, journal: task.journal, err: err}
+					}()
+				}
+			}
+		}
+		if len(running) == 0 {
+			if firstError != nil {
+				activeNodeID = failedNode
+				return nil, firstError
+			}
 			if progressed {
 				continue
 			}
 			break
 		}
-		if err := writeRunManifest(ctx, store, manifestKey, manifest); err != nil {
-			return nil, err
+		// Graph markers may unlock another node without a process completion.
+		if progressed && firstError == nil {
+			continue
 		}
-		waveContext, cancel := context.WithCancel(ctx)
-		finished := make(chan nodeCompletion, len(ready))
-		for _, task := range ready {
-			go func() {
-				var output nodeOutput
-				var err error
-				if task.node.GetKind() == "map" {
-					output, err = runMapNode(waveContext, store, config, invoker, projectKey, runID, task.node, task.input, index, &task.journal, publish, events)
-				} else {
-					output, err = runStepNode(waveContext, store, config, invoker, projectKey, runID, task.node, task.input, index, &task.journal, publish, events)
+		completion := <-finished
+		delete(running, completion.id)
+		if completion.err != nil && firstError == nil {
+			firstError, failedNode = completion.err, completion.id
+			cancel()
+		}
+		// Drain and reconcile every started worker before terminal publication.
+		publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		publicationErr := publish(publication, completion.journal)
+		stop()
+		if publicationErr != nil && firstError == nil {
+			firstError, failedNode = publicationErr, completion.id
+			cancel()
+		}
+		step := completion.journal.Steps[0]
+		if step.Items != nil {
+			for _, item := range *step.Items {
+				if len(item.Attempts) > 0 {
+					dispatchedNodes[completion.id] = true
+					break
 				}
-				finished <- nodeCompletion{id: task.node.GetId(), output: output, journal: task.journal, err: err}
-			}()
+			}
+		} else if len(step.Attempts) > 0 {
+			dispatchedNodes[completion.id] = true
 		}
-		var firstError error
-		failedNode := ""
-		for range ready {
-			completion := <-finished
-			if completion.err != nil && firstError == nil {
-				firstError, failedNode = completion.err, completion.id
-				cancel()
-			}
-			// Reconcile every worker, including successful attempts after cancellation.
-			publication, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			publicationErr := publish(publication, completion.journal)
-			stop()
-			if publicationErr != nil && firstError == nil {
-				firstError, failedNode = publicationErr, completion.id
-				cancel()
-			}
-			step := completion.journal.Steps[0]
-			if step.Items != nil {
-				for _, item := range *step.Items {
-					if len(item.Attempts) > 0 {
-						dispatchedNodes[completion.id] = true
-						break
-					}
-				}
-			} else if len(step.Attempts) > 0 {
-				dispatchedNodes[completion.id] = true
-			}
-			if completion.err == nil {
-				resolution.outputs[completion.id] = completion.output
-			}
-			completed[completion.id] = true
+		if completion.err == nil {
+			resolution.outputs[completion.id] = completion.output
 		}
-		cancel()
-		if firstError != nil {
-			activeNodeID = failedNode
-			return nil, firstError
-		}
+		completed[completion.id] = true
 	}
 
 	activeNodeID = ""

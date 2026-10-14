@@ -541,14 +541,15 @@ input to be exactly `T`. Its mapper is registered by `map()`, rather than with
 empty `list[Result]`; it may feed ordinary downstream nodes, including a later
 map as sequential composition. `massive run --max-workers N` bounds live task
 processes across all ready branches and maps (including retries and exit hooks),
-defaulting to available CPUs. Independent ready nodes may run together; each
+defaulting to the Go runtime CPU budget, respecting container CPU limits.
+Network-bound maps may want a higher explicit value. Independent ready nodes may run together; each
 map's `concurrency` is an additional upper bound. Waiting for a worker does not
 consume a task's timeout. Result order remains source order.
 
 `concurrency` defaults to 20 and must be a
 strict integer from 1 through 4,294,967,295. It is an upper bound: a target may
-apply a lower executor capacity. The local process executor currently caps a
-map at 32 simultaneous child processes.
+apply a lower executor capacity. The local executor applies the shared `--max-workers` budget as well as
+the map's declared concurrency.
 
 Emission produces one Graph IR 0.3 `map` node with its input, item-input,
 item-output, and collected-output schemas, mapper symbol and contract, and
