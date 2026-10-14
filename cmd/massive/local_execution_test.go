@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/Sly1029/massive/internal/runevent"
 )
 
 func TestLocalTaskEnvironmentBindings(t *testing.T) {
@@ -194,7 +196,8 @@ graph.edge_from(joined).to_end(graph.end)`, 1)
 			if err := os.Mkdir(lifetimes, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			command := exec.Command(binary, "run", entry, "--store", progressStore(t), "--project", "tests/workers", "--json", "--progress", "none", "--input", "[0,1,2,3]", "--pass-env", "LIFETIME_DIR", "--pass-env", "WORKER_LIMIT", "--max-workers", fmt.Sprint(limit))
+			events := filepath.Join(root, fmt.Sprintf("processes-%d.ndjson", limit))
+			command := exec.Command(binary, "run", entry, "--events", events, "--store", progressStore(t), "--project", "tests/workers", "--json", "--progress", "none", "--input", "[0,1,2,3]", "--pass-env", "LIFETIME_DIR", "--pass-env", "WORKER_LIMIT", "--max-workers", fmt.Sprint(limit))
 			command.Env = append(os.Environ(), "MASSIVE_PYTHON="+python, "LIFETIME_DIR="+lifetimes, "WORKER_LIMIT="+fmt.Sprint(limit))
 			output, err := command.CombinedOutput()
 			if err != nil {
@@ -202,6 +205,36 @@ graph.edge_from(joined).to_end(graph.end)`, 1)
 			}
 			if !bytes.Contains(output, []byte(`"result":[0,1,2,3,0,1,2,3]`)) {
 				t.Fatalf("unordered result: %s", output)
+			}
+			// Starts precede interpreter startup; finishes follow process-group and
+			// pipe cleanup. These observations enclose each complete process lifetime.
+			stream, err := os.ReadFile(events)
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, processMaximum, starts := 0, 0, 0
+			for _, line := range bytes.Split(bytes.TrimSpace(stream), []byte("\n")) {
+				event, err := runevent.Parse(line)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if event.ItemIndex == nil {
+					continue
+				} // Map collection is not a process.
+				switch event.Type {
+				case "step.attempt.started":
+					active++
+					starts++
+				case "step.attempt.finished":
+					active--
+				}
+				processMaximum = max(processMaximum, active)
+				if active < 0 || active > limit {
+					t.Fatalf("live process observations = %d, limit = %d", active, limit)
+				}
+			}
+			if active != 0 || starts != 8 || processMaximum != limit {
+				t.Fatalf("process lifetimes: active=%d starts=%d maximum=%d", active, starts, processMaximum)
 			}
 			type interval struct {
 				Branch     string

@@ -51,6 +51,5 @@ inherited-pipe drainage is bounded, as for the frontend. A cancelled context is
 returned as the error, never reported as a finding.
 
 Local control-plane probes use the reduced interpreter base environment, while
-uv's offline metadata checks retain their explicit UV settings. Pin tasks to the
-probe's absolute executable; no activation variables are required. Pass-through
-settings and secret values do not enter dependency realization identity.
+uv's offline metadata checks retain their explicit UV settings. Pass-through
+settings and secret values stay outside dependency realization identity.

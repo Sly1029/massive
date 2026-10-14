@@ -122,5 +122,3 @@ Remote process invocations inherit their already contract-scoped pod environment
 One local process budget spans all batches; acquire it before start observations
 and attempt deadlines, and release it after process ownership cleanup. Ready-node
 workers own their node journal state; root publication copies and serializes it.
-Cancel sibling nodes on failure, reconcile every worker, and preserve the root
-failure under the outer run context.

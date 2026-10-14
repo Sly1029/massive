@@ -154,12 +154,12 @@ func (i *ProcessStepInvoker) InvokeSteps(ctx context.Context, batch StepInvocati
 						batch.OnStarted(batch.Steps[index].Descriptor)
 					}
 					outcome, err := i.invokeOne(batchContext, descriptorDir, batch.Steps[index])
-					if i.workers != nil {
-						<-i.workers
-					}
 					outcomes[index] = outcome
 					if batch.OnFinished != nil {
 						batch.OnFinished(batch.Steps[index].Descriptor, outcome)
+					}
+					if i.workers != nil {
+						<-i.workers
 					}
 					if outcome.Fatal != nil {
 						err = &FatalRunError{Failure: *outcome.Fatal}

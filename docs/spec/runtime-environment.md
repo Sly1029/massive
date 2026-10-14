@@ -19,7 +19,7 @@ and middleware.
 The same workflow should not need to know whether a credential comes from a CI
 secret, a Kubernetes Secret, or a workload identity.
 
-## Proposed minimal secret contract
+## Minimal secret contract
 
 The workflow declares a logical name and the environment-variable name its code
 expects. The deployment maps that name to a concrete source:
@@ -81,17 +81,12 @@ network policy are not Python dependency/build inputs. Keep them out of the envi
 cache key. Record non-secret deployment bindings separately so operators can audit
 what ran where without making credential rotation rebuild dependency environments.
 
-## Sequence
+## Deferred work
 
-1. Package source and dependency inputs using standard Python project metadata.
-2. Implement dependency preflight and record actual environment realization.
-3. Version logical secret requirements and deployment mappings together.
-4. Add selective local environment bindings; native Argo `secretKeyRef` lowering
-   has a live functional gate.
-5. Add lifecycle events before considering middleware or typed dependency providers.
-
-No first-party vault, provider plugin framework, token proxy, or generic policy renderer
-is scheduled.
+Source packaging, dependency preflight, selective local environment bindings,
+native Argo `secretKeyRef` lowering, and lifecycle events are implemented.
+No first-party vault, provider plugin framework, token proxy, or generic policy
+renderer is scheduled. Add a new binding source only for a concrete target need.
 
 ## Local execution trust
 
