@@ -1,6 +1,7 @@
 """Local code-first fan-in, branching, exhausted outcomes, and recovery."""
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 from fan_in import DEFAULTS, Doubled, Report, Request, double, pair, prepare, square
@@ -19,7 +20,7 @@ class Result(BaseModel):
 
 
 async def coordinator(wf: Workflow, inputs: Request) -> Result:
-    doubled, squared = await wf.gather(
+    doubled, squared = await asyncio.gather(
         wf.run(double, inputs, key="double"), wf.run(square, inputs, key="square")
     )
     report = await wf.run(pair, (doubled, squared))
@@ -31,10 +32,10 @@ async def coordinator(wf: Workflow, inputs: Request) -> Result:
         except StepFailed as error:
             return MapItemFailed(status="failed", failure=error.failure)
 
-    outcomes = await wf.gather([
+    outcomes = await asyncio.gather(
         item(Task(name="ok", behavior="ok"), 0),
         item(Task(name="exhausted", behavior="raise"), 1),
-    ])
+    )
     recovery = None
     if any(outcome.status == "failed" for outcome in outcomes):
         prepared = await wf.run(prepare, inputs, key="recovery-input")

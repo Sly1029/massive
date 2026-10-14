@@ -1,20 +1,18 @@
 # pyright: reportPrivateUsage=false
-"""Explicit activity calls driven by Massive's deterministic delivery turns.
-
-The local spike supports these coroutine joins, not an asyncio event loop.
-"""
+"""Explicit activities and deterministic CPython asyncio delivery turns."""
 
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 import re
+import sys
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Generic, TypeVar, cast, overload
+from typing import Any, TypeVar, cast, overload
 
 from pydantic import TypeAdapter
 
@@ -26,9 +24,6 @@ from .outcomes import MapItemFailure
 
 I = TypeVar("I")
 O = TypeVar("O")
-A = TypeVar("A")
-B = TypeVar("B")
-C = TypeVar("C")
 
 
 class StepFailed(Exception):
@@ -37,32 +32,11 @@ class StepFailed(Exception):
         super().__init__(failure.diagnostic)
 
 
-@dataclass(eq=False)
-class _Future(Generic[O]):
-    done: bool = False
-    value: O | None = None
-    error: BaseException | None = None
-    waiters: list[_Task] = field(default_factory=lambda: list[_Task]())
-    listeners: list[_Future[None]] = field(default_factory=lambda: list[_Future[None]]())
-
-    def __await__(self) -> Generator[_Future[O], None, O]:
-        if not self.done:
-            yield self
-        if self.error is not None:
-            raise self.error
-        return cast(O, self.value)
-
-
-@dataclass(eq=False)
-class _Task:
-    iterator: Generator[Any, None, Any]
-    result: _Future[Any]
-
-
 class _Scheduler:
     def __init__(self) -> None:
-        self.ready: deque[_Task] = deque()
-        self.tasks: list[_Task] = []
+        if sys.implementation.name != "cpython":
+            raise RuntimeError("coordinator capability: delivery turns require pinned CPython")
+        self.loop = asyncio.SelectorEventLoop()
         self.author_turn = False
         self.fatal: BaseException | None = None
 
@@ -75,51 +49,26 @@ class _Scheduler:
         finally:
             self.author_turn = author_turn
 
-    def spawn(self, value: Awaitable[O]) -> _Future[O]:
-        result: _Future[O] = _Future()
-        task = _Task(value.__await__(), result)
-        self.tasks.append(task)
-        self.ready.append(task)
-        return result
-
-    def settle(
-        self, future: _Future[Any], value: Any = None, error: BaseException | None = None
-    ) -> None:
-        if future.done:
-            raise RuntimeError("result delivered twice")
-        future.done, future.value, future.error = True, value, error
-        self.ready.extend(future.waiters)
-        future.waiters.clear()
-        for listener in future.listeners:
-            if not listener.done:
-                self.settle(listener)
-
     def drain(self) -> None:
-        while self.ready:
-            task = self.ready.popleft()
+        # CPython's FIFO ready queue defines quiescence. run_forever installs the
+        # normal running-loop context; a stop callback bounds each ready batch.
+        # The interpreter realization is pinned and checked before every replay.
+        ready = cast(deque[asyncio.Handle], getattr(self.loop, "_ready"))  # noqa: B009 -- absent in typeshed
+        while ready:
+            self.loop.call_soon(self.loop.stop)
+            self.author_turn = True
             try:
-                self.author_turn = True
-                blocked = next(task.iterator)
-            except StopIteration as result:
-                self.settle(task.result, result.value)
-            except BaseException as error:  # noqa: BLE001 -- coroutine boundary
-                self.settle(task.result, error=error)
-            else:
-                if not isinstance(blocked, _Future):
-                    raise TypeError(
-                        "coordinator capability: await only wf.run, wf.gather, "
-                        "or wf.as_completed; asyncio futures and duration waits are unsupported"
-                    )
-                if blocked.done:
-                    self.ready.append(task)
-                else:
-                    blocked.waiters.append(task)
+                self.loop.run_forever()
             finally:
                 self.author_turn = False
+            if getattr(self.loop, "_scheduled"):  # noqa: B009 -- absent in typeshed
+                raise RuntimeError("coordinator capability: duration waits must run inside an activity")
 
     def close(self) -> None:
-        for task in self.tasks:
-            task.iterator.close()
+        # Cancellation never drains another author turn or dispatches finalizers.
+        for task in asyncio.all_tasks(self.loop):
+            task.cancel()
+        self.loop.close()
 
 
 class Workflow:
@@ -130,7 +79,7 @@ class Workflow:
         *,
         defaults: ExecutionContract,
         _scheduler: _Scheduler,
-        _issue: Callable[[Callable[..., Any], Any, ExecutionContract, str], _Future[Any]],
+        _issue: Callable[[Callable[..., Any], Any, ExecutionContract, str], asyncio.Future[Any]],
         _root: Path,
         _package_id: str,
     ) -> None:
@@ -190,39 +139,6 @@ class Workflow:
             future = self._issue(fn, input, contract or self.defaults, invocation_key)
         return cast(O, await future)
 
-    @overload
-    async def gather(self, items: Sequence[Awaitable[O]], /) -> list[O]: ...
-    @overload
-    async def gather(self, a: Awaitable[A], /) -> tuple[A]: ...
-    @overload
-    async def gather(self, a: Awaitable[A], b: Awaitable[B], /) -> tuple[A, B]: ...
-    @overload
-    async def gather(
-        self, a: Awaitable[A], b: Awaitable[B], c: Awaitable[C], /
-    ) -> tuple[A, B, C]: ...
-    async def gather(self, *items: Any) -> Any:
-        as_list = len(items) == 1 and isinstance(items[0], (list, tuple))
-        selected = cast(Sequence[Awaitable[Any]], items[0]) if as_list else list(items)
-        futures = [self._scheduler.spawn(item) for item in selected]
-        values = [await future for future in futures]
-        return values if as_list else tuple(values)
-
-    async def as_completed(self, items: Sequence[Awaitable[O]]) -> AsyncIterator[O]:
-        futures = [self._scheduler.spawn(item) for item in items]
-        while futures:
-            ready = next((future for future in futures if future.done), None)
-            if ready is None:
-                wake: _Future[None] = _Future()
-                for future in futures:
-                    future.listeners.append(wake)
-                await wake
-                for future in futures:
-                    future.listeners.remove(wake)
-                continue
-            futures.remove(ready)
-            yield await ready
-
-
 def resolved_contract(contract: ExecutionContract) -> tuple[dict[str, Any], dict[str, Any]]:
     environment = contract.environment.as_json()
     environment_ref = sha256_ref(canonical_json(environment))
@@ -268,6 +184,10 @@ def check_coordinator_operations(fn: Callable[..., Any]) -> None:
         "input",
         "time",
         "sleep",
+        "wait_for",
+        "timeout",
+        "call_later",
+        "call_at",
         "monotonic",
         "perf_counter",
         "now",

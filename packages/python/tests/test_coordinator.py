@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -153,17 +154,19 @@ def completed(journal: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.mark.skipif(sys.platform != "linux", reason="SIGKILL quiescence evidence uses Linux /proc")
 @pytest.mark.parametrize("pattern", ["normal", "as_completed"])
+@pytest.mark.parametrize("first", ["one", "three"])
 def test_sigkill_resume_delivery_turns_preserve_publications(
-    coordinator_cli: Path, tmp_path: Path, pattern: str
+    coordinator_cli: Path, tmp_path: Path, pattern: str, first: str
 ) -> None:
     source, control, store, jobs = setup(
-        tmp_path, blocked=["a-two", "a-three", "b-one"], delays={"a-one": 0.01}
+        tmp_path,
+        blocked=[*(f"a-{name}" for name in ("one", "two", "three") if name != first), f"b-{first}"],
     )
     process = start(coordinator_cli, source, store, jobs, "crash", COORDINATOR_VARIANT=pattern)
     try:
         wait_for(
             lambda: (
-                completed(journal(store, "crash")) and list(control.glob("started-b-one-*.json"))
+                completed(journal(store, "crash")) and list(control.glob(f"started-b-{first}-*.json"))
             ),
             process,
         )
@@ -208,7 +211,8 @@ def test_sigkill_resume_delivery_turns_preserve_publications(
     assert actual == expected if pattern == "normal" else sorted(actual) == sorted(expected)
     assert sorted(actual) == [11, 12, 13]
     # Completed activity one was published exactly once, with the same attempt.
-    assert len(list(control.glob("effect-a-one-*"))) == 1
+    assert len(list(control.glob(f"effect-a-{first}-*"))) == 1
+    assert history["deliveries"][0].endswith(f"@a-{first}")
 
 
 @pytest.mark.parametrize("variant", ["changed", "reordered", "new", "early"])
@@ -228,17 +232,54 @@ def test_replay_divergence_stops_before_new_activity_effects(
 
 
 @pytest.mark.parametrize("damage", ["missing", "corrupt"])
+@pytest.mark.parametrize("target", ["activity", "final", "result", "input"])
 def test_completed_artifact_damage_is_never_a_cache_miss(
-    coordinator_cli: Path, tmp_path: Path, damage: str
+    coordinator_cli: Path, tmp_path: Path, damage: str, target: str
 ) -> None:
     source, control, store, jobs = setup(tmp_path)
     assert run(argv(coordinator_cli, source, store, jobs, "damage")).returncode == 0
     before = list(control.glob("effect-*"))
-    body = store / journal(store, "damage")["steps"][0]["attempts"][0]["output"]["body"]["key"]
+    state = journal(store, "damage")
+    history = record(store, "damage")
+    keys = {
+        "activity": state["steps"][0]["attempts"][0]["output"]["body"]["key"],
+        "final": json.loads(
+            (store / history["final"]["output"]["key"]).read_text()
+        )["body"]["key"],
+        "result": state["result"]["key"],
+        "input": history["start"]["descriptor"]["input"]["artifact"]["key"],
+    }
+    body = store / keys[target]
     body.unlink() if damage == "missing" else body.write_bytes(b"999999")
     resumed = run(argv(coordinator_cli, source, store, jobs, "damage", resume=True))
-    assert resumed.returncode != 0 and "verification" in resumed.stderr
+    diagnostic = "input artifact" if target == "input" else "verification"
+    assert resumed.returncode != 0 and diagnostic in resumed.stderr
     assert list(control.glob("effect-*")) == before
+
+
+@pytest.mark.parametrize("changed", ["source", "input", "store"])
+def test_resume_identity_changes_stop_before_effects(
+    coordinator_cli: Path, tmp_path: Path, changed: str
+) -> None:
+    source, control, store, jobs = setup(tmp_path)
+    assert run(argv(coordinator_cli, source, store, jobs, "identity")).returncode == 0
+    effects = {path.name: path.read_bytes() for path in control.glob("effect-*")}
+    args = argv(coordinator_cli, source, store, jobs, "identity", resume=True)
+    diagnostic = "identity changed"
+    if changed == "source":
+        with (source / "workflow.py").open("a") as file:
+            file.write("\n# Different source identity.\n")
+        args.append(str(source / "workflow.py"))
+    elif changed == "input":
+        args.extend(["--input", json.dumps([{**jobs[0], "value": 99}])])
+    else:
+        moved = tmp_path / "moved-store"
+        shutil.copytree(store, moved)
+        args[args.index(str(store))] = str(moved)
+        diagnostic = "store location changed"
+    rejected = run(args)
+    assert rejected.returncode != 0 and diagnostic in rejected.stderr, rejected.stderr
+    assert effects == {path.name: path.read_bytes() for path in control.glob("effect-*")}
 
 
 @pytest.mark.parametrize("behavior", ["orphan", "fail", "fatal", "hang", "invalid"])
@@ -302,11 +343,12 @@ def test_installed_conformance_shape(coordinator_cli: Path, tmp_path: Path) -> N
     assert value["recovery"] == {"kind": "doubled", "value": 6}
 
 
+@pytest.mark.parametrize("pattern", ["normal", "as_completed"])
 def test_real_runner_response_batching_preserves_every_turn(
-    coordinator_cli: Path, tmp_path: Path
+    coordinator_cli: Path, tmp_path: Path, pattern: str
 ) -> None:
     source, _, store, jobs = setup(tmp_path, delays={"a-one": 0.15, "a-two": 0, "a-three": 0.05})
-    original = run(argv(coordinator_cli, source, store, jobs, "batch"))
+    original = run(argv(coordinator_cli, source, store, jobs, "batch"), COORDINATOR_VARIANT=pattern)
     assert original.returncode == 0, original.stderr
     history = record(store, "batch")
     responses = []
@@ -320,7 +362,7 @@ def test_real_runner_response_batching_preserves_every_turn(
         check=False,
         text=True,
         timeout=20,
-        env=env(),
+        env=env(COORDINATOR_VARIANT=pattern),
     )
     assert batch.returncode == 0, batch.stderr
     batch_output = [json.loads(line) for line in batch.stdout.splitlines()]
@@ -342,7 +384,7 @@ def test_real_runner_response_batching_preserves_every_turn(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=env(),
+        env=env(COORDINATOR_VARIANT=pattern),
     )
     assert streamed.stdin is not None and streamed.stdout is not None
     streamed.stdin.write(json.dumps(history["start"]) + "\n")
@@ -366,7 +408,9 @@ def test_real_runner_response_batching_preserves_every_turn(
     commands = [frame for frame in batch_output if frame["kind"] == "InvokeCommand"]
     assert commands == [command for turn in history["turns"] for command in turn["commands"]]
     # A succeeded replay also proves terminal-result comparison and zero new attempts.
-    resumed = run(argv(coordinator_cli, source, store, jobs, "batch", resume=True))
+    resumed = run(
+        argv(coordinator_cli, source, store, jobs, "batch", resume=True), COORDINATOR_VARIANT=pattern
+    )
     assert resumed.returncode == 0, resumed.stderr
     assert json.loads(resumed.stdout)["result"] == json.loads(original.stdout)["result"]
 
@@ -392,6 +436,7 @@ def test_sigkill_retry_backoff_and_disabled_attempts(
         else:
             wait_for(lambda: list(control.glob("started-a-one-*.json")), process)
         old = journal(store, "retry")["steps"][0]["attempts"]
+        backoff = record(store, "retry")["retryAt"]
         kill_and_quiesce(process, control)
     finally:
         if process.poll() is None:
@@ -407,6 +452,10 @@ def test_sigkill_retry_backoff_and_disabled_attempts(
     assert json.loads(resumed.stdout)["result"] == ([11] if retry_enabled else [10])
     if retry_enabled:
         assert step["attempts"][0] == old[0]
+        first = json.loads((control / "started-a-one-1.json").read_text())
+        second = json.loads((control / "started-a-one-2.json").read_text())
+        assert first["idempotencyKey"] == second["idempotencyKey"]
+        assert second["startedAt"] >= datetime.fromisoformat(next(iter(backoff.values()))).timestamp()
     else:
         assert not list(control.glob("started-a-one-2.json"))
 
@@ -442,6 +491,11 @@ def test_coordinator_runtime_capabilities_and_sticky_fatal(
         ("clock", "return [int(time.time())]", "capability"),
         ("io", "return [int(Path(inputs[0].control).read_text())]", "capability"),
         ("asyncio", "import asyncio\n    await asyncio.sleep(0)\n    return []", "capability"),
+        (
+            "timer",
+            "from asyncio import sleep as pause\n    await pause(0.01)\n    return []",
+            "capability",
+        ),
         (
             "sticky",
             'try:\n        raise FatalRunError("sticky safe cause")\n    except FatalRunError:\n        pass\n    return []',

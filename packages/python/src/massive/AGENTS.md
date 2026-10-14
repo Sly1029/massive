@@ -79,8 +79,9 @@ the schema in `conformance/fixtures/map-outcomes`. The IR omits the default
 policy; never emit `itemFailures: "fail"`.
 
 Local code-first coordinators use `Workflow.run` with plain exported activities.
-Their minimal coroutine scheduler supports `wf.gather` and `wf.as_completed`;
-raw asyncio futures and duration waits require an unsupported-capability diagnostic.
-Every delivery drains all ready continuations in FIFO order before another
-result enters Python. Reserve protocol stdout and redirect fd 1 before importing
-author code. The installed wheel must include the coordinator protocol schema.
+Use ordinary `asyncio.gather` and `asyncio.as_completed` for joins. The pinned
+CPython selector loop drains its FIFO ready queue to quiescence before another
+result enters Python; queued timers require a capability diagnostic. Keep the
+private ready-queue dependency explicit and validate response batching against
+the checked interpreter. Reserve protocol stdout and redirect fd 1 before
+importing author code. The installed wheel includes the coordinator schema.

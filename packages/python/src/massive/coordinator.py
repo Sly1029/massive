@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.resources
 import json
@@ -37,7 +38,6 @@ from .runner import (
 from .workflow import (
     StepFailed,
     Workflow,
-    _Future,
     _Scheduler,
     check_coordinator_operations,
     entry_types,
@@ -117,7 +117,7 @@ def run() -> int:
         descriptor = cast(StepInvocationDescriptor, start["descriptor"])
         store = _datastore(descriptor["datastore"])
         defaults = contract_from_json(start["defaults"], start["environment"])
-        pending: dict[str, tuple[_Future[Any], TypeAdapter[Any]]] = {}
+        pending: dict[str, tuple[asyncio.Future[Any], TypeAdapter[Any]]] = {}
         with (
             _source_root(descriptor["sourcePackage"], store) as root,
             _source_import_path(root),
@@ -153,7 +153,7 @@ def run() -> int:
 
             def issue(
                 fn: Callable[..., Any], value: Any, contract: ExecutionContract, key: str
-            ) -> _Future[Any]:
+            ) -> asyncio.Future[Any]:
                 from .builder import _symbol_module
 
                 step = StepDefinition[Any, Any].from_callable(fn)
@@ -182,7 +182,7 @@ def run() -> int:
                 resolved, environment = resolved_contract(contract)
                 module = _symbol_module(fn, root)
                 ref = f"{symbol['packageId']}:{module}#{fn.__name__}"
-                future: _Future[Any] = _Future()
+                future: asyncio.Future[Any] = scheduler.loop.create_future()
                 pending[key] = (future, TypeAdapter(step.output_type))
                 write(
                     {
@@ -219,22 +219,21 @@ def run() -> int:
                 _root=root,
                 _package_id=symbol["packageId"],
             )
-            terminal = scheduler.spawn(fn(wf, inputs))
+            terminal = scheduler.loop.create_task(fn(wf, inputs))
             while True:
                 scheduler.drain()
                 if scheduler.fatal is not None:
                     raise scheduler.fatal
-                if terminal.done:
-                    if terminal.error is not None:
-                        raise terminal.error
-                    if pending:
+                if terminal.done():
+                    output = terminal.result()
+                    if pending or asyncio.all_tasks(scheduler.loop):
                         raise ValueError("coordinator finished with outstanding activities")
                     adapter = TypeAdapter(output_type)
                     body = canonical_json(
                         cast(
                             JsonValue,
                             adapter.dump_python(
-                                adapter.validate_python(terminal.value, context=files),
+                                adapter.validate_python(output, context=files),
                                 mode="json",
                                 context=files,
                             ),
@@ -264,9 +263,7 @@ def run() -> int:
                 turn += 1
                 future, adapter = pending.pop(result["invocationKey"])
                 if "failure" in result:
-                    scheduler.settle(
-                        future, error=StepFailed(MapItemFailure.model_validate(result["failure"]))
-                    )
+                    future.set_exception(StepFailed(MapItemFailure.model_validate(result["failure"])))
                 else:
                     ref = result["output"]
                     value = store.get(ref["key"]).body
@@ -276,7 +273,7 @@ def run() -> int:
                     body = store.get(manifest["body"]["key"]).body
                     if sha256_ref(body) != manifest["body"]["hash"]:
                         raise ValueError("coordinator result body hash mismatch")
-                    scheduler.settle(future, adapter.validate_json(body, context=files))
+                    future.set_result(adapter.validate_json(body, context=files))
     except BaseException as error:  # noqa: BLE001 -- process boundary
         frame: dict[str, Any] = {
             "kind": "CoordinatorFail",

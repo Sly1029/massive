@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -38,6 +39,7 @@ def _activity(context: StepContext[Job], stage: str) -> int:
         "pgid": os.getpgrp(),
         "attempt": context.invocation.attempt,
         "idempotencyKey": context.invocation.idempotency_key,
+        "startedAt": time.time(),
     }
     (root / f"started-{stage}-{job.name}-{context.invocation.attempt}.json").write_text(
         json.dumps(record)
@@ -101,5 +103,6 @@ async def coordinator(wf: Workflow, inputs: list[Job]) -> list[int]:
     if VARIANT == "early":
         return []
     if VARIANT == "as_completed":
-        return [value async for value in wf.as_completed([item(job) for job in ordered])]
-    return await wf.gather([item(job) for job in ordered])
+        tasks = [asyncio.create_task(item(job)) for job in ordered]
+        return [await value for value in asyncio.as_completed(tasks)]
+    return list(await asyncio.gather(*(item(job) for job in ordered)))

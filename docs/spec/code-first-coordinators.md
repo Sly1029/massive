@@ -1,9 +1,9 @@
 # Code-first coordinators
 
-Status: design handoff for a local spike, based on `1e07ae0`. This document
-specifies the proposed behavior; it does not establish that the protocol,
-runner, resume tests, or typing fixtures have been implemented. Adoption and
-merge require the owner's review. Argo continues to consume builder GraphIR.
+Status: implemented local spike, based on `1e07ae0`; validation evidence is
+recorded below as each gate passes. The protocol, CPython asyncio runner,
+replay record, functional fixtures, and typing fixtures are implemented.
+Adoption and merge require the owner's review. Argo consumes builder GraphIR.
 
 The hypothesis is that ordinary typed Python can replace costly coordination
 wiring while Massive retains immutable artifacts and isolated activities.
@@ -19,7 +19,7 @@ correctness obligation that a key-to-result cache alone does not satisfy.
 | --- | --- | --- |
 | Activity | Typed input/output, effects, isolation, retry and timeout policy | Plain `StepContext[I] -> O` functions, `ExecutionContract`, invocation descriptor v3, manifest-last publication |
 | Coordination | Choose activities and join their immutable outputs | Builder GraphIR today; an async Python function in this spike |
-| Record | Bind source/input identity, invocation commands, attempts, verified results, and replay order | Run journal v6 and datastore; a coordinator replay record must be added |
+| Record | Bind source/input identity, invocation commands, attempts, verified results, and replay order | Run journal v7 and immutable coordinator replay snapshots in the datastore |
 
 The Go orchestrator owns execution and publication. The coordinator requests
 activities; it does not become a second step executor. Keep the implementation
@@ -97,6 +97,7 @@ The essential messages are:
 | `InvokeResult` | `invocation_key`, exactly one of verified output `ArtifactRef` or shared recoverable failure record |
 | `CoordinatorComplete` | Typed, verified final output artifact; no outstanding activities |
 | `CoordinatorFail` | Bounded safe lifecycle diagnostic and existing fatal cause when explicitly supplied |
+| `CoordinatorQuiescent` | Close the current turn's ordered command sequence before another result is delivered |
 
 Resolve schema hashes from the pinned symbol table or explicit schema records;
 an untyped `ArtifactRef` by itself does not establish the activity's input or
@@ -149,7 +150,9 @@ schema/protocol recipe and resolved default policy as part of the immutable
 start configuration. Reuse `planHash` as this recipe's execution fingerprint
 only with an explicit coordinator discriminator; do not claim a GraphIR plan
 was compiled. A run ID names one execution, while the fingerprint checks resume
-eligibility. Freeze the checked interpreter/environment, archived source, and
+eligibility. The fingerprint recipe v2 names `cpython-asyncio-delivery-v1`;
+earlier spike recipes fail with a rebuild diagnostic. Freeze the checked
+interpreter/environment, archived source, and
 original absolute deadline. A resume must not buy a new deadline or reset retries.
 
 Claim exclusive ownership before replay or journal mutation. A local file lock
@@ -191,19 +194,33 @@ async coordinators. If B finishes before A and B's continuation invokes C,
 releasing cached A first on replay can change the next command without any
 clock, random call, or source change.
 
-For the minimal spike, document barrier-style joins as the supported pattern
-if the implementation records only commands. Completion-sensitive scheduling,
-`as_completed`, races, and per-item follow-up invocations before the join are
-then unsupported; a strict mismatch reports divergence but cannot distinguish
-an author error from the engine's different delivery schedule. This limitation
-must appear in the test evidence and recommendation.
+The implemented scheduler supports independent per-item continuations through
+deterministic delivery turns, including ordinary `asyncio.gather`. Go durably
+records one result delivery before releasing it to CPython. The runner uses a
+CPython selector event loop and drains every FIFO ready callback to quiescence
+before reading another result, even when all response frames are already buffered.
+It then emits the turn boundary. Replay re-delivers the recorded order and
+compares the full canonical commands and command count for every closed turn
+before allowing new activity dispatch. The unfinished final turn may extend its
+accepted prefix; live execution begins after all recorded history is consumed.
 
-To support independent async continuations, also persist result-delivery order
-and coordinator turn boundaries, and drive replay from that history. Batch
-delivery matters: resolving several futures together can differ from resolving
-them across event-loop turns. Raw NDJSON arrival order is not itself a proven
-deterministic Python scheduler. Test changed completion timing and response
-batching with the exact supported interpreter before claiming this capability.
+This is delivery-order scheduling: a fast later activity can release its
+continuation while an earlier activity remains blocked. Go settlement order
+chooses live delivery order; replay preserves that order. Changing future
+completion order after the recorded prefix is consumed may change `as_completed`
+output order, as it does in a fresh execution. A complete record replays the exact
+terminal output and commands without new attempts.
+
+`asyncio.as_completed` must receive tasks created in deterministic input order
+with `asyncio.create_task`; its bare-coroutine scheduling passes through a set.
+This avoids identity-dependent command order inside the standard library.
+Timers/duration waits are rejected, including aliased calls that evade the cheap
+source checks. Coordinator I/O and background threads remain unsupported.
+The runner depends on CPython's private ready queue to recognize quiescence;
+the checked interpreter realization is pinned and verified before replay. This
+is an explicit spike dependency, not a guarantee for alternate event loops or
+arbitrary Python libraries. Functional tests change completion timing and NDJSON
+batching while comparing every command and turn boundary.
 Temporal explicitly replays an ordered history of commands and events; it is
 more than an activity-result dictionary.
 [Temporal replay](https://docs.temporal.io/workflows).
@@ -301,8 +318,8 @@ depending on that positional count.
 [Workers API](https://developers.cloudflare.com/workflows/build/workers-api/),
 [step context](https://developers.cloudflare.com/workflows/build/step-context/).
 Its guidance requires deterministic names/branches and cautions about races.
-Our restricted barrier-style gather should be validated on that target before
-asserting identical concurrent behavior.
+The local delivery history has no implemented mapping to that target; validate
+concurrent behavior there before asserting equivalence.
 [Workflows rules](https://developers.cloudflare.com/workflows/build/rules-of-workflows/).
 
 ## Argo and Monty
@@ -364,14 +381,15 @@ and a recovery invocation after the join. Functional acceptance must show:
   barrier-style joins or full independent continuations are supported.
 - Pass pyright and ty positive/negative fixtures; protocol/schema conformance;
   the mock ban; and the repository check through `massive-heavy`. Installed-wheel
-  execution must cover the new runner mode. No runtime evidence is claimed by
-  this design-only handoff.
+  execution must cover the new runner mode. Completed spike gates are listed
+  below; unrun targets do not inherit local evidence.
 
-Proceed with the local spike, retain builders, and decide adoption from its
-crash/replay evidence and authoring benefit. The strongest concern is hiding a
-new replay scheduler behind an apparently ordinary asyncio interface. A
-command-only prototype with explicit supported patterns is useful evidence,
-but insufficient grounds for advertising arbitrary durable Python.
+Retain builders and keep this PR draft for owner review. The delivery scheduler
+addresses the command-only replay risk for the tested asyncio patterns. Adoption
+should weigh the authoring benefit against a private CPython scheduling dependency,
+whole-snapshot journal cost, and the explicit orphan-worker quiescence precondition.
+The evidence does not establish arbitrary durable Python, automatic effect
+fencing, or a distributed coordinator target.
 
 If adopted, separate activity execution from coordination scheduling at the
 existing invoker seam; add one typed coordinator/run-kind contract and one
@@ -395,3 +413,11 @@ against real CLI/runner processes and filesystem stores, through `massive-heavy`
    reordered keys, a new key ahead of the recorded suffix, or early completion
    fails with a safe divergence diagnostic. The four cases preserve every
    external activity-effect file byte for byte.
+3. **Artifacts and lifecycle:** 21 cases pass missing/corrupt activity, final,
+   run-result, and pinned-input artifacts; changed source/input/store identity;
+   orphan publication; recorded retry/backoff and interrupted non-retryable work;
+   recovered exhaustion; fatal, deadline, sticky coordinator fatal, and unsupported
+   operations. Backoff retains its original timestamp and retries retain the
+   idempotency key. Only coordinator journals admit recovered failures; v6 is
+   rejected with a rebuild diagnostic. These cases run through the CPython
+   asyncio driver, with ordinary standard-library joins.

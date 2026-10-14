@@ -36,7 +36,7 @@ func (failure *coordinatorDivergenceError) Error() string {
 
 // This recipe is independently versioned; it never asserts GraphIR compilation.
 func coordinatorFingerprint(definition, input []byte, env *runjournal.Environment) (string, error) {
-	body, err := canonical.Marshal(map[string]any{"kind": "CoordinatorExecution", "recipeVersion": 1, "definition": json.RawMessage(definition), "input": json.RawMessage(input), "environment": env})
+	body, err := canonical.Marshal(map[string]any{"kind": "CoordinatorExecution", "recipeVersion": 2, "scheduler": "cpython-asyncio-delivery-v1", "definition": json.RawMessage(definition), "input": json.RawMessage(input), "environment": env})
 	if err != nil {
 		return "", err
 	}
@@ -209,7 +209,7 @@ func RunCoordinator(ctx context.Context, config CoordinatorRunConfig) (result *R
 		}
 		hash, err := coordinatorFingerprint(definition.Canonical, originalInput.Body, engine.manifest.Environment)
 		if err != nil || hash != engine.manifest.PlanHash {
-			return nil, fmt.Errorf("coordinator execution fingerprint mismatch")
+			return nil, fmt.Errorf("coordinator execution fingerprint mismatch; rebuild and start a new run")
 		}
 		if config.Input != nil {
 			input, err := canonical.CanonicalizeJSON(config.Input)
