@@ -426,7 +426,13 @@ against real CLI/runner processes and filesystem stores, through `massive-heavy`
    created `as_completed` tasks, with either the first or third submitted activity
    completing first. A blocked earlier activity does not delay the later
    continuation. For both patterns, sending the complete response history in one
-   write or streaming one result per quiescent turn produces byte-identical
+   write or streaming one result per quiescent turn produces identical validated
    protocol frames, commands, boundaries, and final artifacts. Complete-record
    resume reproduces the original output. The delivery scheduler held; no
    issue-order fallback was needed.
+5. **Typing:** pyright and ty pass the SDK and coordinator authoring fixtures.
+   The fixtures prove awaited synchronous/asynchronous result types, heterogeneous
+   `asyncio.gather` tuple positions, homogeneous gathered list elements, and
+   `as_completed` values. Wrong synchronous/asynchronous inputs and a wrong
+   awaited output assignment remain rejected; both checkers treat unused negative
+   ignores as errors.
